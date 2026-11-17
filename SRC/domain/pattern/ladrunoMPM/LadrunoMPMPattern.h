@@ -144,6 +144,14 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   // Initial velocity of every particle of a body: uniform v, or (sine) v_comp =
   // v0 sin(beta (X_axis - xref)), other components 0. Returns the count, or -1.
   int setBodyVelocity(int body, const double *v, std::string &err);
+  // WP-232i (tests/mpm_bspline_interface.md B11, B12): one flat list, ndm per
+  // particle in storage order. The body force (per unit mass, unscaled) may be set
+  // between any two `mpm analyze` calls; the velocity only before the first step.
+  int setParticleBodyForce(const std::vector<double> &b, std::string &err);
+  int setParticleVelocity(const std::vector<double> &v, std::string &err);
+  // WP-232i: a B-spline grid face with both `fix` and `wall` is refused (B5); a
+  // gridvel box reaching the ghost layer behind a `fix` face too (B10). "" = fine.
+  std::string bsplineFaceConflict() const;
   int setBodyVelocitySine(int body, int comp, int axis, double v0, double beta,
                           double xref, std::string &err);
   int setBodyStressGeostatic(int body, double yTop, double rho, double g, double K0,

@@ -12,6 +12,10 @@ checked WITHOUT building OpenSees (the tests/test_hypo_kernel_cpp.py idiom).
   mass cutoff, refusals, particle_fields after 1/3/5 steps, the closed forms
   (translation, bar period, PIC vs FLIP, impact, incline, K0, small mass).
 
+* tests/mpm_bspline_core_check.cpp (WP-232i) includes the same core and checks the B-spline
+  rows that need no binary: G1 (basis properties, cardinal values, C1), G1-K4 (the folded S'
+  near `fix` faces), G8 (images against the full domain, mode F) and the body-force path (B11).
+
 Neither file reads tests/mpm_reference.py (232b's oracle stays independent).
 This file is deliberately NOT named test_ladruno_mpm_*: the mutation gate's MPM
 suite must hold only tests that run the mutated binary, and these compile their
@@ -93,3 +97,24 @@ def test_cpp_mpm_engine_core_cases(engine_run):
 def test_cpp_mpm_engine_core_selfweight_column(engine_run):
     _, out = engine_run
     assert "column_selfweight_2d_gimp selfweight_error" not in _fail_lines(out), out
+
+
+@pytest.mark.t1
+def test_cpp_mpm_bspline_core():
+    """WP-232i: G1, G1-K4, G8 and B11 on the core (tests/mpm_bspline_core_check.cpp)."""
+    gpp = shutil.which("g++") or shutil.which("c++") or shutil.which("clang++")
+    if gpp is None:
+        pytest.skip("no C++ compiler available")
+    with tempfile.TemporaryDirectory() as td:
+        exe = os.path.join(td, "bsc.exe")
+        cmd = [gpp, "-O2", "-std=c++17", "-Wall", "-Wextra", "-I", _CORE_DIR, "-I", _KERNEL_DIR,
+               os.path.join(_HERE, "mpm_bspline_core_check.cpp"), "-o", exe]
+        cc = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                            encoding="utf-8", errors="replace")
+        assert cc.returncode == 0, "compile failed: " + cc.stderr
+        rr = subprocess.run([exe],stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=600)
+    out = rr.stdout + rr.stderr
+    assert rr.returncode == 0 and "RESULT: PASS" in out, out
+    m = re.search(r"\[checks\] (\d+) checks", out)
+    assert m and int(m.group(1)) >= 80, out

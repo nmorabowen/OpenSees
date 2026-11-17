@@ -391,3 +391,185 @@ harness (status shipped, no class tags), the vanilla fragment, a quirk entry for
 learned. python3.12; ruff F811 clean; the fork-checklist gates before every push. Report per the
 Worker rules.
 ```
+
+## 232i — phase 3: the B-spline basis and the manufactured-solution orders
+
+Kickoff 2026-11-16 (orchestrator, Opus 5.5 — the program's orchestrator session, per #1075).
+Branch `wp/232i-mpm-bspline-mms`, one draft PR for the WP, one C++ worker. Base `ladruno` at
+`6ee968060` (release `ladruno-v20261116`). ADR §8 row "method of manufactured solutions — spatial
+convergence order per basis" (P3) and §9 phase 3. Done when the gate table below is green (or a
+reported miss with its diagnosis, never a widened band), the warrant package is in the PR, and the
+ADR carries "Amendment (232i, <date>)" recording the basis, its boundary treatment and the
+contract decision.
+
+**Model and effort, re-decided at kickoff.** C++ worker: opus · high (the roster's fork C++ row: a
+new basis in both modes, a boundary treatment, a per-particle body-force path, and its MMS
+harness). No separate verification worker: a manufactured solution is its own oracle (a wrong
+body force or a wrong reading of the kernel shows up as an order collapse, not as agreement), and
+the MMS derivation is checked by an independent finite-difference residual test (below). Ready-flip
+critic: fable · high (the author is Opus), briefed with the diff, this section and the ADR rows —
+not with the orchestrator's reading. `/code-review high`. No out-of-family verdict is pre-booked
+(232c's and 232f's were waived); ask the owner at ready-flip.
+
+**Decisions fixed at kickoff** (the worker may object in its Round-1 report; the orchestrator
+decides):
+
+- **K1 — degrees.** Quadratic (`bspline2`) is required; cubic (`bspline3`) is in scope only if it
+  falls out of the same code path (a degree parameter; `AxisSupport` already holds 4 nodes per
+  axis). Cubic never delays the quadratic gate.
+- **K2 — Contract 1 is not changed in 232i.** Its §1.7 makes any new allowed `BASIS` value a
+  `FORMAT_VERSION` bump, which is apeGmsh work through T. A B-spline grid is chosen on the deck
+  only (`mpm grid … -basis bspline2`); `mpm particles -file` into a B-spline grid is refused loudly
+  (the file's `GRID/BASIS` differs from the deck's). Contract 1 v2 is filed as a follow-up for T.
+- **K3 — Contract 2** (the `.ladruno` particle group writes `GRID/BASIS`): the orchestrator asks T
+  at kickoff whether apeGmsh's merged particle reader refuses an unknown `BASIS` value. The worker
+  implements whichever the orchestrator relays before Round 2 (write the new value and amend
+  `232a_mpm_contracts.md` §2, or hold the value behind a contract amendment T schedules).
+  **Answered by T, 2026-11-16 (apeGmsh main `df1869079`):** write the new value and amend
+  Contract 2 §2 in this PR, listing the exact allowed values. Until apeGmsh releases a reader
+  that takes the merged contract text, the TypeScript viewer refuses `"bspline2"` by name
+  (`ladrunoParticles.ts` `readGrid`, C2-GRID). The Python reader passes the value through and
+  nothing reads it. Neither shows wrong values. Holding the value back would make the file lie
+  about its grid. Contract 1 v2, the reader change and the bridge's `-basis` value are
+  nmorabowen/apeGmsh#3013.
+- **K4 — the boundary treatment is the Round-1 decision.** Today a face's `fix`/`wall` zeroes the
+  face nodes and the ghost layer alike (interface A5). That keeps linear reproduction for GIMP
+  (its support near a face never reaches the ghost layer), but not for a uniform quadratic
+  B-spline, whose support does: zeroed ghosts leave an O(h) boundary layer. Candidates: mirrored
+  ghost values (odd for a fixed component, even for a free one), a boundary-modified
+  (open-knot / clamped) basis at the grid-box faces (Steffen, Kirby & Berzins 2008; Gan et al.
+  2018), or the A5 zeroing kept and its order loss reported. The choice must work in mode F and in
+  mode A (where a mirrored ghost is an MP constraint with factor −1 under the user's handler — say
+  whether that is admissible, or why a modified basis avoids it). Literature only: no GPL / LGPL /
+  unlicensed source (Worker rule 5).
+
+**Pre-registered gates** (fixed here, before any B-spline number exists; a band is never widened
+after a run — a miss is reported as a miss, with its diagnosis).
+
+The manufactured solution, after Wallstedt & Guilkey (2008): unit square (unit cube for the 3D
+row), `u_i(X, t) = A sin(2π X_i) sin(c π t)` for each axis i, rollers on every face (the normal
+component fixed; F stays diagonal, so there is no rotation, no shear stress and no shear
+traction), `ElasticIsotropic` through the hypo kernel. The body force is
+`b = a − (1/ρ₀) ∇_X · P` with the stress the kernel actually integrates (quote the kernel's strain
+measure and the stress it returns from the interface documents before deriving; for a coaxial
+stretch the Hughes–Winget increments sum to the logarithmic strain up to O(Δt²)). Error
+`e = RMS_p |u_p − u(X_p, t_end)| / A` over all particles at `t_end` = one period. Order `p` =
+least-squares slope of `log e` against `log h` over the three finest rungs. Ladder
+`1/h = 8, 16, 32, 64` (add 128 if a run costs under 10 min); two particles per cell per axis (a
+3×3 leg reported). Explicit Δt fixed across the ladder at ≤ 0.1 × the finest rung's critical Δt;
+**validity check:** halving Δt at the finest rung changes `e` by < 5 % — if not, Δt is reduced
+until it holds (a validity condition on the evidence, not a band). FLIP with α = 1 for the gated
+legs (PIC reported).
+
+| Row | Gate |
+|---|---|
+| G1 basis properties, each new basis, 2D and 3D | at ≥ 10⁴ random admissible positions, including every position within 2h of each face, after the K4 treatment: `S ≥ 0`; partition of unity `\|Σ S − 1\| ≤ 1e-13`; `\|Σ ∇S\| ≤ 1e-11 / h`; linear reproduction `\|Σ S xᵢ − x_p\| ≤ 1e-12 h` and `\|Σ xᵢ ⊗ ∇S − I\| ≤ 1e-11`; the 1D cardinal values in the interior (quadratic: `S(0) = 3/4`, `S(±h/2) = 1/2` and `1/8`; cubic: `S(0) = 2/3`, `S(±h) = 1/6`) to 1e-14; C¹ continuity across knots by a finite-difference sweep of `dS` (max jump ≤ 1e-8 / h). In the g++ core check and through `mpm debug shape`. |
+| G2 MMS, mode F, 2D plane strain, small amplitude (max \|F_ii − 1\| = 1e-3) | `bspline2`: p ≥ 1.8 and `e` non-increasing along the whole ladder |
+| G3 MMS, mode F, 2D plane strain, large amplitude (max \|F_ii − 1\| = 0.1; particles cross cells at the finest rungs — report crossings per rung) | `bspline2`: p ≥ 1.5 and `e` non-increasing |
+| G4 MMS, mode A, quasi-static, 2D, small amplitude (`u(X, λ) = λ A sin(2π X_i)`, λ ramped in ≥ 4 load steps, body force updated per step) | `bspline2`: p ≥ 1.8 and `e` non-increasing |
+| G5 cubic, if delivered (K1) | G2–G4 at the same thresholds for `bspline3` |
+| G6 mutation | the MPM family's ZERO and SCALE mutants each turn G2 (or G3) red |
+| G7 contracts and refusals | `-basis bspline2` round-trips through `mpm info summary`, the `.ladruno` output (per K3) and the database restart in mode A; `mpm particles -file` into a B-spline grid refused (K2); an inadmissible particle refused as today |
+| G1-K4 (added at the freeze, before any number) | folded `S′` within 2h of each `fix` face at the G1 tolerances: odd component `Σ S′ (x_ι − x_face)_n = (x_p − x_face)_n`; even component `Σ S′ = 1` and `Σ S′ x_t = x_{p,t}`; `S′ ≥ 0` |
+| G8 images (added at the freeze) | mode F, `bspline2`: a body symmetric about an interior grid plane, run on the full grid, against its half on a grid whose face is that plane with a roller (`fix`, images): particle positions and stresses equal to rel 1e-10 after ≥ 100 steps, at small and large amplitude |
+| R1 reported, not gated | G2 and G3 for `gimp` and `linear` (literature expectation: GIMP near 2 at small amplitude; linear erratic once particles cross cells) — a GIMP small-amplitude order below 1.5 is filed as an issue against shipped code; PIC legs; the 3×3 leg; the 3D small-amplitude MMS at `1/h = 4, 8, 16`; mode A transient (Newmark average acceleration) MMS; the slice-1 self-weight column at both compressions (the 20 % case is the uGIMP XFAIL) per basis at three resolutions; the cell-crossing meter (S1 row) per basis, as a number |
+
+**Freeze (2026-11-16, orchestrator, on `tests/mpm_bspline_interface.md` @ `b25586c8b`).**
+Frozen as B1–B12 with the following conditions:
+- K4 = mirrored ghosts by images on `fix` faces of B-spline grids (B5). `wall` stays A5 and is
+  first order there, documented.
+- Amendments 1 (`mpm info basis`), 2 (G1-K4 above) and 4 (cubic in both modes) are accepted.
+- Amendment 3: the gate keeps `e` at one period. `e(T/4)` and `max_t e(t)` are reported, not
+  gated.
+- **F1 — K3 per T:** write `bspline2` and `bspline3`. Amend C2-GRID in `232a_mpm_contracts.md` §2
+  to list exactly `gimp | linear | bspline2 | bspline3`, with no minor bump, and say that a reader
+  older than the amendment refuses the value by name (the safe outcome). Split `check_grid`'s value
+  set per contract. G7's `.ladruno` leg is a round trip.
+- **F2 — memory:** raising `MAX_DOF` must not grow per-element storage for `gimp`, `linear` or
+  `bspline2`. Size by the actual support, or keep cubic on its own pool. Report bytes per
+  particle-element at 10⁴ (the M0b M3 method) before and after: growth over 5 % for GIMP is a
+  defect.
+- **F3 — unchanged answers:** B8's per-component path must reproduce GIMP and linear bit for bit.
+  The whole existing MPM suite (slice 1, the 232f gates, contracts, lifecycle, the g++ core check)
+  passes unchanged, with the counts in the report.
+- **F4 — G8**, the images-against-full-domain equality, is required.
+
+**Critic round (2026-11-16, Fable · high, verdict AMEND at `da23a1fed`; each finding verified
+in-tree by the orchestrator).** These are added before the final warrant run. No band changes.
+- **A1 (major, a defect).** A face-layer node of a `fix` face is its own image, so its mass is
+  one-sided. The active-node cutoff (`LadrunoMPMImplicit.cpp:554-561`; `LadrunoMPMCore.h:683-685`
+  and `:749-752`) then drops in the half model a node the full model keeps. The critic's probe:
+  3-14 % stress difference in 2D and 9.6 % in a 3D octant at mode A's default cutoff; up to 53 %
+  in mode F at `massCutoff 0.05`. Fix: on B-spline grids the cutoff tests the face-layer node's
+  mass times 2^k, where k is the number of `fix` faces through the node. **G8 gains two legs:**
+  G8-A (mode A, Newmark, default `renormalize` 5e-2) and G8-F-cut (mode F at `massCutoff 0.05`),
+  each with a body reaching a free surface near the face. The equality bar is unchanged:
+  rel 1e-10.
+- **A2 (major, the mutation margin).** On the Zone-A rungs SCALE survives the one-period MMS
+  tests, so the family's SCALE score (floor 0.38, `mutation_gate.py:134`) has one test of margin.
+  Added a Zone-A mutation oracle, which is not an accuracy gate: the quarter-period peak error
+  `e(T/4) ≤ 0.05` (5 % of the amplitude) for `bspline2` G2 at 1/h = 32. Re-measure the MPM
+  family's ZERO and SCALE scores with `mutation_gate.py` against their floors.
+- **A3 (minor).** `verdict()` fails when a gate row lacks its criterion or has `p = None`
+  (evidence void, never a pass). The results test recomputes `p` and monotonicity from `e` and
+  `h`, fails when G2-G4 are missing, and checks that the rows' `ladrunoBuild` is one build. Local
+  orders are reported per row. The guide describes a face that fixes only tangential components as
+  an antisymmetry plane (odd tangential, even normal image).
+
+```text
+<header>  ADR sections: §4 (walls W1–W17), §5.2, §5.3 (and its 232f amendments), §5.4, §6, §8
+(the P3 row, the mutation note), §9 phase 3. Your PR: #<pr>.
+Branch: work detached on origin/wp/232i-mpm-bspline-mms; commit; `git pull --rebase origin
+wp/232i-mpm-bspline-mms`; `git push origin HEAD:wp/232i-mpm-bspline-mms`.
+Read the "232i" section of .claude/skills/ladruno-mpm/references/wp-briefs.md first: its
+decisions K1–K4 and its gate table bind you. Never widen a band.
+Independence: as in 232c, read tests/mpm_interface.md, tests/mpm_implicit_interface.md and the
+cases files; never tests/mpm_reference.py or tests/mpm_implicit_reference.py.
+
+ROUND 1 — stop and report after it (the orchestrator freezes it):
+  tests/mpm_bspline_interface.md, at most ~3 pages, deciding with code anchors quoted:
+  - the basis: the 1D functions and derivatives per degree, the support rule (which nodes, from
+    which cell), admissibility, how it plugs into Basis / axisSupport / particleSupport
+    (LadrunoMPMCore.h:74-238) and every site that switches on the basis today (grep it: the
+    command parser, the LadrunoMPMIO.cpp BASIS read and write, LadrunoMPMImplicit.cpp support and
+    serialization, LadrunoMPMPattern.cpp summary and output);
+  - K4: the boundary treatment, with the reason, what it does to `fix` and `wall` faces and to
+    free ghost nodes, in mode F and in mode A, and what it changes for GIMP and linear (nothing,
+    or say why);
+  - mode A: the particle element's node set under the new support (3 or 4 nodes per axis),
+    re-pointing, and any size assumption (27 / 64 nodes) in LadrunoMPMImplicit.cpp;
+  - the MMS body-force path: a generic per-particle body force (no MMS formula in C++), settable
+    from Python each step as one flat list, honoured by P2G in mode F and by the particle element
+    in mode A; its lifecycle under `reset` / `wipe` / restart; Tcl may lack it (say so in the
+    guide). Also the per-particle initial velocity the MMS needs;
+  - the kernel facts the MMS rests on, quoted from the interface documents: the strain measure
+    the hypo kernel accumulates, the stress it returns (Cauchy or Kirchhoff), and the
+    plane-strain embedding;
+  - K2 and K3 as the orchestrator relays them; the `mpm grid` syntax.
+
+ROUND 2 — on the orchestrator's "frozen":
+  Implement, batching edits; ask the orchestrator for each build (all five targets) and each
+  mutant build — never start build.bat yourself.
+  - tests/mpm_mms.py: the manufactured fields, accelerations and body force (numpy; sympy is not
+    installed — derive by hand, show the derivation in the docstring).
+    tests/test_mpm_mms_reference.py checks the derivation independently: a centred
+    finite-difference evaluation of ρ₀ a − ∇_X · P − ρ₀ b at random (X, t) is ≤ 1e-6 relative,
+    never against MPM.
+  - tests/test_ladruno_mpm_bspline_*.py (zone_a), Python, reading a cases file
+    tests/mpm_bspline_cases.txt that holds each row's parameters and its gate copied from the
+    table; a classic Tcl test for G1 and G7 (both shipped engines). Gated legs run in Zone-A only
+    if they fit its time budget (say what each costs); the full ladder is the warrant run, which
+    the orchestrator launches, with results JSON committed under tests/data/mpm/bspline/ carrying
+    ladrunoBuild, Δt, crossings per rung, e per rung and p.
+  - The g++ core check (tests/mpm_engine_check.cpp, tests/test_mpm_engine_core_cpp.py) extended
+    for G1.
+  Registrations per fork-checklist.md: the ledger fragments WP-232i-mpm-bspline-mms.md
+  (implementations; vanilla rows + `// Ladruno` markers for any upstream file), a banner line,
+  the guide (Ladruno_implementation/232_ladruno_mpm_guide.md: the basis, its boundary treatment,
+  the body-force command, what Tcl lacks), stamps. Draft the ADR amendment text in your report;
+  the orchestrator writes it.
+Done when: every gated row green (or a reported miss with diagnosis), R1 reported in
+Ladruno_implementation/232i_mpm_bspline_mms.md (method, tables per row, the orders, the
+crossings), ci/ gates clean, ladrunoBuild matching your head on the exe and the pyd. Report per
+the Worker rules.
+```

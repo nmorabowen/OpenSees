@@ -106,6 +106,8 @@ LadrunoMPMPattern::mpmBodyForce(int p)
     double f = mp * eng.par.gravity[a];
     if ((int)pforce.size() >= nd * (p + 1)) f += pforce[nd * p + a];
     bfBuf[a] = lambda * f;
+    // WP-232i B11: the particle body force per unit mass, NOT scaled by the load factor
+    if ((int)eng.bodyForce.size() >= nd * (p + 1)) bfBuf[a] += mp * eng.bodyForce[nd * p + a];
   }
   return bfBuf.data();
 }
@@ -526,8 +528,21 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
   // ---- supports at the committed positions --------------------------------------
   std::vector<long> supStart(1, 0), node;
   std::vector<double> Sv, dSv;
+  // WP-232i (tests/mpm_bspline_interface.md B8): on a B-spline grid the support is
+  // folded (the ghosts behind a `fix` face are images, never Domain nodes): Sv, dSv
+  // then hold the unsigned weight W and grad W, Sc, dSc the per-component S' and
+  // grad S' (nd, nd x nd per entry); oddP[p] marks a particle with a sign -1, which
+  // takes the per-component path in its element. GIMP and linear: unchanged.
+  const bool bspl = ladruno_mpm::isBSpline(eng.par.basis);
+  std::vector<double> Sc, dSc;
+  std::vector<char> oddP(N, 0);
   for (int p = 0; p < N; p++) {
-    ladruno_mpm::particleSupport(G, eng.par.basis, &P.x[nd * p], &P.lp[nd * p], node, Sv, dSv);
+    if (bspl) {
+      oddP[p] = ladruno_mpm::foldedSupport(G, eng.par.basis, eng.fc, &P.x[nd * p], &P.lp[nd * p],
+                                           node, Sv, dSv, Sc, dSc) ? 1 : 0;
+    } else {
+      ladruno_mpm::particleSupport(G, eng.par.basis, &P.x[nd * p], &P.lp[nd * p], node, Sv, dSv);
+    }
     supStart.push_back((long)node.size());
   }
   std::map<long, double> mass;        // ordered: deterministic node creation
@@ -543,7 +558,10 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
   for (int p = 0; p < N; p++) {
     int nk = 0;
     for (long k = supStart[p]; k < supStart[p + 1]; k++) {
-      const bool act = mass[node[k]] > mcut;
+      // critic A1: a face-layer node of a `fix` face is tested with the mass of the body
+      // plus its reflections (x 2^k); GIMP and linear unchanged
+      const bool act = ladruno_mpm::imageCutoffMass(G, eng.par.basis, eng.fc, node[k],
+                                                    mass[node[k]]) > mcut;
       if (act || ghost) {
         keep[k] = 1;
         inact[k] = act ? 0 : 1;
@@ -572,6 +590,13 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
           if (keep[k]) {
             Sv[k] /= sum;
             for (int a = 0; a < nd; a++) dSv[nd * k + a] = (dSv[nd * k + a] - Sv[k] * gsum[a]) / sum;
+            if (bspl)            // B9: every component scaled alike, by the unsigned sums
+              for (int c = 0; c < nd; c++) {
+                double &sc = Sc[nd * k + c];
+                sc /= sum;
+                for (int a = 0; a < nd; a++)
+                  dSc[(nd * k + c) * nd + a] = (dSc[(nd * k + c) * nd + a] - sc * gsum[a]) / sum;
+              }
           }
     }
   }
@@ -687,8 +712,9 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
       r[0] += w;
       if (!qs)
         for (int a = 0; a < nd; a++) {
-          r[1 + a] += w * P.v[nd * p + a];
-          r[1 + nd + a] += w * P.a[nd * p + a];
+          const double wa = bspl ? Sc[nd * k + a] * P.m[p] : w;   // B8: momentum reflected
+          r[1 + a] += wa * P.v[nd * p + a];
+          r[1 + nd + a] += wa * P.a[nd * p + a];
         }
     }
   // The NODE's committed v, a take the grid conditions (review item 2): a fixed component
@@ -706,6 +732,21 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
       r[1 + nd + a] = (r[0] > 0.0) ? r[1 + nd + a] / r[0] : 0.0;
     }
   }
+  // WP-232i (B6, found by G8): on a B-spline grid a face-layer node lies on the
+  // symmetry plane of its `fix` face, so the components that face fixes project
+  // to exactly 0 (body + reflection), not to the one-sided value.
+  if (bspl)
+    for (auto &kv : mv) {
+      int ijk[3];
+      G.extIJK(kv.first, ijk);
+      for (int d = 0; d < nd; d++) {
+        unsigned m = 0u;
+        if (ijk[d] == 0) m |= eng.fc.fixMask[2 * d];
+        if (ijk[d] == G.n[d]) m |= eng.fc.fixMask[2 * d + 1];
+        for (int a = 0; a < nd; a++)
+          if (m & (1u << a)) { kv.second[1 + a] = 0.0; kv.second[1 + nd + a] = 0.0; }
+      }
+    }
   Vector zero(nd), vel(nd), acc(nd);
   for (auto &kv : mv) {
     Node *n = dom->getNode(liveTag[kv.first]);
@@ -735,6 +776,8 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
     for (long k = supStart[p]; k < supStart[p + 1]; k++) nk += keep[k];
     ID tags(nk);
     std::vector<double> S(nk), dS(nd * nk), vH(nd * nk), aH(nd * nk);
+    std::vector<double> Spc, dSpc;          // WP-232i B8: per component, odd folds only
+    if (bspl && oddP[p]) { Spc.resize(nd * nk); dSpc.resize(nd * nd * nk); }
     std::vector<char> ina(nk);
     int j = 0;
     for (long k = supStart[p]; k < supStart[p + 1]; k++) {
@@ -742,6 +785,12 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
       tags(j) = liveTag[node[k]];
       S[j] = Sv[k];
       ina[j] = inact[k];
+      if (!Spc.empty()) {
+        for (int c = 0; c < nd; c++) {
+          Spc[nd * j + c] = Sc[nd * k + c];
+          for (int a = 0; a < nd; a++) dSpc[(nd * j + c) * nd + a] = dSc[(nd * k + c) * nd + a];
+        }
+      }
       const std::vector<double> &r = mv[node[k]];
       for (int a = 0; a < nd; a++) {
         dS[nd * j + a] = dSv[nd * k + a];
@@ -756,7 +805,7 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
       return -2;
     }
     if (!e->connectivityEquals(tags)) connChanged = true;
-    if (e->repoint(tags, S, dS, ina, vH, aH) < 0) { err = "re-pointing failed"; return -2; }
+    if (e->repoint(tags, S, dS, ina, vH, aH, Spc, dSpc) < 0) { err = "re-pointing failed"; return -2; }
   }
   // review item 8: whether an element is in the Domain is decided per element, so a
   // partial add earlier never strands the rest
@@ -886,6 +935,18 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
   }
   if (admitAnalysis(A, err) < 0) {
     opserr << "ERROR mpm analyze -- " << err.c_str() << "\n";
+    return -1;
+  }
+  {
+    const std::string why = bsplineFaceConflict();   // WP-232i B5, B10
+    if (!why.empty()) {
+      opserr << "ERROR mpm analyze -- " << why.c_str() << "\n";
+      return -1;
+    }
+  }
+  if (!eng.bodyForce.empty() && (int)eng.bodyForce.size() != nd * N) {   // WP-232i B11
+    opserr << "ERROR mpm analyze -- the particle body force holds " << (int)eng.bodyForce.size()
+           << " values for " << N << " particles (ndm per particle): set it again\n";
     return -1;
   }
   if ((int)pforce.size() != nd * N) pforce.resize(nd * N, 0.0);
@@ -1081,7 +1142,7 @@ void getParticles(Unpacker &u, ladruno_mpm::Particles &P)
 }
 }  // namespace
 
-const int MPM_PACK_VERSION = 1;
+const int MPM_PACK_VERSION = 2;     // WP-232i: + the particle body force
 
 int
 LadrunoMPMPattern::packState(Vector &out)
@@ -1120,6 +1181,7 @@ LadrunoMPMPattern::packState(Vector &out)
   k.put((double)bodyNames.size());
   for (const auto &kv : bodyNames) { k.put(kv.first); k.puts(kv.second); }
   k.puts(unitL); k.puts(unitF); k.puts(unitT); k.puts(unitSystem); k.put(unitsFromFile);
+  k.putv(eng.bodyForce);
   out.resize((int)k.d.size());
   for (int i = 0; i < (int)k.d.size(); i++) out(i) = k.d[i];
   return 0;
@@ -1139,7 +1201,11 @@ LadrunoMPMPattern::unpackState(const Vector &in)
   std::string err;
   eng.clearParticles();
   if (!eng.setGrid(ndm, x0, h, n, err)) return -1;
-  eng.par.basis = (ladruno_mpm::Basis)(int)u.get();
+  {
+    const int b = (int)u.get();
+    if (b < (int)ladruno_mpm::BASIS_GIMP || b > (int)ladruno_mpm::BASIS_BSPLINE3) return -1;
+    eng.par.basis = (ladruno_mpm::Basis)b;
+  }
   eng.par.flip = u.get(); eng.par.damping = u.get(); eng.par.masscut = u.get(); eng.par.safety = u.get();
   for (int d = 0; d < 3; d++) eng.par.gravity[d] = u.get();
   for (int f = 0; f < 6; f++) { eng.fc.fixMask[f] = (unsigned)u.get(); eng.fc.wallMu[f] = u.get(); }
@@ -1181,6 +1247,7 @@ LadrunoMPMPattern::unpackState(const Vector &in)
   for (int i = 0; i < nb && !u.bad; i++) { const int id = (int)u.get(); bodyNames[id] = u.gets(); }
   unitL = u.gets(); unitF = u.gets(); unitT = u.gets(); unitSystem = u.gets();
   unitsFromFile = u.get() != 0.0;
+  u.getv(eng.bodyForce);
   if (u.bad) return -1;
   // the per-step SPs are rebuilt by the next step; the materials live in the
   // restored elements (relinked at the next `mpm analyze`)

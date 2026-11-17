@@ -47,9 +47,11 @@
 
 namespace {
 
-// Shared scratch, keyed by the number of DOFs (at most 27 nodes x 3). The
-// element is serial (no threading opt-in), so one scratch per size is safe.
-const int MAX_DOF = 81;
+// Shared scratch, keyed by the number of DOFs (at most 64 nodes x 3: WP-232i's
+// cubic B-spline; 27 x 3 before). The pool is static and allocates a size only
+// when one is first used, so no element stores more (232i F2). The element is
+// serial (no threading opt-in), so one scratch per size is safe.
+const int MAX_DOF = 192;
 
 Matrix &scratchK(int n)
 {
@@ -172,7 +174,8 @@ LadrunoMPMPoint::connectivityEquals(const ID &tags) const
 int
 LadrunoMPMPoint::repoint(const ID &tags, const std::vector<double> &Sk,
                          const std::vector<double> &dSk, const std::vector<char> &inactive,
-                         const std::vector<double> &vH, const std::vector<double> &aH)
+                         const std::vector<double> &vH, const std::vector<double> &aH,
+                         const std::vector<double> &Sck, const std::vector<double> &dSck)
 {
   nen = tags.Size();
   if (nen < 1 || nen * ndm > MAX_DOF) {
@@ -183,6 +186,15 @@ LadrunoMPMPoint::repoint(const ID &tags, const std::vector<double> &Sk,
   connect = tags;
   S = Sk;
   dS = dSk;
+  if (!Sck.empty() && ((int)Sck.size() != nen * ndm || (int)dSck.size() != nen * ndm * ndm)) {
+    opserr << "LadrunoMPMPoint " << this->getTag() << " -- per-component support of the wrong"
+           << " size (MPM host bug)\n";
+    return -1;
+  }
+  Sc = Sck;              // WP-232i B8: empty = the scalar path
+  dSc = dSck;
+  if (Sc.empty()) { std::vector<double>().swap(gc); }
+  else gc.assign(nen * ndm * ndm, 0.0);
   vHat = vH;
   aHat = aH;
   ghostK.assign(nen, 0.0);
@@ -221,7 +233,10 @@ LadrunoMPMPoint::computeTrial(void)
   for (int a = 0; a < nd; a++)
     for (int c = 0; c < nd; c++) {
       double s = (a == c) ? 1.0 : 0.0;
-      for (int k = 0; k < nen; k++) s += uT[nd * k + a] * dS[nd * k + c];
+      if (Sc.empty())
+        for (int k = 0; k < nen; k++) s += uT[nd * k + a] * dS[nd * k + c];
+      else                                   // B8: component a's own gradient
+        for (int k = 0; k < nen; k++) s += uT[nd * k + a] * dSc[(nd * k + a) * nd + c];
       Frel[nd * a + c] = s;
     }
   const double *Fn = &PP.F[nn * p];
@@ -239,7 +254,10 @@ LadrunoMPMPoint::computeTrial(void)
   double x[3] = {0.0, 0.0, 0.0};
   for (int a = 0; a < nd; a++) {
     double s = PP.x[nd * p + a];
-    for (int k = 0; k < nen; k++) s += S[k] * uT[nd * k + a];
+    if (Sc.empty())
+      for (int k = 0; k < nen; k++) s += S[k] * uT[nd * k + a];
+    else
+      for (int k = 0; k < nen; k++) s += Sc[nd * k + a] * uT[nd * k + a];
     x[a] = s;
   }
   if (!h->mpmTrialAdmissible(p, x)) return -3;
@@ -270,6 +288,24 @@ LadrunoMPMPoint::computeTrial(void)
   }
   double sg[9];
   voigtToTensor(nd, sigT, sg);
+  if (!Sc.empty()) {                     // B8: g'_{k,i} = grad S'_{k,i} . F_rel^-1
+    for (int k = 0; k < nen; k++)
+      for (int i = 0; i < nd; i++) {
+        const double *dsi = &dSc[(nd * k + i) * nd];
+        double *gi = &gc[(nd * k + i) * nd];
+        for (int j = 0; j < nd; j++) {
+          double s = 0.0;
+          for (int K = 0; K < nd; K++) s += dsi[K] * Fi[nd * K + j];
+          gi[j] = s;
+        }
+        double s = 0.0;
+        for (int j = 0; j < nd; j++) s += sg[3 * i + j] * gi[j];
+        fInt[nd * k + i] = (LADRUNO_MUTATE_MPM == LADRUNO_MUT_ZERO) ? 0.0 : vol * s;
+      }
+    trialValid = true;
+    needUpdate = false;
+    return 0;
+  }
   for (int k = 0; k < nen; k++) {
     for (int j = 0; j < nd; j++) {
       double s = 0.0;
@@ -378,7 +414,10 @@ LadrunoMPMPoint::g2p(ladruno_mpm::Particles &PP, double flip, bool quasiStatic)
   const int nd = ndm, nn = nd * nd;
   for (int a = 0; a < nd; a++) {
     double dx = 0.0;
-    for (int k = 0; k < nen; k++) dx += S[k] * nodes[k]->getTrialDisp()(a);
+    if (Sc.empty())
+      for (int k = 0; k < nen; k++) dx += S[k] * nodes[k]->getTrialDisp()(a);
+    else
+      for (int k = 0; k < nen; k++) dx += Sc[nd * k + a] * nodes[k]->getTrialDisp()(a);
     // MPM mutation family, SCALE: the G2P position increment x1.5 (ADR 232 §8)
     if (LADRUNO_MUTATE_MPM == LADRUNO_MUT_SCALE) dx *= ladruno_mpm::MUT_SCALE_FACTOR;
     PP.x[nd * p + a] += dx;
@@ -395,10 +434,11 @@ LadrunoMPMPoint::g2p(ladruno_mpm::Particles &PP, double flip, bool quasiStatic)
       double dv = 0.0, vpic = 0.0, da = 0.0, apic = 0.0;
       for (int k = 0; k < nen; k++) {
         const double v = nodes[k]->getTrialVel()(a), ac = nodes[k]->getTrialAccel()(a);
-        dv += S[k] * (v - vHat[nd * k + a]);
-        vpic += S[k] * v;
-        da += S[k] * (ac - aHat[nd * k + a]);
-        apic += S[k] * ac;
+        const double Sk = Sc.empty() ? S[k] : Sc[nd * k + a];
+        dv += Sk * (v - vHat[nd * k + a]);
+        vpic += Sk * v;
+        da += Sk * (ac - aHat[nd * k + a]);
+        apic += Sk * ac;
       }
       double &vp = PP.v[nd * p + a];
       double &ap = PP.a[nd * p + a];
@@ -476,7 +516,8 @@ LadrunoMPMPoint::assembleForce(void)
   for (int k = 0; k < nen; k++)
     for (int a = 0; a < ndm; a++) {
       const int r = ndm * k + a;
-      (*P)(r) = fInt[r] - S[k] * bf[a] + ghostK[k] * uT[r];
+      const double Sk = Sc.empty() ? S[k] : Sc[ndm * k + a];   // B8
+      (*P)(r) = fInt[r] - Sk * bf[a] + ghostK[k] * uT[r];
     }
 }
 
@@ -542,6 +583,10 @@ LadrunoMPMPoint::tangent(Matrix &K, bool initial)
       for (int c = 0; c < 3; c++) Dmat[3 * r + c] = Dm(r, c);
     ladruno_hypo::pushTangentPlaneStrain(Rm, Dmat, Dc);
   }
+  if (!Sc.empty()) {                     // WP-232i B8
+    tangentPerComponent(K, initial, Rm, volm, sg, Dc);
+    return;
+  }
   // material part: B_a rows {xx,yy,zz,xy,yz,zx} (3D) or {xx,yy,xy} (2D)
   double Ba[6][3], Bb[6][3], DB[6][3];
   for (int a = 0; a < nen; a++) {
@@ -587,6 +632,58 @@ LadrunoMPMPoint::tangent(Matrix &K, bool initial)
           for (int l = 0; l < nd; l++) s += ga[j] * sg[3 * j + l] * gb[l];
         for (int i = 0; i < nd; i++) K(nd * a + i, nd * b + i) += s * volm;
       }
+    }
+    for (int i = 0; i < nd; i++) K(nd * a + i, nd * a + i) += ghostK[a];   // ghost spring (D2.3)
+  }
+}
+
+// WP-232i B8: the tangent with each displacement component's own gradient,
+// g'_{a,i} (= T^T K T for the images' reduction). Same algebra as tangent().
+void
+LadrunoMPMPoint::tangentPerComponent(Matrix &K, bool initial, const double *, double volm,
+                                     const double *sg, const double *Dc)
+{
+  const int nd = ndm;
+  const double *grad = initial ? dSc.data() : gc.data();   // [(nd*a + i)*nd + j]
+  auto G = [&](int a, int i) { return &grad[(nd * a + i) * nd]; };
+  auto fillB = [&](int a, double B[6][3]) {
+    for (int r = 0; r < nv; r++) for (int c = 0; c < 3; c++) B[r][c] = 0.0;
+    const double *g0 = G(a, 0), *g1 = G(a, 1), *g2 = (nd == 3) ? G(a, 2) : 0;
+    if (nd == 3) {
+      B[0][0] = g0[0]; B[1][1] = g1[1]; B[2][2] = g2[2];
+      B[3][0] = g0[1]; B[3][1] = g1[0];
+      B[4][1] = g1[2]; B[4][2] = g2[1];
+      B[5][0] = g0[2]; B[5][2] = g2[0];
+    } else {
+      B[0][0] = g0[0]; B[1][1] = g1[1];
+      B[2][0] = g0[1]; B[2][1] = g1[0];
+    }
+  };
+  double Ba[6][3], Bb[6][3], DB[6][3];
+  for (int a = 0; a < nen; a++) {
+    fillB(a, Ba);
+    for (int b = 0; b < nen; b++) {
+      fillB(b, Bb);
+      for (int r = 0; r < nv; r++)
+        for (int c = 0; c < nd; c++) {
+          double s = 0.0;
+          for (int q = 0; q < nv; q++) s += Dc[nv * r + q] * Bb[q][c];
+          DB[r][c] = s;
+        }
+      for (int i = 0; i < nd; i++)
+        for (int k = 0; k < nd; k++) {
+          double s = 0.0;
+          for (int r = 0; r < nv; r++) s += Ba[r][i] * DB[r][k];
+          K(nd * a + i, nd * b + k) += s * volm;
+        }
+      if (!initial)                    // geometric term: g'_{a,i} . sigma . g'_{b,i} V
+        for (int i = 0; i < nd; i++) {
+          const double *ga = G(a, i), *gb = G(b, i);
+          double s = 0.0;
+          for (int j = 0; j < nd; j++)
+            for (int l = 0; l < nd; l++) s += ga[j] * sg[3 * j + l] * gb[l];
+          K(nd * a + i, nd * b + i) += s * volm;
+        }
     }
     for (int i = 0; i < nd; i++) K(nd * a + i, nd * a + i) += ghostK[a];   // ghost spring (D2.3)
   }

@@ -71,11 +71,70 @@ const int    MUT_ZERO = 1;         // ZERO : the P2G internal force is dropped
 const int    MUT_SCALE = 2;        // SCALE: the G2P position increment is x1.5
 const double MUT_SCALE_FACTOR = 1.5;
 
-enum Basis { BASIS_GIMP = 0, BASIS_LINEAR = 1 };
+// WP-232i (tests/mpm_bspline_interface.md B4): node-centred uniform B-splines,
+// degree 2 and 3, on the same vertex lattice and ghost layer.
+enum Basis { BASIS_GIMP = 0, BASIS_LINEAR = 1, BASIS_BSPLINE2 = 2, BASIS_BSPLINE3 = 3 };
+
+inline bool isBSpline(Basis b) { return b == BASIS_BSPLINE2 || b == BASIS_BSPLINE3; }
+
+inline const char *basisName(Basis b)
+{
+  switch (b) {
+    case BASIS_GIMP: return "gimp";
+    case BASIS_LINEAR: return "linear";
+    case BASIS_BSPLINE2: return "bspline2";
+    case BASIS_BSPLINE3: return "bspline3";
+  }
+  return "?";
+}
+
+// name -> basis; false for an unknown name
+inline bool basisFromName(const std::string &s, Basis &b)
+{
+  if (s == "gimp") { b = BASIS_GIMP; return true; }
+  if (s == "linear") { b = BASIS_LINEAR; return true; }
+  if (s == "bspline2") { b = BASIS_BSPLINE2; return true; }
+  if (s == "bspline3") { b = BASIS_BSPLINE3; return true; }
+  return false;
+}
 
 // --------------------------------------------------------------------------- //
 //  Basis (interface §4)                                                        //
 // --------------------------------------------------------------------------- //
+
+// Uniform B-spline 1D factor (tests/mpm_bspline_interface.md B1), r = x_p - x_i,
+// degree 2 (support |r| < 3h/2) or 3 (|r| < 2h). dS = d/dx_p.
+inline void bsplineFactor(int degree, double r, double h, double &S, double &dS)
+{
+  const double xi = r / h;
+  const double a = std::fabs(xi);
+  const double sg = (xi > 0.0) ? 1.0 : ((xi < 0.0) ? -1.0 : 0.0);
+  if (degree == 2) {
+    if (a < 0.5) {
+      S  = 0.75 - xi * xi;
+      dS = -2.0 * xi / h;
+    } else if (a < 1.5) {
+      const double t = 1.5 - a;
+      S  = 0.5 * t * t;
+      dS = -sg * t / h;
+    } else {
+      S = 0.0;
+      dS = 0.0;
+    }
+    return;
+  }
+  if (a < 1.0) {
+    S  = 2.0 / 3.0 - xi * xi + 0.5 * a * a * a;
+    dS = (-2.0 * xi + 1.5 * xi * a) / h;
+  } else if (a < 2.0) {
+    const double t = 2.0 - a;
+    S  = t * t * t / 6.0;
+    dS = -sg * t * t / (2.0 * h);
+  } else {
+    S = 0.0;
+    dS = 0.0;
+  }
+}
 
 // uGIMP 1D factor, r = x_p - x_i, 0 < lp <= h/2 (interface §4.1).
 inline void gimpFactor(double r, double h, double lp, double &S, double &dS)
@@ -179,7 +238,7 @@ struct AxisSupport {
 inline bool admissibleAxis(const Grid &g, Basis b, int d, double x, double lp)
 {
   const double lo = g.x0[d], hi = g.x0[d] + g.n[d] * g.h;
-  if (b == BASIS_LINEAR)
+  if (b == BASIS_LINEAR || isBSpline(b))      // B3: the centre rule; lp not used
     return (lo <= x) && (x <= hi);
   return (lp > 0.0) && (lp <= 0.5 * g.h) && (lo <= x) && (x <= hi);
 }
@@ -197,10 +256,20 @@ inline void axisSupport(const Grid &g, Basis b, int d, double x, double lp, Axis
     return;
   }
   const int c = (int)std::floor((x - g.x0[d]) / h);
+  const int deg = (b == BASIS_BSPLINE2) ? 2 : ((b == BASIS_BSPLINE3) ? 3 : 0);
   for (int i = c - 1; i <= c + 2; i++) {
     if (i < -g.ghost || i > g.n[d] + g.ghost) continue;   // never hit when admissible
     double S, dS;
-    gimpFactor(x - (g.x0[d] + i * h), h, lp, S, dS);
+    if (deg) {
+      // B2: the same scan. r is measured from the NEARER face, so a node and its
+      // image across that face get |r| ordered exactly in floating point (the
+      // folded S' = S_image - S_ghost of K4 is then never negative by round-off).
+      const double hi = g.x0[d] + g.n[d] * h;
+      const double r = (2.0 * (x - g.x0[d]) <= g.n[d] * h) ? (x - g.x0[d]) - i * h
+                                                           : (x - hi) - (i - g.n[d]) * h;
+      bsplineFactor(deg, r, h, S, dS);
+    }
+    else gimpFactor(x - (g.x0[d] + i * h), h, lp, S, dS);
     if (S == 0.0 && dS == 0.0) continue;
     a.idx[a.count] = i; a.S[a.count] = S; a.dS[a.count] = dS;
     a.count++;
@@ -282,6 +351,130 @@ inline int faceIndex(const std::string &s)
   return -1;
 }
 
+// --------------------------------------------------------------------------- //
+//  K4 — images on `fix` faces of a B-spline grid (tests/mpm_bspline_interface.md //
+//  B5, B6, B8). A ghost node behind a face that carries `fix` is slaved to its  //
+//  image: per axis, i < 0 behind a fixed min face maps to -i, i > n behind a    //
+//  fixed max face to 2n - i, and the velocity reflects with R = prod diag(s),  //
+//  s_a = -1 for a component that face fixes (odd), +1 for a free one (even):   //
+//  v_g = R v_image. GIMP and linear grids have no images (B5).                 //
+// --------------------------------------------------------------------------- //
+
+// The image of extended-lattice node `ext`; false when the node is its own.
+// sg[3] receives R's diagonal.
+inline bool imageOfNode(const Grid &g, Basis b, const FaceConditions &fc, long ext, long &img,
+                        double sg[3])
+{
+  sg[0] = sg[1] = sg[2] = 1.0;
+  if (!isBSpline(b)) return false;
+  int ijk[3];
+  g.extIJK(ext, ijk);
+  bool moved = false;
+  for (int d = 0; d < g.ndm; d++) {
+    int f = -1;
+    if (ijk[d] < 0 && fc.fixMask[2 * d] != 0u) { ijk[d] = -ijk[d]; f = 2 * d; }
+    else if (ijk[d] > g.n[d] && fc.fixMask[2 * d + 1] != 0u) { ijk[d] = 2 * g.n[d] - ijk[d]; f = 2 * d + 1; }
+    if (f < 0) continue;
+    moved = true;
+    for (int a = 0; a < g.ndm; a++)
+      if (fc.fixMask[f] & (1u << a)) sg[a] = -sg[a];
+  }
+  if (!moved) return false;
+  img = g.extId(ijk);
+  return true;
+}
+
+// The mass the active-node cutoff tests (critic A1, WP-232i): on a B-spline grid a
+// face-layer node of a `fix` face is its own image, so its one-sided mass is 1 / 2^k of the
+// body-plus-reflection mass, k = the number of `fix` faces through the node; the cutoff tests
+// m * 2^k, as the full symmetric model would. GIMP and linear: m, untouched.
+inline double imageCutoffMass(const Grid &g, Basis b, const FaceConditions &fc, long ext, double m)
+{
+  if (!isBSpline(b)) return m;
+  int ijk[3];
+  g.extIJK(ext, ijk);
+  double f = 1.0;
+  for (int d = 0; d < g.ndm; d++) {
+    if (ijk[d] == 0 && fc.fixMask[2 * d] != 0u) f *= 2.0;
+    if (ijk[d] == g.n[d] && fc.fixMask[2 * d + 1] != 0u) f *= 2.0;
+  }
+  return m * f;
+}
+
+// The folded support of ONE particle (B5, B8), built per axis and then as a
+// tensor product, so the image map (separable per axis) and the signs (a product
+// of per-axis signs) are exact, and a folded S' is a product of non-negative 1D
+// factors. Appends per own node: node id; the unsigned weight W = S + S_ghost and
+// grad W (nd); the per-component S'_{.,a} = S + s_a S_ghost (nd values) and
+// grad S'_{.,a} (nd x nd, component-major). For GIMP / linear, or with no `fix`
+// face in reach, W = S'_a = S. Returns true when any sign is -1.
+inline bool foldedSupport(const Grid &g, Basis b, const FaceConditions &fc, const double *x,
+                          const double *lp, std::vector<long> &oNode, std::vector<double> &oW,
+                          std::vector<double> &odW, std::vector<double> &oSc,
+                          std::vector<double> &odSc)
+{
+  const int nd = g.ndm;
+  // per axis: own targets, unsigned and per-component 1D factors
+  int nt[3] = {1, 1, 1}, tgt[3][4];
+  double w[3][4], dw[3][4], sc[3][4][3], dsc[3][4][3];
+  bool odd = false;
+  for (int d = 0; d < nd; d++) {
+    AxisSupport ax;
+    axisSupport(g, b, d, x[d], lp[d], ax);
+    nt[d] = 0;
+    for (int k = 0; k < ax.count; k++) {
+      int i = ax.idx[k], f = -1;
+      if (isBSpline(b)) {
+        if (i < 0 && fc.fixMask[2 * d] != 0u) { i = -i; f = 2 * d; }
+        else if (i > g.n[d] && fc.fixMask[2 * d + 1] != 0u) { i = 2 * g.n[d] - i; f = 2 * d + 1; }
+      }
+      int j = 0;
+      while (j < nt[d] && tgt[d][j] != i) j++;
+      if (j == nt[d]) {
+        tgt[d][j] = i; w[d][j] = dw[d][j] = 0.0;
+        for (int a = 0; a < 3; a++) sc[d][j][a] = dsc[d][j][a] = 0.0;
+        nt[d]++;
+      }
+      w[d][j] += ax.S[k];
+      dw[d][j] += ax.dS[k];
+      for (int a = 0; a < nd; a++) {
+        const double s = (f >= 0 && (fc.fixMask[f] & (1u << a))) ? -1.0 : 1.0;
+        odd = odd || s < 0.0;
+        sc[d][j][a] += s * ax.S[k];
+        dsc[d][j][a] += s * ax.dS[k];
+      }
+    }
+  }
+  const int nz = (nd == 3) ? nt[2] : 1;
+  for (int kz = 0; kz < nz; kz++)
+    for (int ky = 0; ky < nt[1]; ky++)
+      for (int kx = 0; kx < nt[0]; kx++) {
+        const int kk[3] = {kx, ky, kz};
+        int ijk[3] = {tgt[0][kx], tgt[1][ky], (nd == 3) ? tgt[2][kz] : 0};
+        oNode.push_back(g.extId(ijk));
+        double W = 1.0;
+        for (int d = 0; d < nd; d++) W *= w[d][kk[d]];
+        oW.push_back(W);
+        for (int e = 0; e < nd; e++) {
+          double gW = dw[e][kk[e]];
+          for (int d = 0; d < nd; d++) if (d != e) gW *= w[d][kk[d]];
+          odW.push_back(gW);
+        }
+        for (int a = 0; a < nd; a++) {
+          double S = 1.0;
+          for (int d = 0; d < nd; d++) S *= sc[d][kk[d]][a];
+          oSc.push_back(S);
+        }
+        for (int a = 0; a < nd; a++)
+          for (int e = 0; e < nd; e++) {
+            double gS = dsc[e][kk[e]][a];
+            for (int d = 0; d < nd; d++) if (d != e) gS *= sc[d][kk[d]][a];
+            odSc.push_back(gS);
+          }
+      }
+  return odd;
+}
+
 const int64_t MAX_PARTICLE_ID = (int64_t(1) << 53) - 1;   // 232a ruling 2
 
 struct Particles {
@@ -313,6 +506,9 @@ class Engine {
   Params         par;
   FaceConditions fc;
   Particles      P;
+  // WP-232i (B11): per-particle body force per unit MASS (acceleration units),
+  // ndm per particle in storage order, NOT scaled by the load factor; empty = none.
+  std::vector<double> bodyForce;
 
   int ndm() const { return grid.ndm; }
   int nv() const { return grid.ndm == 3 ? 6 : 3; }
@@ -498,10 +694,14 @@ class Engine {
   {
     buildSupports();
     p2gMass();
+    collectImages();                    // K4: slaved ghosts are never active nodes
+    for (size_t s = 0; s < slave.size(); s++) gm[slaveImg[s]] += gm[slave[s]];
     out.clear();
     const double mcut = par.masscut * massRef();
     for (long i : touched)
-      if (gm[i] > 0.0 && gm[i] > mcut) out.push_back(grid.publicId(i));
+      if (!gslave[i] && gm[i] > 0.0 &&
+          imageCutoffMass(grid, par.basis, fc, i, gm[i]) > mcut)       // critic A1
+        out.push_back(grid.publicId(i));
     std::sort(out.begin(), out.end());
     clearGrid();
   }
@@ -514,6 +714,12 @@ class Engine {
   {
     const int N = P.size(), nd = grid.ndm, nvv = nv();
     if (N == 0) return 0;
+    if (!bodyForce.empty() && (long)bodyForce.size() != (long)nd * N) {
+      err = "the particle body force holds " + std::to_string((long long)bodyForce.size()) +
+            " values for " + std::to_string(N) + " particles (ndm per particle): set it again;"
+            " step refused, nothing changed";
+      return -1;
+    }
     buildSupports();
 
     // ---- step 3: P2G -------------------------------------------------------
@@ -522,6 +728,7 @@ class Engine {
     for (int d = 0; d < 3; d++) b[d] = lambda * par.gravity[d];
     for (int p = 0; p < N; p++) {
       const double mp = P.m[p], Vp = P.V[p];
+      const double *bfp = bodyForce.empty() ? nullptr : &bodyForce[nd * p];
       double sg[3][3];
       voigtToTensor(&P.sig[nvv * p], sg);
       for (long k = supStart[p]; k < supStart[p + 1]; k++) {
@@ -530,7 +737,7 @@ class Engine {
         const double *g = &supdS[nd * k];
         for (int a = 0; a < nd; a++) {
           gp[nd * i + a]   += S * mp * P.v[nd * p + a];
-          gfe[nd * i + a]  += S * mp * b[a];
+          gfe[nd * i + a]  += S * mp * (bfp ? b[a] + bfp[a] : b[a]);
           if (LADRUNO_MUTATE_MPM != MUT_ZERO) {
             double s = 0.0;
             for (int c = 0; c < nd; c++) s += sg[a][c] * g[c];
@@ -540,10 +747,28 @@ class Engine {
       }
     }
 
+    // K4 (B6): fold the slaved ghosts onto their images, mass +, momentum and
+    // forces reflected. GIMP and linear grids have no images.
+    collectImages();
+    for (size_t s = 0; s < slave.size(); s++) {
+      gm[slaveImg[s]] += gm[slave[s]];
+      foldVec(gp, s);
+      foldVec(gfi, s);
+      foldVec(gfe, s);
+    }
+    // A face-layer node lies ON the symmetry plane: its own image is itself, so
+    // the components its face fixes carry no momentum and no force (the full
+    // body + reflection gives exactly 0 there; G8). Its FLIP increment is then
+    // a = 0, where A5's zeroing gives a = -v^n / dt.
+    zeroFaceOdd(gp);
+    zeroFaceOdd(gfi);
+    zeroFaceOdd(gfe);
+
     // ---- step 4: damping, grid momentum update, grid conditions ------------
     const double mcut = par.masscut * massRef();
     for (long i : touched) {
-      const bool act = gm[i] > 0.0 && gm[i] > mcut;
+      if (gslave[i]) continue;          // K4: set from the image below
+      const bool act = gm[i] > 0.0 && imageCutoffMass(grid, par.basis, fc, i, gm[i]) > mcut;
       gact[i] = act ? 1 : 0;
       if (!act) {
         for (int a = 0; a < nd; a++) gv1[nd * i + a] = ga[nd * i + a] = 0.0;
@@ -562,6 +787,11 @@ class Engine {
         gv1[nd * i + a] = v1[a];
         ga[nd * i + a] = (v1[a] - vn[a]) / dt;
       }
+    }
+    for (size_t s = 0; s < slave.size(); s++) {
+      gact[slave[s]] = gact[slaveImg[s]];
+      reflectVec(gv1, s);
+      reflectVec(ga, s);
     }
 
     // ---- step 5: MUSL particle update (trial) ------------------------------
@@ -612,7 +842,9 @@ class Engine {
         for (int a = 0; a < nd; a++)
           gvs[nd * i + a] += supS[k] * P.m[p] * tv[nd * p + a];
       }
+    for (size_t s = 0; s < slave.size(); s++) foldVec(gvs, s);   // K4 (B6)
     for (long i : touched) {
+      if (gslave[i]) continue;
       double vs[3] = {0, 0, 0};
       if (gact[i]) {
         for (int a = 0; a < nd; a++) vs[a] = gvs[nd * i + a] / gm[i];
@@ -620,6 +852,7 @@ class Engine {
       }
       for (int a = 0; a < nd; a++) gvs[nd * i + a] = vs[a];
     }
+    for (size_t s = 0; s < slave.size(); s++) reflectVec(gvs, s);
     // velocity gradient, F, the kernel, the constitutive update
     const int nn = nd * nd;
     tF.resize(P.F.size()); tR.resize(P.R.size()); tV.resize(N);
@@ -710,8 +943,11 @@ class Engine {
   std::vector<double> supS, supdS;
   // grid arrays, dense, reset through the touched list
   std::vector<double> gm, gp, gfi, gfe, gv1, ga, gvs;
-  std::vector<char>   gmark, gact;
+  std::vector<char>   gmark, gact, gslave;
   std::vector<long>   touched;
+  // K4 (B6): this step's slaved ghost nodes, their images and R's diagonal
+  std::vector<long>   slave, slaveImg;
+  std::vector<double> slaveSg;
   // trial particle arrays
   std::vector<double> tx, tv, tF, tR, tV, teps, tsh, tsig;
 
@@ -747,7 +983,7 @@ class Engine {
       gm.assign(nN, 0.0);
       gp.assign(nd * nN, 0.0); gfi.assign(nd * nN, 0.0); gfe.assign(nd * nN, 0.0);
       gv1.assign(nd * nN, 0.0); ga.assign(nd * nN, 0.0); gvs.assign(nd * nN, 0.0);
-      gmark.assign(nN, 0); gact.assign(nN, 0);
+      gmark.assign(nN, 0); gact.assign(nN, 0); gslave.assign(nN, 0);
       touched.clear();
     }
   }
@@ -770,11 +1006,64 @@ class Engine {
       gm[i] = 0.0;
       gmark[i] = 0;
       gact[i] = 0;
+      gslave[i] = 0;
       for (int a = 0; a < nd; a++)
         gp[nd * i + a] = gfi[nd * i + a] = gfe[nd * i + a] =
         gv1[nd * i + a] = ga[nd * i + a] = gvs[nd * i + a] = 0.0;
     }
     touched.clear();
+    slave.clear(); slaveImg.clear(); slaveSg.clear();
+  }
+
+  // K4 (B6): find the touched ghosts slaved to an image (B-spline grids with a
+  // `fix` face only); an untouched image joins `touched`.
+  void collectImages()
+  {
+    slave.clear(); slaveImg.clear(); slaveSg.clear();
+    if (!isBSpline(par.basis)) return;
+    const size_t nt = touched.size();
+    for (size_t t = 0; t < nt; t++) {
+      long img = -1;
+      double sg[3];
+      if (!imageOfNode(grid, par.basis, fc, touched[t], img, sg)) continue;
+      gslave[touched[t]] = 1;
+      slave.push_back(touched[t]);
+      slaveImg.push_back(img);
+      for (int d = 0; d < 3; d++) slaveSg.push_back(sg[d]);
+      if (!gmark[img]) { gmark[img] = 1; touched.push_back(img); }
+    }
+  }
+  // arr[image] += R arr[slave]
+  void foldVec(std::vector<double> &arr, size_t s)
+  {
+    const int nd = grid.ndm;
+    for (int a = 0; a < nd; a++)
+      arr[nd * slaveImg[s] + a] += slaveSg[3 * s + a] * arr[nd * slave[s] + a];
+  }
+  // K4 (B6): on a B-spline grid, zero the fixed components of arr on the face
+  // layer of every `fix` face (touched nodes)
+  void zeroFaceOdd(std::vector<double> &arr)
+  {
+    if (!isBSpline(par.basis)) return;
+    const int nd = grid.ndm;
+    for (long i : touched) {
+      int ijk[3];
+      grid.extIJK(i, ijk);
+      for (int d = 0; d < nd; d++) {
+        unsigned m = 0u;
+        if (ijk[d] == 0) m |= fc.fixMask[2 * d];
+        if (ijk[d] == grid.n[d]) m |= fc.fixMask[2 * d + 1];
+        for (int a = 0; a < nd; a++)
+          if (m & (1u << a)) arr[nd * i + a] = 0.0;
+      }
+    }
+  }
+  // arr[slave] = R arr[image]
+  void reflectVec(std::vector<double> &arr, size_t s)
+  {
+    const int nd = grid.ndm;
+    for (int a = 0; a < nd; a++)
+      arr[nd * slave[s] + a] = slaveSg[3 * s + a] * arr[nd * slaveImg[s] + a];
   }
 
   void revertAll(MaterialPoints &mats, int upTo)
