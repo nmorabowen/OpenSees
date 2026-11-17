@@ -26,7 +26,17 @@
    "p": 2.0150676638715574,
    "nonincr": true,
    "dt": 0.0006725330685083942,
+   "dt_rule": 0.0006725330685083942,
    "validity_change": 0.0012766109757995426,
+   "validity_reached": true,
+   "validity_tried": [
+    {
+     "dt": 0.0006725330685083942,
+     "e": 0.0031142761999152285,
+     "e_dt_half": 0.0031182519190937116,
+     "change": 0.0012766109757995426
+    }
+   ],
    "e_quarter": [
     0.006786358800051797,
     0.004443800112611556,
@@ -56,19 +66,19 @@
     65536
    ],
    "wall": [
-    0.309256100008497,
-    1.0849679000093602,
-    4.210555500001647,
-    17.00841439999931,
-    77.7705500999873
+    0.31800749999820255,
+    1.0923163999977987,
+    4.179886700003408,
+    16.92570209999394,
+    83.93273089999275
    ],
    "status": "gate",
    "gate": "MMS, mode F, 2D plane strain, small amplitude (max |F_ii - 1| = 1e-3): bspline2 p >= 1.8 and e non-increasing along the whole ladder",
    "verdict": true,
    "verdict_text": "p=2.015 (>= 1.8), non-increasing=True",
    "rung_128": {
-    "probe_64_wall_s": 7.221019499993417,
-    "estimated_128_wall_s": 57.76815599994734,
+    "probe_64_wall_s": 7.247031100007007,
+    "estimated_128_wall_s": 57.976248800056055,
     "add_128": true
    },
    "mode": "explicit",
@@ -76,7 +86,7 @@
    "fmax": 0.001,
    "ppc": 2,
    "flip": 1.0,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "G3": {
    "row": "G3",
@@ -104,7 +114,17 @@
    "p": 1.828276008426872,
    "nonincr": true,
    "dt": 0.0006001951084828766,
+   "dt_rule": 0.0006001951084828766,
    "validity_change": 0.017780096616634967,
+   "validity_reached": true,
+   "validity_tried": [
+    {
+     "dt": 0.0006001951084828766,
+     "e": 0.0040183484235737175,
+     "e_dt_half": 0.004089795046784161,
+     "change": 0.017780096616634967
+    }
+   ],
    "e_quarter": [
     0.009281757241968051,
     0.006030242835472096,
@@ -134,19 +154,19 @@
     65536
    ],
    "wall": [
-    0.37550829999963753,
-    1.3288148999999976,
-    5.0369014000025345,
-    20.56562710000435,
-    91.95906939999259
+    0.4140422999917064,
+    1.4321917999914149,
+    5.569226499996148,
+    22.454843700004858,
+    100.92852669999411
    ],
    "status": "gate",
    "gate": "MMS, mode F, 2D plane strain, large amplitude (max |F_ii - 1| = 0.1; crossings per rung reported): bspline2 p >= 1.5 and e non-increasing",
    "verdict": true,
    "verdict_text": "p=1.828 (>= 1.5), non-increasing=True",
    "rung_128": {
-    "probe_64_wall_s": 8.614887999996427,
-    "estimated_128_wall_s": 68.91910399997141,
+    "probe_64_wall_s": 9.5272985999909,
+    "estimated_128_wall_s": 76.2183887999272,
     "add_128": true
    },
    "mode": "explicit",
@@ -154,7 +174,7 @@
    "fmax": 0.1,
    "ppc": 2,
    "flip": 1.0,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "G4": {
    "row": "G4",
@@ -182,7 +202,10 @@
    "p": 2.004636540015145,
    "nonincr": true,
    "dt": null,
+   "dt_rule": null,
    "validity_change": null,
+   "validity_reached": null,
+   "validity_tried": [],
    "e_quarter": [
     null,
     null,
@@ -212,19 +235,19 @@
     65536
    ],
    "wall": [
-    0.055896399993798696,
-    0.17224319999513682,
-    0.7693809000047622,
-    3.373655899995356,
-    15.753341200004797
+    0.06078400000114925,
+    0.18327080000017304,
+    0.814930300010019,
+    3.6063507000071695,
+    16.326990600005956
    ],
    "status": "gate",
    "gate": "MMS, mode A, quasi-static, 2D, small amplitude (u = lam A sin(2 pi X_i), lam ramped in >= 4 load steps, body force updated per step): bspline2 p >= 1.8 and e non-increasing",
    "verdict": true,
    "verdict_text": "p=2.005 (>= 1.8), non-increasing=True",
    "rung_128": {
-    "probe_64_wall_s": 3.4055408999993233,
-    "estimated_128_wall_s": 13.622163599997293,
+    "probe_64_wall_s": 3.617392700005439,
+    "estimated_128_wall_s": 14.469570800021756,
     "add_128": true
    },
    "mode": "quasiStatic",
@@ -232,7 +255,7 @@
    "fmax": 0.001,
    "ppc": 2,
    "flip": null,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "G5-G2": {
    "row": "G5-G2",
@@ -260,7 +283,17 @@
    "p": 2.0178762686493084,
    "nonincr": true,
    "dt": 0.0006725330685083942,
+   "dt_rule": 0.0006725330685083942,
    "validity_change": 0.0010027742639847378,
+   "validity_reached": true,
+   "validity_tried": [
+    {
+     "dt": 0.0006725330685083942,
+     "e": 0.003966156222159458,
+     "e_dt_half": 0.003970133381545982,
+     "change": 0.0010027742639847378
+    }
+   ],
    "e_quarter": [
     0.02569307855349784,
     0.002483505131828251,
@@ -290,19 +323,19 @@
     65536
    ],
    "wall": [
-    0.3624914000101853,
-    1.2990374999935739,
-    5.014583199998015,
-    20.35740639999858,
-    88.57860910000454
+    0.3827651000028709,
+    1.3229186999960802,
+    5.179132299992489,
+    21.396903500004555,
+    90.00978659999964
    ],
    "status": "gate",
    "gate": "cubic (K1, delivered): G2 at the same thresholds for bspline3",
    "verdict": true,
    "verdict_text": "p=2.018 (>= 1.8), non-increasing=True",
    "rung_128": {
-    "probe_64_wall_s": 8.668978799993056,
-    "estimated_128_wall_s": 69.35183039994445,
+    "probe_64_wall_s": 8.936744100006763,
+    "estimated_128_wall_s": 71.4939528000541,
     "add_128": true
    },
    "mode": "explicit",
@@ -310,7 +343,7 @@
    "fmax": 0.001,
    "ppc": 2,
    "flip": 1.0,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "G5-G3": {
    "row": "G5-G3",
@@ -338,7 +371,17 @@
    "p": 2.016618731372753,
    "nonincr": true,
    "dt": 0.0006001951084828766,
+   "dt_rule": 0.0006001951084828766,
    "validity_change": 0.0005769136665169241,
+   "validity_reached": true,
+   "validity_tried": [
+    {
+     "dt": 0.0006001951084828766,
+     "e": 0.003987815672223652,
+     "e_dt_half": 0.003990116297584508,
+     "change": 0.0005769136665169241
+    }
+   ],
    "e_quarter": [
     0.027207295791081998,
     0.003531747871703532,
@@ -368,19 +411,19 @@
     65536
    ],
    "wall": [
-    0.4259301999991294,
-    1.555485699995188,
-    6.023743999990984,
-    24.406707799993455,
-    106.06914079999842
+    0.4456547000008868,
+    1.531620199995814,
+    6.012439400001313,
+    24.094969000012497,
+    108.3495319000067
    ],
    "status": "gate",
    "gate": "cubic (K1, delivered): G3 at the same thresholds for bspline3",
    "verdict": true,
    "verdict_text": "p=2.017 (>= 1.5), non-increasing=True",
    "rung_128": {
-    "probe_64_wall_s": 10.553440300005605,
-    "estimated_128_wall_s": 84.42752240004484,
+    "probe_64_wall_s": 10.4632042000012,
+    "estimated_128_wall_s": 83.7056336000096,
     "add_128": true
    },
    "mode": "explicit",
@@ -388,7 +431,7 @@
    "fmax": 0.1,
    "ppc": 2,
    "flip": 1.0,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "G5-G4": {
    "row": "G5-G4",
@@ -416,7 +459,10 @@
    "p": 2.4754854653845344,
    "nonincr": true,
    "dt": null,
+   "dt_rule": null,
    "validity_change": null,
+   "validity_reached": null,
+   "validity_tried": [],
    "e_quarter": [
     null,
     null,
@@ -446,19 +492,19 @@
     65536
    ],
    "wall": [
-    0.11606500000925735,
-    0.4653678000031505,
-    1.9214547000010498,
-    9.088165900000604,
-    40.676699299991014
+    0.11975070000335108,
+    0.45693869999377057,
+    1.9183492000011029,
+    9.218746500002453,
+    39.704522599990014
    ],
    "status": "gate",
    "gate": "cubic (K1, delivered): G4 at the same thresholds for bspline3",
    "verdict": true,
    "verdict_text": "p=2.475 (>= 1.8), non-increasing=True",
    "rung_128": {
-    "probe_64_wall_s": 9.141177599987714,
-    "estimated_128_wall_s": 36.564710399950854,
+    "probe_64_wall_s": 9.173356900006183,
+    "estimated_128_wall_s": 36.693427600024734,
     "add_128": true
    },
    "mode": "quasiStatic",
@@ -466,7 +512,7 @@
    "fmax": 0.001,
    "ppc": 2,
    "flip": null,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "R1-gimp-G2": {
    "row": "R1-gimp-G2",
@@ -491,7 +537,17 @@
    "p": 2.092192740195735,
    "nonincr": true,
    "dt": 0.0013450661370167883,
+   "dt_rule": 0.0013450661370167883,
    "validity_change": 0.0010602578657636053,
+   "validity_reached": true,
+   "validity_tried": [
+    {
+     "dt": 0.0013450661370167883,
+     "e": 0.006473421703313829,
+     "e_dt_half": 0.006480285199593172,
+     "change": 0.0010602578657636053
+    }
+   ],
    "e_quarter": [
     0.056751308306872354,
     0.012978504592849098,
@@ -517,10 +573,10 @@
     16384
    ],
    "wall": [
-    0.2265691000065999,
-    0.5210007000132464,
-    1.9491602999914903,
-    7.866106799992849
+    0.15493950000382029,
+    0.5027817000081996,
+    1.9235938000056194,
+    7.829356200003531
    ],
    "status": "report",
    "gate": "R1: G2 for gimp (literature: near 2 at small amplitude; an order below 1.5 is filed as an issue against shipped code)",
@@ -533,7 +589,7 @@
    "ppc": 2,
    "flip": 1.0,
    "file_issue": false,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "R1-gimp-G3": {
    "row": "R1-gimp-G3",
@@ -558,7 +614,17 @@
    "p": 1.8683592955697237,
    "nonincr": true,
    "dt": 0.0012003902169657533,
+   "dt_rule": 0.0012003902169657533,
    "validity_change": 0.0011029214404505337,
+   "validity_reached": true,
+   "validity_tried": [
+    {
+     "dt": 0.0012003902169657533,
+     "e": 0.01289433063158258,
+     "e_dt_half": 0.01290855206529641,
+     "change": 0.0011029214404505337
+    }
+   ],
    "e_quarter": [
     0.04734024698297695,
     0.007981261551685576,
@@ -584,10 +650,10 @@
     16384
    ],
    "wall": [
-    0.17956770000455435,
-    0.6320541000022786,
-    2.390602999992552,
-    9.685693400009768
+    0.17732669999531936,
+    0.6150051000004169,
+    2.3602505000017118,
+    9.649875199989765
    ],
    "status": "report",
    "gate": "R1: G3 for gimp",
@@ -599,7 +665,7 @@
    "fmax": 0.1,
    "ppc": 2,
    "flip": 1.0,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "R1-linear-G2": {
    "row": "R1-linear-G2",
@@ -624,7 +690,17 @@
    "p": 2.0994234005931482,
    "nonincr": true,
    "dt": 0.0013450661370167883,
+   "dt_rule": 0.0013450661370167883,
    "validity_change": 0.001197862635344401,
+   "validity_reached": true,
+   "validity_tried": [
+    {
+     "dt": 0.0013450661370167883,
+     "e": 0.006373890344845025,
+     "e_dt_half": 0.006381525389930897,
+     "change": 0.001197862635344401
+    }
+   ],
    "e_quarter": [
     0.056865452227140095,
     0.013022981299568647,
@@ -650,10 +726,10 @@
     16384
    ],
    "wall": [
-    0.1339257999934489,
-    0.4538790000078734,
-    1.740430899997591,
-    7.106331799994223
+    0.1364774999965448,
+    0.45900439999240916,
+    1.7622054999956163,
+    7.100867800007109
    ],
    "status": "report",
    "gate": "R1: G2 for linear (literature: erratic once particles cross cells)",
@@ -665,7 +741,7 @@
    "fmax": 0.001,
    "ppc": 2,
    "flip": 1.0,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "R1-linear-G3": {
    "row": "R1-linear-G3",
@@ -690,7 +766,17 @@
    "p": 0.4165288569704065,
    "nonincr": false,
    "dt": 0.0012003902169657533,
+   "dt_rule": 0.0012003902169657533,
    "validity_change": 0.030833174103256956,
+   "validity_reached": true,
+   "validity_tried": [
+    {
+     "dt": 0.0012003902169657533,
+     "e": 0.11527755824424149,
+     "e_dt_half": 0.11883193126778453,
+     "change": 0.030833174103256956
+    }
+   ],
    "e_quarter": [
     0.059750463467984814,
     0.03959686914374308,
@@ -716,10 +802,10 @@
     16384
    ],
    "wall": [
-    0.1607979999971576,
-    0.5723691000021063,
-    2.1880987000040477,
-    8.97690639999928
+    0.16193770000245422,
+    0.5624303000076907,
+    2.1567546000005677,
+    8.786108100001002
    ],
    "status": "report",
    "gate": "R1: G3 for linear",
@@ -731,7 +817,7 @@
    "fmax": 0.1,
    "ppc": 2,
    "flip": 1.0,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "R1-pic-G2": {
    "row": "R1-pic-G2",
@@ -810,10 +896,10 @@
     16384
    ],
    "wall": [
-    0.14773710000736173,
-    0.5227336999960244,
-    2.007091699997545,
-    8.35892659999081
+    0.15228840000054333,
+    0.5213603000011062,
+    2.038282800000161,
+    8.361888699990232
    ],
    "status": "report",
    "gate": "R1: the PIC leg of G2 (alpha_F = 0)",
@@ -825,7 +911,7 @@
    "fmax": 0.001,
    "ppc": 2,
    "flip": 0.0,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "R1-pic-G3": {
    "row": "R1-pic-G3",
@@ -904,10 +990,10 @@
     16384
    ],
    "wall": [
-    0.18219580000732094,
-    0.6419636000064202,
-    2.5026874000031967,
-    10.504195500005153
+    0.1795708999998169,
+    0.6359181000007084,
+    2.4227694000001065,
+    10.07544030000281
    ],
    "status": "report",
    "gate": "R1: the PIC leg of G3 (alpha_F = 0)",
@@ -919,7 +1005,7 @@
    "fmax": 0.1,
    "ppc": 2,
    "flip": 0.0,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "R1-3x3-G2": {
    "row": "R1-3x3-G2",
@@ -980,10 +1066,10 @@
     36864
    ],
    "wall": [
-    0.3191534000070533,
-    1.1767657000018517,
-    4.649441699992167,
-    19.58665190001193
+    0.324352399999043,
+    1.1891740999999456,
+    4.689002700004494,
+    19.371379399992293
    ],
    "status": "report",
    "gate": "R1: the 3 x 3 particles-per-cell leg of G2",
@@ -995,7 +1081,7 @@
    "fmax": 0.001,
    "ppc": 3,
    "flip": 1.0,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "R1-3d": {
    "row": "R1-3d",
@@ -1049,9 +1135,9 @@
     32768
    ],
    "wall": [
-    0.1459723000007216,
-    1.034197699991637,
-    8.394404199993005
+    0.14546340001106728,
+    1.053702200006228,
+    8.40176409999549
    ],
    "status": "report",
    "gate": "R1: the 3D small-amplitude MMS at 1/h = 4, 8, 16",
@@ -1063,7 +1149,7 @@
    "fmax": 0.001,
    "ppc": 2,
    "flip": 1.0,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "R1-modeA-transient": {
    "row": "R1-modeA-transient",
@@ -1110,9 +1196,9 @@
     4096
    ],
    "wall": [
-    1.535160100000212,
-    7.079217999998946,
-    31.079344999991008
+    1.500975599992671,
+    6.8502040000021225,
+    30.80160479999904
    ],
    "status": "report",
    "gate": "R1: mode A transient (Newmark average acceleration) MMS",
@@ -1124,161 +1210,161 @@
    "fmax": 0.001,
    "ppc": 2,
    "flip": 1.0,
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   },
   "R1-column": {
    "status": "report",
    "gate": "R1: the slice-1 self-weight column at both compressions (the 20 % case is the uGIMP XFAIL) per basis at three resolutions, and the cell-crossing meter per basis",
    "runs": {
     "column_selfweight_small_2d_gimp|gimp|r1": {
-     "wall": 0.4783222999976715,
+     "wall": 0.4848111999890534,
      "accepted": true,
      "selfweight_error": 0.012836151010359172,
      "cell_crossing_meter": 0.012187590707091668
     },
     "column_selfweight_small_2d_gimp|gimp|r2": {
-     "wall": 3.4669809000042733,
+     "wall": 3.533805399987614,
      "accepted": true,
      "selfweight_error": 0.006545673760794598,
      "cell_crossing_meter": 0.005928882198016524
     },
     "column_selfweight_small_2d_gimp|gimp|r4": {
-     "wall": 27.397068899997976,
+     "wall": 27.73170129999926,
      "accepted": true,
      "selfweight_error": 0.003399780243920686,
      "cell_crossing_meter": 0.0028012297195406455
     },
     "column_selfweight_small_2d_gimp|linear|r1": {
-     "wall": 0.3909955999988597,
+     "wall": 0.39431549998698756,
      "accepted": true,
      "selfweight_error": 0.014357839685675862,
      "cell_crossing_meter": 0.012531978881389794
     },
     "column_selfweight_small_2d_gimp|linear|r2": {
-     "wall": 3.008672800002387,
+     "wall": 3.02555819999543,
      "accepted": true,
      "selfweight_error": 0.00818130154090337,
      "cell_crossing_meter": 0.006313864288410021
     },
     "column_selfweight_small_2d_gimp|linear|r4": {
-     "wall": 24.210936399991624,
+     "wall": 24.040756900009,
      "accepted": true,
      "selfweight_error": 0.005093503605469887,
      "cell_crossing_meter": 0.003250919669084633
     },
     "column_selfweight_small_2d_gimp|bspline2|r1": {
-     "wall": 0.5062480999913532,
+     "wall": 0.5089802000002237,
      "accepted": true,
      "selfweight_error": 0.006954102088331128,
      "cell_crossing_meter": 0.0018246910734581482
     },
     "column_selfweight_small_2d_gimp|bspline2|r2": {
-     "wall": 3.9557252999948105,
+     "wall": 3.9278687000041828,
      "accepted": true,
      "selfweight_error": 0.003624903040724511,
      "cell_crossing_meter": 0.0006912767661138085
     },
     "column_selfweight_small_2d_gimp|bspline2|r4": {
-     "wall": 30.895040000003064,
+     "wall": 30.808371599996462,
      "accepted": true,
      "selfweight_error": 0.0020990943262038262,
      "cell_crossing_meter": 0.00028524434828564456
     },
     "column_selfweight_small_2d_gimp|bspline3|r1": {
-     "wall": 0.6339700999960769,
+     "wall": 0.6303987999999663,
      "accepted": true,
      "selfweight_error": 0.005947447440846154,
      "cell_crossing_meter": 0.0013222433710544585
     },
     "column_selfweight_small_2d_gimp|bspline3|r2": {
-     "wall": 4.907059599994682,
+     "wall": 4.8609411000070395,
      "accepted": true,
      "selfweight_error": 0.0029735018436460813,
      "cell_crossing_meter": 0.0004645940323540952
     },
     "column_selfweight_small_2d_gimp|bspline3|r4": {
-     "wall": 39.17274840000027,
+     "wall": 38.886622099991655,
      "accepted": true,
      "selfweight_error": 0.001486970864639443,
      "cell_crossing_meter": 0.00016209823741053392
     },
     "column_selfweight_2d_gimp|gimp|r1": {
-     "wall": 0.09563209999760147,
+     "wall": 0.09837019999395125,
      "accepted": true,
      "selfweight_error": 0.07165563103333683,
      "cell_crossing_meter": 0.02054238501806589
     },
     "column_selfweight_2d_gimp|gimp|r2": {
-     "wall": 0.7569258000003174,
+     "wall": 0.7662504999898374,
      "accepted": true,
      "selfweight_error": 0.07580862418233737,
      "cell_crossing_meter": 0.02242312898782792
     },
     "column_selfweight_2d_gimp|gimp|r4": {
-     "wall": 6.019104300008621,
+     "wall": 6.060855799994897,
      "accepted": true,
      "selfweight_error": 0.09750158889344064,
      "cell_crossing_meter": 0.03205443937633635
     },
     "column_selfweight_2d_gimp|linear|r1": {
-     "wall": 0.0866844999982277,
+     "wall": 0.08637710000039078,
      "accepted": true,
      "selfweight_error": 0.4721479605320156,
      "cell_crossing_meter": 0.14305531462646254
     },
     "column_selfweight_2d_gimp|linear|r2": {
-     "wall": 0.6532768000033684,
+     "wall": 0.650690599999507,
      "accepted": true,
      "selfweight_error": 0.7665754476767634,
      "cell_crossing_meter": 0.23640475712990713
     },
     "column_selfweight_2d_gimp|linear|r4": {
-     "wall": 5.064466000010725,
+     "wall": 5.0791394999978365,
      "accepted": true,
      "selfweight_error": 0.831135653688731,
      "cell_crossing_meter": 0.3329799714491295
     },
     "column_selfweight_2d_gimp|bspline2|r1": {
-     "wall": 0.11103220000222791,
+     "wall": 0.1116386999929091,
      "accepted": true,
      "selfweight_error": 0.040666762060711334,
      "cell_crossing_meter": 0.014715011761125498
     },
     "column_selfweight_2d_gimp|bspline2|r2": {
-     "wall": 0.8438049999967916,
+     "wall": 0.8524062000069534,
      "accepted": true,
      "selfweight_error": 0.07886582339942994,
      "cell_crossing_meter": 0.0247298906943277
     },
     "column_selfweight_2d_gimp|bspline2|r4": {
-     "wall": 6.704618100004154,
+     "wall": 6.706050699998741,
      "accepted": true,
      "selfweight_error": 0.1349176610210292,
      "cell_crossing_meter": 0.04969690106650868
     },
     "column_selfweight_2d_gimp|bspline3|r1": {
-     "wall": 0.13750620000064373,
+     "wall": 0.13497220000135712,
      "accepted": true,
      "selfweight_error": 0.013568796139504121,
      "cell_crossing_meter": 0.00448348059713905
     },
     "column_selfweight_2d_gimp|bspline3|r2": {
-     "wall": 1.0475127000099747,
+     "wall": 1.0456048000050941,
      "accepted": true,
      "selfweight_error": 0.015795259681145254,
      "cell_crossing_meter": 0.005437137530884641
     },
     "column_selfweight_2d_gimp|bspline3|r4": {
-     "wall": 8.374688600000809,
+     "wall": 8.274878099997295,
      "accepted": true,
      "selfweight_error": 0.012889551923617983,
      "cell_crossing_meter": 0.0033986927232437262
     }
    },
-   "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca"
+   "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a"
   }
  },
- "ladrunoBuild": "113ada8a02e7d476144af49dfeabff13321229ca",
+ "ladrunoBuild": "4673949fefe6c63757501535221014bf8bef678a",
  "ladrunoMutation": "none",
- "wall_s": 803.6177978515625
+ "wall_s": 2497.8143405914307
 }

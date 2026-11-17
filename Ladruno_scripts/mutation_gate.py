@@ -129,10 +129,17 @@ FAMILIES = {
         #     Survivors: rows that read stresses (from F, not x), velocities or
         #     periods, refusals, lifecycle, and protocols comparing the binary with
         #     itself.
-        # WP-232i adds the B-spline MMS legs (test_ladruno_mpm_bspline_mms.py, 6 tests: G2,
-        # G3, G4 and their cubic rows on 1/h = 8, 16, 32). Its basis / G7 / G8 file is NOT
-        # selected (unit and self-equality checks, physics-free by design). Re-measure owed
-        # on the 232i mutants (G6).
+        # WP-232i adds test_ladruno_mpm_bspline_mms.py, 7 tests: the MMS rows G2, G3, G4 and
+        # their cubic rows (G5) on 1/h = 8, 16, 32, and the quarter-period oracle
+        # (e(T/4) <= 0.05, bspline2 G2 at 1/h = 32; critic A2). Its basis / G7 / G8 file is
+        # NOT selected (unit and self-equality checks, physics-free by design). Re-measured
+        # 2026-11-16 on 4673949fe (mutants dist/mut_MPM_ZERO, dist/mut_MPM_SCALE), same
+        # Python-half run conditions, baseline 87 passing:
+        #   ZERO : 43 passing -> 0.506. Kills all 7 new tests.
+        #   SCALE: 53 passing -> 0.391. Kills G4, G5-G4 and the e(T/4) oracle; the
+        #     one-period rows G2, G3, G5-G2, G5-G3 survive (at one period e is a drift norm;
+        #     SCALE dies on the warrant run's G3 ladder, G6). The margin RESTS ON THE ORACLE:
+        #     without it SCALE scores 33/87 = 0.379, under its floor. Floors unchanged.
         "paths": ["test_ladruno_mpm_engine.py",       # the cases suite; lifecycle/refusal tests are physics-free
                   "test_ladruno_mpm_implicit_engine.py",
                   "test_ladruno_mpm_bspline_mms.py"],
