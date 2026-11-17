@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 from pathlib import Path
 
 import numpy as np
@@ -31,7 +32,7 @@ def _compile_and_run_cpp_check(tmp_path: Path) -> str:
 
     gxx = shutil.which("g++") or shutil.which("clang++")
     if gxx:
-        cmd = [gxx, "-O2", "-std=c++17", str(CHECK_CPP), f"-I{inc_dir}", "-o", str(exe_path)]
+        cmd = [gxx, "-O2", "-std=c++17", str(CHECK_CPP), f"-I{inc_dir}", "-o", str(exe_path), *cxx_runtime_flags()]
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if res.returncode == 0 and exe_path.exists():
             run_res = subprocess.run([str(exe_path)], capture_output=True, text=True, check=True)

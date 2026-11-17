@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 import tempfile
 
 import pytest
@@ -47,7 +48,7 @@ def test_cpp_ladruno_up_kernel_selfcheck():
         # -std=c++17 is LOAD-BEARING: LadrunoUPShapes.h uses inline constexpr
         # static data members; c++11/14 compiles but fails to link.
         cc = subprocess.run(
-            [gpp, "-O2", "-std=c++17", "-Wall", "-Wextra", "-I", _SRC_UP, src, "-o", exe],
+            [gpp, "-O2", "-std=c++17", "-Wall", "-Wextra", "-I", _SRC_UP, src, "-o", exe, *cxx_runtime_flags()],
             stdin=subprocess.DEVNULL, capture_output=True, text=True,
         )
         assert cc.returncode == 0, f"g++ failed:\n{cc.stderr}"

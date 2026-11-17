@@ -16,6 +16,7 @@ The C++ kernel SRC/material/nD/LadrunoConcrete3DKernel.h implements the SAME sur
 import os
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 import sys
 
 import pytest
@@ -740,7 +741,7 @@ def test_cpp_kernel_matches_oracle_dump(tmp_path):
     gpp = shutil.which("g++")
     exe = os.path.join(tmp_path, "c3dchk.exe")
     src = os.path.join(TESTBED, "concrete3d_kernel_check.cpp")
-    subprocess.run([gpp, "-std=c++17", "-O2", "-I", REPO, src, "-o", exe],
+    subprocess.run([gpp, "-std=c++17", "-O2", "-I", REPO, src, "-o", exe, *cxx_runtime_flags()],
                    stdin=subprocess.DEVNULL, check=True, cwd=REPO, env=os.environ.copy())
     out = subprocess.run([exe, fixture], stdin=subprocess.DEVNULL, cwd=REPO, capture_output=True, text=True,
                          env=os.environ.copy())

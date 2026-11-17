@@ -14,6 +14,7 @@ import math
 import os
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 
 import pytest
 
@@ -171,7 +172,7 @@ def test_hrz_standalone_kernel(tmp_path):
     # PATH to resolve libstdc++/libgcc at load (0xC0000135 otherwise).
     exe = str(tmp_path / ("hrz_standalone_ci" + (".exe" if os.name == "nt" else "")))
     comp = subprocess.run(
-        [gpp, "-std=c++14", "-I", inc, "-DLADRUNO_MASSLUMPING_STANDALONE", src, "-o", exe],
+        [gpp, "-std=c++14", "-I", inc, "-DLADRUNO_MASSLUMPING_STANDALONE", src, "-o", exe, *cxx_runtime_flags()],
         stdin=subprocess.DEVNULL, capture_output=True, text=True, env=os.environ.copy(),
     )
     assert comp.returncode == 0, "standalone compile failed:\n" + comp.stderr

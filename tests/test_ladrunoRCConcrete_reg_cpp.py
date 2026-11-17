@@ -9,6 +9,7 @@ C++ compiler is available.
 import os
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 import tempfile
 
 import pytest
@@ -26,7 +27,7 @@ def test_reg_gpp_gate():
         pytest.skip("no C++ compiler available")
     with tempfile.TemporaryDirectory() as td:
         exe = os.path.join(td, "rc_reg.exe")
-        cc = subprocess.run([gpp, "-O2", "-std=c++17", "-I", _SRC_ND, _GATE, "-o", exe],
+        cc = subprocess.run([gpp, "-O2", "-std=c++17", "-I", _SRC_ND, _GATE, "-o", exe, *cxx_runtime_flags()],
                             stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert cc.returncode == 0, f"g++ failed to compile the regularization gate:\n{cc.stderr}"
         rr = subprocess.run([exe], stdin=subprocess.DEVNULL, capture_output=True, text=True)

@@ -22,6 +22,7 @@ import os
 import re
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 import tempfile
 
 import pytest
@@ -48,7 +49,7 @@ def test_cpp_hypo_kernel_selfcheck():
         exe = os.path.join(td, "hypo_check.exe")
         cc = subprocess.run(
             [gpp, "-O2", "-std=c++17", "-Wall", "-Wextra", "-I", _SRC_GEOM,
-             src, "-o", exe],
+             src, "-o", exe, *cxx_runtime_flags()],
             stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         assert cc.returncode == 0, f"g++ failed:\n{cc.stderr}"

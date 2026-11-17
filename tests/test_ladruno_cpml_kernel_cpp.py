@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+from _cxx import cxx_runtime_flags  # WP-199: static GCC runtime on Windows
 import tempfile
 from typing import Dict, List
 
@@ -49,7 +50,7 @@ def _compile_all(td: str) -> Dict[str, str]:
         for name, defs in targets.items():
             dflags = [f"-D{d}=1" for d in defs]
             cc = subprocess.run(
-                [gpp, "-O2", "-std=c++17", "-Wall", "-Wextra", *dflags, "-I", _SRC_CPML, _CHECK_CPP, "-o", exes[name]],
+                [gpp, "-O2", "-std=c++17", "-Wall", "-Wextra", *dflags, "-I", _SRC_CPML, _CHECK_CPP, "-o", exes[name], *cxx_runtime_flags()],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
