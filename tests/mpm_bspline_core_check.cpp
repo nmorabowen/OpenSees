@@ -275,7 +275,7 @@ static void g1k4(Basis b, int nd, bool clamped)
 // Plane x = 0. Full grid [-L, L] x [0, H]; half grid [0, L] x [0, H] with `fix xmin x`.
 // Body [-a, a] x [y0, y1] (lattice, ppc 2), initial velocity odd in x for v_x and even
 // in x for v_y: v_x = V sin(pi x / a) (1 + y), v_y = 0.5 V cos(pi x / (2a)) sin(pi y).
-static double g8(double V, int steps, bool verbose)
+static double g8(double V, int steps, bool verbose, double masscut = 1e-10)
 {
   const int nd = 2, ppc = 2;
   const double h = 0.125, L = 1.0, H = 1.0, a = 0.5, y0 = 0.25, y1 = 0.75;
@@ -290,6 +290,7 @@ static double g8(double V, int steps, bool verbose)
     const int n[2] = {half ? (int)std::lround(L / h) : (int)std::lround(2 * L / h), (int)std::lround(H / h)};
     e.setGrid(nd, x0, h, n, err);
     e.par.basis = BASIS_BSPLINE2;
+    e.par.masscut = masscut;           // G8-F-cut: 0.05
     if (half) e.fc.fixMask[0] = 1u;            // fix xmin x: the roller, images on
     // particles: the full lattice's x >= 0 half, coordinates mirrored exactly (-x)
     int64_t id = 0;
@@ -336,8 +337,9 @@ static double g8(double V, int steps, bool verbose)
   if (verbose)
     std::printf("INFO G8 V=%g, %d steps: max|F_ii - 1| %.3e, rel dx %.2e, rel dsig %.2e\n", V, steps,
                 maxStrain, rx, rs);
-  check(rx <= 1e-10, "G8 positions (V=" + std::to_string(V) + ")", rx, 1e-10);
-  check(rs <= 1e-10, "G8 stresses (V=" + std::to_string(V) + ")", rs, 1e-10);
+  const std::string tag = "(V=" + std::to_string(V) + ", masscut=" + std::to_string(masscut) + ")";
+  check(rx <= 1e-10, "G8 positions " + tag, rx, 1e-10);
+  check(rs <= 1e-10, "G8 stresses " + tag, rs, 1e-10);
   return maxStrain;
 }
 
@@ -450,6 +452,8 @@ int main(int argc, char **argv)
   g1Cardinal();
   const double sSmall = g8(0.02, 120, true);
   const double sLarge = g8(3.0, 120, true);
+  g8(0.02, 120, true, 0.05);            // G8-F-cut (critic A1): the face-layer cutoff
+  g8(3.0, 120, true, 0.05);
   check(sSmall < 0.01, "G8 small amplitude stays small", sSmall, 0.01);
   check(sLarge > 0.05, "G8 large amplitude reaches |F_ii - 1| > 0.05", sLarge, 0.05);
   bodyForceEqualsGravity();

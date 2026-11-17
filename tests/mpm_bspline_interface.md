@@ -183,7 +183,11 @@ were not read. Decisions are numbered (B*n*) so a review can cite them. Conventi
    product (the image map is separable and the signs are a product of per-axis signs), and a
    B-spline's `r` is measured from the nearer face. Folding node by node from `x0 + i·h` gave
    `S′ = −6e-16` at the face by round-off (G1-K4's `S′ ≥ 0`); per axis it is exactly ≥ 0.
-3. **Restart format.** The host's pack version goes 1 → 2 (it carries the body force); a version-1
+3. **B6 / B9, the face-layer cutoff (critic A1, ready-flip review).** The face-layer node's
+   mass is one-sided as well, so the active-node cutoff tests its mass × 2^k (k = the `fix`
+   faces through it) in mode F (step 4, `activeNodes`) and in mode A's mass map. New gate legs
+   G8-A and G8-F-cut.
+4. **Restart format.** The host's pack version goes 1 → 2 (it carries the body force); a version-1
    database is refused.
 
 ## 6. Proposed amendments and objections (for the orchestrator)

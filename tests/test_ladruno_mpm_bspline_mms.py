@@ -11,9 +11,12 @@ Cost (Python, nmb box, 232i build, estimates from the g++ core at the same sizes
 row ~10-20 s (the 1/h = 32 rung: 4096 particles x ~370 steps); each mode-A quasi-static row a few
 seconds (4 load steps). Zone-A total about 1 min.
 
-This file is in the MPM mutation suite (Ladruno_scripts/mutation_gate.py): ZERO (no internal
-force) and SCALE (G2P position increment x1.5) must turn rows red here (G6, with the warrant run's
-G2 / G3 against the mutant binaries).
+This file is in the MPM mutation suite (Ladruno_scripts/mutation_gate.py). ZERO (no internal
+force) turns every MMS row red here. SCALE (G2P position increment x1.5) does NOT turn the
+one-period rows red on these coarse rungs: at one period the exact displacement is zero and e is
+a drift norm, which a uniform scaling of the increments barely moves (it dies on the warrant run's
+G3 ladder, G6). SCALE's oracle here is `test_quarter_period_mutation_oracle` (critic A2): the
+peak-displacement error e(T/4) of bspline2 G2 at 1/h = 32, which x1.5 makes about 0.5.
 """
 from __future__ import annotations
 
@@ -52,3 +55,16 @@ def test_mms_order_on_the_coarse_rungs(name):
     print(f"{name}: e = {res['e']}, p = {res['p']:.3f}, crossings = {res['crossings']}")
     ok, why = B.verdict(row, res)
     assert ok, f"{name} on 1/h = {SMOKE}: {why}; e = {res['e']}"
+
+
+def test_quarter_period_mutation_oracle():
+    """Critic A2: a mutation oracle, not an accuracy gate (cases-file row A2-oracle). bspline2 G2
+    at 1/h = 32 at the full ladder's dt rule: e(T/4) <= 0.05 (5 % of the amplitude). The warrant
+    run measured 1.5e-3 at 1/h = 32; the SCALE mutant (x1.5 on the position increment) gives a
+    peak displacement 1.5 A, e(T/4) about 0.5."""
+    row = ROWS["G2"]
+    oracle = ROWS["A2-oracle"]
+    dt = float(row["dt_rule"]) * B.critical_dt(row, B.as_list(row["ladder"])[-1])
+    r = B.mms(_ops(), row, int(oracle["rung"]), dt)
+    print(f"e(T/4) at 1/h = {oracle['rung']}: {r['e_quarter']:.4e}")
+    assert r["e_quarter"] is not None and r["e_quarter"] <= float(oracle["e_quarter_le"]), r

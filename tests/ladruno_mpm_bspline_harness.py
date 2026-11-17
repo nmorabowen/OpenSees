@@ -243,14 +243,19 @@ def ladder(ops, row, rungs=None, dt=None, validity=True, log=flushprint):
 
 
 def verdict(row, res):
-    """(ok, text) of a gated ladder row against its parsed gate; (None, ...) when the dt validity
-    condition was never reached: the evidence is void, never a pass."""
+    """(ok, text) of a gated ladder row against its parsed gate. (None, ...) when the evidence is
+    void (the dt validity condition never reached, or no order p): never a pass. (False, ...) when
+    the row carries no criterion at all (critic A3)."""
     if res.get("validity_reached") is False:
         return None, "evidence void: dt validity not reached in %d halvings" % MAX_HALVINGS
+    if row.get("p_ge") is None and not int(row.get("nonincr", 0)):
+        return False, "the row carries no criterion (p_ge / nonincr)"
+    if row.get("p_ge") is not None and res.get("p") is None:
+        return None, "evidence void: no order p (fewer than three rungs)"
     ok = True
     parts = []
     if row.get("p_ge") is not None:
-        ok = ok and res["p"] is not None and res["p"] >= float(row["p_ge"])
+        ok = ok and res["p"] >= float(row["p_ge"])
         parts.append(f"p={res['p']:.3f} (>= {row['p_ge']})")
     if int(row.get("nonincr", 0)):
         ok = ok and res["nonincr"]
@@ -261,11 +266,17 @@ def verdict(row, res):
 # --------------------------------------------------------------------------- #
 #  G8 — images against the full domain                                        #
 # --------------------------------------------------------------------------- #
-def g8(ops, V, steps, h=0.125, ppc=2):
-    """Returns (rel dx, rel dsigma, max |F_ii - 1|). Plane x = 0 (cases-file row G8)."""
+def g8(ops, V, steps, h=0.125, ppc=2, mode="explicit", masscut=None):
+    """Returns (rel dx, rel dsigma, max |F_ii - 1|). Plane x = 0 (cases-file rows G8, G8-A,
+    G8-F-cut). The body [-0.5, 0.5] x [0.25, 0.75] meets the plane with free surfaces at
+    y = 0.25 and 0.75, so face-layer nodes carry small one-sided masses (the cutoff, critic A1).
+    mode "implicit": mode A, Newmark average acceleration, the default cutoff (renormalize 5e-2)
+    unless `masscut` is given; dt 5x the explicit one."""
     E, nu, rho = 1.0e3, 0.3, 1.0
     lam, mu = M.lame(E, nu)
     dt = 0.1 * h / math.sqrt((lam + 2 * mu) / rho)
+    if mode != "explicit":
+        dt *= 5.0
     a, y0, y1 = 0.5, 0.25, 0.75
     hs = h / ppc
     pts = []
@@ -280,8 +291,12 @@ def g8(ops, V, steps, h=0.125, ppc=2):
         n = int(round((1.0 if half else 2.0) / h))
         ops.mpm("grid", HOST, "-origin", 0.0 if half else -1.0, 0.0, "-h", h, "-cells", n,
                 int(round(1.0 / h)), "-basis", "bspline2")
+        if mode != "explicit":
+            ops.mpm("mode", mode)
         if half:
             ops.mpm("fix", "xmin", "x")
+        if masscut is not None:
+            ops.mpm("massCutoff", masscut)
         pid = 0
         for xr, y in pts:
             for side in ((1,) if half else (0, 1)):
@@ -291,6 +306,14 @@ def g8(ops, V, steps, h=0.125, ppc=2):
                 ops.mpm("particle", pid, 1, 1, rho, hs * hs, "-x", x, y, "-lp", hs / 2, hs / 2,
                         "-v", *v)
                 pid += 1
+        if mode != "explicit":
+            ops.constraints("Plain")
+            ops.numberer("RCM")
+            ops.system("UmfPack")
+            ops.test("NormDispIncr", 1e-13, 30)
+            ops.algorithm("Newton")
+            ops.integrator("Newmark", 0.5, 0.25)
+            ops.analysis("Transient")
         for _ in range(steps):
             ops.mpm("analyze", 1, dt)
         return (np.array(_pl(ops.mpm("particleData", "x"))).reshape(-1, 2),

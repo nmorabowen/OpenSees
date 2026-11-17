@@ -294,8 +294,13 @@ leave a first-order boundary layer. On a B-spline grid every ghost behind a face
 **image** of its mirror node: for a component the face fixes, its velocity is the mirror's negated
 (odd); for a free component, the mirror's (even). This is the method of images — the body plus its
 reflection across a symmetry plane — so a roller face (fix the normal component) is reproduced
-exactly, and a clamped face (fix all) to second order. The face-layer node lies on that plane: its
-fixed components carry no momentum or force. In mode A the ghosts behind a `fix` face are never
+exactly, and a clamped face (fix all) to second order. A face that fixes only tangential
+components is an **antisymmetry** plane: the image is odd in the tangential components and even in
+the normal one. The face-layer node lies on that plane: its fixed components carry no momentum or
+force, and the active-node cutoff tests its mass times 2^k (k = the number of `fix` faces through
+it), the mass the body plus its reflections would give. With both, a half model with a roller on
+its symmetry plane equals the full symmetric model to round-off (G8 in mode F, G8-A in mode A at
+the default cutoff, G8-F-cut at `massCutoff 0.05`). In mode A the ghosts behind a `fix` face are never
 Domain nodes: their shape functions are folded into their mirrors per component (no MP constraint,
 so any constraint handler works). GIMP and linear grids are unchanged. **`wall`** faces keep the
 slice-1 treatment (face and ghost layers alike) and are first order on a B-spline grid; a face with

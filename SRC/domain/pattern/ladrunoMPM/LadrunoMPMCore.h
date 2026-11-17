@@ -384,6 +384,23 @@ inline bool imageOfNode(const Grid &g, Basis b, const FaceConditions &fc, long e
   return true;
 }
 
+// The mass the active-node cutoff tests (critic A1, WP-232i): on a B-spline grid a
+// face-layer node of a `fix` face is its own image, so its one-sided mass is 1 / 2^k of the
+// body-plus-reflection mass, k = the number of `fix` faces through the node; the cutoff tests
+// m * 2^k, as the full symmetric model would. GIMP and linear: m, untouched.
+inline double imageCutoffMass(const Grid &g, Basis b, const FaceConditions &fc, long ext, double m)
+{
+  if (!isBSpline(b)) return m;
+  int ijk[3];
+  g.extIJK(ext, ijk);
+  double f = 1.0;
+  for (int d = 0; d < g.ndm; d++) {
+    if (ijk[d] == 0 && fc.fixMask[2 * d] != 0u) f *= 2.0;
+    if (ijk[d] == g.n[d] && fc.fixMask[2 * d + 1] != 0u) f *= 2.0;
+  }
+  return m * f;
+}
+
 // The folded support of ONE particle (B5, B8), built per axis and then as a
 // tensor product, so the image map (separable per axis) and the signs (a product
 // of per-axis signs) are exact, and a folded S' is a product of non-negative 1D
@@ -682,7 +699,9 @@ class Engine {
     out.clear();
     const double mcut = par.masscut * massRef();
     for (long i : touched)
-      if (!gslave[i] && gm[i] > 0.0 && gm[i] > mcut) out.push_back(grid.publicId(i));
+      if (!gslave[i] && gm[i] > 0.0 &&
+          imageCutoffMass(grid, par.basis, fc, i, gm[i]) > mcut)       // critic A1
+        out.push_back(grid.publicId(i));
     std::sort(out.begin(), out.end());
     clearGrid();
   }
@@ -749,7 +768,7 @@ class Engine {
     const double mcut = par.masscut * massRef();
     for (long i : touched) {
       if (gslave[i]) continue;          // K4: set from the image below
-      const bool act = gm[i] > 0.0 && gm[i] > mcut;
+      const bool act = gm[i] > 0.0 && imageCutoffMass(grid, par.basis, fc, i, gm[i]) > mcut;
       gact[i] = act ? 1 : 0;
       if (!act) {
         for (int a = 0; a < nd; a++) gv1[nd * i + a] = ga[nd * i + a] = 0.0;

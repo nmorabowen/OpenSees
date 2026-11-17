@@ -558,7 +558,10 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
   for (int p = 0; p < N; p++) {
     int nk = 0;
     for (long k = supStart[p]; k < supStart[p + 1]; k++) {
-      const bool act = mass[node[k]] > mcut;
+      // critic A1: a face-layer node of a `fix` face is tested with the mass of the body
+      // plus its reflections (x 2^k); GIMP and linear unchanged
+      const bool act = ladruno_mpm::imageCutoffMass(G, eng.par.basis, eng.fc, node[k],
+                                                    mass[node[k]]) > mcut;
       if (act || ghost) {
         keep[k] = 1;
         inact[k] = act ? 0 : 1;

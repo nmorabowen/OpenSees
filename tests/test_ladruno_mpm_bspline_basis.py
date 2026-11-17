@@ -306,10 +306,12 @@ def test_g7_mode_a_restart_round_trip():
 #  G8                                                                          #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("amp", ["small", "large"])
-def test_g8_images_equal_the_full_domain(amp):
-    row = ROWS["G8"]
+@pytest.mark.parametrize("name", ["G8", "G8-A", "G8-F-cut"])
+def test_g8_images_equal_the_full_domain(name, amp):
+    row = ROWS[name]
     V = float(row["v_small"] if amp == "small" else row["v_large"])
-    rx, rs, strain = B.g8(_ops(), V, int(row["steps"]))
+    rx, rs, strain = B.g8(_ops(), V, int(row["steps"]), mode=row.get("mode", "explicit"),
+                          masscut=row.get("masscut"))
     assert rx <= float(row["tol"]) and rs <= float(row["tol"]), (rx, rs)
     if amp == "small":
         assert strain < 0.01, strain

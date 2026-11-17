@@ -154,6 +154,34 @@ v_large 3.0
 tol 1e-10
 end
 
+row G8-A
+status gate
+gate (added by the critic round, A1) G8 in mode A: Newmark average acceleration, the default empty-node treatment (renormalize, cutoff 5e-2), the same bodies; equality rel 1e-10
+mode implicit
+steps 100
+v_small 0.02
+v_large 3.0
+tol 1e-10
+end
+
+row G8-F-cut
+status gate
+gate (added by the critic round, A1) G8 in mode F at `mpm massCutoff 0.05`: a face-layer node's cutoff is tested on the mass of the body plus its reflection; equality rel 1e-10
+mode explicit
+masscut 0.05
+steps 120
+v_small 0.02
+v_large 3.0
+tol 1e-10
+end
+
+row A2-oracle
+status oracle
+gate (added by the critic round, A2) a mutation oracle, not an accuracy gate: e(T/4) <= 0.05 for bspline2 G2 at 1/h = 32 (Zone-A; SCALE must turn it red)
+rung 32
+e_quarter_le 0.05
+end
+
 # ---- R1: reported, not gated -------------------------------------------------------------
 row R1-gimp-G2
 status report
