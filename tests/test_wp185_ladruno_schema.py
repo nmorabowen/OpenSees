@@ -57,7 +57,8 @@ RC_FAMILY = ("LadrunoRCConcrete", "LadrunoRCFiniteStrain")
 
 # Anchors: a capability is a promise apeGmsh gates on; dropping it must fail here
 # even after a rebuild. Each one's behaviour test is named in kCapabilities.
-PINNED_CAPABILITIES = ("mdStageFlagPreserved",)   # apeGmsh#2517 / #2444
+PINNED_CAPABILITIES = ("mdStageFlagPreserved",       # apeGmsh#2517 / #2444
+                       "recorderLadrunoNodeRegion")  # WP-234
 
 
 # ---- what the source declares ------------------------------------------------

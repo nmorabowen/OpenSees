@@ -1,0 +1,9 @@
+---
+wp: WP-234
+title: "WP-234 — recorder ladruno -RN: a node region beside the -R element region"
+pr: "TBD"
+date: 2026-11-16
+status: "PR open"
+section: "table"
+---
+| **WP-234 — `recorder ladruno ... -R <eleRegion> -RN <nodeRegion>`**. A `MeshRegion` cannot carry an explicit node list and an element list together (`setNodes` / `setElements` each delete both; `-ele` rebuilds the nodes), so a single `-R` region could not record nodes that no recorded element references: apeGmsh's `nodes_pg` + `elements_pg` emitted one `region -node ... -ele ...` and lost the nodes (apeGmsh_Examples 02: the embedded-rebar nodes, whose minted CorotTruss elements must stay out of the file for the `element_index_space = "fem"` stamp). `-RN <tag>` adds that region's nodes to `MODEL/NODES` and the `-N` rows (union with the `-R` region's nodes, so element connectivity always resolves); `-E` and `MODEL/ELEMENTS` stay on `-R`. `-RN` needs `-R` (refused by name), may come before or after it, is serialized for the PartitionedDomain path, and gets its own `MODEL/SETS/SET_<tag>`. Plain `-R` is unchanged. `ladrunoSchema` capability `recorderLadrunoNodeRegion` (pinned in `tests/test_wp185_ladruno_schema.py`) lets apeGmsh refuse an older build by name. Gate: `tests/test_ladruno_recorder_node_region.py` (zone_a: node set {R nodes} ∪ {RN nodes} in both token orders, the extra node's displacement value, elements and `-E` rows on `-R` only, `SET_<RN>`, plain `-R` unchanged, `-RN` alone and an unknown `-RN` tag refused, capability listed). | recorder feature | **none — no new classes** | `SRC/recorder/LadrunoRecorder.cpp`, `SRC/interpreter/LadrunoSchema.h` (capability), `tests/test_ladruno_recorder_node_region.py` (new), `tests/test_wp185_ladruno_schema.py` (pin), `Ladruno_implementation/{03_ladruno_recorder.md, ladruno_schema_v1.md, ladruno_apegmsh_contract.md}` | PR open | TBD |

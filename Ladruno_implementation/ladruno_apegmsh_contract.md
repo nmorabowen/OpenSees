@@ -214,7 +214,9 @@ recorder's energy result type: `RESULTS/ON_DOMAIN/energyBalance` + per-region
 ### Ladruno recorder (`.ladruno`)
 
 **OpenSees side.** `recorder ladruno file -N <nodal…> -E <element…> [-G energy
-<regions…>] -T dt -R region`. **Self-describing** — elements declare basis/
+<regions…>] -T dt -R region [-RN nodeRegion]` (`-RN`, WP-234: the node channel adds a
+second region's nodes, so `nodes_pg` + `elements_pg` emit `region -ele` + `region
+-node`; capability `recorderLadrunoNodeRegion`). **Self-describing** — elements declare basis/
 quadrature, so new conforming elements record with zero recorder edits. Current
 schema: chunked `[T×nIds×nComp]` time-series (replaces per-step `DATA/STEP_<k>`);
 **`MODEL/LOCAL_AXES` now written** (per-class quaternion `FRAME` from the element
