@@ -271,3 +271,32 @@ before commit, the k particles with the largest free-DOF residual at their suppo
 elements' last-iterate residuals, which a failed analyze does not clear), with trial stress,
 tangent norm / initial norm, the apex flag (< 1e-2, the regularised DP apex tangent of 232f), path
 and det ΔF_c / det ΔF. Element members now ≈ 0.4 kB (L6's ≤ 5 % off growth: about 2 % of 17.8 kB).
+
+## 12. Round 4 — the L4 r3 stop (2026-11-17)
+
+**`mpm debug failDump` columns** (one line per particle, k per failed attempt, appended):
+
+| # | column | meaning |
+|---|---|---|
+| 1 | t | Domain time at the start of the failed attempt (`stepT0`) |
+| 2 | attempt | the attempt number inside that `mpm analyze` call (1 under K6's ladder: every try is its own call) |
+| 3 | id | particle id |
+| 4..3+ndm | x | committed centre (the step start) |
+| next | residual | largest free-DOF nodal residual norm among the particle's support nodes, from the elements' LAST Newton iterate (the sort key) |
+| next nv | σ̄ | the particle's last-iterate trial Cauchy stress, Voigt, tensor shear ([xx yy xy] in plane strain) |
+| next | tangent ratio | ‖D_t‖_F / ‖D_0‖_F of the material at that trial (current / initial tangent) |
+| next | apex | 1 when the tangent ratio < 1e-2 (DruckerPrager's regularised apex tangent, 1e-3 D_e) |
+| next | path | 0 off, 1 averaged, 2 fallback (J5) |
+| last | det ΔF_c / det ΔF | the cell's volume change over the particle's own (1 when not averaged) |
+
+Rows from build `4fc274d51` carry a tangent ratio of exactly 1.0 and apex 0 for every particle: a
+diagnostic defect, not a material state. `DruckerPragerPlaneStrain` returns both getters through one
+member (`DruckerPragerPlaneStrain.cpp:129-164`), and the hook held a reference across the second
+call. The hook now copies the current tangent first; the element tangent never had the problem
+(`LadrunoMPMPoint::tangent` copies `Dm` at once). Quirk
+`WP-232j-ndmaterial-tangent-getters-share-a-buffer`.
+
+**Verdict: (b), a model / discretisation limit; L4 r3 is a strict-xfail miss.** The evidence is in
+`tests/test_ladruno_mpm_implicit_gates.py::L4_R3_MISS`: the anti-locking tangent is as consistent as
+off's at plastic states (r1, r2), the J5 bookkeeping is inert, GIMP has no images, and the fork's
+own FE B-bar takes as many failed attempts per step on the same ladder (887 at r3).

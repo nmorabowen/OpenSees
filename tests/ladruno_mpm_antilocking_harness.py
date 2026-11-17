@@ -32,6 +32,27 @@ REPO = Path(__file__).resolve().parents[1]
 CASES = REPO / "tests" / "mpm_antilocking_cases.txt"
 EXTRA = ("antilocking", "ladder", "affine", "row", "tangent_eps", "stress", "tangent_strain",
          "energy_mode", "dt_factor", "sample", "v0", "ledger_case")
+# Gate row L4 at r3: the pre-registered miss and its diagnosis (round 4), the strict-xfail reason
+# of tests/test_ladruno_mpm_implicit_gates.py and tests/test_ladruno_mpm_antilocking_results.py.
+L4_R3_MISS = (
+    "pre-registered miss, recorded 2026-11-17 (WP-232j round 4, warrant build 4fc274d51 on esmera"
+    "lda). Gate row L4 at r3 (16 cells across B): the run STOPPED at t = 57 (s = 0.094 m) on the "
+    "K6 ladder's halving floor (h 3.66e-4 < 5e-4), with 502 failed attempts, 7 relaxed steps and "
+    "109 halvings -- 'a stop is a miss'. Its q_max, 115.64 kPa, is inside [110.28, 134.78]; q fel"
+    "l to about 100 at t = 26 and recovered to 105-108. Diagnosis (b), a model / discretisation l"
+    "imit, not a code defect: (1) the anti-locking tangent is consistent at plastic DruckerPrager"
+    " states (mpm debug tangentCheck, FD converged at eps 1e-9: mean rel 2.4e-4 on vs 2.0e-4 off "
+    "at r1 t = 25-60, 2.4e-4 vs 2.3e-4 at r2 t = 30), within L2's 2x; (2) the J5 bookkeeping is i"
+    "nert (0 fallback particle-steps of 3.37e6) and GIMP has no images; (3) the failures are Newt"
+    "on stagnation of non-associated flow, shared by the fork's own FE: LadrunoBrick B-bar on the"
+    " same domain and ladder needs 887 failed attempts at r3 (8.9 per step; MPM 10.7 per step) an"
+    "d 438 at r2 (MPM 374, which completes), and softens after its peak at s = 0.036 like the MPM"
+    "; (4) the dumped worst-residual particles of the failed attempts sit mostly below and beside"
+    " the footing, away from its edge (x 1.3-2.8 m, y -2.3 to -3.8 m) at stagnated residuals of O"
+    "(1-10) kN, against NormU"
+    "nbalance 1e-6 / 1e-5, so halving the step does not converge them. The dump's tangent ratio o"
+    "f 1.0 was a diagnostic aliasing defect (quirk WP-232j-ndmaterial-tangent-getters-share-a-buf"
+    "fer), fixed; it never reached the element tangent. Band, ladder and floor unchanged.")
 H_MIN_DEFAULT = 5e-4          # freeze Q1: the FE's dsc < 1e-6 m at v = 0.002 per unit pseudo-time
 PLASTIC_ZONE = (6.0, -4.0)    # freeze F1: x <= 3B, y >= -2B with B = 2 m
 

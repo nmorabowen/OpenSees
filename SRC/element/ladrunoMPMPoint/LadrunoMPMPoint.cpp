@@ -338,7 +338,11 @@ LadrunoMPMPoint::computeTrial(void)
   }
   if (mat->setTrialStrain(e) < 0) return -4;
   if (diagnose) {                         // WP-232j: `mpm debug failDump`
-    const Matrix &Dt = mat->getTangent();
+    // COPY the current tangent before asking for the initial one: a material may return
+    // both through ONE member buffer (DruckerPragerPlaneStrain.cpp:129-164 fills `tangent`
+    // in both getters), and a held reference then reads the initial tangent twice -- the
+    // 4fc274d51 dumps' constant ratio 1.0 (quirk WP-232j-ndmaterial-tangent-getters-share-a-buffer)
+    const Matrix Dt(mat->getTangent());
     const Matrix &D0 = mat->getInitialTangent();
     double a2 = 0.0, b2 = 0.0;
     for (int r = 0; r < Dt.noRows(); r++)
