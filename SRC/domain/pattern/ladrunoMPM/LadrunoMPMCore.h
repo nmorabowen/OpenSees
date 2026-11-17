@@ -788,6 +788,23 @@ class Engine {
 
     // ---- step 3: P2G -------------------------------------------------------
     p2gMass();
+    // WP-232j (J5, interface §11): each particle's anti-locking path, decided ONCE per step
+    // from the P2G mass (a corner below the cutoff -> the fallback) and used by both the
+    // conjugate force below and the step-5 kinematics, so the two always agree.
+    if (par.antiLocking) {
+      const double mcut0 = par.masscut * massRef();
+      talFlag.assign(N, 1);
+      for (int p = 0; p < N; p++) {
+        long ce[8];
+        double gN[8][3];
+        const int nc = cellCorners(grid, &P.x[nd * p], ce, gN);
+        for (int k = 0; k < nc; k++)
+          if (!(gm[ce[k]] > 0.0 && imageCutoffMass(grid, par.basis, fc, ce[k], gm[ce[k]]) > mcut0)) {
+            talFlag[p] = 2;
+            break;
+          }
+      }
+    }
     double b[3];
     for (int d = 0; d < 3; d++) b[d] = lambda * par.gravity[d];
     for (int p = 0; p < N; p++) {
@@ -795,6 +812,15 @@ class Engine {
       const double *bfp = bodyForce.empty() ? nullptr : &bodyForce[nd * p];
       double sg[3][3];
       voigtToTensor(&P.sig[nvv * p], sg);
+      // WP-232j (C1, interface §11): the force work-conjugate to the F-bar kinematics,
+      // f_a = V [sigma g_a + pbar (ghat_a - g_a)], pbar = tr_d(sigma) / d, ghat the cell
+      // centre's Q1 gradients on its corners (dF_c = I at the step start).
+      const bool avg = par.antiLocking && talFlag[p] == 1;
+      double pbar = 0.0;
+      if (avg) {
+        for (int a = 0; a < nd; a++) pbar += sg[a][a];
+        pbar /= nd;
+      }
       for (long k = supStart[p]; k < supStart[p + 1]; k++) {
         const long i = supNode[k];
         const double S = supS[k];
@@ -805,9 +831,17 @@ class Engine {
           if (LADRUNO_MUTATE_MPM != MUT_ZERO) {
             double s = 0.0;
             for (int c = 0; c < nd; c++) s += sg[a][c] * g[c];
+            if (avg) s -= pbar * g[a];
             gfi[nd * i + a] -= Vp * s;
           }
         }
+      }
+      if (avg && LADRUNO_MUTATE_MPM != MUT_ZERO) {
+        long ce[8];
+        double gN[8][3];
+        const int nc = cellCorners(grid, &P.x[nd * p], ce, gN);
+        for (int k = 0; k < nc; k++)
+          for (int a = 0; a < nd; a++) gfi[nd * ce[k] + a] -= Vp * pbar * gN[k][a];
       }
     }
 
@@ -920,49 +954,19 @@ class Engine {
     // velocity gradient, F, the kernel, the constitutive update
     const int nn = nd * nd;
     tF.resize(P.F.size()); tR.resize(P.R.size()); tV.resize(N);
-    if (par.antiLocking) talFlag.assign(N, 0);
     teps.resize(P.eps.size()); tsh.resize(P.sigHat.size()); tsig.resize(P.sig.size());
     for (int p = 0; p < N; p++) {
-      double L[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
-      for (long k = supStart[p]; k < supStart[p + 1]; k++) {
-        const long i = supNode[k];
-        const double *g = &supdS[nd * k];
-        for (int a = 0; a < nd; a++)
-          for (int c = 0; c < nd; c++)
-            L[nd * a + c] += gvs[nd * i + a] * g[c];
-      }
       const double *Fn = &P.F[nn * p];
-      double dF[9], F1[9];
-      for (int a = 0; a < nd; a++)
-        for (int c = 0; c < nd; c++)
-          dF[nd * a + c] = (a == c ? 1.0 : 0.0) + dt * L[nd * a + c];
-      // WP-232j (J1, interface §2): the cell-centre F-bar on the increment, after the
-      // grid update and the second projection, before the kernel and the material.
-      if (par.antiLocking) {
-        long ce[8];
-        double gN[8][3];
-        const int nc = cellCorners(grid, &P.x[nd * p], ce, gN);
-        bool all = true;
-        for (int k = 0; k < nc && all; k++) all = gact[ce[k]] != 0;
-        talFlag[p] = 2;                           // J5: a corner not active -> the identity
-        if (all) {
-          double dFc[9], dFb[9];
-          for (int a = 0; a < nd; a++)
-            for (int c = 0; c < nd; c++) {
-              double s = (a == c) ? 1.0 : 0.0;
-              for (int k = 0; k < nc; k++) s += dt * gvs[nd * ce[k] + a] * gN[k][c];
-              dFc[nd * a + c] = s;
-            }
-          if (fbarIncrement(nd, dF, dFc, dFb) != 0) {
-            err = "the anti-locking increment of particle " + std::to_string((long long)P.id[p]) +
-                  " refused: det(dF) <= 0 or det(dF_cell) <= 0 (inverted or collapsed)";
-            revertAll(mats, p);
-            clearGrid();
-            return -1;
-          }
-          for (int k = 0; k < nd * nd; k++) dF[k] = dFb[k];
-          talFlag[p] = 1;
-        }
+      double dF[9], dFu[9], F1[9];
+      // WP-232j (C2): the shared step-5 kinematics -- the cell-centre F-bar on the increment
+      // (J1) for an averaged particle, after the grid update and the second projection,
+      // before the kernel and the material.
+      if (stepIncrement(p, gvs, dt, par.antiLocking ? talFlag[p] : 0, dF, dFu) != 0) {
+        err = "the anti-locking increment of particle " + std::to_string((long long)P.id[p]) +
+              " refused: det(dF) <= 0 or det(dF_cell) <= 0 (inverted or collapsed)";
+        revertAll(mats, p);
+        clearGrid();
+        return -1;
       }
       for (int a = 0; a < nd; a++)
         for (int c = 0; c < nd; c++) {
@@ -1018,48 +1022,36 @@ class Engine {
     return 0;
   }
 
-  // `mpm debug affineCheck` in mode F (WP-232j L1): every support node of every
-  // particle (at its committed centre) carries du_a = A x_a + b (A row-major ndm x
-  // ndm), dt = 1: the increment with (J1) and without anti-locking, every node
-  // active (no fallback). out = [max_p |dFbar - dF|_max / |dF - I|_max,
-  // max_p |deps|_max of the kernel on (F_n, dFbar F_n), #averaged, #fallback].
-  void affineCheck(const double *A, const double *b, std::vector<double> &out)
+  // `mpm debug affineCheck` in mode F (WP-232j L1, C2): every node of the extended lattice
+  // carries the grid velocity A x + b (A row-major ndm x ndm), dt = 1, and every particle's
+  // increment comes from the SAME helper as Engine::advance (stepIncrement), averaged. The
+  // material is evaluated on the result and reverted: nothing is committed. out =
+  // [max_p |dFbar - dF|_max / |dF - I|_max, max_p |deps|_max, #averaged, #refused,
+  //  max_p |sigHat_trial - sigHat_n|_max (the spurious stress of a rigid rotation)].
+  void affineCheck(const double *A, const double *b, MaterialPoints &mats, std::vector<double> &out)
   {
-    const int N = P.size(), nd = grid.ndm, nn = nd * nd;
+    const int N = P.size(), nd = grid.ndm, nn = nd * nd, nvv = nv();
     buildSupports();
-    double worst = 0.0, depsMax = 0.0;
-    long nAvg = 0, nFb = 0;
-    auto field = [&](long ext, double *u) {
+    const long nN = grid.numNodes();
+    std::vector<double> gvel((size_t)nd * nN, 0.0);
+    for (long i = 0; i < nN; i++) {
       int ijk[3];
-      grid.extIJK(ext, ijk);
+      grid.extIJK(i, ijk);
       for (int a = 0; a < nd; a++) {
         double s = b[a];
         for (int c = 0; c < nd; c++) s += A[nd * a + c] * (grid.x0[c] + ijk[c] * grid.h);
-        u[a] = s;
+        gvel[nd * i + a] = s;
       }
-    };
+    }
+    double worst = 0.0, depsMax = 0.0, spur = 0.0;
+    long nAvg = 0, nBad = 0;
     for (int p = 0; p < N; p++) {
-      double dF[9], dFc[9], dFb[9], u[3];
-      for (int k = 0; k < nn; k++) dF[k] = dFc[k] = (k % (nd + 1) == 0) ? 1.0 : 0.0;
-      for (long k = supStart[p]; k < supStart[p + 1]; k++) {
-        field(supNode[k], u);
-        for (int a = 0; a < nd; a++)
-          for (int c = 0; c < nd; c++) dF[nd * a + c] += u[a] * supdS[nd * k + c];
-      }
-      long ce[8];
-      double gN[8][3];
-      const int nc = cellCorners(grid, &P.x[nd * p], ce, gN);
-      for (int k = 0; k < nc; k++) {
-        field(ce[k], u);
-        for (int a = 0; a < nd; a++)
-          for (int c = 0; c < nd; c++) dFc[nd * a + c] += u[a] * gN[k][c];
-      }
-      if (fbarIncrement(nd, dF, dFc, dFb) != 0) { nFb++; continue; }
-      nAvg++;
+      double dF[9], dFu[9];
+      if (stepIncrement(p, gvel, 1.0, 1, dF, dFu) != 0) { nBad++; continue; }
       double num = 0.0, den = 0.0;
       for (int k = 0; k < nn; k++) {
-        num = std::max(num, std::fabs(dFb[k] - dF[k]));
-        den = std::max(den, std::fabs(dF[k] - ((k % (nd + 1) == 0) ? 1.0 : 0.0)));
+        num = std::max(num, std::fabs(dF[k] - dFu[k]));
+        den = std::max(den, std::fabs(dFu[k] - ((k % (nd + 1) == 0) ? 1.0 : 0.0)));
       }
       if (den > 0.0) worst = std::max(worst, num / den);
       const double *Fn = &P.F[nn * p];
@@ -1067,15 +1059,57 @@ class Engine {
       for (int a = 0; a < nd; a++)
         for (int c = 0; c < nd; c++) {
           double s = 0.0;
-          for (int e = 0; e < nd; e++) s += dFb[nd * a + e] * Fn[nd * e + c];
+          for (int e = 0; e < nd; e++) s += dF[nd * a + e] * Fn[nd * e + c];
           F1[nd * a + c] = s;
         }
       const int st = (nd == 3) ? ladruno_hypo::hypoIncrementFromF(Fn, F1, deps, R1, &J1)
                                : ladruno_hypo::hypoIncrementFromFPlaneStrain(Fn, F1, deps, R1, &J1);
-      if (st != 0) { nFb++; nAvg--; continue; }
-      for (int k = 0; k < nv(); k++) depsMax = std::max(depsMax, std::fabs(deps[k]));
+      if (st != 0) { nBad++; continue; }
+      nAvg++;
+      double e1[6], sm[6];
+      for (int k = 0; k < nvv; k++) {
+        depsMax = std::max(depsMax, std::fabs(deps[k]));
+        e1[k] = P.eps[nvv * p + k] + deps[k];
+      }
+      if (mats.setTrialStrain(p, e1, sm) == 0)
+        for (int k = 0; k < nvv; k++)
+          spur = std::max(spur, std::fabs(P.sig0[nvv * p + k] + sm[k] - P.sigHat[nvv * p + k]));
+      mats.revertToLastCommit(p);
     }
-    out = {worst, depsMax, (double)nAvg, (double)nFb};
+    out = {worst, depsMax, (double)nAvg, (double)nBad, spur};
+  }
+
+  // WP-232j (C2): the step-5 kinematics of particle p, shared by advance() and
+  // affineCheck(): dFu = I + dt sum_a v_a (x) gradS_a over its support (the grid velocity
+  // array gvel, ndm per engine node), and dF = dFu, or for flag 1 (averaged) the J1
+  // dFbar = (det dF_c / det dFu)^(1/d) dFu with dF_c = I + dt sum_corners v_k (x) gradN_k(x_c).
+  // Returns 0, or -1 on a non-positive determinant.
+  int stepIncrement(int p, const std::vector<double> &gvel, double dt, int flag, double *dF,
+                    double *dFu)
+  {
+    const int nd = grid.ndm;
+    double L[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    for (long k = supStart[p]; k < supStart[p + 1]; k++) {
+      const long i = supNode[k];
+      const double *g = &supdS[nd * k];
+      for (int a = 0; a < nd; a++)
+        for (int c = 0; c < nd; c++)
+          L[nd * a + c] += gvel[nd * i + a] * g[c];
+    }
+    for (int a = 0; a < nd; a++)
+      for (int c = 0; c < nd; c++)
+        dF[nd * a + c] = dFu[nd * a + c] = (a == c ? 1.0 : 0.0) + dt * L[nd * a + c];
+    if (flag != 1) return 0;
+    long ce[8];
+    double gN[8][3], dFc[9];
+    const int nc = cellCorners(grid, &P.x[nd * p], ce, gN);
+    for (int a = 0; a < nd; a++)
+      for (int c = 0; c < nd; c++) {
+        double s = (a == c) ? 1.0 : 0.0;
+        for (int k = 0; k < nc; k++) s += dt * gvel[nd * ce[k] + a] * gN[k][c];
+        dFc[nd * a + c] = s;
+      }
+    return fbarIncrement(nd, dFu, dFc, dF);
   }
 
   // Forget the id registry (used when the host clears its particles).

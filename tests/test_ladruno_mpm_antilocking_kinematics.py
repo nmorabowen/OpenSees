@@ -126,7 +126,7 @@ def test_affine_tcl_equals_python():
     for line in c["affine"]:
         tc = _tcl_list(out, "AFF_" + line[0])
         pv = py[line[0]]["out"]
-        assert tc[2:] == pv[2:], (line[0], tc, pv)            # the counts, exactly
+        assert tc[2:5] == pv[2:5], (line[0], tc, pv)          # the counts, exactly
         assert tc[0] <= 1e-12 and pv[0] <= 1e-12, (tc, pv)      # both within L1a
         assert abs(tc[0] - pv[0]) <= 1e-15 and abs(tc[1] - pv[1]) <= 1e-15, (tc, pv)
 
@@ -189,6 +189,21 @@ def test_setting_round_trip_and_refusals():
     assert int(ops.mpm("info", "antiLocking")) == 0
 
 
+def test_setting_after_a_debug_hook():
+    """C6: a mode-A debug hook (it creates the particle elements) does not fix the setting
+    before the first step."""
+    ops = _ops()
+    for name, args in _modea_cmds():
+        getattr(ops, name)(*H._py_args(args))
+    ops.mpm("debug", "tangentCheck", 1e-6, 1e-8)
+    ops.mpm("antiLocking", "off")
+    assert int(ops.mpm("info", "antiLocking")) == 0
+    ops.mpm("antiLocking", "fbar")
+    ops.mpm("analyze", 1, 0.25)
+    with pytest.raises(Exception):
+        ops.mpm("antiLocking", "off")
+
+
 def _modea_cmds(system="UmfPack"):
     return _modef_cmds("fbar")[:-2] + [
         ("mpm", ["gravity", 0.0, -10.0]), ("mpm", ["mode", "quasiStatic"]),
@@ -198,16 +213,27 @@ def _modea_cmds(system="UmfPack"):
         ("integrator", ["LoadControl", 0.25]), ("analysis", ["Static"])]
 
 
-def test_symmetric_system_refused():
-    """K3 / amendment 5: mode A with `fbar` refuses a symmetric-storage system loudly (the F-bar
-    tangent is unsymmetric) and leaves the particles unmoved; UmfPack runs."""
+@pytest.mark.parametrize("system", [["ProfileSPD"], ["SProfileSPD"], ["BandSPD"], ["SparseSPD"],
+                                    ["Mumps", "-matrixType", 1], ["Mumps", "-matrixType", 2]])
+def test_symmetric_system_refused(system):
+    """K3 / amendment 5 / C3: mode A with `fbar` refuses every symmetric-storage system loudly
+    (the tangent is unsymmetric in general) and leaves the particles unmoved; UmfPack runs."""
     ops = _ops()
-    for name, args in _modea_cmds("ProfileSPD"):
-        getattr(ops, name)(*H._py_args(args))
+    cmds = _modea_cmds()
+    cmds = [("system", system) if n == "system" else (n, a) for n, a in cmds]
+    try:
+        for name, args in cmds:
+            getattr(ops, name)(*H._py_args(args))
+    except Exception as exc:
+        pytest.skip(f"`system {' '.join(map(str, system))}` is not in this build: {exc}")
     x0 = A._as_list(ops.mpm("particleData", "x"))
     with pytest.raises(Exception):
         ops.mpm("analyze", 1, 0.25)
     assert A._as_list(ops.mpm("particleData", "x")) == x0
+
+
+def test_unsymmetric_system_runs():
+    ops = _ops()
     for name, args in _modea_cmds("UmfPack"):
         getattr(ops, name)(*H._py_args(args))
     ops.mpm("analyze", 1, 0.25)
@@ -252,3 +278,19 @@ def test_restart_pack_v3_and_v2():
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         _restart(ops, Path(td), pack_version=2)
         assert int(ops.mpm("info", "antiLocking")) == 0
+    # C6: the pack version is not sticky -- the save after a v2 save is v3 again
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+        wd = Path(td)
+        for name, args in _modea_cmds():
+            getattr(ops, name)(*H._py_args(args))
+        ops.mpm("analyze", 1, 0.25)
+        ops.mpm("debug", "packVersion", 2)
+        ops.database("File", str(wd / "a1"))
+        ops.save(1)
+        ops.database("File", str(wd / "a2"))
+        ops.save(1)
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        ops.database("File", str(wd / "a2"))
+        ops.restore(1)
+        assert int(ops.mpm("info", "antiLocking")) == 1

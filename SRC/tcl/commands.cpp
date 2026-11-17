@@ -797,9 +797,12 @@ ladrunoMPM(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Char **argv)
   // these globals (not in the DL `cmds` singleton): the classic bridge hands them in.
   // Ladruno WP-232j: the system too (mode A refuses a symmetric-storage SOE with
   // `mpm antiLocking fbar`); PARDISO's symmetric modes are known only under _PARDISO.
-  int pardisoMatType = -1;   // Ladruno WP-232j
+  int pardisoMatType = -1;   // Ladruno WP-232j: the solver's matrix type (PARDISO, MUMPS)
 #ifdef _PARDISO
   if (PARDISOGenLinSOE *ps = dynamic_cast<PARDISOGenLinSOE *>(theSOE)) pardisoMatType = ps->getMatType();   // Ladruno WP-232j
+#endif
+#ifdef _MUMPS
+  if (MumpsSOE *ms = dynamic_cast<MumpsSOE *>(theSOE)) pardisoMatType = ms->ladrunoGetMatType();   // Ladruno WP-232j
 #endif
   return (OPS_LadrunoMPMWithAnalysis(theStaticAnalysis, theTransientAnalysis, theStaticIntegrator,
                                      theTransientIntegrator, theHandler, theSOE,

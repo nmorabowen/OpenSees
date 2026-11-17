@@ -33,6 +33,30 @@ static void check(bool ok, const std::string &what)
   }
 }
 
+// Hypoelastic isotropic material (interface §9): sigHat = sig0 + D eps (the check's own law).
+struct Hypo : public MaterialPoints {
+  int nd = 2;
+  double lam = 0.0, mu = 0.0;
+  int setTrialStrain(int, const double *e, double *s) override
+  {
+    if (nd == 3) {
+      const double tr = e[0] + e[1] + e[2];
+      for (int k = 0; k < 3; k++) s[k] = lam * tr + 2.0 * mu * e[k];
+      for (int k = 3; k < 6; k++) s[k] = mu * e[k];
+    } else {
+      const double tr = e[0] + e[1];
+      s[0] = lam * tr + 2.0 * mu * e[0];
+      s[1] = lam * tr + 2.0 * mu * e[1];
+      s[2] = mu * e[2];
+    }
+    return 0;
+  }
+  int commitState(int) override { return 0; }
+  int revertToLastCommit(int) override { return 0; }
+  int pendingRefusals() override { return 0; }
+  double normalModulus(int) override { return lam + 2.0 * mu; }
+};
+
 static const char *BN[4] = {"gimp", "linear", "bspline2", "bspline3"};
 
 static bool setup(Engine &E, int nd, int basis, int ppc)
@@ -77,23 +101,35 @@ int main()
                                 std::to_string(ppc);
         if (!setup(E, nd, basis, ppc)) { check(false, tag + ": setup"); continue; }
         const int N = E.P.size();
+        // C6: a PRE-STRESSED body (L1b: "a stressed body")
+        const double s0[6] = {-1.0e5, -2.0e5, -1.5e5, 3.0e4, -2.0e4, 1.0e4};
+        const int nvv = E.nv();
+        for (int p = 0; p < N; p++)
+          for (int k = 0; k < nvv; k++) {
+            const double v = (nd == 2 && k == 2) ? s0[3] : s0[k];
+            E.P.sig0[nvv * p + k] = E.P.sigHat[nvv * p + k] = E.P.sig[nvv * p + k] = v;
+          }
+        Hypo M;
+        M.nd = nd;
+        M.lam = 1.0e7 * 0.3 / (1.3 * 0.4);
+        M.mu = 1.0e7 / 2.6;
         double A[9], b[3] = {0.3, -0.2, 0.1};
         std::vector<double> out;
         // deviatoric (shear + stretch, trace 0)
         for (int k = 0; k < 9; k++) A[k] = 0.0;
         A[0] = 1e-2; A[nd + 1] = -1e-2; A[1] = 7e-3; A[nd] = -3e-3;
-        E.affineCheck(A, b, out);
+        E.affineCheck(A, b, M, out);
         check(out[0] <= 1e-12 && out[2] == N && out[3] == 0,
               tag + ": L1a deviatoric rel " + std::to_string(out[0]));
         // volumetric
         for (int k = 0; k < 9; k++) A[k] = 0.0;
         for (int d = 0; d < nd; d++) A[(nd + 1) * d] = 1.2e-2;
-        E.affineCheck(A, b, out);
+        E.affineCheck(A, b, M, out);
         check(out[0] <= 1e-12 && out[2] == N && out[3] == 0,
               tag + ": L1a volumetric rel " + std::to_string(out[0]));
         // general affine (deviatoric + volumetric + spin)
         for (int k = 0; k < nd * nd; k++) A[k] = 1e-2 * std::sin(1.3 * k + 0.4);
-        E.affineCheck(A, b, out);
+        E.affineCheck(A, b, M, out);
         check(out[0] <= 1e-12 && out[2] == N && out[3] == 0,
               tag + ": L1a general rel " + std::to_string(out[0]));
         // L1b: 30 deg rigid rotation
@@ -101,9 +137,11 @@ int main()
         rotation(nd, 30.0, Q);
         for (int i = 0; i < nd; i++)
           for (int j = 0; j < nd; j++) A[nd * i + j] = Q[nd * i + j] - (i == j ? 1.0 : 0.0);
-        E.affineCheck(A, b, out);
-        check(out[0] <= 1e-12 && out[1] <= 1e-12 && out[2] == N,
-              tag + ": L1b rotation rel " + std::to_string(out[0]) + " deps " + std::to_string(out[1]));
+        E.affineCheck(A, b, M, out);
+        check(out[0] <= 1e-12 && out[1] <= 1e-12 && out[2] == N && out[3] == 0 &&
+              out[4] <= 1e-12 * 2.0e5,
+              tag + ": L1b rotation rel " + std::to_string(out[0]) + " deps " +
+              std::to_string(out[1]) + " spurious stress " + std::to_string(out[4]));
       }
 
   // ---- J3: corners inside the support; gradients reproduce I -----------------------

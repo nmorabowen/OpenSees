@@ -9,6 +9,9 @@ tests/_testbed bootstrap) and commits the JSON it writes under tests/data/mpm/an
     python3.12 tests/mpm_antilocking_warrant.py --l3 --admitted       # + r2, r3 once L3 is admitted
     python3.12 tests/mpm_antilocking_warrant.py --l5                  # MMS G2, G4 with anti-locking on
     python3.12 tests/mpm_antilocking_warrant.py --off <case>          # the same case with it off (R rows)
+    python3.12 tests/mpm_antilocking_warrant.py --cases footing_mildcone_r2_al --dump r2_fail.txt 20
+                                                                      # the L4 r2 diagnosis (failDump)
+    python3.12 tests/mpm_antilocking_warrant.py --l9                  # every L9 energy row
 
 Each footing record: ladrunoBuild, the setting, q(s) per step, every observable with its verdict,
 failed attempts, relaxed steps, halvings (K6), averaged / fallback particle-steps and the fallback
@@ -39,11 +42,11 @@ def _ops():
     return ops
 
 
-def run_footing(ops, name, off=False):
+def run_footing(ops, name, off=False, dump=None):
     c = A.case_by_name(name)
     if off:
         c["antilocking"] = "off"
-    r = A.run_ladder(c, ops, log=A.flushprint)
+    r = A.run_ladder(c, ops, log=A.flushprint, dump=dump)
     rec = A.run_record(c, r)
     return rec
 
@@ -79,6 +82,9 @@ def main(argv=None):
     ap.add_argument("--admitted", action="store_true",
                     help="L3 is admitted (freeze F2): run footing_j2_r2 / r3 too")
     ap.add_argument("--off", nargs="*", default=[], help="footing cases to run with anti-locking off")
+    ap.add_argument("--dump", nargs=2, metavar=("PATH", "K"), default=None,
+                    help="`mpm debug failDump PATH K` on every footing run (the L4 diagnosis)")
+    ap.add_argument("--l9", action="store_true", help="every L9 energy row")
     a = ap.parse_args(argv)
     names = list(a.cases)
     if a.l4:
@@ -91,11 +97,24 @@ def main(argv=None):
     ops = _ops()
     OUT.mkdir(parents=True, exist_ok=True)
     for n in names:
-        rec = run_footing(ops, n)
+        rec = run_footing(ops, n, dump=a.dump)
         (OUT / f"{n}.json").write_text(json.dumps(rec, indent=1), encoding="utf-8")
     for n in a.off:
         rec = run_footing(ops, n, off=True)
         (OUT / f"{n}_off.json").write_text(json.dumps(rec, indent=1), encoding="utf-8")
+    if a.l9:
+        res = {}
+        for c in A.parse_cases():
+            if c["kind"] == "energy":
+                r = A.run_energy(c, ops)
+                vals = {"ke_ratio": r["ke_ratio"], "completed": r["completed"]}
+                res[c["name"]] = {"ke_ratio": r["ke_ratio"], "completed": r["completed"],
+                                  "ke_max_off": r["off"]["ke_max"], "ke_max_on": r["on"]["ke_max"],
+                                  "dt": r["on"]["dt"], "wall_s": r["wall_s"],
+                                  "verdicts": [list(x) for x in A.evaluate_values(c, vals)]}
+                A.flushprint(c["name"], res[c["name"]]["verdicts"])
+        (OUT / "l9_energy.json").write_text(json.dumps({"ladrunoBuild": A.ladruno_build(ops),
+                                                        "rows": res}, indent=1), encoding="utf-8")
     if a.l5:
         for n in ("mms_G2_al", "mms_G4_al"):
             res = run_mms(ops, n)

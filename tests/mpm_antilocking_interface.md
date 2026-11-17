@@ -211,3 +211,63 @@ Zhao, Jiang & Choo (2022), arXiv:2209.02466. Elguedj, Bazilevs, Calo & Hughes (2
    symmetric option is not detected (it is not a separate SOE class).
 5. **Mutation suite.** Only `test_ladruno_mpm_antilocking_switch.py` joins the MPM family: the
    kinematics and tangent files would add physics-free survivors (affine hooks; SCALE-blind tangent).
+
+## 11. Round 3 — the critic round (2026-11-17; wp-briefs.md "232j", critic block)
+
+**C1 — the conjugate force (supersedes J9's force; J1 kinematics unchanged).** J1–J9 drove the
+stress with ℓ̄ = ℓ + βI_d, β = (1/d)(tr ℓ_c − tr ℓ), but kept f_a = w̄σ̄g_a, which is not
+work-conjugate to ℓ̄: no energy balance (KE 503 → 1.3e4 on the critic's free block). Both modes now
+use
+```
+f_a = w̄ [σ̄ g_a + p̄ (ĝ_a − g_a)],   p̄ = (1/d) Σ_{i<d} σ̄_ii,   ĝ_a = ∇N_a(x_c)·ΔF_c⁻¹ on the corners, 0 elsewhere
+Σ_a f_a·v_a = w̄ [σ̄:ℓ + p̄ (tr ℓ_c − tr ℓ)] = w̄ σ̄:ℓ̄          (the B-bar force, Hughes 1980)
+```
+w̄ is still the carried volume (J9's choice, now also the weight of the conjugate pair). Mode F:
+in P2G with the step-start quantities (ΔF_c = I: ĝ = ∇N(x_c), g = ∇S(x_p^n), w̄ = V_p^n),
+`LadrunoMPMCore.h` step 3. Mode A: `LadrunoMPMPoint::addConjugateForce`. B8 (images): the −p̄ term
+uses g′_{a,i,i}; the corners are real nodes, so ĝ is per node. Plane strain: d = 2, p̄ the in-plane
+mean, F_zz = 1. A fallback particle (J5) keeps f_a = w̄σ̄g_a with its unmodified ΔF.
+
+**J5 decided once per step (mode F).** The path is set from the P2G mass (a corner at or below the
+cutoff → fallback) before the force, and the same flag drives the force and the kinematics.
+
+**J10 re-derived.** With D_ai = ĝ_ai − g_ai (B8: ĝ_ai − g′_{a,i,i}), under the model that makes the
+shipped assembly exact (δ(J̄σ̄) = J̄(c:d̄ + ℓ̄σ̄ + σ̄ℓ̄ᵀ)):
+```
+K = w̄ [B_aᵀ c̄ B_b + (g_a·σ̄·g_b) I]                       (shipped, at σ̄, c̄)
+  + h_ai D_bk,     h_ai = w̄ Σ_j Q_ij g_aj,  Q = (1/d)(c̄:I_d + 2σ̄)
+  + D_ai w̄ [ (qᵀB_b)_k + (2/d)(σ̄ g_b)_k + (s + 2p̄/d) D_bk ],  q_col = (1/d) Σ_{r<d} c̄[r][col], s = (1/d) Σ_{col<d} q_col
+  + w̄ p̄ (g_ak g_bi − ĝ_ak ĝ_bi)
+```
+(B8: g_aj → g′_{a,i,j}, (σ̄g_b)_k → Σ_m g′_{b,k,m} σ̄_mk, g_ak g_bi → g′_{a,i,k} g′_{b,k,i}.)
+At σ̄ = 0 with a major-symmetric c̄ the added part is h Dᵀ + D hᵀ + w̄ s D Dᵀ: symmetric (B-bar).
+Initial: ΔF_c = I, σ̄ = 0, the initial tangent. L2's FD check re-verifies it (C5's rows).
+
+**C2.** `Engine::stepIncrement` is the one step-5 kinematics; `advance` and `affineCheck` both call
+it (affineCheck puts A x + b on every lattice node, dt = 1, and evaluates and reverts the
+particles' own materials). Out, both modes: [rel, max |Δε̂|, #averaged, #fallback, #refused,
+max |σ̂_trial − σ̂_n|].
+
+**C3.** Refused with `fbar` in mode A: SOE tags 3, 4, 11, 14, 16, 17, 27 (`classTags.h`:
+BandSPD, ProfileSPD, SymSparse, ProfileSPDGather, DistributedBandSPD, DistributedProfileSPD,
+SProfileSPD) and PARDISO (99990) or MUMPS (23, 24) with matType > 0. The bridges read
+`PARDISOGenLinSOE::getMatType()` and a new `MumpsSOE::ladrunoGetMatType()` (a vanilla row).
+
+**C4.** The guide states that the fallback needs a corner below the cutoff, which a particle's own
+mass prevents almost always (0 in every warrant record); F1 stays reported.
+
+**C5.** L2 rows: ν 0.3 and 0.45, 3D, `bspline2` with `fix`-face images (B8), 1 % and 5 % strain;
+bars unchanged. **C6.** `judge` "out" fails on a non-finite value; `debug packVersion` applies to one
+save; the L1 bodies are pre-stressed and L1b gates the spurious stress (≤ 1e-12 |σ₀|); only an
+accepted step fixes `mpm antiLocking` (a debug hook's elements do not).
+
+**L9 (pre-registered by the orchestrator).** `kind energy` / `kind ledger` cases;
+`tests/test_ladruno_mpm_antilocking_energy.py`. Interpretation to confirm: mode A's "400 steps of the
+off run's stable Δt" is run at dt = `mpm criticalTimeStep` (the explicit estimate), the same Δt on
+and off.
+
+**L4 diagnosis hook.** `mpm debug failDump <path> [<k>] | off`: on every mode-A attempt that fails
+before commit, the k particles with the largest free-DOF residual at their support nodes (from the
+elements' last-iterate residuals, which a failed analyze does not clear), with trial stress,
+tangent norm / initial norm, the apex flag (< 1e-2, the regularised DP apex tangent of 232f), path
+and det ΔF_c / det ΔF. Element members now ≈ 0.4 kB (L6's ≤ 5 % off growth: about 2 % of 17.8 kB).

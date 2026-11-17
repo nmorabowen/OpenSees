@@ -187,7 +187,9 @@ int
 LadrunoMPMPattern::setAntiLocking(int on, std::string &err)
 {
   if ((on ? 1 : 0) == eng.par.antiLocking) return 0;
-  if (stepped || !eles.empty()) {
+  // C6: only an accepted step fixes it -- elements a debug hook (tangentCheck, affineCheck)
+  // created are re-pointed, corners included, at every step
+  if (stepped) {
     err = "the anti-locking setting is fixed at the first step of an epoch; `mpm reset` first";
     return -1;
   }
@@ -404,15 +406,21 @@ LadrunoMPMPattern::admitAnalysis(const LadrunoMPMAnalysisRefs &A, std::string &e
   // materials (J10); a symmetric-storage system would solve a different matrix.
   if (eng.par.antiLocking && A.soe != 0) {
     const int t = A.soe->getClassTag();
+    // C3: every symmetric-storage SOE class (classTags.h), and the two whose symmetry is a
+    // matType option (PARDISO -matType / -sym, MUMPS -matrixType 1|2), read by the bridges
+    const bool solverSym = (t == LinSOE_TAGS_PARDISOGenLinSOE || t == LinSOE_TAGS_MumpsSOE ||
+                            t == LinSOE_TAGS_MumpsParallelSOE) && A.pardisoMatType > 0;
     const bool sym = t == LinSOE_TAGS_BandSPDLinSOE || t == LinSOE_TAGS_ProfileSPDLinSOE ||
                      t == LinSOE_TAGS_SymSparseLinSOE || t == LinSOE_TAGS_ProfileSPDLinSOEGather ||
-                     (t == LinSOE_TAGS_PARDISOGenLinSOE && A.pardisoMatType > 0);
+                     t == LinSOE_TAGS_DistributedBandSPDLinSOE ||
+                     t == LinSOE_TAGS_DistributedProfileSPDLinSOE ||
+                     t == LinSOE_TAGS_SProfileSPDLinSOE || solverSym;
     if (sym) {
-      err = "`mpm antiLocking fbar` makes the particle tangent unsymmetric (even for elastic"
-            " materials): the symmetric-storage system (class tag " + std::to_string(t) +
-            (t == LinSOE_TAGS_PARDISOGenLinSOE ? ", PARDISO in a symmetric mode" : "") +
-            ") is refused; use an unsymmetric one (UmfPack, SparseGEN, FullGeneral, Mumps,"
-            " `system Pardiso` without a symmetric option)";
+      err = "`mpm antiLocking fbar` makes the particle tangent unsymmetric in general: the"
+            " symmetric-storage system (class tag " + std::to_string(t) +
+            (solverSym ? ", a symmetric matrix type" : "") +
+            ") is refused; use an unsymmetric one: UmfPack, SparseGEN, FullGeneral,"
+            " `system Pardiso` (matType 0) or `system Mumps -matrixType 0`";
       return -1;
     }
   }
@@ -958,9 +966,10 @@ int
 LadrunoMPMPattern::debugAffineCheck(const double *A, const double *b, std::vector<double> &out,
                                     std::string &err)
 {
-  if (theMode == MODE_EXPLICIT) {
-    eng.affineCheck(A, b, out);
-    out.push_back(0.0);
+  if (theMode == MODE_EXPLICIT) {               // C2: the production helper of advance()
+    std::vector<double> o;
+    engineAffineCheck(A, b, o);
+    out = {o[0], o[1], o[2], 0.0, o[3], o[4]};
     return 0;
   }
   if (elementsRestored && relinkElements(err) < 0) return -1;
@@ -986,7 +995,7 @@ LadrunoMPMPattern::debugAffineCheck(const double *A, const double *b, std::vecto
     }
     n->setTrialDisp(u);
   }
-  double worst = 0.0, depsMax = 0.0;
+  double worst = 0.0, depsMax = 0.0, spur = 0.0;
   int nAvg = 0, nFb = 0, nBad = 0;
   for (LadrunoMPMPoint *e : eles) {
     if (e == 0) continue;
@@ -998,6 +1007,7 @@ LadrunoMPMPattern::debugAffineCheck(const double *A, const double *b, std::vecto
     e->antiLockingTrial(rel, dm);
     worst = std::max(worst, rel);
     depsMax = std::max(depsMax, dm);
+    spur = std::max(spur, e->trialStressChange());
     nAvg++;
   }
   for (const auto &kv : liveTag) {
@@ -1008,8 +1018,90 @@ LadrunoMPMPattern::debugAffineCheck(const double *A, const double *b, std::vecto
     if (e != 0) e->revertToLastCommit();
   inStep = false;
   armedWindow = false;
-  out = {worst, depsMax, (double)nAvg, (double)nFb, (double)nBad};
+  out = {worst, depsMax, (double)nAvg, (double)nFb, (double)nBad, spur};
   return 0;
+}
+
+int
+LadrunoMPMPattern::setFailDump(const std::string &path, int k)
+{
+  if (path == "off") {
+    failDumpPath.clear();
+    LadrunoMPMPoint::diagnose = false;
+    return 0;
+  }
+  if (path.empty() || k < 1) return -1;
+  failDumpPath = path;
+  failDumpK = k;
+  LadrunoMPMPoint::diagnose = true;
+  return 0;
+}
+
+// The failure diagnosis (the 232f method): the elements still hold the LAST Newton iterate
+// (a failed analyze reverts the nodes and materials, not the elements' caches). Nodal residual
+// = Sum_e P_e (resisting force minus body force) over free DOFs; a particle's score is the
+// largest residual norm among its support nodes. One line per particle:
+//   t attempt id x.. score sig.. tangentRatio apex(<1e-2) path(0/1/2) detFc/detF
+void
+LadrunoMPMPattern::writeFailDump(double t, int attempt)
+{
+  Domain *dom = this->getDomain();
+  const int nd = eng.ndm(), nv = eng.nv();
+  std::set<std::pair<int, int>> fixed;
+  for (const SpecRow &r : lastSpec) {
+    auto it = liveTag.find(r.ext);
+    if (it != liveTag.end()) fixed.insert(std::make_pair(it->second, r.dof));
+  }
+  std::map<int, std::vector<double>> res;
+  for (LadrunoMPMPoint *e : eles) {
+    if (e == 0 || e->lastResidual() == 0) continue;
+    const ID &c = e->getExternalNodes();
+    const Vector &Pv = *e->lastResidual();
+    if (Pv.Size() != nd * c.Size()) continue;
+    for (int k = 0; k < c.Size(); k++) {
+      std::vector<double> &r = res[c(k)];
+      r.resize(nd, 0.0);
+      for (int a = 0; a < nd; a++) r[a] += Pv(nd * k + a);
+    }
+  }
+  std::map<int, double> nodeNorm;
+  for (auto &kv : res) {
+    double s = 0.0;
+    for (int a = 0; a < nd; a++)
+      if (!fixed.count(std::make_pair(kv.first, a))) s += kv.second[a] * kv.second[a];
+    nodeNorm[kv.first] = std::sqrt(s);
+  }
+  std::vector<std::pair<double, int>> score;
+  for (int p = 0; p < (int)eles.size(); p++) {
+    if (eles[p] == 0) continue;
+    const ID &c = eles[p]->getExternalNodes();
+    double m = 0.0;
+    for (int k = 0; k < c.Size(); k++) m = std::max(m, nodeNorm[c(k)]);
+    score.push_back(std::make_pair(m, p));
+  }
+  std::sort(score.begin(), score.end(), [](const std::pair<double, int> &a, const std::pair<double, int> &b) {
+    return a.first > b.first || (a.first == b.first && a.second < b.second);
+  });
+  FILE *f = std::fopen(failDumpPath.c_str(), "a");
+  if (f == 0) {
+    opserr << "WARNING mpm debug failDump -- cannot open " << failDumpPath.c_str() << "\n";
+    return;
+  }
+  const int n = std::min((int)score.size(), failDumpK);
+  for (int r = 0; r < n; r++) {
+    const int p = score[r].second;
+    LadrunoMPMPoint *e = eles[p];
+    std::fprintf(f, "%.12g %d %lld", t, attempt, (long long)eng.P.id[p]);
+    for (int a = 0; a < nd; a++) std::fprintf(f, " %.9g", eng.P.x[nd * p + a]);
+    std::fprintf(f, " %.6e", score[r].first);
+    const double *s = e->trialStress();
+    for (int k = 0; k < nv; k++) std::fprintf(f, " %.6e", s[k]);
+    const double tr = e->diagTangentRatio();
+    std::fprintf(f, " %.6e %d %d %.9g\n", tr, tr < 1e-2 ? 1 : 0, e->antiLockingPath(),
+                 e->diagVolumeRatio());
+  }
+  std::fclose(f);
+  (void)dom;
 }
 
 void
@@ -1171,6 +1263,7 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
         break;
       }
       // failed before any commit: nothing to undo — cut and retry
+      if (!failDumpPath.empty()) writeFailDump(stepT0, attempt);   // WP-232j diagnosis
       nRetries++;
       if (++cuts > maxCutCount) {
         opserr << "ERROR mpm analyze -- the step at t = " << stepT0 << " failed after " << maxCutCount
@@ -1286,6 +1379,7 @@ LadrunoMPMPattern::packState(Vector &out)
   Packer k;
   const ladruno_mpm::Grid &G = eng.grid;
   const int ver = packVersionOut ? packVersionOut : MPM_PACK_VERSION;   // WP-232j (L8 hook)
+  packVersionOut = 0;                                                   // C6: one save only
   k.put(ver);
   k.put(G.ndm);
   for (int d = 0; d < 3; d++) k.put(G.x0[d]);

@@ -4010,6 +4010,10 @@ int OPS_LadrunoMPMDL()
     if (PARDISOGenLinSOE *ps = dynamic_cast<PARDISOGenLinSOE *>(cmds->getSOE()))   // Ladruno WP-232j
         pardisoMatType = ps->getMatType();
 #endif
+#ifdef _MUMPS
+    if (MumpsSOE *ms = dynamic_cast<MumpsSOE *>(cmds->getSOE()))   // Ladruno WP-232j
+        pardisoMatType = ms->ladrunoGetMatType();
+#endif
     return OPS_LadrunoMPMWithAnalysis(cmds->getStaticAnalysis(), cmds->getTransientAnalysis(),
                                       cmds->getStaticIntegrator(), cmds->getTransientIntegrator(),
                                       cmds->getHandler(), cmds->getSOE(),

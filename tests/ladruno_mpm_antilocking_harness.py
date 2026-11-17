@@ -30,7 +30,8 @@ import ladruno_mpm_implicit_harness as H  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 CASES = REPO / "tests" / "mpm_antilocking_cases.txt"
-EXTRA = ("antilocking", "ladder", "affine", "row", "tangent_eps")
+EXTRA = ("antilocking", "ladder", "affine", "row", "tangent_eps", "stress", "tangent_strain",
+         "energy_mode", "dt_factor", "sample", "v0", "ledger_case")
 H_MIN_DEFAULT = 5e-4          # freeze Q1: the FE's dsc < 1e-6 m at v = 0.002 per unit pseudo-time
 PLASTIC_ZONE = (6.0, -4.0)    # freeze F1: x <= 3B, y >= -2B with B = 2 m
 
@@ -56,14 +57,16 @@ def parse_cases(path=CASES):
             cur = t[1]
             order.append(cur)
             extras[cur] = {"antilocking": None, "ladder": None, "affine": [], "row": None,
-                           "tangent_eps": None, "expects": [], "base": None, "j2": []}
+                           "tangent_eps": None, "expects": [], "base": None, "j2": [],
+                           "stress": [], "tangent_strain": None, "energy_mode": None,
+                           "dt_factor": None, "sample": None, "v0": None, "ledger_case": None}
             kept.append(raw)
             continue
         if cur is not None and t:
             k = t[0]
             if k in EXTRA:
-                if k == "affine":
-                    extras[cur]["affine"].append(t[1:])
+                if k in ("affine", "stress"):
+                    extras[cur][k].append(t[1:])
                 else:
                     extras[cur][k] = t[1:]
                 continue
@@ -104,6 +107,12 @@ def parse_cases(path=CASES):
         te = ext(name, "tangent_eps")
         c["tangent_eps"] = [float(v) for v in te] if te else None
         c["j2"] = ext(name, "j2")
+        c["stress"] = e["stress"]
+        for k in ("tangent_strain", "dt_factor", "v0"):
+            c[k] = float(e[k][0]) if e[k] else None
+        c["sample"] = int(e["sample"][0]) if e["sample"] else None
+        c["energy_mode"] = e["energy_mode"][0] if e["energy_mode"] else None
+        c["ledger_case"] = e["ledger_case"][0] if e["ledger_case"] else None
         out.append(c)
     return out
 
@@ -151,6 +160,8 @@ def model_commands(c):
     if j2:
         k = [i for i, (n, _) in enumerate(cmds) if n == "model"][0]
         cmds[k + 1:k + 1] = j2
+    for st in c.get("stress") or []:
+        cmds.append(("mpm", ["stress", int(st[0]), st[1], *[float(v) for v in st[2:]]]))
     cmds.append(("mpm", ["antiLocking", c.get("antilocking", "fbar")]))
     return cmds
 
@@ -194,16 +205,20 @@ def run_affine(c, ops):
 def evaluate_affine(c, res):
     rows = []
     N = res["N"]
+    s0 = max([abs(float(v)) for st in c.get("stress") or [] for v in st[2:]] or [0.0])
     for name, r in res.items():
         if name == "N":
             continue
-        rel, deps, navg, nfb, nbad = r["out"]
+        rel, deps, navg, nfb, nbad, spur = r["out"]
         ok = navg == N and nfb == 0 and nbad == 0
-        det = f"rel {rel:.3e}, deps {deps:.3e}, averaged {navg:.0f}/{N}, fallback {nfb:.0f}, refused {nbad:.0f}"
+        det = (f"rel {rel:.3e}, deps {deps:.3e}, spurious stress {spur:.3e} (|sigma_0| {s0:.3g}), "
+               f"averaged {navg:.0f}/{N}, fallback {nfb:.0f}, refused {nbad:.0f}")
         if "rel_le" in r["gates"]:
             ok = ok and rel <= r["gates"]["rel_le"]
         if "deps_le" in r["gates"]:
             ok = ok and deps <= r["gates"]["deps_le"]
+        if "spur_rel_le" in r["gates"]:
+            ok = ok and s0 > 0.0 and spur <= r["gates"]["spur_rel_le"] * s0
         rows.append((f"{c['name']} {name}", "pass" if ok else "fail", det))
     return rows
 
@@ -224,6 +239,7 @@ def run_tangent(c, ops):
     for _ in range(H.num_steps(c)):
         ops.mpm("analyze", 1, c["dt"])
     r["strain_max"] = max(abs(v) for v in _as_list(ops.mpm("particleData", "epsHat")))
+    r["N"] = int(ops.mpm("info", "numParticles"))
     r["strained_on"] = [tc(e) for e in eps]
     r["strained_off"] = [tc(e, "off") for e in eps]
     r["eps"] = eps
@@ -241,7 +257,7 @@ def _converged(rows):
 # --------------------------------------------------------------------------- #
 #  The footing: K6's ladder per accepted step, F1's counts                     #
 # --------------------------------------------------------------------------- #
-def run_ladder(c, ops, log=None):
+def run_ladder(c, ops, log=None, dump=None):
     """A footing case through `mpm analyze 1 h` with K6's ladder (interface §5): per step, each
     try sets `algorithm` and `test NormUnbalance`; `mpm cut 2 0` so a failed try reverts and the
     harness moves on; all tries failing halves h (regrown x2 per accepted sub-step, to dt); h
@@ -251,6 +267,8 @@ def run_ladder(c, ops, log=None):
     r = H._record_init(c, lambda f: _as_list(ops.mpm("particleData", f)))
     _apply(ops, H.analysis_commands(c))
     ops.mpm("cut", 2.0, 0)
+    if dump:                                  # the L4 diagnosis (`mpm debug failDump`)
+        ops.mpm("debug", "failDump", str(dump[0]), int(dump[1]))
     lad = c["ladder"] or {"tries": [("Newton", c["newton"][1], c["newton"][2])], "relaxed": 99,
                           "h_min": H_MIN_DEFAULT}
     rec = H._make_recorder(c, r, lambda *a: ops.mpm(*a))
@@ -312,6 +330,8 @@ def run_ladder(c, ops, log=None):
                 log(f"{c['name']}: t = {t:g}, q = {q:.2f}, failed {failed}, relaxed {relaxed}, "
                     f"halvings {halvings}")
             k += 1
+    if dump:
+        ops.mpm("debug", "failDump", "off")
     counts = _as_list(ops.mpm("info", "antiLockingCounts"))
     r.update({"failed_attempts": failed, "relaxed_steps": relaxed, "halvings": halvings,
               "al_averaged": al_avg, "al_fallback": al_fb, "al_counts_engine": counts,
@@ -351,6 +371,8 @@ def observable(c, r, e):
 def judge(e, got):
     if e["op"] is None:
         return "report", f"{got:.6g}"
+    if not (isinstance(got, (int, float)) and math.isfinite(got)):
+        return "fail", f"{got} (not a finite number)"
     if e["op"] == "out":
         lo, hi = e["vals"]
         ok = not (lo <= got <= hi)
@@ -390,6 +412,71 @@ def run_record(c, r):
         rec.setdefault("observables", {})[e["line"]] = observable(c, r, e)
     rec["verdicts"] = [list(x) for x in evaluate(c, r)]
     return rec
+
+
+# --------------------------------------------------------------------------- #
+#  L9: energy                                                                  #
+# --------------------------------------------------------------------------- #
+def _energy_run(c, ops, al):
+    cc = dict(c)
+    cc["antilocking"] = al
+    cmds = [x for x in model_commands(cc) if not (x[0] == "mpm" and x[1] and x[1][0] == "mode")]
+    _apply(ops, cmds)
+    if c["energy_mode"] == "A":
+        ops.mpm("mode", "implicit")
+    if c["v0"]:
+        ops.mpm("velocity", 1, "uniform", c["v0"], *([0.0] * (c["ndm"] - 1)))
+    dt = c["dt_factor"] * float(ops.mpm("criticalTimeStep"))
+    if c["energy_mode"] == "A":
+        _apply(ops, [("constraints", ["Plain"]), ("numberer", ["RCM"]), ("system", ["UmfPack"]),
+                     ("test", ["NormDispIncr", 1e-10, 30]), ("algorithm", ["Newton"]),
+                     ("integrator", ["Newmark", 0.5, 0.25]), ("analysis", ["Transient"])])
+    ke = [_as_list(ops.mpm("info", "summary"))[-1]]
+    done, n, blk = 0, c["steps"], c["sample"] or 20
+    try:
+        with H._stderr_capture():
+            while done < n:
+                m = min(blk, n - done)
+                ops.mpm("analyze", m, dt)
+                done += m
+                ke.append(_as_list(ops.mpm("info", "summary"))[-1])
+    except Exception:
+        pass
+    return {"ke": ke, "done": done, "dt": dt, "ke_max": max(ke)}
+
+
+def run_energy(c, ops):
+    """L9: the case off and on; ke_ratio = KE_max(on) / KE_max(off); completed = both ran."""
+    t0 = time.time()
+    off = _energy_run(c, ops, "off")
+    on = _energy_run(c, ops, "fbar")
+    return {"off": off, "on": on, "ke_ratio": on["ke_max"] / max(off["ke_max"], 1e-300),
+            "completed": 1.0 if (off["done"] == c["steps"] and on["done"] == c["steps"]) else 0.0,
+            "wall_s": time.time() - t0}
+
+
+def run_ledger(c, ops):
+    """L9: an S1 energy-ledger case of tests/mpm_cases.txt with anti-locking on (slice-1 harness)."""
+    import ladruno_mpm_harness as H1
+    base = [x for x in H1.parse_cases() if x["name"] == c["ledger_case"]][0]
+    orig = H1.setup_commands
+    H1.setup_commands = lambda cc: orig(cc) + [("mpm", ["antiLocking", "fbar"])]
+    try:
+        r = H1.run_python(base, ops)
+    finally:
+        H1.setup_commands = orig
+    obs = H1.observables(base, r)
+    return {"obs": obs, "stopped": r.get("stopped"),
+            "counts": _as_list(ops.mpm("info", "antiLockingCounts"))}
+
+
+def evaluate_values(c, values):
+    """[(line, verdict, detail)] for expects over a dict obs -> value."""
+    rows = []
+    for e in c["expects"]:
+        v, det = judge(e, values.get(e["obs"], float("nan")))
+        rows.append((e["line"], "report" if e["report"] else v, det))
+    return rows
 
 
 def flushprint(*a):

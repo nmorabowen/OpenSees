@@ -151,8 +151,17 @@ end
 #             state (mode F: the engine's support of every particle; mode A: every particle element
 #             armed, every live grid node at A X + b) and gates: rel = max_p |dFbar - dF|_max /
 #             |dF - I|_max <= r, max_p |deps|_max <= d (the rotation), every particle averaged
-#             (#averaged = N, #fallback = 0, #refused = 0). `masscut 1e-12` keeps every support
-#             untruncated (amendment 1).
+#             (#averaged = N, #fallback = 0, #refused = 0); spur_rel_le r: the spurious stress
+#             max_p |sigHat_trial - sigHat_n| <= r max |sigma_0| (the rotation of the stressed body,
+#             L1b). `masscut 1e-12` keeps every support untruncated (amendment 1).
+#   stress <body> uniform <nv values>   the body's initial stress (`mpm stress`)
+#   tangent_strain <e>        L2: the strained state must reach max |epsHat| >= 0.75 e
+#   kind energy               L9: the case runs twice, anti-locking off and on; `energy_mode F|A`,
+#             `dt_factor` (of `mpm criticalTimeStep`), `steps`, `sample` (steps per KE sample),
+#             `v0` (uniform x velocity); ke_ratio = KE_max(on) / KE_max(off) over the samples;
+#             completed = 1 when both runs take every step (no particle leaves the grid).
+#   kind ledger               L9: `ledger_case <name>` of tests/mpm_cases.txt run with anti-locking
+#             on through the slice-1 harness; its frozen (non-oracle) tolerances.
 #   kind tangent              L2: `mpm debug tangentCheck 1e-6 <eps>` per tangent_eps, undeformed
 #             and after the case's steps (the strained state), on and with `-antiLocking off`.
 #             tangent_rel_undeformed le r: max rel on, undeformed; tangent_ratio_strained le k:
@@ -171,7 +180,7 @@ end
 # L1: kinematics (232j-C) -- affine fields, every basis, both modes, 2D and 3D
 # ============================================================================
 # Grid 6^d cells of h = 0.5 from the origin; body [1, 2]^d (ppc 2: 16 / 64 particles); elastic
-# E = 1e7, nu = 0.3. A rotation turns about the body centre (b = -(Q - I) c), so mode A's trial
+# E = 1e7, nu = 0.3, PRE-STRESSED (`stress 1 uniform`, round 3 C6: "a stressed body"). A rotation turns about the body centre (b = -(Q - I) c), so mode A's trial
 # centres stay in the grid. Gate (wp-briefs.md "232j" L1a, L1b; amendment 1): rel <= 1e-12 for
 # every field, max |deps| <= 1e-12 for the rotation (the frozen tolerance of the kernel's
 # rigid_rotation cases, tests/hypo_incremental_cases.txt). L1c (F_zz = 1) is header-level only
@@ -188,10 +197,11 @@ cells 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
 affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
-affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_F_gimp_3d
@@ -206,10 +216,11 @@ cells 6 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
 affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
-affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_F_linear_2d
@@ -224,10 +235,11 @@ cells 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
 affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
-affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_F_linear_3d
@@ -242,10 +254,11 @@ cells 6 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
 affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
-affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_F_bspline2_2d
@@ -260,10 +273,11 @@ cells 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
 affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
-affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_F_bspline2_3d
@@ -278,10 +292,11 @@ cells 6 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
 affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
-affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_F_bspline3_2d
@@ -296,10 +311,11 @@ cells 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
 affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
-affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_F_bspline3_3d
@@ -314,10 +330,11 @@ cells 6 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
 affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
-affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_A_gimp_2d
@@ -332,10 +349,11 @@ cells 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
 affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
-affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_A_gimp_3d
@@ -350,10 +368,11 @@ cells 6 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
 affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
-affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_A_linear_2d
@@ -368,10 +387,11 @@ cells 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
 affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
-affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_A_linear_3d
@@ -386,10 +406,11 @@ cells 6 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
 affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
-affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_A_bspline2_2d
@@ -404,10 +425,11 @@ cells 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
 affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
-affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_A_bspline2_3d
@@ -422,10 +444,11 @@ cells 6 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
 affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
-affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_A_bspline3_2d
@@ -440,10 +463,11 @@ cells 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
 affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
-affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 case affine_A_bspline3_3d
@@ -458,10 +482,11 @@ cells 6 6 6
 material 1 elastic 1.0e7 0.3
 body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
 masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
 affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
 affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
 affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
-affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
 end
 
 # ============================================================================
@@ -492,6 +517,161 @@ dt 0.1
 steps 10
 newton NormDispIncr 1e-12 30
 tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 2e-3
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+# Round 3 (C5): the same bars on nu 0.3 / 0.45, 3D, the B8 image path, and 1 % / 5 % strain.
+# Each strained row's max |epsHat| must reach 0.75 x its tangent_strain.
+case tangent_column_1pct
+kind tangent
+mode quasistatic
+desc L2 (C5): 1 % strain (E = 1e7, nu = 0)
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 1.0e7 0.0
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 1e-2
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+case tangent_column_5pct
+kind tangent
+mode quasistatic
+desc L2 (C5): 5 % strain (E = 2e6, nu = 0)
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 2.0e6 0.0
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 5e-2
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+case tangent_column_nu03
+kind tangent
+mode quasistatic
+desc L2 (C5): nu = 0.3, about 0.2 % (E = 3.7e7, confined)
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 3.7e7 0.3
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 2e-3
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+case tangent_column_nu045
+kind tangent
+mode quasistatic
+desc L2 (C5): nu = 0.45, about 0.2 % (E = 1.32e7, confined)
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 1.32e7 0.45
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 2e-3
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+case tangent_column_3d
+kind tangent
+mode quasistatic
+desc L2 (C5): 3D, nu = 0.3, about 0.2 %
+ndm 3
+basis gimp
+origin 0.0 0.0 0.0
+h 0.5
+cells 1 22 1
+material 1 elastic 3.7e7 0.3
+body 1 box 0.0 0.0 0.0 0.5 10.0 0.5 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix zmin z
+fix zmax z
+fix ymin y
+gravity 0.0 -10.0 0.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 2e-3
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+case tangent_column_bspline2_img
+kind tangent
+mode quasistatic
+desc L2 (C5): bspline2 with fix-face images (the B8 path), nu = 0.3
+ndm 2
+basis bspline2
+origin 0.0 0.0
+h 0.5
+cells 2 22
+material 1 elastic 3.7e7 0.3
+body 1 box 0.0 0.0 1.0 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 2e-3
 expect tangent_rel_undeformed le 1e-5
 expect tangent_ratio_strained le 2.0
 end
@@ -643,4 +823,407 @@ status gate
 antilocking off
 desc L7 switch oracle, off: footing_j2_r1 with anti-locking off (locked)
 expect cond_pressure_window footing y 1.0 25.0 35.0 out 513.09 627.11
+end
+
+# ============================================================================
+# L9: energy (232j-C, critic round C1; pre-registered in wp-briefs.md "232j", critic block)
+# ============================================================================
+# The critic's probe: 2D free block 1 x 1.5 m on `fix ymin xy`, grid origin (-4, 0), h = 0.25,
+# 40 x 16 cells, ppc 2, rho 1800, ElasticIsotropic E = 2e5, gravity -9.81; bases gimp, linear,
+# bspline2; nu 0.3 and 0.45. Mode F: FLIP alpha 1, dt = 0.15 dt_crit, 4000 steps; v0 = 1 m/s at
+# 0.05 dt_crit, 9000 steps. Mode A: Newmark average acceleration, 400 steps of dt_crit (the
+# explicit estimate; implicit off is stable there). Gate: KE_max(on) <= 1.5 KE_max(off), and both
+# runs take every step (no particle leaves the grid).
+case energy_F_gimp_nu03
+kind energy
+desc L9 energy, mode F, gimp, nu = 0.3
+ndm 2
+basis gimp
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.15
+steps 4000
+sample 20
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_Fv0_gimp_nu03
+kind energy
+desc L9 energy, mode F, v0 = 1 m/s, gimp, nu = 0.3
+ndm 2
+basis gimp
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.05
+steps 9000
+sample 20
+v0 1.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_A_gimp_nu03
+kind energy
+desc L9 energy, mode A, gimp, nu = 0.3
+ndm 2
+basis gimp
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode A
+dt_factor 1.0
+steps 400
+sample 10
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_F_gimp_nu045
+kind energy
+desc L9 energy, mode F, gimp, nu = 0.45
+ndm 2
+basis gimp
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.15
+steps 4000
+sample 20
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_Fv0_gimp_nu045
+kind energy
+desc L9 energy, mode F, v0 = 1 m/s, gimp, nu = 0.45
+ndm 2
+basis gimp
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.05
+steps 9000
+sample 20
+v0 1.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_A_gimp_nu045
+kind energy
+desc L9 energy, mode A, gimp, nu = 0.45
+ndm 2
+basis gimp
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode A
+dt_factor 1.0
+steps 400
+sample 10
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_F_linear_nu03
+kind energy
+desc L9 energy, mode F, linear, nu = 0.3
+ndm 2
+basis linear
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.15
+steps 4000
+sample 20
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_Fv0_linear_nu03
+kind energy
+desc L9 energy, mode F, v0 = 1 m/s, linear, nu = 0.3
+ndm 2
+basis linear
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.05
+steps 9000
+sample 20
+v0 1.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_A_linear_nu03
+kind energy
+desc L9 energy, mode A, linear, nu = 0.3
+ndm 2
+basis linear
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode A
+dt_factor 1.0
+steps 400
+sample 10
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_F_linear_nu045
+kind energy
+desc L9 energy, mode F, linear, nu = 0.45
+ndm 2
+basis linear
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.15
+steps 4000
+sample 20
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_Fv0_linear_nu045
+kind energy
+desc L9 energy, mode F, v0 = 1 m/s, linear, nu = 0.45
+ndm 2
+basis linear
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.05
+steps 9000
+sample 20
+v0 1.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_A_linear_nu045
+kind energy
+desc L9 energy, mode A, linear, nu = 0.45
+ndm 2
+basis linear
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode A
+dt_factor 1.0
+steps 400
+sample 10
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_F_bspline2_nu03
+kind energy
+desc L9 energy, mode F, bspline2, nu = 0.3
+ndm 2
+basis bspline2
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.15
+steps 4000
+sample 20
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_Fv0_bspline2_nu03
+kind energy
+desc L9 energy, mode F, v0 = 1 m/s, bspline2, nu = 0.3
+ndm 2
+basis bspline2
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.05
+steps 9000
+sample 20
+v0 1.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_A_bspline2_nu03
+kind energy
+desc L9 energy, mode A, bspline2, nu = 0.3
+ndm 2
+basis bspline2
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode A
+dt_factor 1.0
+steps 400
+sample 10
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_F_bspline2_nu045
+kind energy
+desc L9 energy, mode F, bspline2, nu = 0.45
+ndm 2
+basis bspline2
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.15
+steps 4000
+sample 20
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_Fv0_bspline2_nu045
+kind energy
+desc L9 energy, mode F, v0 = 1 m/s, bspline2, nu = 0.45
+ndm 2
+basis bspline2
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.05
+steps 9000
+sample 20
+v0 1.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_A_bspline2_nu045
+kind energy
+desc L9 energy, mode A, bspline2, nu = 0.45
+ndm 2
+basis bspline2
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode A
+dt_factor 1.0
+steps 400
+sample 10
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+# The S1 explicit energy ledger with anti-locking on: bar_flip_2d (energy_ratio_end >= 0.95,
+# period within 1 %) and impact_discs_2d (energy growth <= 1 %), their frozen tolerances; the
+# oracle-equality lines (the off arithmetic's exact values) are not gates here.
+case ledger_bar_flip_2d
+kind ledger
+ledger_case bar_flip_2d
+expect energy_ratio_end ge 0.95
+expect period_comx eq 10.0 tol 0 0.01
+end
+
+case ledger_impact_discs_2d
+kind ledger
+ledger_case impact_discs_2d
+expect energy_ratio_end le 1.01
 end

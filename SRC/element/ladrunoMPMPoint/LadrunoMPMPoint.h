@@ -56,8 +56,10 @@
 // host's `mpm antiLocking fbar`, repoint() also receives the slots of the 2^d
 // corners of the particle's cell (always inside its own support, J3). The trial
 // increment becomes dFbar = (det dF_c / det dF)^(1/d) dF (J1), the residual
-// weight the carried volume det(dFbar F_n) V_0 (J9), and the tangent gains the
-// rank-one F-bar term h d^T (J10). No corners = the shipped arithmetic, bit for bit.
+// weight the carried volume det(dFbar F_n) V_0, the internal force the one
+// work-conjugate to that kinematics, f_a = w [sigma g_a + pbar (ghat_a - g_a)]
+// (interface §11, C1: Sum f.v = w sigma : lbar), and the tangent its consistent
+// linearisation. No corners = the shipped arithmetic, bit for bit.
 //
 // The element overrides no threading opt-in: it stays off every WP-107 / WP-192
 // path (its scratch is static, shared by size).
@@ -147,6 +149,16 @@ class LadrunoMPMPoint : public Element
   void setAntiLockingSuppressed(bool s) { alSuppressed = s; needUpdate = true; trialValid = false; }
   // `mpm debug affineCheck` (L1): the last trial's dF (actual) and dFbar, and its deps
   void antiLockingTrial(double &rel, double &depsMax) const;
+  // max |sigHat_trial - sigHat_n| of the last trial (affineCheck: the spurious stress, L1b)
+  double trialStressChange(void) const;
+  // WP-232j failure diagnosis (`mpm debug failDump`): when set, every trial records the
+  // material's tangent norm against its initial one (an apex / perfectly plastic point
+  // returns a regularised, near-zero tangent).
+  static bool diagnose;
+  double diagTangentRatio(void) const { return diagTan; }
+  double diagVolumeRatio(void) const { return diagJr; }       // det dF_c / det dF (1 off)
+  const double *trialStress(void) const { return sigT; }
+  const Vector *lastResidual(void) const { return P; }
   bool connectivityEquals(const ID &tags) const;
   State state(void) const { return st; }
   // The host's batched G2P (interface D1.9): writes particle p of P from the
@@ -205,6 +217,8 @@ class LadrunoMPMPoint : public Element
   double cellH, Jc, alRel;   // alRel: |dFbar - dF|_max / |dF - I|_max of the last trial
   double Fci[9];          // dF_c^-1 of the last trial (the tangent's g-hat)
   double depsT[6];        // the last trial's unrotated strain increment (affineCheck)
+  double gHat[24];        // C1: ghat_k = gradN_k(x_c) . dF_c^-1 per corner (the conjugate force)
+  double diagTan, diagJr; // failure diagnosis (diagnose)
   bool   alActive(void) const { return alMode != 0 && !alSuppressed && corner[0] >= 0; }
 
   ID connect;
@@ -237,6 +251,8 @@ class LadrunoMPMPoint : public Element
                            const double *sg, const double *Dc);
   void refetchNodes(void);
   void addFbarTangent(Matrix &K, bool initial, double volm, const double *sg, const double *Dc);
+  void fillB(int a, bool initial, double B[6][3]) const;
+  void addConjugateForce(const double *sg);
   void cornerGradients(double gN[8][3]) const;
 };
 

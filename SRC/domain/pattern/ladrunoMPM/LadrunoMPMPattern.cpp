@@ -843,6 +843,17 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
   return rc;
 }
 
+// WP-232j (C2): mode F's `mpm debug affineCheck` through the engine's production helper,
+// evaluating (and reverting) the particles' own materials
+void
+LadrunoMPMPattern::engineAffineCheck(const double *A, const double *b, std::vector<double> &o)
+{
+  Element *saved = ops_TheActiveElement;
+  ops_TheActiveElement = 0;                       // W9, as in analyze()
+  eng.affineCheck(A, b, *adapter, o);
+  ops_TheActiveElement = saved;
+}
+
 int
 LadrunoMPMPattern::reset(void)
 {

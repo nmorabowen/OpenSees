@@ -221,6 +221,10 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   // WP-232j (J13, L8): `mpm debug packVersion 2|3` -- the restart pack's layout for the next
   // database save (2 = the 232i layout, no anti-locking field: the v2-restores-as-off test)
   int    setPackVersion(int v);
+  // WP-232j (L4 r2 diagnosis): `mpm debug failDump <path> [<k>] | off` -- on every mode-A
+  // attempt that fails before commit, append the k particles with the largest residual at
+  // their support nodes (free DOFs), their trial stress, tangent ratio and apex flag.
+  int    setFailDump(const std::string &path, int k);
   // `mpm info` counters (interface §5)
   long   infoCounter(const std::string &what, bool &ok) const;
   const std::vector<double> &dtHistory(void) const { return dtLog; }
@@ -313,7 +317,12 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   std::vector<double>     dtLog;
   std::vector<double>     bfBuf;
   std::vector<unsigned char> alPend;       // WP-232j: this attempt's anti-locking path per particle
-  int                     packVersionOut = 0;   // WP-232j: 0 = the current layout
+  int                     packVersionOut = 0;   // WP-232j: 0 = the current layout (one save only)
+  std::string             failDumpPath;          // WP-232j: empty = off
+  int                     failDumpK = 0;
+  void                    writeFailDump(double t, int attempt);
+  // mode F's affine check with the particles' materials (defined where Mats is complete)
+  void                    engineAffineCheck(const double *A, const double *b, std::vector<double> &o);
 
   double modeAMassCutoff(void) const;
   int    prepareStep(double h, std::string &err);

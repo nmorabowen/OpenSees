@@ -57,6 +57,9 @@ class MumpsSOE : public LinearSOE
     virtual ~MumpsSOE();
 
     virtual int getNumEqn(void) const;
+    // Ladruno WP-232j: the matrix type (0 unsymmetric, 1 SPD, 2 symmetric general), read by
+    // the MPM driver's refusal of symmetric storage with an unsymmetric tangent
+    int ladrunoGetMatType(void) const { return matType; }
     virtual int setSize(Graph &theGraph);
     virtual int addA(const Matrix &, const ID &, double fact = 1.0);
     virtual int addB(const Vector &, const ID &, double fact = 1.0);    

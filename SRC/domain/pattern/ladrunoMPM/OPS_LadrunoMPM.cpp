@@ -526,6 +526,14 @@ int cmdDebug(LadrunoMPMPattern *h)
     if (h->debugTangentCheck(a[0], a[1], out, err, al) < 0) return fail("debug tangentCheck -- " + err);
     return outDoubles(out);
   }
+  if (what == "failDump") {                                            // WP-232j (L4 diagnosis)
+    const std::string path = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+    int k = 20;
+    if (path != "off" && OPS_GetNumRemainingInputArgs() > 0 && !readInt(k))
+      return fail("debug failDump <path> [<k>] | off");
+    if (h->setFailDump(path, k) < 0) return fail("debug failDump <path> [<k>] | off");
+    return 0;
+  }
   if (what == "packVersion") {                                         // WP-232j (L8)
     int v;
     if (!readInt(v) || h->setPackVersion(v) < 0) return fail("debug packVersion 2|3");

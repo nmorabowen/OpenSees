@@ -352,22 +352,29 @@ increment as in implicit MPM (Coombs et al. 2018), with the background cell as t
 domain: every particle of a cell gets the same volumetric increment, one constraint per cell, and
 nearly incompressible flow (J2 plasticity, non-dilatant Drucker–Prager, ν → 0.5) stops locking at
 2×2 particles per cell. Only the increment is modified; the carried `F`, its volume `V = det F V₀`
-and the stress follow from it. One rule for `gimp`, `linear`, `bspline2` and `bspline3`, in mode F
+and the stress follow from it. The internal force is the one work-conjugate to that kinematics,
+`f_a = V [σ g_a + p̄ (ĝ_a − g_a)]` with `p̄` the in-plane (2D) or full (3D) mean stress and `ĝ`
+the cell centre's corner gradients — a B-bar force (Hughes 1980) beside the F-bar kinematics — so
+the internal power is `V σ : ℓ̄` and the scheme keeps the energy balance (gate row L9). Without it
+(the 232j round-2 build) a soft free body under FLIP gained energy without bound. One rule for `gimp`, `linear`, `bspline2` and `bspline3`, in mode F
 (after the grid update, before the material call) and in mode A (inside the particle element).
 
-**Where it does nothing.** A homogeneous (affine) field is unchanged (to 1e-12). A particle whose
-cell has a corner that is not an active node — the free surface's outer cells, a corner dropped by
-the mode-A cutoff, an inactive `ghost` node — keeps its own increment (the fallback);
-`mpm particleData antiLocking` (0 off / 1 averaged / 2 fallback, last accepted step) and
-`mpm info antiLockingCounts` (averaged, fallback particle-steps this epoch) show how much of a run
-that is.
+**Where it does nothing.** A homogeneous (affine) field is unchanged (to 1e-12). A particle keeps its
+own increment (the fallback) only when a corner of its cell is not an active node: a corner below
+the mass cutoff (mode F's 1e-10, mode A's 5e-2 of the largest particle mass) or an inactive `ghost`
+node. The corners of a particle's cell always carry that particle's own mass, so this almost never
+happens: it did not happen once in the 232j warrant records (the free surface's cells keep the
+averaging). `mpm particleData antiLocking` (0 off / 1 averaged / 2 fallback, last accepted step) and
+`mpm info antiLockingCounts` (averaged, fallback particle-steps this epoch) report it.
 
 **Mode A.** The corners of a particle's cell always lie in its own support, so the particle
-elements keep their node sets, sizes and memory (about 190 B more per element, on or off). The
-tangent gains a rank-one F-bar term and is **unsymmetric even for elastic materials**: use an
-unsymmetric system (UmfPack, SparseGEN, FullGeneral, Mumps, `system Pardiso` without a symmetric
-option). `mpm analyze` refuses `BandSPD`, `ProfileSPD`, `SparseSPD` / `SymSparse` and PARDISO in a
-symmetric mode with `fbar`. The restart pack is version 3 (it carries the setting); a version-2
+elements keep their node sets, sizes and memory (about 0.4 kB more per element, on or off). The
+tangent gains the consistent anti-locking terms; it is symmetric for small-strain elasticity but
+**unsymmetric in general** (finite strain, plasticity): use an unsymmetric system (UmfPack,
+SparseGEN, FullGeneral, `system Pardiso` with matType 0, `system Mumps -matrixType 0`).
+`mpm analyze` refuses every symmetric-storage system with `fbar`: `BandSPD`, `ProfileSPD`,
+`SProfileSPD`, `SparseSPD`, the distributed SPD systems, and PARDISO or MUMPS with a symmetric
+matrix type. The restart pack is version 3 (it carries the setting); a version-2
 database (232i) restores with anti-locking off.
 
 | Command | What it does |
@@ -378,7 +385,8 @@ database (232i) restores with anti-locking off.
 | `mpm particleData antiLocking` | per particle, the last accepted step's path: 0, 1 averaged, 2 fallback |
 | `mpm debug affineCheck <A: ndm²> <b: ndm>` | L1 hook: the affine field A x + b on every support node; returns [max rel change, max \|Δε̂\|, averaged, fallback, refused] |
 | `mpm debug tangentCheck <scale> <eps> -antiLocking off` | the 232f tangent check with the F-bar suppressed on the same elements (L2) |
-| `mpm debug packVersion 2\|3` | the restart layout of the next database save (test hook) |
+| `mpm debug packVersion 2\|3` | the restart layout of the next database save only (test hook) |
+| `mpm debug failDump <path> [<k>] \| off` | on every mode-A attempt that fails before commit, append the k particles with the largest residual at their support nodes: time, attempt, id, x, residual, trial stress, tangent norm / initial, apex flag (< 1e-2), path, det ΔF_c / det ΔF |
 
 **When to use it.** Plasticity with isochoric or nearly isochoric flow (J2, Tresca, Drucker–Prager
 with small dilatancy), and elasticity near ν = 0.5, at 2×2 (3×3×3) particles per cell. It is off by
