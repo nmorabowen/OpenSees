@@ -201,7 +201,7 @@ after a run — a miss is reported as a miss, with its diagnosis):
 |---|---|
 | large-deflection cantilever, quasi-static (gravity ramp) | tip deflection within 5 % of the reference at the finest of three resolutions; error non-increasing across them |
 | large-deflection cantilever, transient (Newmark) | first-peak tip deflection and first period within 5 % of the transient reference |
-| non-associated mild-cone footing (φ_ps = 27.47°, plane strain, exact q₀·N_q = 138.9 kPa) | the peak / plateau at the finest of three resolutions (cells across B × particles per cell) within [0.90, 1.10] × 138.9 kPa; all three reported. FE's own monotone sequence 1.0020 / 0.9517 / 0.9260 (ADR-79) is context, not the gate **Outcome (2026-11-15):** unreachable at r3 even by the fork's FE (B-bar 0.882x, locked 1.114x); recorded as a strict xfail, and the owner chose to redesign the gate before phase 4 (ADR 232, amendment after the §8 table). |
+| non-associated mild-cone footing (φ_ps = 27.47°, plane strain, exact q₀·N_q = 138.9 kPa) | the peak / plateau at the finest of three resolutions (cells across B × particles per cell) within [0.90, 1.10] × 138.9 kPa; all three reported. FE's own monotone sequence 1.0020 / 0.9517 / 0.9260 (ADR-79) is context, not the gate **Outcome (2026-11-15):** unreachable at r3 even by the fork's FE (B-bar 0.882x, locked 1.114x); recorded as a strict xfail, and the owner chose to redesign the gate before phase 4 (ADR 232, amendment after the §8 table). **Redesigned at 232j kickoff (2026-11-17): row L4 of "232j".** |
 | elastic column under self-weight, implicit quasi-static | the slice-1 small-compression case's closed form σ = ρ₀g(l₀ − Y) at its frozen tolerance (`tests/mpm_cases.txt`, Amendment 4; the 20 % case stays an XFAIL — quirk `WP-232b-ugimp-fixed-domains-…`) |
 | plate with a hole, stated d/W | peak σ_θθ / σ_net within 5 % of Howland's factor at that d/W |
 | 1D vibrating bar, implicit (Newmark average acceleration, small Δt) | frequency within 1 % of closed form — the transient re-seed (W1) leg |
@@ -572,4 +572,176 @@ Done when: every gated row green (or a reported miss with diagnosis), R1 reporte
 Ladruno_implementation/232i_mpm_bspline_mms.md (method, tables per row, the orders, the
 crossings), ci/ gates clean, ladrunoBuild matching your head on the exe and the pyd. Report per
 the Worker rules.
+```
+
+## 232j — phase 4: anti-locking in rate form
+
+Kickoff 2026-11-17 (orchestrator, Opus 5.5, started by the program orchestrator per #1075).
+Branch `wp/232j-mpm-antilocking`, one draft PR for the WP. Base `ladruno` at `1d2a692ba` (232i
+#1099 merged as `0b26fdb12`; release `ladruno-v20261116` predates 232i). ADR §9 phase 4. The
+footing gate owed by the 232f amendment is redesigned first. The ADR carries it as
+"Amendment (232j kickoff, 2026-11-17)", written with this section and before any phase-4 MPM
+number. Done when the gate table below is green (or each miss is reported with its diagnosis, never
+a widened band), the warrant package is in the PR, and the ADR carries "Amendment (232j, <date>)"
+recording the scheme, its modes and bases, and its default.
+
+Read before dispatch: #1103 (232i review follow-ups), #1095 (mode-A crash in a step-cut retry, a
+hazard for the footing ladder), #1096 (the tangent rebuilds B nen² times), #1097, #1098 (mode-A
+memory, 27-node supports), #1090. None is in scope unless the anti-locking rewrites the same code,
+and none may regress.
+
+**Model and effort, re-decided at kickoff.**
+- C++ worker: opus · high (the roster's fork C++ row). The work is new kinematics in both modes, a
+  consistent mode-A tangent and possibly a new element coupling.
+- Verification worker 232j-V: opus · high, a different agent (the roster's oracle row). It
+  produces L3's FE references and never reads the anti-locking C++.
+- Ready-flip critic: fable · high, from the other family. Its review plus `/code-review high` is
+  the review of record (ADR-87 D4, as for 232c, 232f, 232g and 232i). No owner verdict is
+  pre-booked.
+
+**Decisions fixed at kickoff** (the C++ worker may object in its Round-1 report; the orchestrator
+decides):
+
+- **K1 — the scheme is the Round-1 decision.** Two candidates, plus any other the worker finds:
+  - the cell-averaged volumetric increment, an F-bar in rate form (de Souza Neto et al. 1996;
+    for implicit MPM, Coombs, Charlton, Cortis & Augarde 2018);
+  - a projection of the volumetric increment to the grid and back, of reduced degree for
+    B-splines (B-bar / F-bar projection; Hughes 1980; Moutsanidis et al. 2020).
+
+  The criteria:
+  - L1 exactness on homogeneous fields;
+  - all four bases (`gimp`, `linear`, `bspline2`, `bspline3`);
+  - the same scheme in mode F and mode A;
+  - a consistent mode-A tangent;
+  - the locality and memory cost in mode A (K4);
+  - behaviour when particles change cell between steps.
+
+  Use the literature only: no GPL, LGPL or unlicensed source (Worker rule 5). Verify every
+  citation before it enters the repo.
+- **K2 — rate form.** The modification acts on the step's increment: ΔF in mode A, the velocity
+  gradient or ΔF in mode F. It never acts on the total F. The hypo kernel's incremental entry
+  (Fₙ, ΔF → strain increment and rotation, ADR §6) is kept. In plane strain the volumetric
+  correction acts in-plane (d = 2), and the out-of-plane ΔF_zz stays 1.
+- **K3 — opt-in, default off.** It is a deck-level setting; the syntax is decided in Round 1. With
+  it off, every answer is bit for bit today's. Flipping the default is the owner's later call.
+- **K4 — mode-A coupling.** If the scheme makes a particle's internal force depend on other
+  particles' supports, Round 1 decides the element structure: either an enlarged particle-element
+  node set or one element per cell. It quotes the node and DOF counts, the `FE_Element` pool limit
+  (`MAX_NUM_DOF` = 64, #1098) and the bytes per particle-element it implies.
+- **K5 — contracts are unchanged** unless Round 1 shows the output must record the setting. That
+  change goes to T, never into apeGmsh from here.
+- **K6 — the footing ladder (L4, L3).** MPM and FE get the same solution controls, per accepted
+  step: KrylovNewton (NormUnbalance 1e-6, 40), NewtonLineSearch (1e-6, 60), then KrylovNewton
+  (1e-5, 80), which counts as "relaxed"; on failure, halve the step. This is the ladder
+  `tests/mpm_implicit_reference.py::fe_footing` used. Failed attempts and relaxed steps are
+  reported per run. The C++ worker maps the ladder onto `mpm analyze` in mode A (its cut-and-retry,
+  or per-step algorithm switching in the harness) and says how.
+
+**Pre-registered gates** (fixed here, before any phase-4 MPM number exists; a band is never
+widened after a run — a miss is reported as a miss, with its diagnosis). "On" means anti-locking
+on, "off" means off.
+
+| Row | Gate |
+|---|---|
+| L1 kinematics (both modes, every basis, on) | (a) An affine grid velocity field, deviatoric and volumetric, gives every particle a modified increment equal to the unmodified one, rel 1e-12. (b) The S1 rigid-body rotation of a stressed body shows zero spurious stress at its frozen tolerance. (c) In plane strain, ΔF_zz = 1 exactly. Checked in the g++ core check where the scheme is header-level, and through the engines. |
+| L2 mode-A tangent (on) | Element tangent against a centred finite difference (FD converged over ε 1e-8..1e-10, as 232f measured). Elastic undeformed: ‖K − K_FD‖/‖K‖ ≤ 1e-5. Elastic at 0.2 % strain: at most 2× the off value at the same state. |
+| L3 von Mises strip footing, closed form (mode A, QS, `gimp`, ppc 2 per axis) | The domain, grid, staging and rough `gridvel` footing of `footing_mildcone_r1..r3` (4 / 8 / 16 cells across B). Weightless soil, no surcharge. Material: `LadrunoJ2`, perfectly plastic, E = 1.0e5 kPa, ν = 0.3, σ_y = 100√3 kPa (k = 100 kPa). Push 2 mm per step to s = 0.1 m. The observable is q_lim, the mean footing pressure over s ∈ [0.03, 0.05] m. **Gate:** at r3, q_lim / ((2 + π) k) ∈ [0.97, 1.08], with (2 + π) k = 514.16 kPa. **Admission:** the band holds only if 232j-V's FE (LadrunoBrick B-bar, same domain, staging and ladder) lands inside it at 16 across B, measured before any MPM number. If it does not, the row's gate becomes L4's form: MPM within ±10 % of that FE value at each rung. The FE std (locked) legs are reported. If they sit inside the band at r3, the row is recorded as non-discriminating at r3. |
+| L4 non-associated mild-cone footing, redesigned (mode A, QS, `gimp`, ppc 2) | `footing_mildcone_r1..r3` unchanged except for anti-locking on and K6's ladder. **Gate:** at each of r1, r2 and r3, q_max is within ±10 % of the FE B-bar q_max on the same domain at that resolution (`fe_footing.json`, build `f37e2ff19`): 141.43, 130.66, 122.53 kPa. The bands are [127.29, 155.58], [117.60, 143.73], [110.28, 134.78]. Each run must reach s = 0.2 m. A stop is a miss. Reported: q/exact (the retired [0.90, 1.10] × 138.907 band's verdict), the plateau, s at q_max, failed attempts and relaxed steps. |
+| L5 orders kept (on) | MMS G2 (mode F, small amplitude) and G4 (mode A, QS), `bspline2`, the 232i ladder and definitions: p ≥ 1.8 and e non-increasing. |
+| L6 unchanged answers (off) | The whole existing MPM suite passes unchanged (report the counts). Off reproduces 232i's warrant figures bit for bit on the rows re-run. Per-particle-element memory with off grows ≤ 5 % for `gimp` (10⁴, the M0b M3 method). With on, it is reported. |
+| L7 mutation | The MPM family's ZERO and SCALE scores (`mutation_gate.py`) at or above their floors, 0.46 and 0.38. Plus a Zone-A **switch oracle**: a small locking-sensitive case, such as L3 at r1 if it fits Zone-A's time, where on is within L3's admitted gate and off is outside it. The oracle goes red if the averaging is the identity. |
+| L8 surfaces | The setting round-trips through `mpm info summary` and the mode-A database restart (the pack version bumps; a v2 database restores with off). Classic Tcl and Python give the same answer on one L1 case. Unsupported combinations (by basis, mode or face) are refused loudly. |
+| R reported, not gated | Off against on for L3, L4 and L5. The L4 sequence trend. `bspline3` footing legs where the cost allows. L3 at r1 in mode F with local damping, on against off. The 232i self-weight column at 20 % compression per basis, on. The granular-column runout, on against off. Wall time per step, on against off. |
+
+`test_footing_gate` (the 232f strict xfail on the old band) is replaced by the L4 test. The old
+band's verdict stays in the results record and is never re-gated.
+
+### 232j-V — verification references for L3 (opus · high; never reads the anti-locking C++)
+
+```text
+<header>  ADR sections: §8 (the footing row and its 232f and 232j-kickoff amendments), §9
+phase 4. Your PR: #<pr>.
+Branch: work detached on origin/wp/232j-mpm-antilocking; commit; `git pull --rebase origin
+wp/232j-mpm-antilocking`; `git push origin HEAD:wp/232j-mpm-antilocking`. Another worker pushes
+C++ to the same branch. You touch only tests/mpm_implicit_reference.py (a new leg),
+tests/test_mpm_implicit_reference.py, tests/data/mpm/implicit/fe_footing_j2.json and a new cases
+block in tests/mpm_antilocking_cases.txt (create it; the C++ worker reads it).
+Independence: read nothing the C++ worker adds under SRC/domain/pattern/ladrunoMPM/. You may read
+and run the fork's FE elements.
+Binary: <pyd path>, built by the orchestrator; print ops.ladrunoBuild() into every record.
+Goal: L3's FE references, before any MPM number exists.
+  1. A leg `leg_footing_j2` beside `leg_footing`, reusing `fe_footing`'s slab, staging, rough
+     footing and ladder. Material: LadrunoJ2, perfectly plastic. Quote its factory line
+     (SRC/material/nD/LadrunoJ2.cpp:54) and derive K and G from E = 1.0e5, nu = 0.3; s0 = 100
+     sqrt(3). No surcharge, weightless. Push to s = 0.1 m at 2 mm per step. Legs: B-bar and std at
+     4 / 8 / 16 across B.
+     Output per leg: q(s), q_max, q_lim = the mean of q over s in [0.03, 0.05] m, failed attempts,
+     relaxed steps and wall time.
+  2. The closed form (2 + pi) k = 514.16 kPa. Cite it, and state why the result does not depend
+     on roughness for a weightless Tresca/von Mises strip (Prandtl vs Hill), and the plane-strain
+     relation k = sigma_y / sqrt(3) for von Mises.
+  3. Report the admission verdict for L3: is the B-bar q_lim at 16 across B inside
+     [0.97, 1.08] x 514.16? Is std inside? Never adjust the band.
+  4. Write the cases block for footing_j2_r1..r3 in the style of tests/mpm_implicit_cases.txt,
+     with the gate copied from the "232j" table and the FE values as `ref` lines.
+  5. tests/test_mpm_implicit_reference.py checks the closed form and the FE record's shape. It
+     never checks against MPM.
+Long FE runs: tell the orchestrator the command and it launches them. Do not run anything over
+10 min yourself.
+python3.12; ruff F811 clean; the fork-checklist gates before every push. Report per the Worker
+rules.
+```
+
+### 232j-C — anti-locking in C++ (opus · high; a different agent from 232j-V)
+
+```text
+<header>  ADR sections: §4 (walls W1–W17), §5.2, §5.3 and its 232f amendments, §5.4, §6, §8 (the
+footing row and its amendments, including 232j kickoff; the mutation note), §9 phase 4. Your PR:
+#<pr>.
+Branch: work detached on origin/wp/232j-mpm-antilocking; commit; `git pull --rebase origin
+wp/232j-mpm-antilocking`; `git push origin HEAD:wp/232j-mpm-antilocking`.
+Read the "232j" section of .claude/skills/ladruno-mpm/references/wp-briefs.md first: K1–K6 and
+the gate table bind you. Never widen a band.
+Independence: as before, read tests/mpm_interface.md, tests/mpm_implicit_interface.md,
+tests/mpm_bspline_interface.md and the cases files. Never read tests/mpm_reference.py or
+tests/mpm_implicit_reference.py.
+Context: issues #1095, #1096, #1098 and #1103 touch code you will change. Do not fix them unless
+your change rewrites that code; never regress them.
+
+ROUND 1 — stop and report after it (the orchestrator freezes it):
+  tests/mpm_antilocking_interface.md, at most ~3 pages, deciding with code anchors quoted:
+  - K1: the scheme. Give its equations in rate form for each basis, and the averaging domain
+    (cell, patch or grid projection) and its weights. Show why L1(a) holds exactly. Say what
+    happens when a particle changes cell or a cell holds one particle, and how an empty or
+    one-particle cell is handled.
+  - Mode F: where in the step it enters (after the grid update, before the material call), and
+    its cost.
+  - Mode A (K4): the dependence of a particle's internal force on other DOFs, and the element
+    structure that carries it (enlarged node set or per-cell element). Give the node and DOF
+    counts per basis in 2D and 3D against MAX_NUM_DOF, the bytes per particle-element (the M0b M3
+    method), the consistent tangent including the geometric term, re-pointing, the empty-node
+    treatment, cut-and-retry with nothing to undo, and the restart pack.
+  - K3: the syntax, the default and the refusals.
+  - K6: how the footing ladder maps onto mode A.
+  - K5: whether the output must record the setting.
+  - The harness: the cases file tests/mpm_antilocking_cases.txt (232j-V adds the L3 block; you
+    add L1, L2, L4, L5 and L7), and the test files.
+
+ROUND 2 — on the orchestrator's "frozen":
+  Implement, batching edits. Ask the orchestrator for each build (all five targets) and each
+  mutant build; never start build.bat yourself.
+  Tests tests/test_ladruno_mpm_antilocking_*.py (zone_a, within its time budget; say what each
+  costs). The full L3 and L4 ladders and the L5 ladders are the warrant run, which the
+  orchestrator launches. Results JSON go under tests/data/mpm/antilocking/ and carry
+  ladrunoBuild, the ladder counts and per-rung values. Replace test_footing_gate with the L4
+  test, and keep the old band as a reported value.
+  Classic Tcl for L1 and L8. The g++ core check extended for L1 where it applies.
+  Registrations per fork-checklist.md: the ledger fragments WP-232j-mpm-antilocking.md
+  (implementations; vanilla rows and `// Ladruno` markers for any upstream file), a banner line,
+  the guide (Ladruno_implementation/232_ladruno_mpm_guide.md: the setting, its scheme, its
+  limits, when to use it), stamps.
+  Draft the ADR amendment text in your report; the orchestrator writes it.
+Done when: every gated row is green (or a reported miss with diagnosis); the reported rows are in
+Ladruno_implementation/232j_mpm_antilocking.md (method, tables, off against on); the ci/ gates
+are clean; ladrunoBuild matches your head on the exe and the pyd. Report per the Worker rules.
 ```

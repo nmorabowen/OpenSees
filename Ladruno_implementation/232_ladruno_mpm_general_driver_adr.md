@@ -720,6 +720,32 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 > - **For phase 4 and later.** Large-deformation work should prefer `bspline3`, or accept the
 >   quadratic's reduced peak-error order.
 
+> **Amendment (232j kickoff, 2026-11-17) — the footing gate, redesigned before any phase-4 MPM
+> number.** This settles the gate the 232f amendment left owed. It was fixed at 232j's kickoff
+> (`wp-briefs.md` "232j", row L4), before any anti-locking run.
+>
+> - **The reference is the fork's FE on the same domain at the same resolution, not the closed
+>   form.** The 232f-V record (`tests/data/mpm/implicit/fe_footing.json`, build `f37e2ff19`)
+>   holds LadrunoBrick B-bar on the case's domain, staging and rough footing. Its q_max is 141.43 /
+>   130.66 / 122.53 kPa at 4 / 8 / 16 cells across B. The gate: at each of r1, r2 and r3, the
+>   MPM q_max with anti-locking on lies within ±10 % of the FE B-bar q_max at that resolution.
+>   Each run must reach s = 0.2 m. Both MPM and FE may use the same solution ladder, defined in
+>   the brief.
+> - **Why it is reachable and why it discriminates.** The FE B-bar reaches it by construction:
+>   it is the discretisation the band is centred on, at every rung. Locking falls outside it at
+>   every rung. Standard (locked) H8 on the same domain sits at 1.549 / 1.371 / 1.262 × the FE
+>   B-bar value, and the MPM with no anti-locking sits at 1.33 × at r1 (188.6 kPa, 232f).
+> - **The closed form stays as context.** q₀·N_q = 138.9 kPa and its old band, [0.90, 1.10] ×
+>   exact, are retired as a gate, unwidened. With non-associated flow the collapse load depends
+>   on the mesh (ADR-79), so no fixed band around exact is a valid acceptance test. Each run
+>   still reports q/exact, so the record keeps the old band's verdict. The strict xfail
+>   `test_footing_gate` is replaced by the L4 test in 232j's PR.
+> - **A closed-form anti-locking gate stands beside it (L3).** It is the rough strip footing on a
+>   weightless von Mises (`LadrunoJ2`) soil: associated, isochoric flow, Prandtl
+>   q_u = (2 + π) k. FE converges to this limit, so a fixed band around exact is valid here. That
+>   band is admitted only if the fork's FE B-bar on the same domain lands inside it at the finest
+>   rung, measured before any MPM number. Otherwise the row falls back to L4's FE-relative form.
+
 **Mutation gate (ADR-87 D2)**, through the fork's existing mechanism: a new family `MPM` in the
 `LADRUNO_MUTATE_FAMILY` list (`CMakeLists.txt`, a vanilla-ledgered line), in the options of
 `.github/workflows/ladruno_mutation.yml` and in `Ladruno_scripts/mutation_gate.py`; the mutant is
