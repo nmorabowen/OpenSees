@@ -181,44 +181,72 @@ def mms(ops, row, ncell, dt=None, record=True):
             "steps": nsteps, "wall": time.perf_counter() - t0}
 
 
-def ladder(ops, row, rungs=None, dt=None, validity=True, log=print):
-    """Run a row's ladder at one dt; returns {rungs, h, e, p, nonincr, dt, validity, runs}."""
+def flushprint(*a):
+    print(*a, flush=True)
+
+
+MAX_HALVINGS = 3     # the validity search halves dt at most 3 times (orchestrator, 2026-11-16)
+
+
+def ladder(ops, row, rungs=None, dt=None, validity=True, log=flushprint):
+    """Run a row's ladder at one dt; returns {rungs, h, e, p, nonincr, dt, validity, runs}.
+
+    The brief's validity check (explicit rows): at the finest rung, |e(dt/2) - e(dt)| / e(dt) must
+    be below the row's `validity`; if not, dt is halved and the check repeated, at most
+    MAX_HALVINGS times. When it holds, the ladder runs at that dt. When it never holds, the result
+    records `validity_reached = False` with e at every dt tried, and the ladder runs at the rule
+    dt: data for a report row, and VOID evidence for a gate row (`verdict` gives None)."""
     rungs = rungs or as_list(row["ladder"])
     mode = row.get("mode", "explicit")
     if dt is None and mode == "explicit":
         dt = float(row.get("dt_rule", 0.1)) * critical_dt(row, rungs[-1])
     elif dt is None and mode == "implicit":
         dt = float(row.get("dt_fixed", 0.005))
-    while True:
-        runs = []
-        for nc in rungs:
-            r = mms(ops, row, nc, dt)
-            log(f"  {row['name']} 1/h={nc}: e={r['e']:.4e} crossings={r['crossings']} "
-                f"wall={r['wall']:.1f}s")
-            runs.append(r)
-        val = None
-        if validity and mode == "explicit" and row.get("validity") is not None:
-            rh = mms(ops, row, rungs[-1], dt / 2.0, record=False)
-            val = abs(rh["e"] - runs[-1]["e"]) / runs[-1]["e"]
-            log(f"  {row['name']} validity at 1/h={rungs[-1]}: e(dt/2)={rh['e']:.4e} change {val:.3%}")
-            if val >= float(row["validity"]):
-                dt /= 2.0
-                log(f"  {row['name']}: validity not met; dt halved to {dt:.4e} and the ladder re-run")
-                continue
-        break
+    dt_rule = dt
+    val, reached, tried = None, None, []
+    if validity and mode == "explicit" and row.get("validity") is not None:
+        thr = float(row["validity"])
+        e_dt = mms(ops, row, rungs[-1], dt, record=False)["e"]
+        for k in range(MAX_HALVINGS + 1):
+            e_half = mms(ops, row, rungs[-1], dt / 2.0, record=False)["e"]
+            val = abs(e_half - e_dt) / e_dt
+            tried.append({"dt": dt, "e": e_dt, "e_dt_half": e_half, "change": val})
+            log(f"  {row['name']} validity at 1/h={rungs[-1]}: dt={dt:.4e} e={e_dt:.4e} "
+                f"e(dt/2)={e_half:.4e} change {val:.3%}")
+            if val < thr:
+                reached = True
+                break
+            if k == MAX_HALVINGS:
+                reached = False
+                log(f"  {row['name']}: validity NOT reached after {MAX_HALVINGS} halvings; the "
+                    f"ladder runs at the rule dt {dt_rule:.4e}")
+                dt = dt_rule
+                break
+            dt /= 2.0
+            e_dt = e_half
+    runs = []
+    for nc in rungs:
+        r = mms(ops, row, nc, dt)
+        log(f"  {row['name']} 1/h={nc}: e={r['e']:.4e} crossings={r['crossings']} "
+            f"wall={r['wall']:.1f}s")
+        runs.append(r)
     hs = [1.0 / n for n in rungs]
     es = [r["e"] for r in runs]
     p = M.order(hs, es) if len(rungs) >= 3 else None
     nonincr = all(es[i + 1] <= es[i] for i in range(len(es) - 1))
     return {"row": row["name"], "rungs": rungs, "h": hs, "e": es, "p": p, "nonincr": nonincr,
-            "dt": dt, "validity_change": val,
+            "dt": dt, "dt_rule": dt_rule, "validity_change": val, "validity_reached": reached,
+            "validity_tried": tried,
             "e_quarter": [r["e_quarter"] for r in runs], "e_max": [r["e_max"] for r in runs],
             "crossings": [r["crossings"] for r in runs], "N": [r["N"] for r in runs],
             "wall": [r["wall"] for r in runs]}
 
 
 def verdict(row, res):
-    """(ok, text) of a gated ladder row against its parsed gate."""
+    """(ok, text) of a gated ladder row against its parsed gate; (None, ...) when the dt validity
+    condition was never reached: the evidence is void, never a pass."""
+    if res.get("validity_reached") is False:
+        return None, "evidence void: dt validity not reached in %d halvings" % MAX_HALVINGS
     ok = True
     parts = []
     if row.get("p_ge") is not None:

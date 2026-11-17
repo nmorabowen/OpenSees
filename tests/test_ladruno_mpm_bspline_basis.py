@@ -197,6 +197,7 @@ def test_g7_refuses_a_bspline_grid_with_one_cell():
 def test_g7_ladruno_output_round_trip(tmp_path):
     h5py = pytest.importorskip("h5py")
     sys.path.insert(0, str(REPO / "Ladruno_scripts" / "ladruno_recorder_tests"))
+    import ladruno_format as lf
     import mpm_contracts as mc
     ops = _ops()
     _grid(ops, 2, "bspline2", x0=(0.0, 0.0), h=0.25, n=(4, 4))
@@ -210,8 +211,9 @@ def test_g7_ladruno_output_round_trip(tmp_path):
     ops.mpm("output", "-close")
     assert mc.validate_particle_results(str(out)) == []
     with h5py.File(out, "r") as f:
-        b = f["MODEL_STAGE[0]/MODEL/PARTICLES/GRID"].attrs["BASIS"]
-        assert (b.decode() if isinstance(b, bytes) else str(b)) == "bspline2"
+        # the fork's writer stores every string attribute as a 1-element array (gimp too: the
+        # existing contract form); the format reader's _attr unwraps it
+        assert lf._attr(f["MODEL_STAGE[0]/MODEL/PARTICLES/GRID"], "BASIS") == "bspline2"
 
 
 def test_g7_contract1_set_refused_into_a_bspline_grid(capfd):

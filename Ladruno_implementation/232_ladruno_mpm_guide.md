@@ -311,6 +311,10 @@ material velocity at that node.
 | `mpm debug shape <x..> [-lp ..] -folded` | per own node: id, then per component `S′`, `∇S′` (the images' fold) |
 | `mpm debug shape1d <h> <lp> <r> -basis bspline2\|bspline3` | the 1D factor (default `gimp`) |
 
+**Restart format.** Since WP-232i the mode-A host's restart pack is version 2 (it carries the
+particle body force). A database saved by an earlier build (version 1) is refused loudly at
+`restore`; re-run the model from its deck instead.
+
 **Tcl.** Both list commands read through the shared argument cursor, so classic Tcl accepts them
 (`mpm particleBodyForce {*}$b`), but computing a body force per particle per step is a Python idiom;
 the manufactured-solution harness is Python only.

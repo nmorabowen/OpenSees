@@ -5,6 +5,7 @@ tests/_testbed bootstrap) and commits its JSON:
 
     python3.12 tests/mpm_bspline_warrant.py                      # every row -> warrant.json
     python3.12 tests/mpm_bspline_warrant.py --rows G2 G3         # a subset (merged into the file)
+    python3.12 tests/mpm_bspline_warrant.py --resume             # only rows not yet in the file
     python3.12 tests/mpm_bspline_warrant.py --mutant ZERO        # G6 on a ZERO mutant build
     python3.12 tests/mpm_bspline_warrant.py --mutant SCALE       # G6 on a SCALE mutant build
 
@@ -58,7 +59,7 @@ def _mutation(ops):
         return "none/unknown"
 
 
-def ladder_row(ops, row, allow128=True, log=print):
+def ladder_row(ops, row, allow128=True, log=B.flushprint):
     mode = row.get("mode", "explicit")
     rungs = B.as_list(row["ladder"])
     decision = None
@@ -84,7 +85,7 @@ def ladder_row(ops, row, allow128=True, log=print):
     return res
 
 
-def column_row(ops, row, log=print):
+def column_row(ops, row, log=B.flushprint):
     out = {}
     for case in B.as_list(row["cases"]):
         for basis in B.as_list(row["bases"]):
@@ -103,6 +104,8 @@ def main(argv=None):
     ap.add_argument("--rows", nargs="*")
     ap.add_argument("--mutant", choices=["ZERO", "SCALE"])
     ap.add_argument("--no-128", action="store_true")
+    ap.add_argument("--resume", action="store_true",
+                    help="skip the rows warrant.json already holds")
     ap.add_argument("--out", default=str(OUT))
     a = ap.parse_args(argv)
     ops = _ops()
@@ -129,6 +132,9 @@ def main(argv=None):
         data["ladrunoBuild"] = _build(ops)
         data["ladrunoMutation"] = _mutation(ops)
         names = a.rows or (LADDER_ROWS + ["R1-column"])
+        if a.resume:
+            names = [n for n in names if n not in data["rows"]]
+            B.flushprint("resume: running", names)
         for n in names:
             row = rows[n]
             if n == "R1-column":
@@ -139,9 +145,9 @@ def main(argv=None):
             path.write_text(json.dumps(data, indent=1, default=float))   # after every row
     data["wall_s"] = time.time() - t0
     path.write_text(json.dumps(data, indent=1, default=float))
-    print(f"wrote {path} in {data['wall_s'] / 60:.1f} min")
+    B.flushprint(f"wrote {path} in {data['wall_s'] / 60:.1f} min")
     gated = {n: r.get("verdict") for n, r in data["rows"].items() if r.get("status") == "gate"}
-    print("gated rows:", gated)
+    B.flushprint("gated rows:", gated)
 
 
 if __name__ == "__main__":
