@@ -1,0 +1,365 @@
+{
+ "ladrunoBuild": "4df5764b7dca9c2828f707b1e2a84771683de956",
+ "rows": {
+  "energy_F_gimp_nu03": {
+   "ke_ratio": 1.114167544507586,
+   "completed": 1.0,
+   "ke_max_off": 711.715697081525,
+   "ke_max_on": 792.9705306048277,
+   "dt": 0.003066233147411611,
+   "wall_s": 0.563805341720581,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.11417 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_Fv0_gimp_nu03": {
+   "ke_ratio": 1.0227504597596826,
+   "completed": 1.0,
+   "ke_max_off": 1431.6653046052481,
+   "ke_max_on": 1464.2363485070034,
+   "dt": 0.0009448231045600721,
+   "wall_s": 1.2958221435546875,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.02275 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_A_gimp_nu03": {
+   "ke_ratio": 0.9961272799352846,
+   "completed": 1.0,
+   "ke_max_off": 675.0033582273483,
+   "ke_max_on": 672.389259178191,
+   "dt": 0.020441554316077408,
+   "wall_s": 2.040290117263794,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "0.996127 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_F_gimp_nu045": {
+   "ke_ratio": 1.1689208961001958,
+   "completed": 1.0,
+   "ke_max_off": 514.3605468012665,
+   "ke_max_on": 601.2467912855232,
+   "dt": 0.0018266493169934743,
+   "wall_s": 0.638169527053833,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.16892 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_Fv0_gimp_nu045": {
+   "ke_ratio": 1.0,
+   "completed": 1.0,
+   "ke_max_off": 1350.0,
+   "ke_max_on": 1350.0,
+   "dt": 0.0005806016240634055,
+   "wall_s": 1.2918930053710938,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_A_gimp_nu045": {
+   "ke_ratio": 1.0416834997933588,
+   "completed": 1.0,
+   "ke_max_off": 512.8243934861515,
+   "ke_max_on": 534.2007089860608,
+   "dt": 0.01217766211328983,
+   "wall_s": 1.9220480918884277,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.04168 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_F_linear_nu03": {
+   "ke_ratio": 0.9993276541608517,
+   "completed": 1.0,
+   "ke_max_off": 719.4544903918106,
+   "ke_max_on": 718.9707681587391,
+   "dt": 0.003066233147411611,
+   "wall_s": 0.49399566650390625,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "0.999328 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_Fv0_linear_nu03": {
+   "ke_ratio": 1.024507875950478,
+   "completed": 1.0,
+   "ke_max_off": 1427.818724479632,
+   "ke_max_on": 1462.8115286589484,
+   "dt": 0.0009448231045600721,
+   "wall_s": 1.1535589694976807,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.02451 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_A_linear_nu03": {
+   "ke_ratio": 1.0019029518498659,
+   "completed": 1.0,
+   "ke_max_off": 653.1613486155181,
+   "ke_max_on": 654.404283212127,
+   "dt": 0.020441554316077408,
+   "wall_s": 1.3116660118103027,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.0019 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_F_linear_nu045": {
+   "ke_ratio": 1.0303327245760492,
+   "completed": 1.0,
+   "ke_max_off": 515.2452511564361,
+   "ke_max_on": 530.8740434488816,
+   "dt": 0.0018266493169934743,
+   "wall_s": 0.4922945499420166,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.03033 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_Fv0_linear_nu045": {
+   "ke_ratio": 1.0164570585291826,
+   "completed": 1.0,
+   "ke_max_off": 1350.0,
+   "ke_max_on": 1372.2170290143965,
+   "dt": 0.0005806016240634055,
+   "wall_s": 1.1578567028045654,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.01646 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_A_linear_nu045": {
+   "ke_ratio": 1.036601699328713,
+   "completed": 1.0,
+   "ke_max_off": 511.609215439241,
+   "ke_max_on": 530.3349821165468,
+   "dt": 0.01217766211328983,
+   "wall_s": 1.16841459274292,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.0366 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_F_bspline2_nu03": {
+   "ke_ratio": 1.1929394990427722,
+   "completed": 1.0,
+   "ke_max_off": 705.6930602141896,
+   "ke_max_on": 841.8491257298762,
+   "dt": 0.003066233147411611,
+   "wall_s": 0.6214749813079834,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.19294 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_Fv0_bspline2_nu03": {
+   "ke_ratio": 1.0320561520390232,
+   "completed": 1.0,
+   "ke_max_off": 1502.338875394587,
+   "ke_max_on": 1550.498078798371,
+   "dt": 0.0009448231045600721,
+   "wall_s": 1.4169363975524902,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.03206 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_A_bspline2_nu03": {
+   "ke_ratio": 0.8552973839665626,
+   "completed": 1.0,
+   "ke_max_off": 665.124252994011,
+   "ke_max_on": 568.8790335984918,
+   "dt": 0.020441554316077408,
+   "wall_s": 3.5387988090515137,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "0.855297 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_F_bspline2_nu045": {
+   "ke_ratio": 1.220386500621346,
+   "completed": 1.0,
+   "ke_max_off": 517.1661321229834,
+   "ke_max_on": 631.1425662214443,
+   "dt": 0.0018266493169934743,
+   "wall_s": 0.6166694164276123,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.22039 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_Fv0_bspline2_nu045": {
+   "ke_ratio": 0.9867343060827836,
+   "completed": 1.0,
+   "ke_max_off": 1382.5409643987336,
+   "ke_max_on": 1364.2005991370067,
+   "dt": 0.0005806016240634055,
+   "wall_s": 1.4048867225646973,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "0.986734 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  },
+  "energy_A_bspline2_nu045": {
+   "ke_ratio": 1.091609093852217,
+   "completed": 1.0,
+   "ke_max_off": 517.1753542860628,
+   "ke_max_on": 564.5533198549083,
+   "dt": 0.01217766211328983,
+   "wall_s": 3.2115275859832764,
+   "verdicts": [
+    [
+     "expect ke_ratio le 1.5",
+     "pass",
+     "1.09161 le 1.5"
+    ],
+    [
+     "expect completed eq 1.0 tol 0 0",
+     "pass",
+     "1 eq 1.0"
+    ]
+   ]
+  }
+ }
+}

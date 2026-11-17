@@ -274,6 +274,18 @@ threaded layer when run against the sequential one.
 
 Gotchas:
 
+- **`ladrunoBuild` is stamped at configure time.** `OPENSEES_VERSION` comes from
+  `git log -1` when CMake configures. An incremental `cmake --build` after a
+  `git fetch` / `git reset` therefore ships the new code under the OLD hash. Re-run
+  `cmake -S . -B build/Release …` before every build of a moved tree.
+  `build.bat` reconfigures on Windows, which is why this only bites here (WP-232j,
+  2026-11-17: a warrant run had to be redone).
+- **The apt-MKL `OpenSeesPy.so` under Python needs `libmkl_core` preloaded.**
+  Without it, an MPM deck dies in MKL's dispatcher (`libmkl_def.so: undefined
+  symbol: mkl_sparse_optimize_bsr_trsm_i8`). With the GNU-threaded layer it exits
+  127 silently. Use the sequential layer:
+  `LD_PRELOAD=/lib/x86_64-linux-gnu/libmkl_core.so:/lib/x86_64-linux-gnu/libmkl_sequential.so:/lib/x86_64-linux-gnu/libmkl_gf_lp64.so`
+  (WP-232j; plain UmfPack decks import fine without it).
 - **Build on the head node.** The compute nodes have no `cmake` (the generated
   Makefiles call it) and no internet (`git clone` and `conan install` fail on
   DNS). A cold build of `OpenSees` + `OpenSeesPy` took ~3 min at `-j22` here.
