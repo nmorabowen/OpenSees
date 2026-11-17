@@ -494,6 +494,28 @@ Frozen as B1–B12 with the following conditions:
   passes unchanged, with the counts in the report.
 - **F4 — G8**, the images-against-full-domain equality, is required.
 
+**Critic round (2026-11-16, Fable · high, verdict AMEND at `da23a1fed`; each finding verified
+in-tree by the orchestrator).** These are added before the final warrant run. No band changes.
+- **A1 (major, a defect).** A face-layer node of a `fix` face is its own image, so its mass is
+  one-sided. The active-node cutoff (`LadrunoMPMImplicit.cpp:554-561`; `LadrunoMPMCore.h:683-685`
+  and `:749-752`) then drops in the half model a node the full model keeps. The critic's probe:
+  3-14 % stress difference in 2D and 9.6 % in a 3D octant at mode A's default cutoff; up to 53 %
+  in mode F at `massCutoff 0.05`. Fix: on B-spline grids the cutoff tests the face-layer node's
+  mass times 2^k, where k is the number of `fix` faces through the node. **G8 gains two legs:**
+  G8-A (mode A, Newmark, default `renormalize` 5e-2) and G8-F-cut (mode F at `massCutoff 0.05`),
+  each with a body reaching a free surface near the face. The equality bar is unchanged:
+  rel 1e-10.
+- **A2 (major, the mutation margin).** On the Zone-A rungs SCALE survives the one-period MMS
+  tests, so the family's SCALE score (floor 0.38, `mutation_gate.py:134`) has one test of margin.
+  Added a Zone-A mutation oracle, which is not an accuracy gate: the quarter-period peak error
+  `e(T/4) ≤ 0.05` (5 % of the amplitude) for `bspline2` G2 at 1/h = 32. Re-measure the MPM
+  family's ZERO and SCALE scores with `mutation_gate.py` against their floors.
+- **A3 (minor).** `verdict()` fails when a gate row lacks its criterion or has `p = None`
+  (evidence void, never a pass). The results test recomputes `p` and monotonicity from `e` and
+  `h`, fails when G2-G4 are missing, and checks that the rows' `ladrunoBuild` is one build. Local
+  orders are reported per row. The guide describes a face that fixes only tangential components as
+  an antisymmetry plane (odd tangential, even normal image).
+
 ```text
 <header>  ADR sections: §4 (walls W1–W17), §5.2, §5.3 (and its 232f amendments), §5.4, §6, §8
 (the P3 row, the mutation note), §9 phase 3. Your PR: #<pr>.
