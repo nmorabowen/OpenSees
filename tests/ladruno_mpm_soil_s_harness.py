@@ -6,8 +6,9 @@ S1  one-point identity: a 2 x 2 (x 2)-cell block, ppc 2, every grid node with ma
     the affine velocity v = L (x - ref) (`mpm gridvel ... affine`, `setAffine`), L = (dF - I)/dt
     from the record's per-step dF, so every particle sees dF exactly (linear completeness;
     `mpm massCutoff 0` keeps every node with mass). Mode A: zero free equations, as the FE
-    driver. Mode F: dt 1e-4. Compared per step with GP 1 of the record: sigma (3D Voigt; plane
-    strain sigma_zz from `particleData sigZZ`) and the material state vector.
+    driver. Mode F: dt 1e-4. Compared per step with GP 1 of the record: the material-frame
+    stress (`particleData sigHat`; 3D Voigt; plane strain sigma_zz from `particleData sigZZ`) and
+    the material state vector.
     Tolerance (freeze): rel 1e-8 before fe_self_consistency.first_step_gp_rel_spread_gt_1e8,
     rel 1e-3 from it on (never: 1e-8 throughout).
 S2  the K0 column (fixed base, `fix ymin y`) + a surcharge rho g l0 on the top particle row, as a
@@ -117,7 +118,9 @@ def s1_run(ops, leg, mode, rec=None, nsteps=None):
             ops.mpm("stage", 1, 1)
         ops.mpm("gridvel", "all", "setAffine", *s1_L(rec, leg, k, nd, dt))
         ops.mpm("analyze", 1, dt)
-        sig = _l(ops.mpm("particleData", "sig"))
+        # the record's sig is GP 1's MATERIAL-frame stress (the unrotated sigma_hat; on the shear
+        # legs it differs from the rotated Cauchy stress by the rotation, ~1e-3): compare sigHat
+        sig = _l(ops.mpm("particleData", "sigHat"))
         szz = _l(ops.mpm("particleData", "sigZZ"))
         st = _l(ops.mpm("particleResponse", "state"))
         N = len(szz)
@@ -177,14 +180,28 @@ def run_tcl(deck, exe, timeout=600):
 # --------------------------------------------------------------------------- #
 #  S2 / S4 -- the column with a fixed base                                     #
 # --------------------------------------------------------------------------- #
-def column_build(ops, mat_cmd, basis, mode, l0=10.0, g=G, s0=0):
+CAP_E, CAP_NU, CAP_RHO = 214234.27337502, 0.3129, RHO
+CAP_T = 0.5                                      # the cap thickness (S2a)
+CAP_SOIL = False                                 # S2a variant: the cap is the soil material itself
+
+
+def column_build(ops, mat_cmd, basis, mode, l0=10.0, g=G, s0=0, cap=False):
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
     ops.nDMaterial(*deck_args(mat_cmd))
-    cells_y = int(round(l0 / 0.5)) + 1
+    cells_y = int(round(l0 / 0.5)) + 1 + (int(round(CAP_T / 0.5)) if cap else 0)
     ops.mpm("grid", HOST, "-origin", 0.0, 0.0, "-h", 0.5, "-cells", 2, cells_y, "-basis", basis)
     ops.mpm("mode", "quasiStatic" if mode == "A" else "explicit")
     ops.mpm("body", 1, "box", 0.0, 0.0, 1.0, l0, "-ppc", 2, "-mat", 1, "-rho", RHO)
+    if cap:
+        # S2's surcharge carrier (amendment S2a, 232k-C): a bonded elastic cap one cell thick,
+        # the soil's density (so its nodes stay active under the mode-A mass cutoff); its weight
+        # is cancelled by its body force, and the surcharge is that body force, so it reaches
+        # the soil at its top surface y = l0, as the FE's nodal top loads do. Not measured.
+        if not CAP_SOIL:
+            ops.nDMaterial("ElasticIsotropic", 98, CAP_E, CAP_NU)
+        ops.mpm("body", 3, "box", 0.0, l0, 1.0, l0 + CAP_T, "-ppc", 2, "-mat",
+                1 if CAP_SOIL else 98, "-rho", CAP_RHO)
     ops.mpm("fix", "xmin", "x")
     ops.mpm("fix", "xmax", "x")
     ops.mpm("fix", "ymin", "y")
@@ -221,39 +238,62 @@ def _column_errors(st, Y, rows, rho_g_l0):
     return e_yy / rho_g_l0, math.sqrt(sq / N) / rho_g_l0
 
 
-def s2_run(ops, mat, basis, nsur=10):
+def s2_run(ops, mat, basis, nsur=10, cap=True):
+    """cap=True (amendment S2a): the surcharge rides on a nearly weightless bonded elastic cap
+    above the column. cap=False: the 232f footing mechanism, a body force on the soil's top
+    particle row -- the loaded row then carries about half the load in its own stress (the load
+    acts at its centre, not at the surface), which the max-over-particles syy gate reads as an
+    error of ~q/2 (diagnosis record)."""
     rec = load("s2_column.json")
     leg = rec["legs"][f"{mat}_nsur{nsur}"]
-    column_build(ops, rec["decks"][mat]["cmd"], basis, "A")
+    column_build(ops, rec["decks"][mat]["cmd"], basis, "A", cap=cap)
     x0 = _l(ops.mpm("particleData", "x"))
-    N = len(x0) // 2
+    body = _l(ops.mpm("particleData", "body"))
+    Nall = len(body)
+    N = sum(1 for b in body if b == 1.0)
     Y = [x0[2 * k + 1] for k in range(N)]
     rgl = RHO * G * 10.0
     out = {"mat": mat, "basis": basis, "checkpoints": {}}
 
     def check(name):
         st = _column_state(ops)
+        st = {"sig": st["sig"][:3 * N], "szz": st["szz"][:N], "x": st["x"][:2 * N]}
         ey, ex = _column_errors(st, Y, leg[name]["particles"], rgl)
         out["checkpoints"][name] = {"syy_max": ey, "sxx_rms": ex}
 
-    ops.mpm("analyze", 10, 0.1)
-    check("end_stage0")
-    ops.mpm("stage", 1, 1)
-    check("after_flip")
-    ops.mpm("analyze", 2, 0.1)
-    check("after_hold")
-    # the surcharge: q = rho g l0 on the top row (2 particles per cell width: q h/2 each)
     m = _l(ops.mpm("particleData", "m"))
     ytop = max(Y)
     q = float(leg.get("surcharge", rgl))
-    for i in range(1, nsur + 1):
+    carriers = [k for k in range(Nall) if body[k] == 3.0] if cap else \
+        [k for k in range(N) if abs(Y[k] - ytop) < 1e-9]
+
+    def step(lam, frac):
+        """one quasi-static step; the cap's weight cancelled at the step-end load factor lam,
+        and the surcharge fraction frac on the carriers (per unit mass)"""
         bf = []
-        for k in range(N):
-            f = -(q * 0.25) * i / nsur if abs(Y[k] - ytop) < 1e-9 else 0.0
-            bf += [0.0, f / m[k]]
+        for k in range(Nall):
+            b = 0.0
+            if cap and body[k] == 3.0:
+                b += lam * G
+            if k in carriers:
+                b += -(q / len(carriers)) * frac / m[k]
+            bf += [0.0, b]
         ops.mpm("particleBodyForce", *bf)
         ops.mpm("analyze", 1, 0.1)
+
+    for i in range(1, 11):
+        step(i / 10.0, 0.0)
+    check("end_stage0")
+    ops.mpm("stage", 1, 1)
+    check("after_flip")
+    step(1.0, 0.0)
+    step(1.0, 0.0)
+    check("after_hold")
+    # the surcharge q = rho g l0 (per unit width W = 1), ramped over nsur steps
+    for i in range(1, nsur + 1):
+        step(1.0, i / nsur)
     check("after_surcharge")
+    out["cap"] = cap
     out["passed"] = all(c["syy_max"] <= 0.03 and c["sxx_rms"] <= 0.02
                         for n, c in out["checkpoints"].items() if n != "after_hold")
     return out

@@ -8,7 +8,9 @@ step bit for bit, the message names the material and its tag, and a later `mpm a
 refused until `mpm reset`. Both modes, classic Tcl and Python.
 
 HS has no reachable commit refusal at particles (its trial refusal is forwarded): one simple-
-shear step gamma = 6 trips |deps|^2 > 25 (LadrunoHSKernel.h:1721). The step fails loudly, the
+shear step gamma = 10 trips |deps|^2 > 25 (LadrunoHSKernel.h:1721). (gamma = 6, D14's number, does
+not: the Hughes-Winget increment de-rotated by R_mid has |deps|^2 = 20.7 < 25 -- measured on the
+mode-F leg, which then integrated the step.) The step fails loudly, the
 message names the material and tag, the particles keep the last accepted step, and there is NO
 abort: a later step is admitted.
 """
@@ -45,7 +47,7 @@ def _ops():
 
 
 def _commands(mat, mode, dt):
-    """A 2 x 2-cell plane-strain block in a wide grid (gamma = 6 moves particles +-2.25 m),
+    """A 2 x 2-cell plane-strain block in a wide grid (gamma = 10 moves particles +-3.75 m),
     every node with mass on one affine gridvel."""
     t = mat.split()
     args = [t[0], 1] + [S._num(x) for x in t[2:]]
@@ -109,7 +111,7 @@ def test_s5_hs_trial_refusal_fails_loudly_without_abort(mode, capfd):
     ops = _ops()
     dt = _drive(ops, HS, mode)
     before = _state(ops)
-    ops.mpm("gridvel", "all", "setAffine", 0.0, 6.0 / dt, 0.0, 0.0)
+    ops.mpm("gridvel", "all", "setAffine", 0.0, 10.0 / dt, 0.0, 0.0)
     capfd.readouterr()
     with pytest.raises(Exception):
         ops.mpm("analyze", 1, dt)
