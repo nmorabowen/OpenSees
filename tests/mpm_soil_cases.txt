@@ -170,8 +170,14 @@ end
 # 0.02, 0.05 within +-10 % of the record at that rung.
 # HS (the footing deck without -sig0): records s3_fe_hs_n4 / n8 / n16 (n16 reported only).
 # SANISAND: the deck (scheme-1 defaults) cannot take the first push step at r1 (Round 1); the
-# freeze's probe order v1_me_cap1000, v2_sasme, v3_cppm_refuse, v4_implex_cap1000 runs on
-# esmeralda; records s3_fe_sanisand_<variant>_n<4|8>.
+# probe order v0_tims_r1sep (ruling 2026-11-17: the TIMs model-of-record option set on our 18
+# constants -- 129 0 1 1e-7 1e-4 -Presidual 0.0 -honorTolR 0 -flipAlphaIn init -Pmin 0.0101
+# -maxSubsteps 2000 -sasHFloor 1.0 -sasReseatHyst 1 -sasSoftCap 0.5 -sasTensionCutoff 0.5 1.0),
+# then the freeze's v1_me_cap1000, v2_sasme, v3_cppm_refuse, v4_implex_cap1000, runs on
+# esmeralda; records s3_fe_sanisand_<variant>_n<4|8>. Each SANISAND record carries sas_counts:
+# the `sasStats` separation entries (tension, low p), exits, points separated at the end, and
+# SAS-ME refusals, summed over every Gauss point; a non-zero separation count is reported, not
+# tuned.
 case s3_ref_footing
 kind reference
 data tests/data/mpm/soil/s3_fe_hs_n4.json

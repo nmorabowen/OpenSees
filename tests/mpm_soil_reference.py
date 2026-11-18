@@ -705,12 +705,47 @@ FOOT = dict(B=2.0, X=12.0, D=6.0, q0=20.0, ds=0.002, s_max=0.1, floor=5.0e-4,
 # AND r2 on the K9 ladder wins); options appended to SAN_PARAMS.
 SAN_VARIANTS = {
     "deck": (),
+    # v0 (ruling 2026-11-17, ahead of v1-v4): the TIMs model-of-record option set on our 18
+    # constants, as tims-workbench/Tries/2d-model/model/strip.py emits it -- positional
+    # "IntScheme": 129, "TanType": 0, ... "TolR": 1.0e-4 (:466, over TOYOURA_DM04's
+    # "JacoType=1, TolF=1.0e-7" at :189), then (:1736-1758) "-Presidual" 0.0, "-honorTolR" 0,
+    # "-flipAlphaIn" "init", "-Pmin" 0.0101, "-maxSubsteps" 2000,
+    # "-sasHFloor", 1.0, "-sasReseatHyst", 1, "-sasSoftCap", 0.5 and "-sasTensionCutoff", 0.5, 1.0.
+    "v0_tims_r1sep": (129, 0, 1, 1.0e-7, 1.0e-4,
+                      "-Presidual", 0.0, "-honorTolR", 0, "-flipAlphaIn", "init",
+                      "-Pmin", 0.0101, "-maxSubsteps", 2000,
+                      "-sasHFloor", 1.0, "-sasReseatHyst", 1, "-sasSoftCap", 0.5,
+                      "-sasTensionCutoff", 0.5, 1.0),
     "v1_me_cap1000": ("-maxSubsteps", 1000),
     "v2_sasme": (129,),
     "v3_cppm_refuse": (2, "-cppmOnFail", "refuse"),
     "v4_implex_cap1000": ("-implex", "-maxSubsteps", 1000),
 }
 K9 = [("KrylovNewton", 1.0e-6, 40), ("NewtonLineSearch", 1.0e-6, 60), ("KrylovNewton", 1.0e-5, 80)]
+
+
+# LadrunoSANISAND `sasStats` columns (LadrunoSANISAND.cpp:5616-5640, per instance, cumulative,
+# counted at commit -- :4969): 15 sas_refusals; WP-152 separation 36 sas_sepEntriesTension,
+# 37 sas_sepEntriesLowP, 38 sas_sepExits, 39 sas_sepActive (1 while separated).
+_SAS_COLS = dict(refusals=15, sep_entries_tension=36, sep_entries_lowp=37, sep_exits=38)
+
+
+def _sas_counts(ops, elems) -> dict:
+    """Separation events summed over every Gauss point of the model (8 per hex), from the
+    material's `sasStats` response; sep_active_points = points separated at the end."""
+    tot = {k: 0.0 for k in _SAS_COLS}
+    active = 0
+    for e in elems:
+        for gp in range(8):
+            v = list(ops.eleResponse(e, "material", gp + 1, "sasStats"))
+            if len(v) <= 39:
+                return dict(available=False, note=f"sasStats has {len(v)} columns")
+            for k, c in _SAS_COLS.items():
+                tot[k] += v[c]
+            active += int(v[39] > 0.0)
+    return dict(available=True, response="sasStats (LadrunoSANISAND.cpp:5616-5640)",
+                separation_events=int(tot["sep_entries_tension"] + tot["sep_entries_lowp"]),
+                **{k: int(v) for k, v in tot.items()}, sep_active_points=active)
 
 
 def fe_footing_soil(mat, n_across_b, variant="deck", max_wall=None, curve=True):
@@ -845,12 +880,14 @@ def fe_footing_soil(mat, n_across_b, variant="deck", max_wall=None, curve=True):
         ops.reactions()
         F = -sum(ops.nodeReaction(n, 2) for n in foot)
         rows.append((ops.getTime() * s_max, (F + r_corr) / width, f["q0"] + (F - F0) / width))
+    sas = _sas_counts(ops, elems) if mat == "sanisand" else None
     s = np.array([r[0] for r in rows]) if rows else np.zeros(1)
     q = np.array([r[1] for r in rows]) if rows else np.zeros(1)
     s_end = float(s[-1]) if rows else 0.0
     out = dict(material=mat, variant=variant, san_opts=list(san_opts), n_across_b=n_across_b, h=h,
                hexes=ne, element="LadrunoBrick -formulation bbar (small strain), plane-strain slab",
                stage0_route=route0, flip_route=route1, flip_check=flip_check, F0=F0,
+               sas_counts=sas,
                q0=f["q0"], s_end=s_end, reached=bool(s_end >= f["s_max"] - 1e-9), stopped=stopped,
                q_at={f"{sb:.2f}": float(np.interp(sb * f["B"], s, q))
                      for sb in f["s_over_b"] if rows and sb * f["B"] <= s_end + 1e-12},
@@ -861,7 +898,7 @@ def fe_footing_soil(mat, n_across_b, variant="deck", max_wall=None, curve=True):
     if curve:
         out["curve"] = [[float(a), float(b), float(c)] for a, b, c in rows]
     print(f"FOOT {mat} {variant} n={n_across_b}: s_end {s_end:.4f} reached {out['reached']} "
-          f"q_at {out['q_at']} fails {nfail} relaxed {nrelax} halvings {nhalv} "
+          f"q_at {out['q_at']} fails {nfail} relaxed {nrelax} halvings {nhalv} sas {sas} "
           f"({out['wall_s']} s) {stopped or ''}", flush=True)
     return out
 
