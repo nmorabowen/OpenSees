@@ -1220,6 +1220,26 @@ are `s1_onepoint_options.json` (36 legs, `d935310b0`, build `b94c9d75d`).
   every leg (DP included), because SANISAND's residual stalls at 6.2e-10. Accepted before any K0p
   number. K0 keeps 1e-10.
 
+**Rulings (2026-11-18, option legs on build `f235a001f`).**
+- **SANISAND `-implex` equality: compared at the material's committed response.** The FE record
+  stores the material's committed stress, so the like-for-like particle quantity is the particle
+  material's committed `stress` and its 26-entry state. Those equal the scheme-1 run bit for bit,
+  every step, on all 12 legs and both modes. This reads the ruling; it does not widen it. The
+  particle's own `sigHat` keeps the stress returned at the trial call, which under `-implex` is the
+  extrapolated stress the step was equilibrated with (as an FE element's internal force uses).
+  That is consistent with IMPL-EX, but particle stress output then differs from the material's
+  committed stress, by 0.035–0.233 relative from the first plastic step. It is recorded as a quirk
+  fragment and a guide note: which stress particle output shows under `-implex`. No C++ change.
+  The `-implex` boundary-value leg passes: σ RMS 0.01862 ρgl0 against 0.02, with α moved at
+  160/160.
+- **SANISAND IntScheme 2 shear, the post-switch envelope: a pre-registered miss.** The legs are
+  outside the FE Gauss-point envelope (an over-wide GP 1 ± spread) at 26/110 (ps F), 26/70 (3D A)
+  and 9/70 (3D F) post-switch steps, worst 1.71×; ps A is inside. Before the switch every leg holds
+  1e-11. Diagnosis (232k-C): from the switch step the 8 Gauss points take different CPPM branches,
+  and a particle with its own round-off takes its own. Eight points sample the branch set; they
+  do not bound it. Recorded as a strict xfail with `s1_options_diagnosis.json`; the miss goes to
+  the owner at ready-flip.
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
