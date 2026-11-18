@@ -1,0 +1,105 @@
+{
+ "gimp_toprow": {
+  "mat": "sanisand",
+  "basis": "gimp",
+  "checkpoints": {
+   "end_stage0": {
+    "syy_max": 0.012651086342176555,
+    "sxx_rms": 0.005650682544461126
+   },
+   "after_flip": {
+    "syy_max": 0.012651086342176555,
+    "sxx_rms": 0.005650682544461126
+   },
+   "after_hold": {
+    "syy_max": 0.012658173542395948,
+    "sxx_rms": 0.005650686237986418
+   },
+   "after_surcharge": {
+    "syy_max": 0.26524673700638235,
+    "sxx_rms": 0.026574955455750712
+   }
+  },
+  "cap": false,
+  "passed": false
+ },
+ "gimp_elastic_cap": {
+  "mat": "sanisand",
+  "basis": "gimp",
+  "checkpoints": {
+   "end_stage0": {
+    "syy_max": 0.012651086342516108,
+    "sxx_rms": 0.005650682614699314
+   },
+   "after_flip": {
+    "syy_max": 0.012651086342516108,
+    "sxx_rms": 0.005650682614699314
+   },
+   "after_hold": {
+    "syy_max": 0.012658173542565723,
+    "sxx_rms": 0.00565068632834119
+   },
+   "after_surcharge": {
+    "syy_max": 0.022399804682335645,
+    "sxx_rms": 0.005843275439457295
+   }
+  },
+  "cap": true,
+  "passed": true
+ },
+ "gimp_soil_cap": {
+  "failed": "See stderr output"
+ },
+ "bspline2_toprow": {
+  "mat": "sanisand",
+  "basis": "bspline2",
+  "checkpoints": {
+   "end_stage0": {
+    "syy_max": 0.0069466731786158,
+    "sxx_rms": 0.0007937988303446188
+   },
+   "after_flip": {
+    "syy_max": 0.0069466731786158,
+    "sxx_rms": 0.0007937988303446188
+   },
+   "after_hold": {
+    "syy_max": 0.006946453942626962,
+    "sxx_rms": 0.0007953958179152605
+   },
+   "after_surcharge": {
+    "syy_max": 0.7755200587653315,
+    "sxx_rms": 0.0628122008728375
+   }
+  },
+  "cap": false,
+  "passed": false
+ },
+ "bspline2_elastic_cap": {
+  "mat": "sanisand",
+  "basis": "bspline2",
+  "checkpoints": {
+   "end_stage0": {
+    "syy_max": 0.006946673176580214,
+    "sxx_rms": 0.0005832734999885881
+   },
+   "after_flip": {
+    "syy_max": 0.006946673176580214,
+    "sxx_rms": 0.0005832734999885881
+   },
+   "after_hold": {
+    "syy_max": 0.0069464539405913765,
+    "sxx_rms": 0.0005832602470492932
+   },
+   "after_surcharge": {
+    "syy_max": 0.1802646995446879,
+    "sxx_rms": 0.01782039003687381
+   }
+  },
+  "cap": true,
+  "passed": false
+ },
+ "bspline2_soil_cap": {
+  "failed": "See stderr output"
+ },
+ "build": "7c932089c7c7bae4296395a58c62b46956eff0f8"
+}

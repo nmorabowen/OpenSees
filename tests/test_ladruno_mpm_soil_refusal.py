@@ -144,7 +144,7 @@ def test_s5_sanisand_abort_classic_tcl():
     with tempfile.TemporaryDirectory() as td:
         f = Path(td) / "s5.tcl"
         f.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        r = subprocess.run([exe, str(f)], capture_output=True, text=True, cwd=td, timeout=300,
+        r = subprocess.run([exe, str(f)], stdin=subprocess.DEVNULL, capture_output=True, text=True, cwd=td, timeout=300,
                            env=dict(os.environ, LADRUNO_OPENSEES_QUIET="1"))
     out = r.stdout + r.stderr
     assert "REFUSED" in out and "ABORTED 1" in out, out[-2000:]

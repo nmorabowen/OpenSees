@@ -4,7 +4,8 @@ S2: the K0 column (mode A QS, fixed base) with a surcharge rho g l0 on the top r
 the closed form within 0.03 rho g l0 and sxx RMS against 232k-V's FE column within 0.02 rho g l0,
 at the end of stage 0, after the flip and after the surcharge (tests/data/mpm/soil/s2_column.json).
 S4: the stage flip is the same per-particle map in mode A and mode F, and the FE's: on the
-low-g twin (g 0.5, l0 2; tests/data/mpm/soil/s4_lowg.json) the row with p < Pmin commits
+low-g twin (l0 2, g 0.25 so that mode A's top cell sits below Pmin too; the rule of
+tests/data/mpm/soil/s4_lowg.json) the row with p < Pmin commits
 sigma = -Pmin I and alpha = 0 exactly, every other particle keeps its sigma bit for bit, and
 alpha_in = alpha (-flipAlphaIn init); >= 1 reset particle in each mode.
 """
@@ -40,8 +41,16 @@ S2_HS_MISS = pytest.mark.xfail(strict=True, reason=(
     " elastic cap 0.021 / 0.300, soil cap 0.058 / 0.069. Gate unchanged."))
 
 
+S2_SAN_MISS = pytest.mark.xfail(strict=True, reason=(
+    "recorded miss, the same way as HS (owner's decision, #1110): the registered top-row body-force"
+    " surcharge gives syy_max 0.265 (gimp) / 0.776 (bspline2) after the surcharge, at the top"
+    " cell; end of stage 0 and after the flip pass (0.013 / 0.007; sxx RMS 0.006 / 0.001)."
+    " Gate unchanged."))
+
+
+@pytest.mark.parametrize("mat", [pytest.param("hs", marks=S2_HS_MISS),
+                                 pytest.param("sanisand", marks=S2_SAN_MISS)])
 @pytest.mark.parametrize("basis", ["gimp", "bspline2"])
-@pytest.mark.parametrize("mat", [pytest.param("hs", marks=S2_HS_MISS), "sanisand"])
 def test_s2_column_with_surcharge(mat, basis):
     out = S.s2_run(_ops(), mat, basis)
     assert out["passed"], out["checkpoints"]

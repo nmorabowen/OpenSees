@@ -176,7 +176,7 @@ def run_tcl(deck, exe, timeout=600):
         f = Path(td) / "s1.tcl"
         f.write_text(deck, encoding="utf-8")
         env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
-        r = subprocess.run([exe, str(f)], capture_output=True, text=True, cwd=td,
+        r = subprocess.run([exe, str(f)], stdin=subprocess.DEVNULL, capture_output=True, text=True, cwd=td,
                            timeout=timeout, env=env)
     for line in (r.stdout + r.stderr).splitlines():
         if line.startswith("SIG "):
@@ -307,10 +307,13 @@ def s2_run(ops, mat, basis, nsur=10, cap=False):
     return out
 
 
-def s4_flip_map(ops, mode, basis=None, g=0.5, l0=2.0):
+def s4_flip_map(ops, mode, basis=None, g=0.25, l0=2.0):
     """Stage 0 under low g, then the walk; returns per-particle (pre, post) and the check of the
     record's rule: p < Pmin -> sigma = -Pmin I and alpha = 0, else sigma bit for bit; alpha_in =
-    alpha after the flip (-flipAlphaIn init)."""
+    alpha after the flip (-flipAlphaIn init).
+    g = 0.25, not the FE record's 0.5: mode A's gimp column carries the top cell's two rows at one
+    p (0.159 kPa at g 0.5, above Pmin = 0.101; 0.080 at g 0.25), so the record's g leaves no
+    particle to reset there. The check is the record's rule, which does not depend on g."""
     rec = load("s4_lowg.json")
     pmin = float(rec["Pmin"])
     basis = basis or ("bspline2" if mode == "F" else "gimp")   # the owner's K0 decision
