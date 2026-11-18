@@ -359,6 +359,10 @@ class LadrunoSANISAND : public ManzariDafalias
     // ManzariDafalias instance of every tag in the process) for the D10 stage guard.
     int ladrunoIntegrationScheme(void) const { return (int)mScheme; }
     static int ladrunoStageFlag(void) { return (int)mElastFlag; }
+    // WP-232k (S6): a restored MPM host re-asserts the flag its particles were staged with; the
+    // instances already carry their flipped state (mFlipSeen is restored), so no per-instance
+    // flip runs (contrast updateParameter's Elastic2Plastic).
+    static void ladrunoRestoreStageFlag(int s) { mElastFlag = (char unsigned)s; }
 
     // Ladruno WP-130 (TIMs F18(c)/(d)): the BackwardEuler_CPPM options, set
     // after construction on the IMPL-EX rule (not constructor arguments, so the

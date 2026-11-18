@@ -107,6 +107,8 @@ class LadrunoMPMPointHost
   // particle element through MaterialStageParameter. The host registers ITSELF and walks
   // every particle (0), or answers -2: not a soil stage request, the element forwards as before.
   virtual int    mpmStageParameter(const char **, int, Parameter &) { return -2; }
+  // WP-232k (D14): particle p's material refused the trial strain (the host names it)
+  virtual void   mpmTrialRefused(int) {}
 };
 
 // Shared liveness token: the host nulls `host` in its destructor.

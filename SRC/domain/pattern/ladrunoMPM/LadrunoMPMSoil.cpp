@@ -364,7 +364,9 @@ LadrunoMPMPattern::buildPrescribed(double t, double h, std::string &err)
           const long ext = G.extId(ijk);
           for (int a = 0; a < nd; a++) {
             if (gv.freeMask & (1u << a)) continue;
-            const double val = gv.profiled ? gv.v[a] * fac : gv.v[a];
+            double cx[3] = {0, 0, 0};
+            for (int d = 0; d < nd; d++) cx[d] = G.x0[d] + ijk[d] * G.h;
+            const double val = gv.valueAt(a, cx, nd, fac);
             for (int f = 0; f < 2 * nd; f++) {
               const int d = f / 2;
               const bool on = (f % 2 == 0) ? ijk[d] <= 0 : ijk[d] >= G.n[d];

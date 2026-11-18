@@ -1,0 +1,93 @@
+"""WP-232k S6 (mode A restart): the database round trip with soil particles mid-stage-1. The S2
+column (fixed base) is staged, flipped, and loaded by part of the surcharge; then `save`, `wipe`,
+`restore`, the analysis rebuilt, and the rest of the surcharge applied. The continued run equals
+the uninterrupted one bit for bit (positions, stress, the material state). For SANISAND the
+restored host re-asserts the class-wide stage flag that `wipe` zeroed (restart pack v4); the
+materials restore their own flipped state (LadrunoSANISAND.cpp:2659-2667).
+"""
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(__file__))
+import ladruno_mpm_soil_s_harness as S  # noqa: E402
+
+pytestmark = pytest.mark.zone_a
+L0 = 4.0
+
+
+def _ops():
+    try:
+        from _testbed import ops
+    except Exception as exc:  # pragma: no cover - environment
+        pytest.skip(f"opensees module not importable: {exc}")
+    if not hasattr(ops, "mpm"):
+        pytest.skip("this opensees build has no `mpm` command")
+    return ops
+
+
+def _analysis(ops):
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("UmfPack")
+    ops.test("NormDispIncr", 1.0e-10, 25)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.1)
+    ops.analysis("Static")
+
+
+def _surcharge(ops, i, n=6, q=50.0):
+    y = S._l(ops.mpm("particleData", "x"))[1::2]
+    m = S._l(ops.mpm("particleData", "m"))
+    ytop = max(y)
+    bf = []
+    for k in range(len(m)):
+        f = -(q * 0.25) * i / n if ytop - y[k] < 0.125 else 0.0
+        bf += [0.0, f / m[k]]
+    ops.mpm("particleBodyForce", *bf)
+    ops.mpm("analyze", 1, 0.1)
+
+
+def _fields(ops):
+    out = {f: S._l(ops.mpm("particleData", f)) for f in ("x", "sig", "F", "epsHat")}
+    out["state"] = S._l(ops.mpm("particleResponse", "state"))
+    return out
+
+
+@pytest.mark.parametrize("mat", ["hs", "sanisand"])
+def test_s6_restart_mid_stage1(mat):
+    ops = _ops()
+    cmd = S.load("s2_column.json")["decks"][mat]["cmd"]
+
+    def staged():
+        S.column_build(ops, cmd, "gimp", "A", l0=L0)
+        ops.mpm("analyze", 10, 0.1)
+        ops.mpm("stage", 1, 1)
+        ops.mpm("analyze", 2, 0.1)
+        for i in (1, 2, 3):
+            _surcharge(ops, i)
+
+    staged()
+    for i in (4, 5, 6):
+        _surcharge(ops, i)
+    ref = _fields(ops)
+
+    staged()
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+        ops.database("File", str(Path(td) / "soildb"))
+        ops.save(3)
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        ops.database("File", str(Path(td) / "soildb"))
+        ops.restore(3)
+        _analysis(ops)
+        for i in (4, 5, 6):
+            _surcharge(ops, i)
+        got = _fields(ops)
+    for f in ref:
+        assert got[f] == ref[f], f"{mat}: field {f} differs after the restart"

@@ -336,7 +336,11 @@ LadrunoMPMPoint::computeTrial(void)
     epsT[k] = PP.eps[nv * p + k] + deps[k];
     e(k) = epsT[k];
   }
-  if (mat->setTrialStrain(e) < 0) return -4;
+  if (mat->setTrialStrain(e) < 0) {
+    LadrunoMPMPointHost *hh = host();             // WP-232k (D14): the host names the material
+    if (hh != 0) hh->mpmTrialRefused(p);
+    return -4;
+  }
   if (diagnose) {                         // WP-232j: `mpm debug failDump`
     // COPY the current tangent before asking for the initial one: a material may return
     // both through ONE member buffer (DruckerPragerPlaneStrain.cpp:129-164 fills `tangent`

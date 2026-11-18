@@ -87,6 +87,7 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
     Vector &eps = (nv == 6) ? eps6 : eps3;
     for (int k = 0; k < nv; k++) eps(k) = e[k];
     const int res = mat->setTrialStrain(eps);
+    if (res < 0 && trialFail < 0) trialFail = p;   // WP-232k (D14): named by the host
     const Vector &sig = mat->getStress();
     for (int k = 0; k < nv; k++) s[k] = sig(k);
     return (res < 0) ? -1 : 0;
@@ -112,6 +113,7 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
   }
   int injected = 0;
   int firstRefuser = -1;      // WP-232k (D13): this commit's first refusing particle, or -1
+  int trialFail = -1;         // WP-232k (D14): this step's first trial refusal, or -1
   void clearRefusals() override { ladrunoClearCommitRefusals(); firstRefuser = -1; }
   // The INITIAL (elastic) tangent bounds the wave speed (interface Amendment 6,
   // review F6): a softened current tangent (DruckerPrager's apex mCep =
@@ -860,6 +862,7 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       OPS_PROFILE_SCOPE_DEEP_NAMED(matTmr, "mpm.f.material");
       adapter->setTimer(&matTmr);
 #endif
+      adapter->trialFail = -1;                       // WP-232k (D14)
       res = eng.advance(dt, lambda, *adapter, err);
 #ifndef OPS_PROFILE_DISABLE
       adapter->setTimer(0);
@@ -869,6 +872,8 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
     eng.presc.clear();          // WP-232k (D18): per step; nothing else (affineCheck) sees it
     if (res == -1) {
       dom->revertToLastCommit();
+      if (adapter->trialFail >= 0)                   // WP-232k (D14): name the material and tag
+        err += " (" + refuserText(adapter->trialFail) + ")";
       opserr << "ERROR mpm analyze -- step failed at t = " << t0 + dt << ": " << err.c_str()
              << "; particles keep their committed state\n";
       rc = -1;

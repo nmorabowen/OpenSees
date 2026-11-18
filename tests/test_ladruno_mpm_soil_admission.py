@@ -153,3 +153,42 @@ def test_d15_symmetric_soe_refused_with_soil():
     ops.analysis("Static")
     with pytest.raises(Exception):
         ops.mpm("analyze", 1, 0.1)
+
+
+def test_s7_q2_offset_refused_on_soil():
+    """Q2: a soil particle takes no initial-stress offset (K3)."""
+    ops = _ops()
+    _column(ops, HS, 4, kind="LadrunoHS")
+    with pytest.raises(Exception):
+        ops.mpm("stress", 1, "uniform", -10.0, -10.0, 0.0)
+    with pytest.raises(Exception):
+        ops.mpm("stress", 1, "geostatic", 1.0, 2.0, 9.81, 0.5)
+
+
+def _column_a(ops, threads):
+    _column(ops, HS, 4, mode="quasiStatic", kind="LadrunoHS")
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("UmfPack")
+    ops.test("NormDispIncr", 1.0e-10, 25)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.1)
+    ops.analysis("Static")
+    ops.ladrunoThreads(threads)
+    ops.mpm("analyze", 3, 0.1)
+    ops.mpm("stage", 4, 1)
+    ops.mpm("analyze", 2, 0.1)
+    return _l(ops.mpm("particleData", "sig"))
+
+
+def test_s7_k2_threads_honoured_as_one(capfd):
+    """K2 (D5): soil particles run serial; ladrunoThreads 4 prints the existing 'not on the
+    thread-safe allowlist ... SERIAL' warning and gives the bit-identical answer."""
+    ops = _ops()
+    one = _column_a(ops, 1)
+    capfd.readouterr()
+    four = _column_a(ops, 4)
+    cap = capfd.readouterr()
+    ops.ladrunoThreads(1)
+    assert four == one
+    assert "SERIAL" in (cap.err + cap.out) or "serial" in (cap.err + cap.out).lower()

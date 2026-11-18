@@ -202,6 +202,12 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   int    condForce(const std::string &name, std::vector<double> &out, std::string &err);
   // `mpm pforce <body> box <lo> <hi> <f>`: returns the count of particles
   int    addPointForce(int body, const double *lo, const double *hi, const double *f, std::string &err);
+  // WP-232k (S1): `mpm gridvel <name> box <lo> <hi> affine <L: ndm x ndm> [ref <x: ndm>]` -- every
+  // node of the set prescribed v = L (x_node - ref), all components; `mpm gridvel <name>
+  // setAffine <L>` changes L between `mpm analyze` calls (the harness's per-step dF path)
+  int    addGridVelAffine(const std::string &name, const double *lo, const double *hi,
+                          const double *L, const double *ref, std::string &err);
+  int    setGridVelAffine(const std::string &name, const double *L, std::string &err);
   void   setMassCutoffUser(double c) { eng.par.masscut = c; masscutUser = true; }
   // emptyNodes: -1 exclude (held at zero increment), EMPTY_RENORMALIZE exclude with
   // the kept shape functions renormalised, >= 0 ghost spring factor gamma
@@ -257,6 +263,7 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
 
   // ---- LadrunoMPMPointHost --------------------------------------------------------
   int    mpmStageParameter(const char **argv, int argc, Parameter &param);   // D9 (c)
+  void   mpmTrialRefused(int p);                                             // D14
   ladruno_mpm::Particles &mpmParticles(void) { return eng.P; }
   const double *mpmBodyForce(int p);
   bool   mpmTrialAdmissible(int p, const double *x);
@@ -310,6 +317,10 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
     bool   profiled = false;    // WP-232k D17: present from t = 0, velocity v * phi(t)
     double pT0 = 0.0, pTr = 0.0, pT1 = 0.0;   // the trapezoid: ramp up from pT0 over pTr,
                                                // ramp down ending at pT1
+    bool   affine = false;      // WP-232k (S1): v = L (x - ref) per node, every component
+    double L[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0}, ref[3] = {0, 0, 0};
+    // the prescribed component a at a node with coordinates c, at step factor fac
+    double valueAt(int a, const double *c, int nd, double fac) const;
     bool   presentAt(double t) const;
     double displacementFactor(double t) const;      // Phi(t) (profile) or max(t - start, 0)
     double stepFactor(double t, double h) const;    // (Phi(t+h) - Phi(t)) / h, or 1
@@ -384,6 +395,8 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   bool soilStageRequest(const char **argv, int argc, int &matTag) const;
   // WP-232k (D18, #1109): mode F's prescribed grid velocities for the step [t, t + h]
   int  buildPrescribed(double t, double h, std::string &err);
+  // WP-232k (D14): the first particle whose material refused the trial strain in this attempt
+  int  firstTrialRefuserA = -1;
   int  admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic, std::string &err);
   bool domainHasFreeDOF(std::string &which);
   bool isGridNode(int tag) const;

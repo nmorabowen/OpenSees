@@ -59,6 +59,9 @@ class LadrunoSANISAND3D : public LadrunoSANISAND // Ladruno
 {
   public :
 
+  // Ladruno WP-232k (D13/D14): named in the MPM refusal messages
+  const char *getClassType(void) const { return "LadrunoSANISAND3D"; }
+
   //full constructor
   LadrunoSANISAND3D(int tag, double G0, double nu, double e_init, double Mc, double c, double lambda_c, double e0, double ksi,
 	double P_atm, double m, double h0, double ch, double nb, double A0, double nd, double z_max, double cz, double mDen, int integrationScheme = 2,

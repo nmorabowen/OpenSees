@@ -406,9 +406,33 @@ int cmdGridVel(LadrunoMPMPattern *h)
                       " [translate x|y|z] [profile <t0> <Tr> <t1>]";
   if (OPS_GetNumRemainingInputArgs() < 2) return fail(usage);
   const std::string name = OPS_GetString();
-  if (std::string(OPS_GetString()) != "box") return fail(usage);
+  const std::string kw = OPS_GetString();
+  if (kw == "setAffine") {                                             // WP-232k (S1)
+    double L[9];
+    if (!readDoubles(nd * nd, L)) return fail("gridvel <name> setAffine <L: ndm*ndm, row-major>");
+    std::string err;
+    if (h->setGridVelAffine(name, L, err) < 0) return fail("gridvel -- " + err);
+    return 0;
+  }
+  if (kw != "box") return fail(usage);
   double lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0}, v[3] = {0, 0, 0};
   if (!readDoubles(nd, lo) || !readDoubles(nd, hi)) return fail(usage);
+  if (OPS_GetNumRemainingInputArgs() > 0) {                            // WP-232k (S1): affine
+    const std::string k2 = OPS_GetString();
+    if (k2 == "affine") {
+      double L[9], ref[3] = {0, 0, 0};
+      if (!readDoubles(nd * nd, L))
+        return fail("gridvel <name> box <lo> <hi> affine <L: ndm*ndm, row-major> [ref <x: ndm>]");
+      if (OPS_GetNumRemainingInputArgs() > 0) {
+        if (std::string(OPS_GetString()) != "ref" || !readDoubles(nd, ref))
+          return fail("gridvel ... affine <L> [ref <x: ndm>]");
+      }
+      std::string err;
+      if (h->addGridVelAffine(name, lo, hi, L, ref, err) < 0) return fail("gridvel -- " + err);
+      return 0;
+    }
+    OPS_ResetCurrentInputArg(-1);
+  }
   if (OPS_GetNumRemainingInputArgs() < nd + 1 || std::string(OPS_GetString()) != "v") return fail(usage);
   unsigned freeMask = 0;
   for (int d = 0; d < nd; d++) {
