@@ -264,3 +264,31 @@ def test_k0p_record():
     assert all(abs(p["ratio_xx"] - K0_EL) < 1e-9 for p in d["legs"]["elastic"]["after_hold2"]["particles"])
     assert "poissonRatio" in d["legs"]["sanisand"]["preshear_params"]
     assert "shearModulus" in d["legs"]["dp"]["preshear_params"]
+
+
+def test_s1_options_record():
+    d = _json("s1_onepoint_options")
+    _provenance_ok(d)
+    base = _json("s1_onepoint")["legs"]
+    legs = d["legs"]
+    assert len(legs) == 6 * 3 + 6 + 2 + 8 + 2
+    for key, L in legs.items():
+        assert all("failed" not in s for s in L["steps"]), key
+        F = [np.array(x) for x in L["F"]]
+        for n, dF in enumerate(L["dF"]):
+            assert np.allclose(np.array(dF) @ F[n], F[n + 1], rtol=0, atol=1e-14)
+    # IntScheme 129's points never part; HS options never part
+    for key, L in legs.items():
+        if key.startswith(("sanisand_is129", "hs_")):
+            assert L["fe_self_consistency"]["max_gp_rel_spread"] < 1e-12, key
+    # vacuity facts recorded in the cases block
+    for dim in ("3d", "ps"):
+        for p in ("triax", "oedo", "shear"):
+            assert legs[f"sanisand_implex_{dim}_{p}"]["steps"][-1]["sig"] == \
+                base[f"sanisand_{dim}_{p}"]["steps"][-1]["sig"]
+            assert legs[f"hs_sigmat_{dim}_{p}"]["steps"][-1]["sig"] == \
+                base[f"hs_{dim}_{p}"]["steps"][-1]["sig"]
+        st = legs[f"hs_sigmat_{dim}_tension"]["steps"][-1]["sig"]
+        sd = legs[f"hs_deck_{dim}_tension"]["steps"][-1]["sig"]
+        assert abs(sum(st[:3]) / 3 - 5.0) < 1e-6       # mean stress held at sigma_t
+        assert abs(sum(sd[:3]) / 3) < 1e-6              # the deck: sigma_t = 0

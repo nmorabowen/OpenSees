@@ -15,6 +15,12 @@ dist/bin. Each leg writes tests/data/mpm/soil/<leg>.json with the build hash (op
 the deck, the date and the numbers; tests/test_mpm_soil_reference.py checks those files (no
 binary needed).
 
+GRAVITY: every body force goes through `eleLoad -type -BrickW` (constant BRICKW). Issue #1111:
+the Python interpreter matches that type case-sensitively and silently ignores `-brickW`, after
+which LadrunoBrick applies `-b` unconditionally. The K0, S2 and S3 HS records were re-run with
+the real ramp on 2026-11-18 (fa68005ac); every stage-0 law here is linear, and they agree with
+the earlier records to 1e-11 kPa.
+
 STAGE ROUTES, recorded in every JSON (`flip_route`):
 * SANISAND and HS flip with `updateMaterialStage -material 1 -stage 1`, as their decks do
   (tests/test_ladruno_sanisand.py:614/:620). `MaterialStageParameter::setDomain` stops at the first
@@ -47,8 +53,9 @@ DATA = HERE / "data" / "mpm" / "soil"
 G_GRAV = 9.81
 RHO = 2.0
 
-# The body-force eleLoad type, spelled as the Python interpreter matches it, case-sensitively:
-# OpenSeesPatternCommands.cpp:541 `else if (strcmp(type,"-BrickW") == 0)`. Measured 2026-11-18
+# The body-force eleLoad type, spelled as the Python interpreter matches it, case-sensitively
+# (issue #1111): OpenSeesPatternCommands.cpp:542 `else if (strcmp(type,"-BrickW") == 0)`, and an
+# unknown type falls through to `return 0` (:1072-1074), silently. Measured 2026-11-18
 # (b94c9d75d): `-type -brickW` attaches NOTHING, and LadrunoBrick then applies its `-b`
 # unconditionally (LadrunoBrick.cpp:1516-1519, `if (applyLoad == 0) bodyForce -= ... b[p]`), so
 # a "ramped" gravity is in fact full gravity from the first step. Records before this fix (K0,
@@ -171,6 +178,8 @@ def decks() -> dict:
 
 
 def _material(ops, mat: str, tag: int = 1, san_opts=()) -> None:
+    """`san_opts`: extra tokens after the deck -- SANISAND's positional/flag options, or HS's
+    flags (placed before HS's `-stage 0`)."""
     if mat == "elastic":
         ops.nDMaterial("ElasticIsotropic", tag, EL_E, EL_NU)
     elif mat == "dp":
@@ -180,7 +189,7 @@ def _material(ops, mat: str, tag: int = 1, san_opts=()) -> None:
     elif mat == "sanisand":
         ops.nDMaterial("LadrunoSANISAND", tag, *SAN_PARAMS, *san_opts)
     elif mat == "hs":
-        ops.nDMaterial("LadrunoHS", tag, *HS_ARGS, "-stage", 0)
+        ops.nDMaterial("LadrunoHS", tag, *HS_ARGS, *san_opts, "-stage", 0)
     else:
         raise ValueError(mat)
 
@@ -644,6 +653,13 @@ def s1_path(mat: str, dim: str, path: str) -> dict:
             if nd == 3:
                 D[2, 2] = 1.0 + lat * e
             steps.append(D @ Fc)
+    elif path == "tension":
+        # lateral (x) stretch only, 40 steps to F_xx = 1 + 5e-3: drives sigma_xx through zero into
+        # tension, the only path here that reaches HS's -sigmat cut-off
+        for k in range(1, S1["n_ax"] + 1):
+            D = np.eye(3)
+            D[0, 0] = 1.0 + S1["eps_ax"] * k / S1["n_ax"]
+            steps.append(D @ Fc)
     elif path == "shear":
         q, ga = S1["n_quarter"], S1["gamma_a"]
         g = []    # per cycle: 0 -> +ga (q steps), +ga -> -ga (2q), -ga -> 0 (q)
@@ -758,6 +774,45 @@ def leg_onepoint() -> dict:
                        substeps="SANISAND 'substeps' response [ME substeps, capHit] of the last "
                                 "(converged) update, GP 1; substeps_gp: ME substeps at all 8 GPs"))
     _save("s1_onepoint", payload)
+    return legs
+
+
+# S1 option legs (critic AMEND, 2026-11-18): the admitted options, one-point FE, same paths.
+S1_OPTIONS = {
+    # SANISAND positional IntScheme (LadrunoSANISAND.cpp:64-66, oData[0], defaults :229-237)
+    "sanisand_is2": ("sanisand", (2,), ("triax", "oedo", "shear")),
+    "sanisand_is129": ("sanisand", (129,), ("triax", "oedo", "shear")),
+    # -implex: companion scheme 1, which REQUIRES a cap -- "-implex on IntScheme 1 REQUIRES
+    # -maxSubsteps > 0" (LadrunoSANISAND.cpp:3132) -- so -maxSubsteps 1000 (#792's cap, as the S3
+    # v4 variant); -implexDt pseudo (ops_Dt = the LoadControl increment, 1 here), -implexFactor
+    # fixed, -implexControl OFF, all defaults (LadrunoSANISAND.cpp:66-71)
+    "sanisand_implex": ("sanisand", ("-implex", "-maxSubsteps", 1000), ("triax", "oedo", "shear")),
+    "hs_implex": ("hs", ("-implex",), ("triax", "oedo", "shear")),
+    # HSSmall through -smallStrain G0_ref gamma_0.7 (the deck of test_ladruno_hs_material.py:778-787)
+    "hs_smallstrain": ("hs", ("-smallStrain", 140000.0, 1.5e-4), ("shear",)),
+    # tension cut-off sigma_t (the deck has c = 10 kPa; 5 kPa < c cot(phi) = 12.8 kPa). Measured:
+    # on triax / oedo / shear it is bit-identical to the deck (no principal stress goes tensile),
+    # so the `tension` path is added, with the deck's own tension leg beside it.
+    "hs_sigmat": ("hs", ("-sigmat", 5.0), ("triax", "oedo", "shear", "tension")),
+    "hs_deck": ("hs", (), ("tension",)),
+}
+
+
+def leg_onepoint_options() -> dict:
+    legs = {}
+    for key, (mat, opts, paths) in S1_OPTIONS.items():
+        for dim in ("3d", "ps"):
+            for path in paths:
+                r = fe_onepoint(mat, dim, path, san_opts=opts)
+                r["options"] = list(opts)
+                legs[f"{key}_{dim}_{path}"] = r
+    payload = dict(_provenance("s1_onepoint_options", "fe_onepoint"), decks=decks(), paths=S1,
+                   options={k: dict(material=v[0], opts=list(v[1]), paths=list(v[2]))
+                            for k, v in S1_OPTIONS.items()},
+                   legs=legs,
+                   conventions="as s1_onepoint.json (F, dF, steps, fe_self_consistency); the "
+                               "material is the deck plus `options`")
+    _save("s1_onepoint_options", payload)
     return legs
 
 
@@ -1119,6 +1174,8 @@ def main(argv=None) -> None:
         leg_k0p()
     elif what == "onepoint":
         leg_onepoint()
+    elif what == "onepoint_options":
+        leg_onepoint_options()
     elif what == "s2":
         leg_s2()
     elif what == "s4":

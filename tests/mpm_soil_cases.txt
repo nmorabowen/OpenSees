@@ -214,3 +214,38 @@ field legs.sanisand.<after_hold|after_preshear|after_hold2>.alpha_rows  [Y_centr
 field legs.sanisand.alpha_moved, legs.<mat>.preshear_params, legs.<mat>.flip_route, legs.<mat>.preshear_ladder
 ref fork FE, LadrunoBrick B-bar capped column
 end
+
+# ============================================================================
+# S1 options (critic AMEND, 2026-11-18): the admitted options on the S1 one-point driver, the same
+# paths as s1_ref_onepoint (3D and plane strain), plus a `tension` path (F_xx -> 1 + 5e-3 after
+# the flip, the only path that reaches HS's tension cut-off). Legs <option>_<3d|ps>_<path>:
+#   sanisand_is2     IntScheme 2 (BackwardEuler_CPPM)               triax oedo shear
+#   sanisand_is129   IntScheme 129 (SAS-ME), defaults              triax oedo shear
+#   sanisand_implex  -implex -maxSubsteps 1000 (the cap is REQUIRED: "-implex on IntScheme 1
+#                    REQUIRES -maxSubsteps > 0", LadrunoSANISAND.cpp:3132)   triax oedo shear
+#   hs_implex        -implex                                        triax oedo shear
+#   hs_smallstrain   -smallStrain 140000 1.5e-4 (HSSmall)           shear (3 cycles)
+#   hs_sigmat        -sigmat 5.0                                    triax oedo shear tension
+#   hs_deck          (the deck, for the tension leg's contrast)     tension
+# FE self-consistency (8 GPs of one brick), first step with GP rel spread > 1e-8 / max spread:
+# IntScheme 2 shear 3D 61 / 1.4e-2 and PS 21 / 5.2e-2 (CPPM; triax and oedo never); IntScheme 129
+# never (<= 3.2e-14); -implex as the deck's scheme 1 (13 / 1.1e-4 in 3D triax); HS options never
+# (<= 5.5e-13).
+# TWO VACUITY FACTS, measured against s1_onepoint.json before any MPM number:
+#  * SANISAND -implex: every committed sigma is BIT-IDENTICAL to the scheme-1 deck leg (0.0 rel
+#    on all 6 legs). With every DOF prescribed, the committed state is the implicit companion's;
+#    IMPL-EX only changes the trial stress the global Newton sees. A committed-sigma comparison
+#    therefore cannot tell -implex from the deck; its S1 leg checks only that -implex is admitted
+#    and commits the companion's state.
+#  * HS -sigmat 5: bit-identical to the deck on triax / oedo / shear (no tension). On `tension`
+#    it differs: the cut-off acts on the MEAN stress (LadrunoHSKernel.h:1598-1606, "Surface 4
+#    on the MEAN stress, p >= p_cut"), so p ends at +5.0 kPa (sigma 10.24 / 2.38 / 2.38 in 3D)
+#    against the deck's p = 0 (8.48 / -4.24 / -4.24). sigma_xx exceeds 5 kPa by design.
+# -smallStrain differs from the deck by 16 % (rel) at the end of the cyclic shear; -implex (HS)
+# by 1.1e-4 .. 2.2e-4 on triax / oedo, 0 on shear.
+case s1_ref_onepoint_options
+kind reference
+data tests/data/mpm/soil/s1_onepoint_options.json
+field legs.<option>_<3d|ps>_<path>.{options, F, dF, steps[k].{sig, state, substeps, substeps_gp, gp_rel_spread}, fe_self_consistency}
+ref fork FE, LadrunoBrick -geom hypo, as s1_ref_onepoint
+end
