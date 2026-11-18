@@ -453,6 +453,10 @@ def _ladder_step(ops, t_target, state):
                 break
             except Exception:
                 state["failed"] += 1
+                # a refusal at commit aborts the run (W17): no rung or halving can recover it
+                if int(_l(ops.mpm("debug", "aborted"))[0]):
+                    raise RuntimeError(f"mpm run aborted at t = {float(ops.mpm('info', 'time'))}"
+                                       " (a refusal at commit, W17)")
         if ok is None:
             h = hh / 2.0
             state["halvings"] += 1
@@ -464,7 +468,36 @@ def _ladder_step(ops, t_target, state):
         h = min(2.0 * hh, 1.0)
 
 
-def s3_run(ops, mat_cmd, r, antilocking="fbar", extra_opts=(), s_end=0.1, log=None):
+SAS_NAMES = (
+    "sas_updates", "sas_elastic", "sas_substeps", "sas_accepted", "sas_rejectedErr",
+    "sas_rejectedLowP", "sas_rejectedNonPosH", "sas_rejectedDrift", "sas_rejectedAlpha",
+    "sas_elasticStages", "sas_driftCorrections", "sas_alphaInReseats", "sas_hBrackets",
+    "sas_alphaProjected", "sas_intersectFail", "sas_refusals", "sas_refStartF",
+    "sas_refStartAlpha", "sas_refStartOther", "sas_refDTmin", "sas_refNonPosH",
+    "sas_refLowP", "sas_refDrift", "sas_refAlpha", "sas_refCap",
+    "sas_maxSubstepsOneUpdate", "sas_lastSubsteps", "sas_lastRefuseCode",
+    "sas_maxAlphaRatio", "sas_lastAlphaRatio", "sas_lastF", "sas_entryOverKappa",
+    "sas_rejectedReversal", "sas_hFloored", "sas_hSoftCapped", "sas_reseatHeld",
+    "sas_sepEntriesTension", "sas_sepEntriesLowP", "sas_sepExits", "sas_sepActive",
+    "sas_sepLastCode", "sas_sepMaxP0", "sas_sepHeldHighP", "sas_sepHeldCompressing")
+
+
+def sas_counts(ops):
+    """LadrunoSANISAND IntScheme 129's `sasStats`, over every particle: counters summed, the
+    max/last entries as a max (LadrunoSANISAND.cpp, the sasStats response)."""
+    v = _l(ops.mpm("particleResponse", "sasStats"))
+    n = len(SAS_NAMES)
+    if not v or len(v) % n:
+        return None
+    out = {}
+    for i, name in enumerate(SAS_NAMES):
+        col = v[i::n]
+        out[name] = max(col) if ("max" in name or "last" in name) else sum(col)
+    return out
+
+
+def s3_run(ops, mat_cmd, r, antilocking="fbar", extra_opts=(), s_end=0.1, log=None,
+           wall_cap=None, sas=False):
     import time as _t
     w0 = _t.time()
     s3_build(ops, mat_cmd, r, antilocking, extra_opts)
@@ -479,7 +512,15 @@ def s3_run(ops, mat_cmd, r, antilocking="fbar", extra_opts=(), s_end=0.1, log=No
     n_push = int(round(s_end / 0.002))
     if out["stopped"] is None:
         for k in range(1, n_push + 1):
-            if not _ladder_step(ops, 12.0 + k, st):
+            if wall_cap is not None and _t.time() - w0 > wall_cap:
+                out["stopped"] = f"wall cap {wall_cap:.0f} s at s = {0.002 * (k - 1):.4f}"
+                break
+            try:
+                ok = _ladder_step(ops, 12.0 + k, st)
+            except Exception as exc:                # a refusal at commit aborts the run (W17)
+                out["stopped"] = f"abort at s = {0.002 * (k - 1):.4f}: {exc}"
+                break
+            if not ok:
                 out["stopped"] = f"s = {0.002 * (k - 1):.4f}"
                 break
             q = -_l(ops.mpm("condForce", "footing"))[1] / B_HALF
@@ -495,6 +536,8 @@ def s3_run(ops, mat_cmd, r, antilocking="fbar", extra_opts=(), s_end=0.1, log=No
                 out["q_at"][str(sb)] = q
     out.update(failed_attempts=st["failed"], relaxed=st["relaxed"], halvings=st["halvings"],
                wall_s=_t.time() - w0)
+    if sas:
+        out["sas_counts"] = sas_counts(ops)
     return out
 
 
@@ -518,6 +561,8 @@ def main(argv=None):
     ap.add_argument("--basis", default="gimp")
     ap.add_argument("--r", type=int, default=1)
     ap.add_argument("--al", default="fbar")
+    ap.add_argument("--deck", help="S3 probe deck, e.g. v0_tims_r1sep (s3_fe_<mat>_<deck>_n*.json)")
+    ap.add_argument("--wall-cap", type=float, default=None, help="S3: stop after this many s")
     ap.add_argument("--out")
     a = ap.parse_args(argv)
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -528,9 +573,25 @@ def main(argv=None):
     elif a.what == "s2":
         res = s2_run(ops, a.mat, a.basis)
         name = f"s2_mpm_{a.mat}_{a.basis}.json"
+    elif a.deck:
+        # a SANISAND probe deck (owner, 2026-11-18): the FE variant record's deck line plus its
+        # option set, run on the same domain and ladder, REPORTED beside the stalled FE
+        n = 4 * 2 ** (a.r - 1)
+        ref = load(f"s3_fe_{a.mat}_{a.deck}_n{n}.json")
+        res = s3_run(ops, ref["decks"][a.mat]["cmd"], a.r, a.al,
+                     extra_opts=[_num(str(o)) for o in ref["san_opts"]], log=print,
+                     wall_cap=a.wall_cap, sas=(a.mat == "sanisand"))
+        res.update(deck=a.deck, deck_cmd=ref["decks"][a.mat]["cmd"], options=ref["san_opts"],
+                   fe=dict(record=f"s3_fe_{a.mat}_{a.deck}_n{n}.json", reached=ref["reached"],
+                           stopped=ref["stopped"], s_end=ref["s_end"], q_at=ref["q_at"],
+                           q_max=ref.get("q_max"), failed_attempts=ref["failed_attempts"],
+                           relaxed=ref["relaxed"], halvings=ref["halvings"]),
+                   status="reported (no FE reference reached s = 0.05 B)")
+        name = f"s3_mpm_{a.mat}_r{a.r}_{a.al}_{a.deck}.json"
     else:
         ref = load(f"s3_fe_{a.mat}_n{4 * 2 ** (a.r - 1)}.json")
-        res = s3_run(ops, ref["decks"][a.mat]["cmd"], a.r, a.al, log=print)
+        res = s3_run(ops, ref["decks"][a.mat]["cmd"], a.r, a.al, log=print,
+                     wall_cap=a.wall_cap)
         res["judge"] = s3_judge(res, ref)
         name = f"s3_mpm_{a.mat}_r{a.r}_{a.al}.json"
     res["build"] = str(ops.ladrunoBuild())

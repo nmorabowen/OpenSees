@@ -1,0 +1,180 @@
+{
+ "build": "f235a001f934263c8aab7691bef5211f693a4816",
+ "case": "K0p, mode F, bspline2, capped",
+ "legs": {
+  "elastic": {
+   "leg": "elastic",
+   "particles_soil": 160,
+   "particles_total": 192,
+   "wall_s": 6.203530788421631,
+   "meter": 0.014046902271478744,
+   "phases": {
+    "gravity": {
+     "chunks": 29,
+     "s_per_particle_step": 5.024233117747544e-07
+    },
+    "hold1": {
+     "chunks": 5,
+     "s_per_particle_step": 5.11684375093561e-07
+    },
+    "preshear": {
+     "chunks": 30,
+     "s_per_particle_step": 5.229491319293326e-07,
+     "inc_median": 4.666971661494119e-09,
+     "inc_p90": 7.160474728903587e-08,
+     "inc_samples": 320
+    },
+    "hold1b": {
+     "chunks": 5,
+     "s_per_particle_step": 5.230458333092732e-07
+    },
+    "translate": {
+     "chunks": 540,
+     "s_per_particle_step": 5.20857822145001e-07,
+     "inc_median": 4.813029491268041e-07,
+     "inc_p90": 2.343756298624549e-06,
+     "inc_samples": 4320
+    },
+    "hold2": {
+     "chunks": 10,
+     "s_per_particle_step": 5.164265625126063e-07
+    }
+   }
+  },
+  "dp": {
+   "leg": "dp",
+   "particles_soil": 160,
+   "particles_total": 192,
+   "wall_s": 12.765400171279907,
+   "meter": 0.04567695055546281,
+   "phases": {
+    "gravity": {
+     "chunks": 29,
+     "s_per_particle_step": 1.0166989943104716e-06
+    },
+    "hold1": {
+     "chunks": 5,
+     "s_per_particle_step": 1.2651416667116186e-06
+    },
+    "preshear": {
+     "chunks": 30,
+     "s_per_particle_step": 1.4331038194970663e-06,
+     "inc_median": 1.6618549536417922e-08,
+     "inc_p90": 2.5205218120907484e-07,
+     "inc_samples": 320
+    },
+    "hold1b": {
+     "chunks": 5,
+     "s_per_particle_step": 1.114078124904457e-06
+    },
+    "translate": {
+     "chunks": 540,
+     "s_per_particle_step": 1.0517196180548306e-06,
+     "inc_median": 4.004821769955804e-07,
+     "inc_p90": 2.4925812775014865e-06,
+     "inc_samples": 4320
+    },
+    "hold2": {
+     "chunks": 10,
+     "s_per_particle_step": 1.0431390625171844e-06
+    }
+   }
+  },
+  "sanisand": {
+   "leg": "sanisand",
+   "particles_soil": 160,
+   "particles_total": 192,
+   "wall_s": 25.081510543823242,
+   "meter": 0.04741129882174331,
+   "phases": {
+    "gravity": {
+     "chunks": 29,
+     "s_per_particle_step": 1.2667492816014612e-06
+    },
+    "hold1": {
+     "chunks": 5,
+     "s_per_particle_step": 1.3757260417908886e-06
+    },
+    "preshear": {
+     "chunks": 30,
+     "s_per_particle_step": 4.154712847202467e-06,
+     "inc_median": 1.7426627250199902e-08,
+     "inc_p90": 1.5256087912348483e-07,
+     "inc_samples": 320
+    },
+    "hold1b": {
+     "chunks": 5,
+     "s_per_particle_step": 3.0112114583668397e-06
+    },
+    "translate": {
+     "chunks": 540,
+     "s_per_particle_step": 2.0486165026972637e-06,
+     "inc_median": 1.4633932300216772e-07,
+     "inc_p90": 5.614983161576699e-07,
+     "inc_samples": 4320
+    },
+    "hold2": {
+     "chunks": 10,
+     "s_per_particle_step": 1.4095479166750617e-06
+    }
+   }
+  },
+  "hs": {
+   "leg": "hs",
+   "particles_soil": 160,
+   "particles_total": 192,
+   "wall_s": 12.464826345443726,
+   "meter": 0.02723114079455121,
+   "phases": {
+    "gravity": {
+     "chunks": 29,
+     "s_per_particle_step": 7.464735991279353e-07
+    },
+    "hold1": {
+     "chunks": 5,
+     "s_per_particle_step": 1.0536874999615976e-06
+    },
+    "preshear": {
+     "chunks": 30,
+     "s_per_particle_step": 1.0551793402808269e-06,
+     "inc_median": 1.9181286024946646e-08,
+     "inc_p90": 2.229989860702456e-07,
+     "inc_samples": 320
+    },
+    "hold1b": {
+     "chunks": 5,
+     "s_per_particle_step": 1.064720833331497e-06
+    },
+    "translate": {
+     "chunks": 540,
+     "s_per_particle_step": 1.0610753857960205e-06,
+     "inc_median": 1.53687898822706e-06,
+     "inc_p90": 6.275707336790544e-06,
+     "inc_samples": 4320
+    },
+    "hold2": {
+     "chunks": 10,
+     "s_per_particle_step": 1.0627588541562243e-06
+    }
+   }
+  }
+ },
+ "material_cost": {
+  "preshear": {
+   "elastic": 0.0,
+   "dp": 9.101546875677337e-07,
+   "sanisand": 3.6317637152731345e-06,
+   "hs": 5.322302083514943e-07,
+   "sanisand_over_dp": 3.990270846133349,
+   "hs_over_dp": 0.584768958091957
+  },
+  "translate": {
+   "elastic": 0.0,
+   "dp": 5.308617959098296e-07,
+   "sanisand": 1.5277586805522626e-06,
+   "hs": 5.402175636510195e-07,
+   "sanisand_over_dp": 2.877884022401496,
+   "hs_over_dp": 1.0176237352419668
+  }
+ }
+}

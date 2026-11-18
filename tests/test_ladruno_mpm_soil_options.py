@@ -129,7 +129,8 @@ def _is2_params():
         for mode in ("A", "F"):
             why = _IS2_MISS.get((leg, mode))
             marks = [pytest.mark.xfail(strict=True, reason=(
-                "pre-registered miss (ruling d683e0db8; s1_options_diagnosis.json): " + why +
+                "owner-accepted 2026-11-18 recorded miss (ruling d683e0db8; "
+                "s1_options_diagnosis.json): " + why +
                 ". Past the switch the FE's 8 Gauss points "
                 "take different CPPM branches (substeps differ from that step on); the particle's "
                 "round-off puts it on its own branch, so the 8-GP envelope samples the branch set "

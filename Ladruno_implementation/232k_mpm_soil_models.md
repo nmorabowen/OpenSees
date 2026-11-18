@@ -161,10 +161,10 @@ Builds `7b00fcf13` / `7c932089c`, Windows MSVC, unless noted.
 
 | Row | Result | Verdict |
 |---|---|---|
-| S1 one-point identity (`s1_mpm.json`) | HS: 12 legs × 2 modes, max rel 1.2e-11. SANISAND: 22 of 24 pass (mode F on bspline2). SANISAND 3D mode A misses at step 12, the second plastic step, one step before the FE's own Gauss-point spread passes 1e-8: triax 3.2e-6, oedo 1.06e-8, with the FE's substep counts (5, 4). Option legs (`s1_onepoint_options.json`, rulings at f6ae63d79; build `f235a001f`): see "S1 option legs" below. | 22 pass; **2 pre-registered misses** (strict xfail, ruling at 926d27153); option legs: pass, except **IntScheme 2 shear, a pre-registered miss** (strict xfail, ruling d683e0db8) |
+| S1 one-point identity (`s1_mpm.json`) | HS: 12 legs × 2 modes, max rel 1.2e-11. SANISAND: 22 of 24 pass (mode F on bspline2). SANISAND 3D mode A misses at step 12, the second plastic step, one step before the FE's own Gauss-point spread passes 1e-8: triax 3.2e-6, oedo 1.06e-8, with the FE's substep counts (5, 4). Option legs (`s1_onepoint_options.json`, rulings at f6ae63d79; build `f235a001f`): see "S1 option legs" below. | 22 pass; **2 recorded misses, owner-accepted 2026-11-18** (strict xfail, ruling at 926d27153); option legs: pass, except **IntScheme 2 shear, a recorded miss, owner-accepted 2026-11-18** (strict xfail, ruling d683e0db8) |
 | S2 column + surcharge (`s2_mpm_hs_diagnosis.json`, `s2_mpm_sanisand.json`) | End of stage 0 and after the flip pass: HS 0.0128 / 0.0069, SANISAND 0.0127 / 0.0069. After the surcharge (registered top-row body force), max syy is HS 0.274 / 0.576 and SANISAND 0.265 / 0.776, at the top cell. | **recorded miss** (#1110; strict xfail) |
-| S3 footing, HS (`s3_mpm_hs_r<r>_<fbar\|off>.json`) | q / q_FE at s/B 0.01 / 0.02 / 0.05. Gated: r1 fbar 0.977 / 0.973 / 0.960 (0 failed attempts, 3 s); r2 fbar 0.969 / 0.968 / 0.907 (11 failed, 36 s, esmeralda), thin at s/B 0.05. Reported: r1 off 1.005 / 1.013 / 1.020; r2 off 0.987 / 0.992 / 0.982 (80 failed, 7 relaxed, 18 halvings); **r3 fbar 0.961 / 0.931 / 0.162** (56 failed, 10 relaxed, 5 halvings, 744 s), a deck artifact, see below. | r1, r2 pass; r3 and off reported |
-| S3 footing, SANISAND | No FE variant reached s = 0.1 m: v1–v4 (a15fdeb60) and v0 `tims_r1sep` (n4 stopped at the 2 h wall cap at s = 0.0215, q_max 636 kPa, 1341 relaxed steps; n8 at s = 0.0037). Per the freeze, reported only; no S3 SANISAND MPM leg was run (the owner's call). | reported, no reference |
+| S3 footing, HS (`s3_mpm_hs_r<r>_<fbar\|off>.json`) | q / q_FE at s/B 0.01 / 0.02 / 0.05. Gated: r1 fbar 0.977 / 0.973 / 0.960 (0 failed attempts, 3 s); r2 fbar 0.969 / 0.968 / 0.907 (11 failed, 36 s, esmeralda), thin at s/B 0.05. Reported: r1 off 1.005 / 1.013 / 1.020; r2 off 0.987 / 0.992 / 0.982 (80 failed, 7 relaxed, 18 halvings); **r3 fbar 0.961 / 0.931 / 0.162** (56 failed, 10 relaxed, 5 halvings, 744 s), an artifact of the deck's footing condition (#1112), see below. | r1, r2 pass; r3 and off reported |
+| S3 footing, SANISAND | No FE variant reached s = 0.1 m: v1–v4 (a15fdeb60) and v0 `tims_r1sep` (n4 stopped at the 2 h wall cap at s = 0.0215, q_max 636 kPa, 1341 relaxed steps; n8 at s = 0.0037). Per the freeze, reported only. Owner (2026-11-18): ONE MPM r1 leg with the v0 deck, fbar, gimp, mode A, K9 ladder, 2 h wall cap, reported beside the stalled FE (`s3_mpm_sanisand_r1_fbar_v0_tims_r1sep.json`, esmeralda): **pending**. | reported, no reference |
 | S4 stage parity (`s4_mpm_same_state.json`) | (i) The low-g column's flip map matches the rule exactly in both modes, with ≥ 1 reset particle each (g 0.25). (ii) Same-state leg: the **fallback branch** ran; see below. | pass |
 | S5 refusal | SANISAND `-implex -maxSubsteps 1` aborts in both modes and in classic Tcl. Particles are unmoved bit for bit, the message names the material and tag, and later steps are refused until `mpm reset`. HS at γ = 10 fails loudly with no abort. | pass |
 | S6 restart, mode A | SANISAND and HS mid-stage-1: the continued run is bit for bit. The restored host re-asserts SANISAND's stage flag (restart pack v4). | pass |
@@ -185,8 +185,12 @@ Builds `7b00fcf13` / `7c932089c`, Windows MSVC, unless noted.
 mode F on bspline2):
 - **Pass under the S1 rule:** SANISAND IntScheme 129 and IntScheme 2 triax/oedo; HS `-implex`,
   `-smallStrain`, the HS deck's tension leg, and every `-sigmat` leg, the gated `tension` path
-  included.
-- **IntScheme 2 shear, a pre-registered miss (ruling d683e0db8).** Before the switch step (ps 21, 3D 61) every leg
+  included. **HSSmall's cyclic shear** (the brief's R row) is covered here:
+  `hs_smallstrain_{3d,ps}_shear` are `-smallStrain 140000 1.5e-4` on a 130-step, three-cycle
+  shear path (cases block `s1_ref_onepoint_options`, `mpm_soil_cases.txt:266`; the FE's
+  `-smallStrain` answer differs from the plain deck by 16 % at the end), and both pass the S1 rule
+  in both modes.
+- **IntScheme 2 shear, a recorded miss, owner-accepted 2026-11-18 (ruling d683e0db8).** Before the switch step (ps 21, 3D 61) every leg
   holds ≤ 1e-11. After it, the gate is the stress inside the FE's Gauss-point envelope widened by
   1e-3 relative. The record carries GP 1's stress and the GP spread, not per-GP min/max, so the
   envelope used is GP 1 ± spread, which contains [min, max]. ps mode A stays inside (worst 0.94 of
@@ -195,8 +199,7 @@ mode F on bspline2):
   the FE's 8 Gauss points take different CPPM branches (their substep counts part there). At step
   21 the ps particle sits at the far edge of the spread (distance to GP 1 = the spread to 1e-6).
   The particle's round-off differs from every GP's, so it follows a branch of its own; 8 GPs
-  sample the branch set and do not bound it. Strict xfail; the miss goes to the owner at
-  ready-flip.
+  sample the branch set and do not bound it. Strict xfail, accepted by the owner (2026-11-18).
 - **SANISAND `-implex`: pass, compared at the material's committed response (ruling
   d683e0db8).** 232k-V's `-implex` records equal the scheme-1 records bit for bit. So does the
   MPM run at the material: the material's committed `stress` response and its 26-entry state equal
@@ -211,7 +214,8 @@ mode F on bspline2):
   capped, staging only, against `k0p_column_capped_implex.json` (232k-V, 185aacefd). α moved in
   160 of 160 particles (max 0.081); σ RMS 0.01862 ρgl0 against the gate 0.02. **Pass.**
 
-**S3, the r3 collapse: an artifact of the footing condition in the S3 deck.** At s = 0.096 m
+**S3, the r3 collapse: an artifact of the footing condition in the S3 deck (#1112; 232j's L4 r3
+stop, #1107, sits at s/h = 0.75 too).** At s = 0.096 m
 (s/h = 0.768, h = 0.125) q falls from 868 to 38 kPa in one step, then climbs like a fresh contact
 (+54, +63 kPa per step); the run "reaches" s = 0.1 with q 155. It is neither physical (HS has no
 softening; the FE n16 curve is monotone to 958 kPa) nor the ladder (a relaxed step still meets
@@ -235,8 +239,19 @@ NormUnbalance 1e-5, so it is equilibrated; the relaxed steps are a symptom). The
 
 So s/B = 0.05 at r3 (s = 0.8h) is past the range in which this footing condition holds (about
 0.75h); r1 (0.2h) and r2 (0.4h) are inside it. A footing that follows the soil (a node row inside
-the tracked box before the top row leaves, or s_end/h ≤ 0.5 at every rung) is the owner's call;
+the tracked box before the top row leaves, or s_end/h ≤ 0.5 at every rung) is filed as #1112;
 r3 stays a reported row.
+
+**Granular-column collapse (R row, reported, not gated).** `tests/mpm_soil_collapse.py`: Lube's
+column (aspect ratio 2, half width 1 m, symmetry on xmin, no-slip base), mode F on bspline2,
+h 0.25 m, ppc 2 (128 particles), the k0_ref_column decks; stage 0 under gravity with local damping
+0.8 for 1 s, the flip, then 4 s undamped; dt 0.25 dt_c re-read every 0.05 s. Recorded: runout
+(L∞ − a)/a, H∞/2a, floor hits from the flip on, flip resets, sasStats when the scheme is 129,
+and a refusal abort with its time. DP on Windows (`f235a001f`): runout 3.41 (gated DP) and 3.44
+(dp_mildcone), H∞/2a 0.49, 9–12 s. SANISAND and HS: esmeralda, **pending**. Two findings while
+building it: with M0b's Coulomb wall (μ 0.4) a base particle's centre reaches y = 0 and the next
+step is refused as leaving the grid (A7; DP at t = 2.08 s), so the base is no-slip; and a fixed
+dt set from the post-settle dt_c is refused by the CFL check during the flow.
 
 **S1, rotation.** The FE record stores GP 1's material-frame stress, so S1 compares the particle's
 unrotated σ̂ (`sigHat`). This is a reading of the record's convention, not a band change (ruling).
@@ -261,5 +276,22 @@ round-off, because mode A builds ΔF from displacements and mode F from velociti
 | S1 | 0.1–7 s per leg |
 | HS S3 r1 | 3 s |
 
-SANISAND's M0b upper bounds (0.6–1.2 ms per plastic call) were not reached: increments at
-particles are small.
+**Cost per particle-step at particles (R row; closes M0b's 222–920 range).** Probe
+`tests/mpm_soil_cost_probe.py`, record `cost_probe_k0p_F_bspline2.json` (Windows, `f235a001f`):
+the K0p column in mode F on bspline2, capped (160 soil + 32 floor-block and cap particles,
+dt 5e-4), wall time
+per 100-step chunk by phase, and every 20th chunk one extra step bracketed by F reads for the
+strain increment a particle sees, |sym(F_{n+1} F_n⁻¹) − I|. The material cost is a leg's time
+per particle-step minus the elastic leg's (same engine work).
+
+| phase | median Δε per step (SANISAND; p90) | SANISAND | DP | HS | SANISAND / DP | HS / DP |
+|---|---|---|---|---|---|---|
+| pre-shear (α moves) | 1.7e-8 (1.5e-7) | 3.63 µs | 0.91 µs | 0.53 µs | **3.99** | 0.58 |
+| translation | 1.5e-7 (5.6e-7) | 1.53 µs | 0.53 µs | 0.54 µs | **2.88** | 1.02 |
+
+(per particle-step over all 192 particles; per soil particle × 1.2). An explicit particle sees
+increments of 1e-8–1e-7 per step, three to four orders below M0b's 2.56e-4 and 9.44e-4, where
+SANISAND / DP was 341 and 647 per plastic call. At these increments SANISAND costs 3–4× DP per
+particle-step, not hundreds. The esmeralda K0p records agree in whole-leg wall time: (SANISAND −
+elastic) / (DP − elastic) = 2.18 (F bspline2), 2.07 (F bspline3); mode A's legs run 0.4–3.2 s in
+all and are too short to separate (9.7, 13.9).
