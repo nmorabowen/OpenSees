@@ -243,22 +243,27 @@ length ($\text{lch}_\text{ref}/\text{lch}$); v1 is first-order $O(h^2)$ and want
 
 ## 5. State update, unload/reload, and tangent
 
-The state update is a **damage-memory backbone with elastic unload/reload**:
+The state update is a **damage-memory backbone with friction-slider
+unload/reload**:
 
 - **Virgin loading** ($|s| \ge$ the committed peak $|s|$): the stress rides the
   envelope, $\tau = \operatorname{sgn}(s)\,\tau(|s|)$, with the branch tangent
   from §3. The peak-slip magnitude `CslipMaxAbs` is the **damage memory**.
-- **Unload / reload** ($|s| <$ committed peak): the response is **elastic with
-  stiffness $k_0$**, on a line through the committed-peak envelope point — i.e.
-  the bond unloads stiffly toward the origin and reloads back up to where it left
-  the envelope, then resumes softening. The tangent on this branch is $k_0$
-  (finite, positive — no negative-stiffness surprise on unload).
+- **Unload / reload** ($|s| <$ committed peak $s_p$): the stress moves at
+  **stiffness $k_0$ from the committed point** and is limited to the envelope
+  stress of the peak in both directions,
+  $\tau = \operatorname{clamp}\big(\tau_C + k_0(s - s_C),\,\pm\tau(s_p)\big)$.
+  Once on the limit the bond slides as friction, leaving a residual slip and
+  dissipating energy. Because $\tau(a) \le k_0 a$, the path is already on the
+  limit when it reaches $\pm s_p$, so it rejoins the backbone without a jump. The
+  tangent on this branch is $k_0$, sliding included (finite, positive, and it
+  sees the next reversal).
 
 This is a **monotonic-backbone** model: a purely monotonic history walks the full
-backbone exactly, and reversals unload/reload elastically. **Cyclic
-degradation** (bond deterioration, frictional pinching under load reversals) is
-**deferred to v2**; v1's reversal behaviour is the simplest physically defensible
-choice, not a calibrated cyclic law.
+backbone exactly, and $|\tau|$ never exceeds $\tau_{\max}$ under reversals.
+**Cyclic degradation** (bond deterioration under repeated reversals, reduced
+reversed-friction stress) is **deferred to v2**; v1's reversal behaviour is the
+simplest physically defensible choice, not a calibrated cyclic law.
 
 ## 6. The unit contract — stress to force
 
