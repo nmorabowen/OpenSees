@@ -1067,6 +1067,15 @@ made before any SANISAND or HS mode-F number and leaves the gate rule unchanged:
   a larger meter than the translated legs. Mode F is pending on esmeralda; the K0 verdict waits
   for it.
 
+**Ruling (2026-11-18, before any S4 number) — S4's same-state leg.** S4 is two checks: (i) the
+low-g column, per particle, against the flip rule's map, in each mode; (ii) the S1 block driven on
+the same affine oedometric stage-0 path in mode A and mode F, then `mpm stage`, at two rows of
+`s4_lowg.json` (row 0 with p < Pmin, so the reset runs, and row 39). In (ii), both modes are within
+rel 1e-8 of the FE record before and after the flip. Between the modes: if the pre-flip states are
+bitwise equal, the post-flip σ and `state` must be bitwise equal; if they differ by round-off
+(mode A builds ΔF from displacements, mode F from velocities × dt), the post-flip difference must
+be at most 10 × the pre-flip difference (floor 1e-15 relative). Which branch ran is reported.
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
