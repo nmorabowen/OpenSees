@@ -1,0 +1,150 @@
+{
+ "build": "f235a001f934263c8aab7691bef5211f693a4816",
+ "date": "2026-11-18",
+ "reference": "tests/data/mpm/soil/s1_onepoint_options.json (d935310b0), s1_onepoint.json",
+ "is2_shear_note": "stress only; ratio = max over particles of |sigHat - sig_GP1|_inf / (gp_spread + 1e-3 max|sig_GP1|), after the switch step",
+ "implex_note": "sigHat = the particle stress; stress_response = particleResponse stress (the material committed stress); both against the scheme-1 deck run sigHat",
+ "is2_shear": {
+  "sanisand_is2_ps_shear:A": {
+   "switch_step": 21,
+   "worst_pre_rel": 3.5746701489537775e-12,
+   "worst_post": {
+    "step": 21,
+    "d_rel": 0.015762294735068825,
+    "spread_rel": 0.015760729113637732,
+    "ratio": 0.9404301345246067
+   },
+   "steps_outside": 0,
+   "steps_post": 110,
+   "first_outside": null
+  },
+  "sanisand_is2_ps_shear:F": {
+   "switch_step": 21,
+   "worst_pre_rel": 3.1782823206578153e-12,
+   "worst_post": {
+    "step": 41,
+    "d_rel": 0.019184229311372543,
+    "spread_rel": 0.0121056923565262,
+    "ratio": 1.4638089152016018
+   },
+   "steps_outside": 26,
+   "steps_post": 110,
+   "first_outside": {
+    "step": 41,
+    "d_rel": 0.019184229311372543,
+    "spread_rel": 0.0121056923565262,
+    "ratio": 1.4638089152016018
+   }
+  },
+  "sanisand_is2_3d_shear:A": {
+   "switch_step": 61,
+   "worst_pre_rel": 9.534606427884606e-12,
+   "worst_post": {
+    "step": 102,
+    "d_rel": 0.012835477691885182,
+    "spread_rel": 0.006501441298230249,
+    "ratio": 1.7110682043080638
+   },
+   "steps_outside": 26,
+   "steps_post": 70,
+   "first_outside": {
+    "step": 101,
+    "d_rel": 0.011083065905933803,
+    "spread_rel": 0.008797886088069251,
+    "ratio": 1.1311690916094135
+   }
+  },
+  "sanisand_is2_3d_shear:F": {
+   "switch_step": 61,
+   "worst_pre_rel": 3.178557407790579e-12,
+   "worst_post": {
+    "step": 102,
+    "d_rel": 0.009949386730113153,
+    "spread_rel": 0.006501441298230249,
+    "ratio": 1.3263300124018071
+   },
+   "steps_outside": 9,
+   "steps_post": 70,
+   "first_outside": {
+    "step": 101,
+    "d_rel": 0.01108032867516707,
+    "spread_rel": 0.008797886088069251,
+    "ratio": 1.1308897220860152
+   }
+  }
+ },
+ "implex": {
+  "sanisand_implex_3d_oedo:A": {
+   "sigHat_bit_equal": false,
+   "sigHat_max_rel": 0.05249912435964087,
+   "stress_response_stride": 6,
+   "stress_response_vs_deck_sigHat_max_rel": 0.0
+  },
+  "sanisand_implex_3d_oedo:F": {
+   "sigHat_bit_equal": false,
+   "sigHat_max_rel": 0.05249912435958928,
+   "stress_response_stride": 6,
+   "stress_response_vs_deck_sigHat_max_rel": 0.0
+  },
+  "sanisand_implex_3d_shear:A": {
+   "sigHat_bit_equal": false,
+   "sigHat_max_rel": 0.23335698248106024,
+   "stress_response_stride": 6,
+   "stress_response_vs_deck_sigHat_max_rel": 0.0
+  },
+  "sanisand_implex_3d_shear:F": {
+   "sigHat_bit_equal": false,
+   "sigHat_max_rel": 0.2333570010062716,
+   "stress_response_stride": 6,
+   "stress_response_vs_deck_sigHat_max_rel": 0.0
+  },
+  "sanisand_implex_3d_triax:A": {
+   "sigHat_bit_equal": false,
+   "sigHat_max_rel": 0.08169975953157028,
+   "stress_response_stride": 6,
+   "stress_response_vs_deck_sigHat_max_rel": 0.0
+  },
+  "sanisand_implex_3d_triax:F": {
+   "sigHat_bit_equal": false,
+   "sigHat_max_rel": 0.08169975745090326,
+   "stress_response_stride": 6,
+   "stress_response_vs_deck_sigHat_max_rel": 0.0
+  },
+  "sanisand_implex_ps_oedo:A": {
+   "sigHat_bit_equal": false,
+   "sigHat_max_rel": 0.03483889049990914,
+   "stress_response_stride": 3,
+   "stress_response_vs_deck_sigHat_max_rel": 0.0
+  },
+  "sanisand_implex_ps_oedo:F": {
+   "sigHat_bit_equal": false,
+   "sigHat_max_rel": 0.03483889049990914,
+   "stress_response_stride": 3,
+   "stress_response_vs_deck_sigHat_max_rel": 0.0
+  },
+  "sanisand_implex_ps_shear:A": {
+   "sigHat_bit_equal": false,
+   "sigHat_max_rel": 0.22412046481605954,
+   "stress_response_stride": 3,
+   "stress_response_vs_deck_sigHat_max_rel": 0.0
+  },
+  "sanisand_implex_ps_shear:F": {
+   "sigHat_bit_equal": false,
+   "sigHat_max_rel": 0.22412046481772585,
+   "stress_response_stride": 3,
+   "stress_response_vs_deck_sigHat_max_rel": 0.0
+  },
+  "sanisand_implex_ps_triax:A": {
+   "sigHat_bit_equal": false,
+   "sigHat_max_rel": 0.05211594787540491,
+   "stress_response_stride": 3,
+   "stress_response_vs_deck_sigHat_max_rel": 0.0
+  },
+  "sanisand_implex_ps_triax:F": {
+   "sigHat_bit_equal": false,
+   "sigHat_max_rel": 0.05211594787540491,
+   "stress_response_stride": 3,
+   "stress_response_vs_deck_sigHat_max_rel": 0.0
+  }
+ }
+}

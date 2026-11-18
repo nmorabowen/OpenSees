@@ -140,7 +140,7 @@ Builds `7b00fcf13` / `7c932089c`, Windows MSVC, unless noted.
 
 | Row | Result | Verdict |
 |---|---|---|
-| S1 one-point identity (`s1_mpm.json`) | HS: 12 legs × 2 modes, max rel 1.2e-11. SANISAND: 22 of 24 pass (mode F on bspline2). SANISAND 3D mode A misses at step 12, the second plastic step, one step before the FE's own Gauss-point spread passes 1e-8: triax 3.2e-6, oedo 1.06e-8, with the FE's substep counts (5, 4). Option legs (IntScheme 2, 129, `-implex`; HS `-implex`, `-smallStrain`, `-sigmat`): wait for 232k-V's references (`test_ladruno_mpm_soil_options.py`). | 22 pass; **2 pre-registered misses** (strict xfail, ruling at 926d27153) |
+| S1 one-point identity (`s1_mpm.json`) | HS: 12 legs × 2 modes, max rel 1.2e-11. SANISAND: 22 of 24 pass (mode F on bspline2). SANISAND 3D mode A misses at step 12, the second plastic step, one step before the FE's own Gauss-point spread passes 1e-8: triax 3.2e-6, oedo 1.06e-8, with the FE's substep counts (5, 4). Option legs (`s1_onepoint_options.json`, rulings at f6ae63d79; build `f235a001f`): see "S1 option legs" below. | 22 pass; **2 pre-registered misses** (strict xfail, ruling at 926d27153); option legs: **2 misses pending a ruling** |
 | S2 column + surcharge (`s2_mpm_hs_diagnosis.json`, `s2_mpm_sanisand.json`) | End of stage 0 and after the flip pass: HS 0.0128 / 0.0069, SANISAND 0.0127 / 0.0069. After the surcharge (registered top-row body force), max syy is HS 0.274 / 0.576 and SANISAND 0.265 / 0.776, at the top cell. | **recorded miss** (#1110; strict xfail) |
 | S3 footing, HS (`s3_mpm_hs_r1_fbar.json`) | r1 fbar: q / q_FE 0.977 / 0.973 / 0.960 at s/B 0.01 / 0.02 / 0.05; reached the target; 0 failed attempts; 3.1 s. r1 off and r2 on reached on esmeralda; r3 and r2-off are running. | r1 pass; r2/r3 pending on esmeralda |
 | S3 footing, SANISAND | Waits for the FE deck (probe v0 running; v1–v4 failed to reach). | pending |
@@ -148,7 +148,7 @@ Builds `7b00fcf13` / `7c932089c`, Windows MSVC, unless noted.
 | S5 refusal | SANISAND `-implex -maxSubsteps 1` aborts in both modes and in classic Tcl. Particles are unmoved bit for bit, the message names the material and tag, and later steps are refused until `mpm reset`. HS at γ = 10 fails loudly with no abort. | pass |
 | S6 restart, mode A | SANISAND and HS mid-stage-1: the continued run is bit for bit. The restored host re-asserts SANISAND's stage flag (restart pack v4). | pass |
 | S7 refusals and options | Symmetric-storage solvers refused (K7); unadmitted schemes refused; HS `-sig0` refused; Q2 offset refused; K2 (`ladrunoThreads 4` prints the serial warning, answer bit-identical); the K0 basis rule; `mpm info materials`. | pass |
-| S8 unchanged answers | MPM suite: 615 passed, 16 skipped, 6 xfailed (all pre-registered), 0 failed. GCC on esmeralda: L4 r1 is bit for bit against the 232j record (346 of 346 values). | pass |
+| S8 unchanged answers | MPM suite: 615 passed, 16 skipped, 6 xfailed (all pre-registered), 0 failed; the same counts again on `f235a001f`. GCC on esmeralda: L4 r1 is bit for bit against the 232j record (346 of 346 values). | pass |
 | S9 mutation | MPM family ZERO / SCALE: run by the orchestrator. Zone-A soil oracle: `test_s9_onepoint_triax` (HS and SANISAND, plane strain, both modes). | oracle in place; scores pending |
 | S10 engines | Classic Tcl equals Python on the S1 hs_ps_triax leg (≤ 1e-12). | pass |
 
@@ -159,6 +159,36 @@ Builds `7b00fcf13` / `7c932089c`, Windows MSVC, unless noted.
   stays the same.
 - Mode F holds 3.4e-10 at that step.
 - The 1e-8 band presumes strain input free of round-off, which the FE's single brick has.
+
+**S1 option legs** (`test_ladruno_mpm_soil_options.py`, build `f235a001f`, both modes, SANISAND
+mode F on bspline2):
+- **Pass under the S1 rule:** SANISAND IntScheme 129 and IntScheme 2 triax/oedo; HS `-implex`,
+  `-smallStrain`, the HS deck's tension leg, and every `-sigmat` leg, the gated `tension` path
+  included.
+- **IntScheme 2 shear, a miss pending a ruling.** Before the switch step (ps 21, 3D 61) every leg
+  holds ≤ 1e-11. After it, the gate is the stress inside the FE's Gauss-point envelope widened by
+  1e-3 relative. The record carries GP 1's stress and the GP spread, not per-GP min/max, so the
+  envelope used is GP 1 ± spread, which contains [min, max]. ps mode A stays inside (worst 0.94 of
+  the band). ps mode F has 26 of 110 post-switch steps outside (worst 1.46×, step 41); 3D mode A
+  26 of 70 (1.71×, step 102); 3D mode F 9 of 70 (1.33×, step 102). Diagnosis: from the switch step
+  the FE's 8 Gauss points take different CPPM branches (their substep counts part there). At step
+  21 the ps particle sits at the far edge of the spread (distance to GP 1 = the spread to 1e-6).
+  The particle's round-off differs from every GP's, so it follows a branch of its own; 8 GPs
+  sample the branch set and do not bound it. Strict xfail, pending a ruling.
+- **SANISAND `-implex`, a miss pending a ruling.** 232k-V's `-implex` records equal the scheme-1
+  records bit for bit. At the material the MPM run does too: the material's committed `stress`
+  response and its 26-entry state equal the scheme-1 run's particle stress and state bit for bit,
+  every step, all 12 legs (`test_option_implex_material_equals_scheme1`). The particle's own
+  stress (`sigHat`) does not: it departs at step 11, the first plastic step, by up to 0.035 (ps
+  oedo) to 0.233 (3D shear) relative. The engine keeps the stress the material returned at the
+  trial call, which under `-implex` is the extrapolated (companion) stress; `commitState` then
+  corrects the material but the particle keeps the trial value. Two ways out, the coordinator's
+  call: re-read the stress after `commitState` for `-implex` materials (a C++ change, and in mode
+  F it changes the next step's internal force), or gate the material's committed response. Strict
+  xfail, pending a ruling.
+- **`-implex` boundary-value leg** (`k0p_meter_A_gimp_implex.json`): K0p column, mode A gimp,
+  capped, staging only, against `k0p_column_capped_implex.json` (232k-V, 185aacefd). α moved in
+  160 of 160 particles (max 0.081); σ RMS 0.01862 ρgl0 against the gate 0.02. **Pass.**
 
 **S1, rotation.** The FE record stores GP 1's material-frame stress, so S1 compares the particle's
 unrotated σ̂ (`sigHat`). This is a reading of the record's convention, not a band change (ruling).
