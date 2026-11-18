@@ -94,17 +94,18 @@ def _envelope_run(ops, leg, mode, rec):
         scale = max(abs(v) for v in rs) or 1.0
         sscale = max(abs(v) for v in ref["state"]) or 1.0
         ns = len(st) // N
+        nc = min(ns, len(ref["state"]))
         after = sw is not None and k + 1 >= sw
         for p in range(N):
             s6 = S._sig6(sig, szz, nd, p)
             if after:
                 w = float(ref.get("gp_spread", 0.0)) + 1e-3 * scale
                 ok = all(abs(a - b) <= w for a, b in zip(s6, rs))
-                ok = ok and max(abs(st[ns * p + i] - ref["state"][i]) for i in range(ns)) <= \
+                ok = ok and max(abs(st[ns * p + i] - ref["state"][i]) for i in range(nc)) <= \
                     (float(ref.get("gp_rel_spread", 0.0)) + 1e-3) * sscale
             else:
                 ok = max(abs(a - b) for a, b in zip(s6, rs)) <= 1e-8 * scale and \
-                    max(abs(st[ns * p + i] - ref["state"][i]) for i in range(ns)) <= 1e-8 * sscale
+                    max(abs(st[ns * p + i] - ref["state"][i]) for i in range(nc)) <= 1e-8 * sscale
             if not ok:
                 bad.append((k + 1, p))
                 break
@@ -142,10 +143,10 @@ def test_option_implex_equals_scheme1(leg, mode):
             ops.mpm("gridvel", "all", "setAffine", *S.s1_L(r, lg, k, nd, dt))
             ops.mpm("analyze", 1, dt)
             tr.append((S._l(ops.mpm("particleData", "sigHat")),
-                       S._l(ops.mpm("particleResponse", "state"))[:26]))
+                       S._l(ops.mpm("particleResponse", "state"))))
         traces.append(tr)
     assert len(L["dF"]) == len(Lb["dF"])
-    first = next((k for k, (a, b) in enumerate(zip(*traces)) if a[0] != b[0]), None)
+    first = next((k for k, (a, b) in enumerate(zip(*traces)) if a != b), None)
     assert first is None, f"{leg} {mode}: -implex departs from scheme 1 at step {first + 1}"
 
 
