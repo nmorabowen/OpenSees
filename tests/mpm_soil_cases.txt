@@ -185,3 +185,32 @@ data tests/data/mpm/soil/s3_fe_hs_n8.json
 field q_at.{0.01,0.02,0.05}, reached, stopped, failed_attempts, relaxed, halvings, curve [s, q, q_excess]
 ref fork FE, LadrunoBrick B-bar, the K9 ladder
 end
+
+# ============================================================================
+# K0p -- the plastic cell-crossing meter's reference (gate K0p, pre-registered 2026-11-18). The
+# k0_ref_column_capped model and staging, then a stage-1 pre-shear and a hold:
+#   stage 0: gravity ramp 0 -> 1 in 10 steps (one Path series, -BrickW); the flip; 2 hold steps;
+#   pre-shear: nu -> 0.05, then gravity 1 -> 1.3 in 10 steps (soil AND cap: gravity is global),
+#   on the K9 ladder (none needed a retry); 2 hold steps.
+# Flip route: EVERY soil point (parameter element e materialState 1 + updateParameter 1.0 over
+# every soil element: SANISAND id 5, Elastic2Plastic at every point; HS id 13; DP materialState 2).
+# Pre-shear parameters: SANISAND `poissonRatio` (ManzariDafalias.cpp:955-956 -> id 7, :995-997
+# `m_nu = info.theDouble`) = 0.05 at every soil point. DP (gated) `shearModulus` (id 10) =
+# 102016.32065477144 and `bulkModulus` (id 11) = 79346.02717593333 (nu 0.05 at E =
+# 214234.27337502; DruckerPrager.cpp:1097-1107 rebuild mCe); dp_mildcone likewise at its E 45000.
+# HS answers no Poisson parameter (LadrunoHS::setParameter): gravity +30 % only. Elastic:
+# gravity +30 % only.
+# sigma_ref(Y_p) = legs.<mat>.after_hold2.particles: syy = -1.3 (rho g (l0 - Y) + 20) closed form;
+# sxx, szz = FE ratio x syy. Measured ratios after the pre-shear and hold: elastic 0.455392; DP
+# 0.489816 (bottom) .. 0.485924 (top, on the cone); SANISAND 0.406131 .. 0.404478; HS 0.353337;
+# dp_mildcone as DP. SANISAND alpha moved at every FE point (320 of 320, ||d alpha|| 0.100 ..
+# 0.104; the hold after it moves alpha by <= 7.6e-10). alpha per element row before (after_hold)
+# and after (after_preshear, after_hold2) is in alpha_rows.
+case k0p_ref_column_capped
+kind reference
+data tests/data/mpm/soil/k0p_column_capped.json
+field legs.<elastic|dp|sanisand|hs|dp_mildcone>.<end_stage0|after_hold|after_preshear|after_hold2>.particles
+field legs.sanisand.<after_hold|after_preshear|after_hold2>.alpha_rows  [Y_centre, alpha 6 comps]
+field legs.sanisand.alpha_moved, legs.<mat>.preshear_params, legs.<mat>.flip_route, legs.<mat>.preshear_ladder
+ref fork FE, LadrunoBrick B-bar capped column
+end

@@ -47,6 +47,15 @@ DATA = HERE / "data" / "mpm" / "soil"
 G_GRAV = 9.81
 RHO = 2.0
 
+# The body-force eleLoad type, spelled as the Python interpreter matches it, case-sensitively:
+# OpenSeesPatternCommands.cpp:541 `else if (strcmp(type,"-BrickW") == 0)`. Measured 2026-11-18
+# (b94c9d75d): `-type -brickW` attaches NOTHING, and LadrunoBrick then applies its `-b`
+# unconditionally (LadrunoBrick.cpp:1516-1519, `if (applyLoad == 0) bodyForce -= ... b[p]`), so
+# a "ramped" gravity is in fact full gravity from the first step. Records before this fix (K0,
+# S2, S3 HS at 42c11333a) were taken that way; every stage-0 law here is linear elastic, so their
+# end-of-stage-0 states are the same, and they were re-run with the ramp.
+BRICKW = "-BrickW"
+
 # SANISAND: Gorini's set, tests/test_ladruno_sanisand.py:245-263 (kPa), scheme 1 defaults
 # (`_build_confined`, :590, passes opts=()): -maxSubsteps 0 (uncapped), honorTolR 0 (TolE 1e-4).
 SAN_PARAMS = [264.32, 0.3129, 0.6944, 1.33090, 0.71, 0.027, 0.83, 0.45, 101.0, 0.005, 1.3, 0.968,
@@ -311,7 +320,7 @@ def fe_column(mat, capped=False, g=G_GRAV, n_grav=10, n_hold=2, surcharge=None, 
     route0 = _stage(ops, mat, 0, soil_elems)
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
-    ops.eleLoad("-ele", *range(1, m["ne"] + 1), "-type", "-brickW")
+    ops.eleLoad("-ele", *range(1, m["ne"] + 1), "-type", BRICKW)
     _analysis(ops)
     ops.integrator("LoadControl", 1.0 / n_grav)
     ops.analysis("Static")
@@ -394,6 +403,195 @@ def leg_k0() -> dict:
                            "closed form, sxx and szz = the FE ratio to syy times syy"))
         _save(name, payload)
     return res
+
+
+# ----------------------------------------------------------------------------------------------
+# K0p: the plastic cell-crossing meter's reference (gate K0p, pre-registered 2026-11-18). K0's
+# capped column, stage 0 -> flip -> hold, then a stage-1 pre-shear: nu -> 0.05 (SANISAND
+# `poissonRatio`; DP `bulkModulus` + `shearModulus` for nu 0.05 at the same E), gravity +30 % in
+# 10 steps (every body: soil and cap), then a 2-step hold.
+# ----------------------------------------------------------------------------------------------
+K0P = dict(nu=0.05, dg=0.30, n_pre=10, n_hold=2)
+
+
+def _flip_every_point(ops, mat, elems) -> str:
+    """Flip EVERY soil point (not updateMaterialStage's one element)."""
+    if mat in ("dp", "dp_mildcone"):
+        return _stage(ops, mat, 1, elems)
+    if mat == "elastic":
+        return "none (elastic)"
+    ops.parameter(960)
+    for e in elems:
+        # SANISAND: ManzariDafalias::setParameter wants ('materialState', tag) -> id 5, which runs
+        # Elastic2Plastic on s = 1 (ManzariDafalias.cpp:975-981); HS: 'materialState' -> id 13,
+        # the full applyStageTransition (LadrunoHS.cpp:1189-1192, :1225-1232).
+        ops.addToParameter(960, "element", e, "materialState", 1)
+    ops.updateParameter(960, 1.0)
+    return ("parameter element e materialState 1 over every soil element (all 8 points), "
+            "updateParameter 1.0" + (" (id 5: Elastic2Plastic at every point)" if mat == "sanisand"
+                                     else " (id 13: applyStageTransition at every point)"))
+
+
+def _preshear_params(ops, mat, elems) -> str:
+    nu = K0P["nu"]
+    if mat == "sanisand":
+        # ManzariDafalias.cpp:955-956 `else if (strcmp(argv[0],"poissonRatio") == 0) { ...
+        # return param.addObject(7, this);` and :995-997 `else if (responseID == 7) { m_nu =
+        # info.theDouble; }`; LadrunoSANISAND::setParameter falls through to the base (:5193).
+        ops.parameter(961)
+        for e in elems:
+            ops.addToParameter(961, "element", e, "poissonRatio", 1)
+        ops.updateParameter(961, nu)
+        return "SANISAND poissonRatio (id 7) -> 0.05 at every soil point"
+    if mat in ("dp", "dp_mildcone"):
+        # DruckerPrager.cpp:1056-1061 `shearModulus` -> addObject(10), `bulkModulus` ->
+        # addObject(11); :1097-1107 `mG = info.theDouble; mCe = mK*mIIvol + 2*mG*mIIdev;` and
+        # `mK = info.theDouble; mCe = ...`. E is the leg's own: E = 9 K G / (3 K + G).
+        K0_, G0_ = (DP_K, DP_G) if mat == "dp" else (DPM_ARGS[0], DPM_ARGS[1])
+        E = 9.0 * K0_ * G0_ / (3.0 * K0_ + G0_)
+        K, G = E / (3.0 * (1.0 - 2.0 * nu)), E / (2.0 * (1.0 + nu))
+        for pid, name, val in ((962, "shearModulus", G), (963, "bulkModulus", K)):
+            ops.parameter(pid)
+            for e in elems:
+                ops.addToParameter(pid, "element", e, name)
+            ops.updateParameter(pid, val)
+        return f"DP shearModulus (id 10) -> {G!r}, bulkModulus (id 11) -> {K!r} (nu 0.05 at E {E!r})"
+    if mat == "hs":
+        return ("none: LadrunoHS answers no Poisson parameter (setParameter names: E50, Eoed, Eur, "
+                "c, phi, psi, G0, gamma07, OCR, pop, rho, stage; LadrunoHS.cpp:1172-1250); "
+                "gravity +30 % only")
+    return "none (elastic): gravity +30 % only"
+
+
+def _row_alpha(ops, m, h=COL["h"]):
+    """SANISAND alpha (state 6-11) per element row, mean over the row's points, and per point."""
+    rows, pts = {}, []
+    for e, j in m["soil"]:
+        for gp in range(8):
+            a = list(ops.eleResponse(e, "material", gp + 1, "state"))[6:12]
+            rows.setdefault(j, []).append(a)
+            pts.append(a)
+    return [[(j + 0.5) * h, *np.mean(np.array(rows[j]), axis=0).tolist()] for j in sorted(rows)], pts
+
+
+def _ladder_advance(ops, t_from, t_to, dt0, floor=5.0e-4):
+    """LoadControl from t_from to t_to with nominal step dt0 on the K9 ladder, halving on a full
+    ladder failure down to floor * dt0, regrowing x2 after a success. Returns the counts."""
+    dt, nfail, nrelax, nhalv, steps = dt0, 0, 0, 0, 0
+    while ops.getTime() < t_to - 1e-12:
+        dt = min(dt, t_to - ops.getTime())
+        ops.integrator("LoadControl", dt)
+        ok = False
+        for i, (alg, tl, it) in enumerate(K9):
+            ops.test("NormUnbalance", tl, it, 0)
+            ops.algorithm(alg)
+            if ops.analyze(1) == 0:
+                ok, nrelax = True, nrelax + (i == 2)
+                break
+            nfail += 1
+        if not ok:
+            dt *= 0.5
+            nhalv += 1
+            if dt < floor * dt0:
+                raise RuntimeError(f"ladder floor at t = {ops.getTime()}")
+            continue
+        steps += 1
+        dt = min(2.0 * dt, dt0)
+    return dict(steps=steps, failed_attempts=nfail, relaxed=nrelax, halvings=nhalv,
+                ladder=[list(x) for x in K9])
+
+
+def fe_column_k0p(mat, g=G_GRAV):
+    ops = fe_engine()
+    t0 = time.time()
+    m = _column_model(ops, mat, g=g, capped=True)
+    soil = [e for e, _ in m["soil"]]
+    route0 = _stage(ops, mat, 0, soil)
+    # ONE gravity pattern on a Path series: 0 -> 1 over t in [0, 1] (stage 0), 1 -> 1.3 over
+    # [1, 2] (the pre-shear), held to t = 3 (PathSeries returns 0 AT its last time point).
+    ops.timeSeries("Path", 1, "-time", 0.0, 1.0, 2.0, 3.0,
+                   "-values", 0.0, 1.0, 1.0 + K0P["dg"], 1.0 + K0P["dg"])
+    ops.pattern("Plain", 1, 1)
+    ops.eleLoad("-ele", *range(1, m["ne"] + 1), "-type", BRICKW)
+    _analysis(ops)
+    ops.integrator("LoadControl", 0.1)
+    ops.analysis("Static")
+    for st in range(10):
+        if ops.analyze(1) != 0:
+            raise RuntimeError(f"K0p {mat} gravity step {st + 1} failed")
+    ys = column_particle_y()
+    q_top = cap_rho() * g * CAP["t"]
+
+    def checkpoint(factor):
+        tab, spread = _row_table(ops, m)
+        sy = lambda y: -factor * (RHO * g * (COL["L0"] - y) + q_top)  # noqa: E731
+        cp = dict(rows=tab, gp_spread=spread,
+                  centre_syy_error=max(abs(r[2] - sy(r[0])) for r in tab),
+                  particles=_ratios(tab, ys, sy), cap_rows=_row_table(ops, m, which="cap")[0])
+        if mat == "sanisand":
+            cp["alpha_rows"], cp["_alpha_pts"] = _row_alpha(ops, m)
+        return cp
+
+    out = dict(material=mat, capped=True, g=g, rho=RHO, preshear=K0P, stage0_route=route0)
+    out["end_stage0"] = checkpoint(1.0)
+    out["flip_route"] = _flip_every_point(ops, mat, soil)
+    if mat == "sanisand":
+        out["flip_check"] = _flip_inertness(out["end_stage0"]["rows"])
+    ops.integrator("LoadControl", 0.0)
+    for st in range(2):
+        if ops.analyze(1) != 0:
+            raise RuntimeError(f"K0p {mat} hold step {st + 1} failed")
+    out["after_hold"] = checkpoint(1.0)
+    out["preshear_params"] = _preshear_params(ops, mat, soil)
+    # The pre-shear: n_pre steps of dt = 1/n_pre on the K9 ladder (KrylovNewton 1e-6/40 ->
+    # NewtonLineSearch 1e-6/60 -> KrylovNewton 1e-5/80), halving to 5e-4 of the step. Newton
+    # 1e-8 (stage 0) stalls at step 3 for SANISAND: its scheme-1 TolE 1e-4 sets a residual floor.
+    lad = _ladder_advance(ops, 1.0, 2.0, 1.0 / K0P["n_pre"])
+    out["after_preshear"] = checkpoint(1.0 + K0P["dg"])
+    out["preshear_ladder"] = lad
+    ops.integrator("LoadControl", 0.0)
+    for st in range(K0P["n_hold"]):
+        ok = -1
+        for alg, tl, it in K9:
+            ops.test("NormUnbalance", tl, it, 0)
+            ops.algorithm(alg)
+            if ops.analyze(1) == 0:
+                ok = 0
+                break
+        if ok != 0:
+            raise RuntimeError(f"K0p {mat} post-pre-shear hold step {st + 1} failed")
+    out["after_hold2"] = checkpoint(1.0 + K0P["dg"])
+    if mat == "sanisand":
+        a0 = np.array(out["after_hold"].pop("_alpha_pts"))
+        a1 = np.array(out["after_preshear"].pop("_alpha_pts"))
+        a2 = np.array(out["after_hold2"].pop("_alpha_pts"))
+        d = np.linalg.norm(a1 - a0, axis=1)
+        out["alpha_moved"] = dict(
+            tol=1e-10, points=int(a0.shape[0]), moved_by_preshear=int(np.sum(d > 1e-10)),
+            fraction=float(np.mean(d > 1e-10)), max_norm_dalpha=float(d.max()),
+            min_norm_dalpha=float(d.min()),
+            hold2_max_norm_dalpha=float(np.linalg.norm(a2 - a1, axis=1).max()),
+            note="FE Gauss points, ||alpha(after_preshear) - alpha(after_hold)||; the MPM validity "
+                 "condition (>= 50 % of particles) is the harness's, on particles")
+        out["end_stage0"].pop("_alpha_pts", None)
+    out["wall_s"] = round(time.time() - t0, 2)
+    r = out["after_hold2"]["particles"]
+    print(f"K0P {mat}: ratio_xx after pre-shear+hold {r[0]['ratio_xx']:.6f} .. {r[-1]['ratio_xx']:.6f}"
+          + (f"; alpha moved {out['alpha_moved']['fraction']:.3f}" if mat == "sanisand" else "")
+          + f" ({out['wall_s']} s)", flush=True)
+    return out
+
+
+def leg_k0p() -> dict:
+    legs = {mat: fe_column_k0p(mat) for mat in MATERIALS}
+    payload = dict(_provenance("k0p_column_capped", "fe_column_k0p"), decks=decks(), legs=legs,
+                   particle_y=column_particle_y(), preshear=K0P,
+                   meter_reference=("sigma_ref(Y) = legs.<mat>.after_hold2.particles at the "
+                                    "particle's initial Y: syy = -1.3 (rho g (l0 - Y) + 20) closed "
+                                    "form (gravity +30 % acts on the cap too), sxx, szz = FE ratio "
+                                    "x syy"))
+    _save("k0p_column_capped", payload)
+    return payload
 
 
 # ----------------------------------------------------------------------------------------------
@@ -750,7 +948,7 @@ def _sas_counts(ops, elems) -> dict:
 
 def fe_footing_soil(mat, n_across_b, variant="deck", max_wall=None, curve=True):
     """Half model x in [0, 12], y in [-6, 0], h = B / n_across_b, LadrunoBrick B-bar plane-strain
-    slab. Stage 0: gravity (-brickW, rho 2.0, g 9.81) and the 20 kPa surcharge (tributary nodal
+    slab. Stage 0: gravity (-BrickW, rho 2.0, g 9.81) and the 20 kPa surcharge (tributary nodal
     loads on every top node) ramp together in 10 LoadControl steps; loadConst; the flip; 2 hold
     steps (LoadControl 0). Push: the rough footing (top nodes x <= B/2: u_y prescribed, u_x held)
     descends 2 mm per step to s = 0.05 B = 0.1 m on the K9 ladder (KrylovNewton 1e-6/40 ->
@@ -803,7 +1001,7 @@ def fe_footing_soil(mat, n_across_b, variant="deck", max_wall=None, curve=True):
     r_corr = f["q0"] * sum(trib[n] for n in foot)
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
-    ops.eleLoad("-ele", *elems, "-type", "-brickW")
+    ops.eleLoad("-ele", *elems, "-type", BRICKW)
     for n, A in trib.items():
         ops.load(n, 0.0, -f["q0"] * A, 0.0)
     _analysis(ops, tol=1.0e-6)
@@ -917,6 +1115,8 @@ def main(argv=None) -> None:
     what = argv[0] if argv else "k0"
     if what == "k0":
         leg_k0()
+    elif what == "k0p":
+        leg_k0p()
     elif what == "onepoint":
         leg_onepoint()
     elif what == "s2":

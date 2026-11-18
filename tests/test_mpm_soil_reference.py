@@ -242,3 +242,25 @@ def test_reference_blocks_point_at_records():
     assert [float(x) for x in mats[2][1:]] == R.DP_ARGS
     assert [float(x) for x in mats[3][1:]] == R.SAN_PARAMS
     assert [float(x) for x in mats[1][1:]] == [R.EL_E, R.EL_NU]
+
+
+def test_k0p_record():
+    d = _json("k0p_column_capped")
+    _provenance_ok(d)
+    assert set(d["legs"]) == set(R.MATERIALS)
+    for mat, L in d["legs"].items():
+        for cp in ("after_preshear", "after_hold2"):
+            for p in L[cp]["particles"]:
+                assert math.isclose(p["syy"], -1.3 * (2.0 * 9.81 * (10.0 - p["Y"]) + 20.0),
+                                    rel_tol=1e-13)
+            assert L[cp]["centre_syy_error"] < 1e-6 * 196.2
+        if mat != "elastic":
+            assert "every" in L["flip_route"]
+    am = d["legs"]["sanisand"]["alpha_moved"]
+    assert am["fraction"] >= 0.5 and am["min_norm_dalpha"] > 1e-3      # the pre-shear is plastic
+    # nu -> 0.05 moved SANISAND off its stage-0 ratio; elastic keeps it
+    r = [p["ratio_xx"] for p in d["legs"]["sanisand"]["after_hold2"]["particles"]]
+    assert max(r) < K0_EL - 1e-2
+    assert all(abs(p["ratio_xx"] - K0_EL) < 1e-9 for p in d["legs"]["elastic"]["after_hold2"]["particles"])
+    assert "poissonRatio" in d["legs"]["sanisand"]["preshear_params"]
+    assert "shearModulus" in d["legs"]["dp"]["preshear_params"]
