@@ -1028,6 +1028,22 @@ first step at which the FE's own Gauss-point spread exceeds 1e-8 (recorded per l
 `s1_onepoint.json` `fe_self_consistency`, build `fc82c1a41`); from that step on, rel 1e-3. HS never
 parts (2.5e-13) and stays at 1e-8 throughout. The MPM substep counts are still reported.
 
+**Ruling (2026-11-17, before any S3 MPM number) — variant v0, the TIMs model-of-record option set.**
+At the owner's pointer, the TIMs workbench's standard SANISAND FEA strip
+(`tims-workbench/Tries/2d-model/model/strip.py`, presets `kimura_v856_dm04_fp` /
+`kimura_v751_dm04_fp`, build `7ab1f32ad`, LadrunoQuad B-bar at B/8) reaches s/B 0.18 with zero
+material refusals. Its integrator options are the ones the TIMs lane found necessary
+(`07 — Handoff, Where the SANISAND Wall Stands.md`): plain SAS-ME walls near s/B 0.051, and only
+the R1 trio plus separation reaches. The probe order therefore gains **v0, ahead of v1–v4**: our
+deck's 18 constants (unchanged, as K0/S1/S2) with TIMs' option set: `IntScheme 129, TanType 0,
+JacoType 1, TolF 1e-7, TolR 1e-4, -Presidual 0.0 -honorTolR 0 -flipAlphaIn init -Pmin 0.0101
+-maxSubsteps 2000 -sasHFloor 1.0 -sasReseatHyst 1 -sasSoftCap 0.5 -sasTensionCutoff 0.5 1.0`
+(`strip.py:1722-1773`, as that driver emits it; TIMs' notes record an owner preference for
+`0.1 1.0`, unresolved there). The winner rule is unchanged (first in order to reach s = 0.05 B at
+r1 and r2 on the K9 ladder). Under S3's 20 kPa surcharge the separation cutoff should be inert:
+each record reports its separation count, and a non-zero count is reported, not tuned. TIMs' own
+q(s) on its own geometry is context only, never a gate (different B, box, footing model).
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
