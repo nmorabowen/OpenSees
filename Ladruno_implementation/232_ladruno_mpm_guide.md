@@ -453,6 +453,11 @@ Interface `tests/mpm_soil_interface.md` (D1–D23); results [[232k_mpm_soil_mode
   particles.
 - **Queries:** `mpm particleData sigZZ`, `mpm particleResponse [-size] <args>` (e.g. `state`:
   SANISAND alpha at 6–11, e at 24), `mpm info materials`.
+- **Particle stress under `-implex` is the trial stress.** `particleData sig` / `sigHat` keep the
+  extrapolated stress the step was equilibrated with, not the material's committed (corrected)
+  stress. In the S1 one-point legs the gap is 0.035–0.233 relative from the first plastic step.
+  Read the committed stress with `mpm particleResponse stress` (quirk
+  `WP-232k-implex-particle-stress-is-trial`).
 - **Restart** (mode A): the restored host re-asserts SANISAND's stage flag (pack v4).
 - **Cost** (M0b upper bounds): a SANISAND plastic call 0.6–1.2 ms; serial.
 - **Grid motion for drivers:** `mpm gridvel <name> box <lo> <hi> affine <L> [ref <x>]`, changed

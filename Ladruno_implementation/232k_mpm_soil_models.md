@@ -140,7 +140,7 @@ Builds `7b00fcf13` / `7c932089c`, Windows MSVC, unless noted.
 
 | Row | Result | Verdict |
 |---|---|---|
-| S1 one-point identity (`s1_mpm.json`) | HS: 12 legs × 2 modes, max rel 1.2e-11. SANISAND: 22 of 24 pass (mode F on bspline2). SANISAND 3D mode A misses at step 12, the second plastic step, one step before the FE's own Gauss-point spread passes 1e-8: triax 3.2e-6, oedo 1.06e-8, with the FE's substep counts (5, 4). Option legs (`s1_onepoint_options.json`, rulings at f6ae63d79; build `f235a001f`): see "S1 option legs" below. | 22 pass; **2 pre-registered misses** (strict xfail, ruling at 926d27153); option legs: **2 misses pending a ruling** |
+| S1 one-point identity (`s1_mpm.json`) | HS: 12 legs × 2 modes, max rel 1.2e-11. SANISAND: 22 of 24 pass (mode F on bspline2). SANISAND 3D mode A misses at step 12, the second plastic step, one step before the FE's own Gauss-point spread passes 1e-8: triax 3.2e-6, oedo 1.06e-8, with the FE's substep counts (5, 4). Option legs (`s1_onepoint_options.json`, rulings at f6ae63d79; build `f235a001f`): see "S1 option legs" below. | 22 pass; **2 pre-registered misses** (strict xfail, ruling at 926d27153); option legs: pass, except **IntScheme 2 shear, a pre-registered miss** (strict xfail, ruling d683e0db8) |
 | S2 column + surcharge (`s2_mpm_hs_diagnosis.json`, `s2_mpm_sanisand.json`) | End of stage 0 and after the flip pass: HS 0.0128 / 0.0069, SANISAND 0.0127 / 0.0069. After the surcharge (registered top-row body force), max syy is HS 0.274 / 0.576 and SANISAND 0.265 / 0.776, at the top cell. | **recorded miss** (#1110; strict xfail) |
 | S3 footing, HS (`s3_mpm_hs_r1_fbar.json`) | r1 fbar: q / q_FE 0.977 / 0.973 / 0.960 at s/B 0.01 / 0.02 / 0.05; reached the target; 0 failed attempts; 3.1 s. r1 off and r2 on reached on esmeralda; r3 and r2-off are running. | r1 pass; r2/r3 pending on esmeralda |
 | S3 footing, SANISAND | Waits for the FE deck (probe v0 running; v1–v4 failed to reach). | pending |
@@ -165,7 +165,7 @@ mode F on bspline2):
 - **Pass under the S1 rule:** SANISAND IntScheme 129 and IntScheme 2 triax/oedo; HS `-implex`,
   `-smallStrain`, the HS deck's tension leg, and every `-sigmat` leg, the gated `tension` path
   included.
-- **IntScheme 2 shear, a miss pending a ruling.** Before the switch step (ps 21, 3D 61) every leg
+- **IntScheme 2 shear, a pre-registered miss (ruling d683e0db8).** Before the switch step (ps 21, 3D 61) every leg
   holds ≤ 1e-11. After it, the gate is the stress inside the FE's Gauss-point envelope widened by
   1e-3 relative. The record carries GP 1's stress and the GP spread, not per-GP min/max, so the
   envelope used is GP 1 ± spread, which contains [min, max]. ps mode A stays inside (worst 0.94 of
@@ -174,18 +174,18 @@ mode F on bspline2):
   the FE's 8 Gauss points take different CPPM branches (their substep counts part there). At step
   21 the ps particle sits at the far edge of the spread (distance to GP 1 = the spread to 1e-6).
   The particle's round-off differs from every GP's, so it follows a branch of its own; 8 GPs
-  sample the branch set and do not bound it. Strict xfail, pending a ruling.
-- **SANISAND `-implex`, a miss pending a ruling.** 232k-V's `-implex` records equal the scheme-1
-  records bit for bit. At the material the MPM run does too: the material's committed `stress`
-  response and its 26-entry state equal the scheme-1 run's particle stress and state bit for bit,
-  every step, all 12 legs (`test_option_implex_material_equals_scheme1`). The particle's own
-  stress (`sigHat`) does not: it departs at step 11, the first plastic step, by up to 0.035 (ps
-  oedo) to 0.233 (3D shear) relative. The engine keeps the stress the material returned at the
-  trial call, which under `-implex` is the extrapolated (companion) stress; `commitState` then
-  corrects the material but the particle keeps the trial value. Two ways out, the coordinator's
-  call: re-read the stress after `commitState` for `-implex` materials (a C++ change, and in mode
-  F it changes the next step's internal force), or gate the material's committed response. Strict
-  xfail, pending a ruling.
+  sample the branch set and do not bound it. Strict xfail; the miss goes to the owner at
+  ready-flip.
+- **SANISAND `-implex`: pass, compared at the material's committed response (ruling
+  d683e0db8).** 232k-V's `-implex` records equal the scheme-1 records bit for bit. So does the
+  MPM run at the material: the material's committed `stress` response and its 26-entry state equal
+  the scheme-1 run's particle stress and state bit for bit, every step, all 12 legs and both modes
+  (`test_option_implex_material_equals_scheme1`, the gated leg). The particle's own stress
+  (`sigHat`) departs at step 11, the first plastic step, by 0.035 (ps oedo) to 0.233 (3D shear)
+  relative. The engine keeps the stress the material returned at the trial call, which under
+  `-implex` is the extrapolated stress the step was equilibrated with; `commitState` corrects the
+  material, the particle keeps the trial value. Consistent with IMPL-EX, no C++ change; recorded
+  as quirk `WP-232k-implex-particle-stress-is-trial` and a guide note.
 - **`-implex` boundary-value leg** (`k0p_meter_A_gimp_implex.json`): K0p column, mode A gimp,
   capped, staging only, against `k0p_column_capped_implex.json` (232k-V, 185aacefd). α moved in
   160 of 160 particles (max 0.081); σ RMS 0.01862 ρgl0 against the gate 0.02. **Pass.**

@@ -7,16 +7,17 @@ appended to the deck). Rules (wp-briefs.md "232k", rulings on B3's option legs, 
 - SANISAND IntScheme 2: triax and oedo the S1 rule; shear: 1e-8 before the switch step, after it
   every MPM stress inside the FE's Gauss-point envelope widened by 1e-3 relative. The record holds
   GP 1's stress and the GP spread (max - min over the 8 GPs), so the envelope used is
-  [sig_GP1 - spread, sig_GP1 + spread] (it contains [min, max]); the state is held to the GP rel
-  spread + 1e-3.
+  [sig_GP1 - spread, sig_GP1 + spread] (it contains [min, max]); stress only after the switch.
+  ps mode A passes; ps F, 3D A and 3D F are a pre-registered miss (strict xfail, ruling
+  d683e0db8, numbers in s1_options_diagnosis.json).
 - HS -sigmat: the `tension` path is the gated leg (S1 rule); its other paths never go tensile
   and are checked by the S1 rule too.
 - SANISAND -implex: with every DOF prescribed it commits the scheme-1 state, so its one-point leg
-  is an EQUALITY: at particles, -implex equals the deck (scheme 1) bit for bit, step by step.
-  Measured on f235a001f: it holds at the material (committed `stress` response and state) and
-  misses at the particle's sigHat, which keeps the trial-call (extrapolated) stress: recorded as
-  a strict xfail pending a ruling. The option's real gate is the boundary-value leg (the K0p column, mode A gimp, against
-  k0p_column_capped_implex.json, sigma RMS <= 0.02 rho g l0).
+  is an EQUALITY, compared at the material's committed response (ruling d683e0db8): the particle
+  material's `stress` response and state equal the deck (scheme 1) bit for bit, step by step.
+  The particle's own sigHat keeps the trial (extrapolated) stress under -implex (quirk
+  WP-232k-implex-particle-stress-is-trial). The boundary-value leg: the K0p column, mode A gimp,
+  against k0p_column_capped_implex.json, sigma RMS <= 0.02 rho g l0.
 """
 from __future__ import annotations
 
@@ -128,7 +129,8 @@ def _is2_params():
         for mode in ("A", "F"):
             why = _IS2_MISS.get((leg, mode))
             marks = [pytest.mark.xfail(strict=True, reason=(
-                "232k-C miss, pending ruling: " + why + ". Past the switch the FE's 8 Gauss points "
+                "pre-registered miss (ruling d683e0db8; s1_options_diagnosis.json): " + why +
+                ". Past the switch the FE's 8 Gauss points "
                 "take different CPPM branches (substeps differ from that step on); the particle's "
                 "round-off puts it on its own branch, so the 8-GP envelope samples the branch set "
                 "and does not bound it"))] if why else []
@@ -141,14 +143,6 @@ def _is2_params():
 def test_option_is2_shear_envelope(leg, mode):
     bad = _envelope_run(_ops(), leg, mode, _rec())
     assert not bad, (leg, mode, bad[:3])
-
-
-_IMPLEX_MISS = (
-    "232k-C miss, pending ruling: the particle carries the stress returned at the trial call, "
-    "which under -implex is the extrapolated (companion) stress; commitState then corrects the "
-    "material, so the material's committed `stress` response and its state equal scheme 1 bit "
-    "for bit (test_option_implex_material_equals_scheme1) while the particle's sigHat departs "
-    "from step 11 (the first plastic step), max rel 0.035 (ps oedo) .. 0.233 (3d shear)")
 
 
 def _implex_traces(ops, leg, mode, what):
@@ -178,42 +172,13 @@ def _implex_traces(ops, leg, mode, what):
 @pytest.mark.parametrize("mode", ["A", "F"])
 @pytest.mark.parametrize("leg", IMPLEX or ["none"])
 def test_option_implex_material_equals_scheme1(leg, mode):
-    """At the material: -implex's committed stress response and state equal the deck's (scheme 1)
-    particle sigHat and state bit for bit, every step."""
+    """The gated -implex leg (ruling d683e0db8): the particle material's committed `stress`
+    response and its state equal the deck's (scheme 1) particle sigHat and state bit for bit,
+    every step. The particle's own sigHat keeps the trial (extrapolated) stress under -implex
+    (quirk WP-232k-implex-particle-stress-is-trial)."""
     traces = _implex_traces(_ops(), leg, mode, "stress")
     first = next((k for k, (a, b) in enumerate(zip(*traces)) if a != b), None)
     assert first is None, f"{leg} {mode}: -implex material departs from scheme 1 at step {first + 1}"
-
-
-@pytest.mark.skipif(not LEGS, reason="s1_onepoint_options.json not committed")
-@pytest.mark.parametrize("mode", ["A", "F"])
-@pytest.mark.parametrize("leg", IMPLEX or ["none"])
-@pytest.mark.xfail(strict=True, reason=_IMPLEX_MISS)
-def test_option_implex_equals_scheme1(leg, mode):
-    """The ruling's gate: at particles, -implex equals scheme 1 bit for bit (sigHat and state)."""
-    ops = _ops()
-    rec = _rec()
-    base = S.load("s1_onepoint.json")
-    deck_leg = leg.replace("sanisand_implex_", "sanisand_")
-    L, Lb = rec["legs"][leg], base["legs"][deck_leg]
-    dt = 1.0 if mode == "A" else 1e-4
-    traces = []
-    for r, lg in ((rec, leg), (base, deck_leg)):
-        cmds, nd = S.s1_commands(r, lg, mode, dt)
-        for name, args in cmds:
-            getattr(ops, name)(*args)
-        tr = []
-        for k in range(len(r["legs"][lg]["dF"])):
-            if k + 1 == int(r["legs"][lg]["flip_before_step"]):
-                ops.mpm("stage", 1, 1)
-            ops.mpm("gridvel", "all", "setAffine", *S.s1_L(r, lg, k, nd, dt))
-            ops.mpm("analyze", 1, dt)
-            tr.append((S._l(ops.mpm("particleData", "sigHat")),
-                       S._l(ops.mpm("particleResponse", "state"))))
-        traces.append(tr)
-    assert len(L["dF"]) == len(Lb["dF"])
-    first = next((k for k, (a, b) in enumerate(zip(*traces)) if a != b), None)
-    assert first is None, f"{leg} {mode}: -implex departs from scheme 1 at step {first + 1}"
 
 
 @pytest.mark.skipif(not (DATA / "k0p_column_capped_implex.json").exists(),
