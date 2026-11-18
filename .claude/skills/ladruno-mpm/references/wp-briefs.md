@@ -1162,6 +1162,44 @@ orchestrator).**
 - **S9:** the MPM mutation gate is dispatched on CI (`ladruno_mutation.yml`, family MPM, run
   44318604262, head `42bbefac6`).
 
+**Ready-flip critic (2026-11-18, Fable · high, at `926d27153`): AMEND.** Each finding the
+orchestrator relied on was verified in-tree:
+- **C1, verified (orchestrator).** In both mode-A K0 records, SANISAND's back-stress never moves
+  across the translation (max |Δα| = 0.0 over 160 particles; α_yy = 0.5700358 everywhere). The
+  stage-0 state sits on the cone axis, and an oedometric perturbation keeps it there. The same
+  holds in the passing capped mode-F bspline2 record (0 of 160 moved). **The admitted K0 passes
+  therefore measure SANISAND's pressure-dependent hypoelastic response under crossing, not its
+  plasticity.** In the failing capped mode-F gimp record, α moved in 70 of 160 particles (max
+  0.58) and e by up to −0.0041. Plastic flow was engaged there, but which came first, the
+  plasticity or a p-dependent elastic instability, is not separated (C2).
+- **A2, verified by reading:** `mpm stage` passes any s, and SANISAND's `Elastic2Plastic` runs
+  only on s = 1.
+- Others (A1, A3–A5, B1–B4, C3, D) are accepted as listed in the critic's report and are fixed
+  in the AMEND round.
+
+**New gate K0p — the plastic cell-crossing meter (pre-registered 2026-11-18, before any K0p
+number).** It closes C1.
+- **Case:** K0's capped column (D19a/D21a/D23 cap). After the flip and the hold, a stage-1
+  pre-shear: SANISAND's `poissonRatio` is set to 0.05 (the TIMs ν trick, through the stage/parameter
+  route) and gravity is raised by 30 % (mode A: 10 steps; mode F: a 1 s ramp and a 0.5 s settle).
+  Then K0's hold, translation and settle are unchanged.
+- **DP leg:** the same staging, with K and G for ν = 0.05 at the same E, through DP's
+  `bulkModulus` / `shearModulus` parameters.
+- **References:** 232k-V's FE column with the identical staging, for both materials.
+- **Validity (checked before the meter is read):** at least 50 % of SANISAND particles must have
+  α moved by the pre-shear (against the post-flip state); otherwise the leg is not admitted and
+  goes back to the orchestrator before any meter is read. Reported, not gated: Δα and Δe during
+  the translation, against the twin.
+- **Gate:** A_p = m(SANISAND, K0p) / m(DP, K0p) ≤ 2, or m(SANISAND, K0p) ≤ 0.01, on every
+  admitted combination (mode A gimp, mode A bspline2, mode F bspline2, mode F bspline3). Post-flip
+  floor events make a leg not admitted, with no further re-run, and it is reported as a miss.
+  **A miss goes to the owner** and may reopen the K0 admission decision.
+- **bspline3** also runs K0 capped mode F (C3), because it is admitted for SANISAND in mode F.
+
+**DP elastic matching, dated (B-row note):** the gated DP leg uses SANISAND's stage-0 K and G
+(ruled 2026-11-17, before any MPM number, so the ratio compares like elasticity). In every record
+the matched DP's meter is at or below `dp_mildcone`'s, so the choice does not flatter SANISAND.
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
