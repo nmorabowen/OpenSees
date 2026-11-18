@@ -157,7 +157,10 @@ On GIMP the two are close (0.0147 against 0.0141), which fits GIMP's smaller pos
 
 ## S rows
 
-Builds `7b00fcf13` / `7c932089c`, Windows MSVC, unless noted.
+Builds `7b00fcf13` / `7c932089c`, Windows MSVC, unless noted. The whole soil test set
+(`tests/test_ladruno_mpm_soil_*.py`, `--runslow`), one pass on `f235a001f` with every record
+committed: **160 passed, 10 xfailed, 0 skipped, 0 failed** (the xfails: S2 ×4, K0 capped gimp,
+S1 SANISAND 3D mode A ×2, IntScheme 2 shear ×3).
 
 | Row | Result | Verdict |
 |---|---|---|
