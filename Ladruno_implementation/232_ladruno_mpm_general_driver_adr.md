@@ -779,7 +779,8 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 >     non-associated Drucker–Prager at 16 cells across B: the fork's FE B-bar needs 887 failed
 >     attempts on the same ladder. The anti-locking tangent agrees with finite differences at
 >     plastic states, and the worst-residual particles are not at the apex. The test is a
->     strict xfail. Band, ladder and floor are unchanged.
+>     strict xfail. Band, ladder and floor are unchanged. **The owner accepted the miss**
+>     (2026-11-17). The shared FE/MPM stagnation is tracked in #1107.
 > - **Use.** Turn it on for nearly incompressible or isochoric-plastic soils in mode A and in
 >   mode F. It is opt-in until the owner flips the default.
 
