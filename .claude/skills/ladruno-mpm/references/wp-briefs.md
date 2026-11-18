@@ -1200,6 +1200,26 @@ number).** It closes C1.
 (ruled 2026-11-17, before any MPM number, so the ratio compares like elasticity). In every record
 the matched DP's meter is at or below `dp_mildcone`'s, so the choice does not flatter SANISAND.
 
+**Rulings (2026-11-18, before any option-leg MPM number) — B3's option legs.** 232k-V's references
+are `s1_onepoint_options.json` (36 legs, `d935310b0`, build `b94c9d75d`).
+- **SANISAND `-implex` (run with `-maxSubsteps 1000`, which it requires):** with every DOF
+  prescribed, it commits exactly the scheme-1 state, bit for bit on all 6 legs, because IMPL-EX
+  changes only the trial stress the global Newton sees. The one-point leg is therefore kept only
+  as an equality check: at particles it must equal the scheme-1 record bit for bit. The option is
+  admitted only with a boundary-value leg: the K0p column in mode A on gimp with `-implex`,
+  against 232k-V's FE capped column with `-implex` on the same staging, gated at σ RMS ≤ 0.02 ρgl0
+  (S2's bar). It cannot simply be refused, because S5's abort leg uses it.
+- **HS `-sigmat`:** triaxial, oedometer and shear never go tensile, so 232k-V's added `tension`
+  path (lateral stretch, p held at +5 kPa by the cutoff) is the gated leg.
+- **SANISAND IntScheme 2, shear legs:** the FE reference's own Gauss points part by 1.4e-2 (3D,
+  from step 61) and 5.2e-2 (plane strain, from step 21). After the S1 switch step, the leg passes
+  when every MPM value lies inside the FE's Gauss-point envelope [min, max] widened by 1e-3
+  relative. Before the switch, 1e-8 still applies. Its triaxial and oedometer legs keep the plain
+  S1 rule.
+- **K0p tolerance (232k-C):** mode A NormDispIncr 1e-8 in the K0p pre-shear and after it, for
+  every leg (DP included), because SANISAND's residual stalls at 6.2e-10. Accepted before any K0p
+  number. K0 keeps 1e-10.
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
