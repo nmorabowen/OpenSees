@@ -1087,6 +1087,25 @@ On them, A would be 8.5 (gimp) and 2.9 (bspline2). They are recorded as a findin
 explicit MPM drives free-surface soil particles to the pressure floor, which the motionless twin never
 reaches. Mode A had no post-flip floor event, and its pass stands.
 
+**Rulings (2026-11-18) — S5 trigger, S2 HS, S8.**
+- **S5 HS trigger γ = 6 → 10: accepted.** It is the input that provokes the refusal, not a band:
+  the de-rotated increment at γ = 6 gives |Δε|² = 20.7 < 25, so it never tripped HS's check.
+- **S2 HS after the surcharge: a pre-registered miss on both bases.** With the registered surcharge
+  mechanism (`footing_mildcone`'s body force on the top particle row), the max σ_yy error is
+  0.27 (gimp) and 0.58 (bspline2) of ρgl0 against 0.03, at the end of stage 0 and after the flip
+  both pass. Diagnosis (232k-C, `s2_mpm_hs_diagnosis.json`, build `7b00fcf13`): the error is local
+  to the loaded top cell; every row below it is within 0.013. It is the load carrier, not the
+  material: a concentrated body force on one particle row is spread over the basis support, not a
+  traction. Reported, not gated: an elastic cap with its weight cancelled gives 0.021 / 0.30, and
+  a cap of the soil material 0.058 / 0.069. **Proposal S2a (switch to the cap) is declined as a
+  gate change**, because it was proposed after the numbers. The SANISAND S2 leg runs with the same
+  registered mechanism, and the cap variants are reported beside it. The miss goes to the program
+  orchestrator before ready; the owner decides misses.
+- **S8 bit for bit:** the 232j records were made with GCC on esmeralda, so the bit-for-bit re-run
+  is done there. The MSVC re-run (L4 r1: up to 3.4e-8 relative, 89 against 88 failed attempts,
+  same q_max to 7 digits) is reported as the compiler difference it is. The suite counts (615
+  passed, 16 skipped, 6 xfailed, 0 failed) stand.
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
