@@ -1,7 +1,8 @@
 """WP-232f: the fine-resolution P1 gates of MPM mode A (tests/mpm_implicit_cases.txt).
 
 These are the pre-registered gate rows at their finest resolution (cantilever QS and transient
-r2 / r3, the mild-cone footing r2 / r3, the plate with a hole): 10^4 - 5 * 10^4 particles over
+r2 / r3, the plate with a hole; the mild-cone footing r1-r3 is WP-232j's gate row L4, with
+anti-locking on): 10^4 - 5 * 10^4 particles over
 up to 400 implicit steps, too long for Zone-A's 40-minute job. They run where the warrant is
 assembled: set LADRUNO_MPM_GATES=1 (and dist/bin/opensees.pyd on PYTHONPATH). Without it every
 test here is skipped with that reason — they are never silently passed.
@@ -75,32 +76,30 @@ def test_cantilever_error_trend():
         assert trend and all(v == "pass" for _, v, _ in trend), trend
 
 
-FOOTING_MISS = (
-    "pre-registered miss, recorded 2026-11-14/15 (WP-232f, PR #1083). The band [0.90, 1.10] x "
-    "138.907 = [125.0, 152.8] kPa is NOT REACHABLE at r3 by any of the fork's own discretisations: "
-    "with NON-ASSOCIATED flow the collapse load is mesh dependent (ADR-79), and 232f-V's FE on this "
-    "case's domain at 16 cells across B gives B-bar 122.53 (0.882x) and std, locked, 154.68 (1.114x) "
-    "-- both outside (tests/data/mpm/implicit/fe_footing.json). So anti-locking (phase 4) alone would "
-    "not bring MPM into the band; the gate itself is the owner's to redesign. Separately, (b) NEWTON "
-    "DIVERGENCE at r2 / r3 (r2 stops near t = 30, r3 at step 42): iterates invert particles and carry "
-    "centres out of the grid; NewtonLineSearch (t = 28) and KrylovNewton (t = 29) do not help. The "
-    "element tangent is not the cause (||K - K_FD|| / ||K||, FD converged over eps 1e-8..1e-10: 3e-6 "
-    "elastic undeformed, 1e-3 at 0.2 % strain, mean 3.7 % on the plastic footing state); the worst "
-    "particles (rel ~1, |K| ~ 75 against ~1e5) are DruckerPrager at its apex near the free surface "
-    "(weightless soil, sigma_y 0.2 kPa), returning its regularised 1e-3 Ce tangent where the response "
-    "is perfectly plastic, so the nodes they support are nearly singular. Context: r1 q_max 188.6 "
-    "(1.36x) sits in the locked-FE range (std H8 219.1 / 179.1 at 4 / 8 across B); the observable is "
-    "exact (test_condforce_is_the_reaction). The band is not touched.")
+# The 232f footing gate ([0.90, 1.10] x 138.907 kPa at r3, strict xfail since PR #1083) was
+# redesigned at 232j's kickoff (ADR 232 amendment "232j kickoff"): it is replaced by gate row L4,
+# the FE-relative band at every rung with anti-locking on and K6's ladder. The old band is never
+# re-gated; its verdict (q/exact) is printed below as a reported value.
+OLD_BAND = (0.90 * 138.907, 1.10 * 138.907)
+_al = __import__("ladruno_mpm_antilocking_harness")     # the L4 r3 miss text (WP-232j round 4)
 
 
-@pytest.mark.xfail(strict=True, reason=FOOTING_MISS)
-@pytest.mark.parametrize("name", ["footing_mildcone_r2", "footing_mildcone_r3"])
+@pytest.mark.parametrize("name", ["footing_mildcone_r1_al", "footing_mildcone_r2_al",
+                                  pytest.param("footing_mildcone_r3_al", marks=pytest.mark.xfail(
+                                      strict=True, reason=_al.L4_R3_MISS))])
 def test_footing_gate(name):
-    c = H.case_by_name(name)
-    r = run(name)
-    res = H.evaluate(c, r, runs=run)
-    for lab, v, det in res:
+    """WP-232j gate row L4 (tests/mpm_antilocking_cases.txt): q_max within +-10 % of the FE B-bar
+    q_max at that rung, every run reaching s = 0.2 m. Reported: the retired band's verdict."""
+    import ladruno_mpm_antilocking_harness as A
+    c = A.case_by_name(name)
+    r = A.run_ladder(c, _ops(), log=A.flushprint)
+    rows = A.evaluate(c, r)
+    for lab, v, det in rows:
         print(f"{v.upper():6s} {lab}: {det}")
+    qmax = A.observable(c, r, [e for e in c["expects"] if e["obs"] == "cond_pressure_max"][0])
+    print(f"REPORT retired band [0.90, 1.10] x 138.907: q_max {qmax:.2f} = {qmax / 138.907:.4f} x "
+          f"exact -> {'inside' if OLD_BAND[0] <= qmax <= OLD_BAND[1] else 'outside'} (never gated); "
+          f"failed {r['failed_attempts']}, relaxed {r['relaxed_steps']}, halvings {r['halvings']}, "
+          f"plastic-zone fallback share {r['zone_fallback_share']:.4f}")
     assert r["stopped"] is None, f"{name}: stopped at step {r['stopped']}"
-    got = H.observable(c, r, [e for e in c["expects"] if e["obs"] == "cond_pressure_max"][0])[0]
-    assert 0.90 * 138.907 <= got <= 1.10 * 138.907, got
+    assert all(v in ("pass", "report") for _, v, _ in rows), rows

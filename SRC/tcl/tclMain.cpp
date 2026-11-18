@@ -232,6 +232,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • mpm — explicit MPM engine: uGIMP, MUSL PIC/FLIP, frictional walls (WP-232)\n"
 "        • mpm — implicit / quasi-static MPM (mode A): LadrunoMPMPoint particle elements (WP-232f)\n"
 "        • mpm — quadratic / cubic B-spline bases, images on roller faces, MMS orders (WP-232i)\n"
+"        • mpm — anti-locking: cell-centre F-bar on the step increment, modes F and A (WP-232j)\n"
 "\n";
     // FEATURES-END
 

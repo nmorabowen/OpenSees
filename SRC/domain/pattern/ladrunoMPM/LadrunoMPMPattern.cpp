@@ -329,7 +329,8 @@ LadrunoMPMPattern::Print(OPS_Stream &s, int)
   for (int d = 0; d < g.ndm; d++) s << " " << g.n[d];
   s << ", " << eng.P.size() << " particles, basis "
     << ladruno_mpm::basisName(eng.par.basis) << ", flip " << eng.par.flip
-    << ", damping " << eng.par.damping << endln;
+    << ", damping " << eng.par.damping << ", antiLocking "
+    << (eng.par.antiLocking ? "fbar" : "off") << endln;
 }
 
 LoadPattern *
@@ -842,6 +843,17 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
   return rc;
 }
 
+// WP-232j (C2): mode F's `mpm debug affineCheck` through the engine's production helper,
+// evaluating (and reverting) the particles' own materials
+void
+LadrunoMPMPattern::engineAffineCheck(const double *A, const double *b, std::vector<double> &o)
+{
+  Element *saved = ops_TheActiveElement;
+  ops_TheActiveElement = 0;                       // W9, as in analyze()
+  eng.affineCheck(A, b, *adapter, o);
+  ops_TheActiveElement = saved;
+}
+
 int
 LadrunoMPMPattern::reset(void)
 {
@@ -856,6 +868,8 @@ LadrunoMPMPattern::reset(void)
   teardownModeA();
   epochSteps = 0;
   nG2P = nAccepted = nRetries = nDomainChanges = nConnChanges = 0;
+  eng.alFlag.clear();               // WP-232j (F1): the counts are per epoch
+  eng.alAveraged = eng.alFallback = 0;
   for (GridVel &g : gridVels) { g.nodes.clear(); g.force.assign(eng.ndm(), 0.0); }
   for (NDMaterial *m : mats)
     if (m != 0) m->revertToStart();   // review item 6: a hand-removed particle element took its material

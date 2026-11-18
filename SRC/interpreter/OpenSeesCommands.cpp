@@ -3998,13 +3998,26 @@ int OPS_profiler()
 // `cmds` singleton; classic Tcl has its own bridge in commands.cpp
 // (tests/mpm_implicit_interface.md §4, the LadrunoStaggeredAnalyze pattern).
 int OPS_LadrunoMPMWithAnalysis(StaticAnalysis *, DirectIntegrationAnalysis *, StaticIntegrator *,
-                               TransientIntegrator *, ConstraintHandler *);   // Ladruno WP-232f
+                               TransientIntegrator *, ConstraintHandler *,
+                               LinearSOE *, int);   // Ladruno WP-232f; WP-232j: + the SOE
 int OPS_LadrunoMPMDL()
 {
-    if (cmds == 0) return OPS_LadrunoMPMWithAnalysis(0, 0, 0, 0, 0);   // Ladruno WP-232f
+    if (cmds == 0) return OPS_LadrunoMPMWithAnalysis(0, 0, 0, 0, 0, 0, -1);   // Ladruno WP-232f / 232j
+    // Ladruno WP-232j: the system too (mode A refuses a symmetric-storage SOE with
+    // `mpm antiLocking fbar`); PARDISO's symmetric modes are known only under _PARDISO.
+    int pardisoMatType = -1;   // Ladruno WP-232j
+#ifdef _PARDISO
+    if (PARDISOGenLinSOE *ps = dynamic_cast<PARDISOGenLinSOE *>(cmds->getSOE()))   // Ladruno WP-232j
+        pardisoMatType = ps->getMatType();
+#endif
+#ifdef _MUMPS
+    if (MumpsSOE *ms = dynamic_cast<MumpsSOE *>(cmds->getSOE()))   // Ladruno WP-232j
+        pardisoMatType = ms->ladrunoGetMatType();
+#endif
     return OPS_LadrunoMPMWithAnalysis(cmds->getStaticAnalysis(), cmds->getTransientAnalysis(),
                                       cmds->getStaticIntegrator(), cmds->getTransientIntegrator(),
-                                      cmds->getHandler());           // Ladruno WP-232f
+                                      cmds->getHandler(), cmds->getSOE(),
+                                      pardisoMatType);           // Ladruno WP-232f / 232j
 }
 
 int OPS_LadrunoStaggeredAnalyze()

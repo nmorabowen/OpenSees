@@ -339,6 +339,76 @@ mutation suite). The full ladders are the warrant run, `tests/mpm_bspline_warran
 `tests/data/mpm/bspline/` (checked by `tests/test_mpm_bspline_warrant_results.py`); method and
 tables in [[232i_mpm_bspline_mms]].
 
+## Anti-locking: the cell-centre F-bar (WP-232j)
+
+Frozen interface: `tests/mpm_antilocking_interface.md` (J1–J13); ADR 232 §9 phase 4.
+
+**What it does.** With `mpm antiLocking fbar`, every particle's deformation-gradient increment
+of the step is rescaled so its volume change is the one of its background cell:
+`ΔF̄ = (det ΔF_c / det ΔF)^{1/d} ΔF`, where `ΔF_c` is the increment of the bilinear (2D) /
+trilinear (3D) field of the cell's corner nodes at the cell centre and `d = ndm` (plane strain:
+the in-plane 2×2 block, `F_zz = 1`). That is de Souza Neto et al. (1996)'s F-bar, on the step
+increment as in implicit MPM (Coombs et al. 2018), with the background cell as the averaging
+domain: every particle of a cell gets the same volumetric increment, one constraint per cell, and
+nearly incompressible flow (J2 plasticity, non-dilatant Drucker–Prager, ν → 0.5) stops locking at
+2×2 particles per cell. Only the increment is modified; the carried `F`, its volume `V = det F V₀`
+and the stress follow from it. The internal force is the one work-conjugate to that kinematics,
+`f_a = V [σ g_a + p̄ (ĝ_a − g_a)]` with `p̄` the in-plane (2D) or full (3D) mean stress and `ĝ`
+the cell centre's corner gradients — a B-bar force (Hughes 1980) beside the F-bar kinematics — so
+the internal power is `V σ : ℓ̄` and the scheme keeps the energy balance (gate row L9). Without it
+(the 232j round-2 build) a soft free body under FLIP gained energy without bound. One rule for `gimp`, `linear`, `bspline2` and `bspline3`, in mode F
+(after the grid update, before the material call) and in mode A (inside the particle element).
+
+**Where it does nothing.** A homogeneous (affine) field is unchanged (to 1e-12). A particle keeps its
+own increment (the fallback) only when a corner of its cell is not an active node: a corner below
+the mass cutoff (mode F's 1e-10, mode A's 5e-2 of the largest particle mass) or an inactive `ghost`
+node. The corners of a particle's cell always carry that particle's own mass, so this almost never
+happens: it did not happen once in the 232j warrant records (the free surface's cells keep the
+averaging). `mpm particleData antiLocking` (0 off / 1 averaged / 2 fallback, last accepted step) and
+`mpm info antiLockingCounts` (averaged, fallback particle-steps this epoch) report it.
+
+**Mode A.** The corners of a particle's cell always lie in its own support, so the particle
+elements keep their node sets, sizes and memory (about 0.4 kB more per element, on or off). The
+tangent gains the consistent anti-locking terms; it is symmetric for small-strain elasticity but
+**unsymmetric in general** (finite strain, plasticity): use an unsymmetric system (UmfPack,
+SparseGEN, FullGeneral, `system Pardiso` with matType 0, `system Mumps -matrixType 0`).
+`mpm analyze` refuses every symmetric-storage system with `fbar`: `BandSPD`, `ProfileSPD`,
+`SProfileSPD`, `SparseSPD`, the distributed SPD systems, and PARDISO or MUMPS with a symmetric
+matrix type. The restart pack is version 3 (it carries the setting); a version-2
+database (232i) restores with anti-locking off.
+
+| Command | What it does |
+|---|---|
+| `mpm antiLocking off \| fbar` | default `off` (every answer bit for bit as before); fixed for an epoch like `mpm mode` (change it after `mpm reset`) |
+| `mpm info antiLocking` | 0 off, 1 fbar |
+| `mpm info antiLockingCounts` | [averaged, fallback] particle-steps over the accepted steps of this epoch |
+| `mpm particleData antiLocking` | per particle, the last accepted step's path: 0, 1 averaged, 2 fallback |
+| `mpm debug affineCheck <A: ndm²> <b: ndm>` | L1 hook: the affine field A x + b on every support node; returns [max rel change, max \|Δε̂\|, averaged, fallback, refused] |
+| `mpm debug tangentCheck <scale> <eps> -antiLocking off` | the 232f tangent check with the F-bar suppressed on the same elements (L2) |
+| `mpm debug packVersion 2\|3` | the restart layout of the next database save only (test hook) |
+| `mpm debug failDump <path> [<k>] \| off` | on every mode-A attempt that fails before commit, append the k particles with the largest residual at their support nodes: time, attempt, id, x, residual, trial stress, tangent norm / initial, apex flag (< 1e-2), path, det ΔF_c / det ΔF |
+
+**When to use it.** Plasticity with isochoric or nearly isochoric flow (J2, Tresca, Drucker–Prager
+with small dilatancy), and elasticity near ν = 0.5, at 2×2 (3×3×3) particles per cell. It is off by
+default; flipping the default is the owner's call. It changes nothing for a homogeneous
+deformation, so a compressible elastic body converges at the same order (gate row L5).
+
+**Footing runs (K6).** The footing cases run the same solution ladder as the FE references, per
+accepted step: KrylovNewton (NormUnbalance 1e-6, 40), NewtonLineSearch (1e-6, 60), KrylovNewton
+(1e-5, 80, "relaxed"), then halve the step (floor 5e-4 of pseudo-time). The harness drives it
+(`tests/ladruno_mpm_antilocking_harness.py::run_ladder`): `mpm cut 2 0`, so a failed try reverts to
+the last accepted step and the next try (`algorithm`, `test`, `mpm analyze 1 h`) starts clean.
+
+**Verification (WP-232j).** `tests/mpm_antilocking_cases.txt` holds every row with its
+pre-registered gate. `tests/test_ladruno_mpm_antilocking_kinematics.py`: L1 on the header (g++,
+`tests/mpm_antilocking_core_check.cpp`) and through the binaries, both modes, every basis, 2D and 3D;
+L8 (the setting's round trip, classic Tcl = Python, refusals, the restart pack).
+`tests/test_ladruno_mpm_antilocking_tangent.py`: L2. `tests/test_ladruno_mpm_antilocking_switch.py`:
+L7's switch oracle (in the MPM mutation suite). The long rows (L3, L4, L5) are the warrant run,
+`tests/mpm_antilocking_warrant.py`, results in `tests/data/mpm/antilocking/` (checked by
+`tests/test_ladruno_mpm_antilocking_results.py`); L4 also replaces 232f's footing xfail in
+`tests/test_ladruno_mpm_implicit_gates.py`. Method and tables: [[232j_mpm_antilocking]].
+
 ## Verification
 
 - `tests/test_mpm_engine_core_cpp.py` — the pure core (`LadrunoMPMCore.h`) and the kernel entry,

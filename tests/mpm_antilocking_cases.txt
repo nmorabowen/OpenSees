@@ -1,0 +1,1238 @@
+# mpm_antilocking_cases.txt -- cases for MPM anti-locking (WP-232j, ADR-232 §9 phase 4).
+#
+# FORMAT -- that of tests/mpm_implicit_cases.txt (its header, and through it tests/mpm_cases.txt's,
+# is authoritative for every key it defines). The gates are the pre-registered rows of
+# .claude/skills/ladruno-mpm/references/wp-briefs.md, section "232j" -- copied, never widened.
+# Blocks: L3 (below) is written by the verification worker 232j-V from references that are not
+# the MPM code (a closed form and the fork's FE). The C++ worker 232j-C adds L1, L2, L4, L5, L7.
+
+# ============================================================================
+# L3: von Mises strip footing, closed form (232j-V)
+# ============================================================================
+# Keys and observables added by this block:
+#   material  <tag> ladrunoj2 <K> <G> <s0>        nDMaterial LadrunoJ2 <tag> K G -iso voce s0 0 0 0
+#             (perfectly plastic von Mises; SRC/material/nD/LadrunoJ2.cpp:54, the factory's
+#             syntax line; s0 is the uniaxial yield stress, yield ||s|| = sqrt(2/3) s0)
+#   ladder    <alg> <tol> <maxIter> ... relaxed <k> halve
+#             K6's per-step solution ladder: the tries in order (OpenSees algorithm names, test
+#             NormUnbalance); a step accepted at try k or later is a 'relaxed' step; when every
+#             try fails the step is halved (and grows back x2 per accepted step, to dt). The FE
+#             reference ran exactly this (tests/mpm_implicit_reference.py::fe_footing). Report the
+#             failed attempts and the relaxed steps per run.
+#   cond_pressure_window <name> <comp> <width> <t_from> <t_to>
+#             the plain mean of -cond_force(name, comp) / width over the committed steps with
+#             t in [t_from, t_to] (closed, tolerance 1e-9). Here s = 0.002 (t - 10) m, so
+#             t in [25, 35] is s in [0.03, 0.05] m: L3's q_lim (11 steps at 2 mm per step).
+#
+# Problem: the rough rigid strip footing on a weightless von Mises half-space, no surcharge.
+# Closed form q_u = (2 + pi) k, k = s0 / sqrt(3) = 100 kPa, q_u = 514.159 kPa: Prandtl (1920),
+# "Ueber die Haerte plastischer Koerper", Nachr. Ges. Wiss. Goettingen, Math.-Phys. Kl., 74-85;
+# Hill (1950), The Mathematical Theory of Plasticity, Oxford. Plane strain with isochoric plastic
+# flow makes sigma_zz the in-plane mean at collapse, so von Mises sqrt(3 J2) = s0 is Tresca
+# tau_max = s0 / sqrt(3) = k. Roughness does not matter: Hill's field carries no shear on the
+# footing base, so it is statically admissible for a rough base too (lower bound (2 + pi) k for
+# both); Prandtl's rigid-wedge mechanism has no slip on the base, so it is kinematically
+# admissible for a rough base (upper bound (2 + pi) k). The bounds coincide. Weightless: no N_gamma,
+# no length scale, so B drops out.
+# Material: E = 1.0e5 kPa, nu = 0.3 -> K = E/(3(1-2nu)) = 83333.333 kPa, G = E/(2(1+nu)) =
+# 38461.538 kPa; s0 = 100 sqrt(3) = 173.205 kPa.
+# Domain, grid, staging and footing: those of footing_mildcone_r1..r3 (tests/mpm_implicit_cases.txt)
+# with no surcharge (no pforce), no gravity, anti-locking ON. Units kN, m, s (kPa). Half model,
+# soil x in [0, 12], y in [-6, 0], two empty cell rows above. Sides rollers, base fixed. Stage 1,
+# t in [0, 10]: nothing is loaded (the staging is kept so both codes run the same steps).
+# Stage 2, t > 10: the rough footing gridvel on x in [-h, B/2], v = (0, -0.002), dt = 1: 2 mm per
+# step, 50 steps to s = 0.1 m. q = -cond_force(footing, y) / (B/2), B/2 = 1 m.
+# Gate (pre-registered, wp-briefs.md "232j" row L3): at r3, q_lim / ((2 + pi) k) in [0.97, 1.08],
+# that is q_lim in [498.734, 555.292] kPa.
+# ADMISSION (row L3): the band holds only if the fork's FE B-bar q_lim at 16 across B (same
+# domain, staging, ladder) lands inside it, measured before any MPM number. If it does not, the
+# row's gate becomes L4's form: MPM q_lim within +-10 % of the FE B-bar q_lim at each rung. The FE
+# std (locked) legs are reported; if std is inside the band at r3, L3 is non-discriminating at r3.
+# The FE record is tests/data/mpm/implicit/fe_footing_j2.json (its 'admission' block).
+# ADMISSION VERDICT (FE, build 4fc274d51, all six legs one build, before any MPM L3 number):
+#   ADMITTED. FE B-bar q_lim at 16 across B = 510.34 kPa = 0.9926 x (2 + pi) k, inside
+#   [0.97, 1.08]. The B-bar sequence 1.1088 / 1.0327 / 0.9926 at 4 / 8 / 16 falls toward exact.
+#   L3's r3 gate is the closed-form band above, unchanged.
+# NON-DISCRIMINATING AT r3 (as pre-registered): FE std (locked) q_lim at 16 across B = 548.81 kPa
+#   = 1.0674 x, also inside the band. At r3 the band does not separate locked from unlocked; the
+#   std sequence 1.2656 / 1.1401 / 1.0674 is outside it at r1 and r2 only.
+# Particles (ppc 2): r1 1152, r2 4608, r3 18432.
+case footing_j2_r1
+kind run
+mode quasistatic
+status report
+desc L3 rough strip footing on weightless von Mises soil, h = 0.5 (4 cells across B), anti-locking on
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.5
+cells 24 14
+material 1 ladrunoj2 83333.33333333333 38461.53846153846 173.20508075688772
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.5 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 60
+newton NormUnbalance 1e-6 40
+ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve
+ref closed form (2 + pi) k = 514.159 kPa (Prandtl 1920; Hill 1950): the gate value.
+ref FE B-bar (LadrunoBrick, rough, 4 across B, build 4fc274d51): q_lim 570.10 kPa = 1.1088 of exact, q_max 612.30 at s = 0.1, 0 failed, 0 relaxed.
+ref FE std (locked) at 4 across B: q_lim 650.72 kPa = 1.2656 of exact, q_max 841.55 at s = 0.1.
+gap the window s in [0.03, 0.05] sits before the FE B-bar plateau at this rung (612 kPa from s ~ 0.07).
+expect cond_pressure_window footing y 1.0 25.0 35.0 ge 498.734
+expect cond_pressure_window footing y 1.0 25.0 35.0 le 555.292
+expect cond_pressure_max footing y 1.0 eq 514.159 tol 0 0.08 report
+end
+
+case footing_j2_r2
+kind run
+mode quasistatic
+status report
+desc as footing_j2_r1, h = 0.25 (8 cells across B)
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.25
+cells 48 28
+material 1 ladrunoj2 83333.33333333333 38461.53846153846 173.20508075688772
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.25 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 60
+newton NormUnbalance 1e-6 40
+ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve
+ref closed form (2 + pi) k = 514.159 kPa (Prandtl 1920; Hill 1950): the gate value.
+ref FE B-bar (LadrunoBrick, rough, 8 across B, build 4fc274d51): q_lim 530.96 kPa = 1.0327 of exact, q_max 567.57 at s = 0.1, 0 failed, 0 relaxed.
+ref FE std (locked) at 8 across B: q_lim 586.20 kPa = 1.1401 of exact, q_max 722.85 at s = 0.1, 0 failed, 0 relaxed.
+expect cond_pressure_window footing y 1.0 25.0 35.0 ge 498.734
+expect cond_pressure_window footing y 1.0 25.0 35.0 le 555.292
+expect cond_pressure_max footing y 1.0 eq 514.159 tol 0 0.08 report
+end
+
+case footing_j2_r3
+kind run
+mode quasistatic
+desc as footing_j2_r1, h = 0.125 (16 cells across B): THE GATE (band admitted)
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.125
+cells 96 56
+material 1 ladrunoj2 83333.33333333333 38461.53846153846 173.20508075688772
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.125 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 60
+newton NormUnbalance 1e-6 40
+ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve
+ref closed form (2 + pi) k = 514.159 kPa (Prandtl 1920; Hill 1950): the gate value.
+ref FE B-bar (LadrunoBrick, rough, 16 across B, build 4fc274d51): q_lim 510.34 kPa = 0.9926 of exact, q_max 542.85 at s = 0.1, 4 failed, 0 relaxed.
+ref FE std (locked) at 16 across B: q_lim 548.81 kPa = 1.0674 of exact, q_max 649.25 at s = 0.1, 9 failed, 0 relaxed.
+ref Admission: ADMITTED (B-bar inside [0.97, 1.08]); non-discriminating at r3 (std also inside).
+expect cond_pressure_window footing y 1.0 25.0 35.0 ge 498.734
+expect cond_pressure_window footing y 1.0 25.0 35.0 le 555.292
+expect cond_pressure_max footing y 1.0 eq 514.159 tol 0 0.08 report
+end
+
+# ============================================================================
+# 232j-C's blocks (L1, L2, L4, L5, L7). Interface: tests/mpm_antilocking_interface.md (J1-J13,
+# frozen 2026-11-17 with amendments 1-5 and conditions F1, F2 in wp-briefs.md "232j").
+# ============================================================================
+# Keys and observables added by these blocks (the harness is tests/ladruno_mpm_antilocking_harness.py):
+#   antilocking off | fbar     every case in THIS file runs with `mpm antiLocking fbar` unless it
+#             says `antilocking off` (freeze Q2); a `base` case's setting is inherited.
+#   ladder ... halve [<h_min>] the K6 ladder of the L3 block; h_min is the halving floor in the
+#             cases' pseudo-time, default 5e-4 (freeze Q1: the FE's dsc < 1e-6 m at v = 0.002).
+#             Below it the run stops (a miss). Halvings are counted.
+#   kind affine               L1: no step is taken. Each `affine <name> A <ndm*ndm> b <ndm>
+#             [rel_le <r>] [deps_le <d>]` line runs `mpm debug affineCheck A b` at the committed
+#             state (mode F: the engine's support of every particle; mode A: every particle element
+#             armed, every live grid node at A X + b) and gates: rel = max_p |dFbar - dF|_max /
+#             |dF - I|_max <= r, max_p |deps|_max <= d (the rotation), every particle averaged
+#             (#averaged = N, #fallback = 0, #refused = 0); spur_rel_le r: the spurious stress
+#             max_p |sigHat_trial - sigHat_n| <= r max |sigma_0| (the rotation of the stressed body,
+#             L1b). `masscut 1e-12` keeps every support untruncated (amendment 1).
+#   stress <body> uniform <nv values>   the body's initial stress (`mpm stress`)
+#   tangent_strain <e>        L2: the strained state must reach max |epsHat| >= 0.75 e
+#   kind energy               L9: the case runs twice, anti-locking off and on; `energy_mode F|A`,
+#             `dt_factor` (of `mpm criticalTimeStep`), `steps`, `sample` (steps per KE sample),
+#             `v0` (uniform x velocity); ke_ratio = KE_max(on) / KE_max(off) over the samples;
+#             completed = 1 when both runs take every step (no particle leaves the grid).
+#   kind ledger               L9: `ledger_case <name>` of tests/mpm_cases.txt run with anti-locking
+#             on through the slice-1 harness; its frozen (non-oracle) tolerances.
+#   kind tangent              L2: `mpm debug tangentCheck 1e-6 <eps>` per tangent_eps, undeformed
+#             and after the case's steps (the strained state), on and with `-antiLocking off`.
+#             tangent_rel_undeformed le r: max rel on, undeformed; tangent_ratio_strained le k:
+#             max rel on / max rel off at the strained state; both at the converged eps (the
+#             first two eps agree to 10 %).
+#   kind mms                  L5: `row <G2|G4>` of tests/mpm_bspline_cases.txt, run with anti-locking
+#             on, on the row's own ladder and definitions; p_ge / nonincr are the row's.
+#   cond_pressure_argmax <name> <comp> <width>  t at the max (s = 0.002 (t - 10) m), reported
+#   reach_t                   the last committed time (every step accepted = steps * dt)
+#   expect <obs> ... out <lo> <hi>   the value lies OUTSIDE [lo, hi] (the switch oracle's off leg)
+# Every L3 / L4 / L7 run also reports (freeze F1): averaged and fallback particle-steps over all
+# accepted steps, and the fallback share inside the footing's plastic zone x <= 3B = 6 m,
+# y >= -2B = -4 m (positions at the step start); failed attempts, relaxed steps, halvings, wall.
+
+# ============================================================================
+# L1: kinematics (232j-C) -- affine fields, every basis, both modes, 2D and 3D
+# ============================================================================
+# Grid 6^d cells of h = 0.5 from the origin; body [1, 2]^d (ppc 2: 16 / 64 particles); elastic
+# E = 1e7, nu = 0.3, PRE-STRESSED (`stress 1 uniform`, round 3 C6: "a stressed body"). A rotation turns about the body centre (b = -(Q - I) c), so mode A's trial
+# centres stay in the grid. Gate (wp-briefs.md "232j" L1a, L1b; amendment 1): rel <= 1e-12 for
+# every field, max |deps| <= 1e-12 for the rotation (the frozen tolerance of the kernel's
+# rigid_rotation cases, tests/hypo_incremental_cases.txt). L1c (F_zz = 1) is header-level only
+# (tests/mpm_antilocking_core_check.cpp): the engine has no z in plane strain.
+case affine_F_gimp_2d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, gimp, 2D
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_F_gimp_3d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, gimp, 3D
+ndm 3
+basis gimp
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_F_linear_2d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, linear, 2D
+ndm 2
+basis linear
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_F_linear_3d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, linear, 3D
+ndm 3
+basis linear
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_F_bspline2_2d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, bspline2, 2D
+ndm 2
+basis bspline2
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_F_bspline2_3d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, bspline2, 3D
+ndm 3
+basis bspline2
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_F_bspline3_2d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, bspline3, 2D
+ndm 2
+basis bspline3
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_F_bspline3_3d
+kind affine
+mode explicit
+desc L1 affine fields, mode F, bspline3, 3D
+ndm 3
+basis bspline3
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_A_gimp_2d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, gimp, 2D
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_A_gimp_3d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, gimp, 3D
+ndm 3
+basis gimp
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_A_linear_2d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, linear, 2D
+ndm 2
+basis linear
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_A_linear_3d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, linear, 3D
+ndm 3
+basis linear
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_A_bspline2_2d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, bspline2, 2D
+ndm 2
+basis bspline2
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_A_bspline2_3d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, bspline2, 3D
+ndm 3
+basis bspline2
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_A_bspline3_2d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, bspline3, 2D
+ndm 2
+basis bspline3
+origin 0.0 0.0
+h 0.5
+cells 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 3.0e4
+affine deviatoric A 0.01 0.007 -0.003 -0.01 b 0.001 0.002 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.012 b 0.001 0.002 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 b 0.001 0.002 rel_le 1e-12
+affine rotation30 A -0.1339745962155613 -0.49999999999999994 0.49999999999999994 -0.1339745962155613 b 0.9509618943233418 -0.549038105676658 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+case affine_A_bspline3_3d
+kind affine
+mode quasistatic
+desc L1 affine fields, mode A, bspline3, 3D
+ndm 3
+basis bspline3
+origin 0.0 0.0 0.0
+h 0.5
+cells 6 6 6
+material 1 elastic 1.0e7 0.3
+body 1 box 1.0 1.0 1.0 2.0 2.0 2.0 ppc 2 mat 1 rho 1000.0
+masscut 1e-12
+stress 1 uniform -1.0e5 -2.0e5 -1.5e5 3.0e4 -2.0e4 1.0e4
+affine deviatoric A 0.01 0.007 0.0 -0.003 -0.01 0.0 0.0 0.0 0.0 b 0.001 0.002 0.003 rel_le 1e-12
+affine volumetric A 0.012 0.0 0.0 0.0 0.012 0.0 0.0 0.0 0.012 b 0.001 0.002 0.003 rel_le 1e-12
+affine general A 0.0038941834230865053 0.009916648104524686 0.001411200080598672 -0.009161659367494553 -0.006312666378723209 0.005784397643882001 0.009407305566797726 -0.000751511204618093 -0.009809362300664915 b 0.001 0.002 0.003 rel_le 1e-12
+affine rotation30 A -0.11908852996938779 -0.3035612008409863 0.3631054658256802 0.3631054658256802 -0.0744303312308674 -0.10712240168197273 -0.3035612008409863 0.22621093165136053 -0.0744303312308674 b 0.0893163974770409 -0.2723290993692601 0.2276709006307398 rel_le 1e-12 deps_le 1e-12 spur_rel_le 1e-12
+end
+
+# ============================================================================
+# L2: the mode-A tangent (232j-C)
+# ============================================================================
+# column_selfweight_small_qs of tests/mpm_implicit_cases.txt (80 particles, nu = 0), anti-locking
+# on. Undeformed: the committed initial state. Strained: after its 10 quasi-static steps, the full
+# gravity, rho0 g l0 / E = 0.002 -- the 0.2 % strain of the gate (the harness reports the max
+# |epsHat| it reached). Gate (wp-briefs.md "232j" L2): undeformed ||K - K_FD|| / ||K|| <= 1e-5;
+# strained, at most 2x the off value at the same state (`-antiLocking off` on the same elements).
+case tangent_column_on
+kind tangent
+mode quasistatic
+desc L2 element tangent against central differences, anti-locking on
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 5.0e7 0.0
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 2e-3
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+# Round 3 (C5): the same bars on nu 0.3 / 0.45, 3D, the B8 image path, and 1 % / 5 % strain.
+# Each strained row's max |epsHat| must reach 0.75 x its tangent_strain.
+case tangent_column_1pct
+kind tangent
+mode quasistatic
+desc L2 (C5): 1 % strain (E = 1e7, nu = 0)
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 1.0e7 0.0
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 1e-2
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+case tangent_column_5pct
+kind tangent
+mode quasistatic
+desc L2 (C5): 5 % strain (E = 2e6, nu = 0)
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 2.0e6 0.0
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 5e-2
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+case tangent_column_nu03
+kind tangent
+mode quasistatic
+desc L2 (C5): nu = 0.3, about 0.2 % (E = 3.7e7, confined)
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 3.7e7 0.3
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 2e-3
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+case tangent_column_nu045
+kind tangent
+mode quasistatic
+desc L2 (C5): nu = 0.45, about 0.2 % (E = 1.32e7, confined)
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 1 22
+material 1 elastic 1.32e7 0.45
+body 1 box 0.0 0.0 0.5 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 2e-3
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+case tangent_column_3d
+kind tangent
+mode quasistatic
+desc L2 (C5): 3D, nu = 0.3, about 0.2 %
+ndm 3
+basis gimp
+origin 0.0 0.0 0.0
+h 0.5
+cells 1 22 1
+material 1 elastic 3.7e7 0.3
+body 1 box 0.0 0.0 0.0 0.5 10.0 0.5 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix zmin z
+fix zmax z
+fix ymin y
+gravity 0.0 -10.0 0.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 2e-3
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+case tangent_column_bspline2_img
+kind tangent
+mode quasistatic
+desc L2 (C5): bspline2 with fix-face images (the B8 path), nu = 0.3
+ndm 2
+basis bspline2
+origin 0.0 0.0
+h 0.5
+cells 2 22
+material 1 elastic 3.7e7 0.3
+body 1 box 0.0 0.0 1.0 10.0 ppc 2 mat 1 rho 1000.0
+fix xmin x
+fix xmax x
+fix ymin y
+gravity 0.0 -10.0
+series linear 1.0
+dt 0.1
+steps 10
+newton NormDispIncr 1e-12 30
+tangent_eps 1e-8 1e-9 1e-10
+tangent_strain 2e-3
+expect tangent_rel_undeformed le 1e-5
+expect tangent_ratio_strained le 2.0
+end
+
+# ============================================================================
+# L4: the non-associated mild-cone footing, redesigned (232j-C)
+# ============================================================================
+# footing_mildcone_r1..r3 of tests/mpm_implicit_cases.txt unchanged except anti-locking on and
+# K6's ladder (the L3 block's line, floor 5e-4). Gate (wp-briefs.md "232j" L4; ADR 232 amendment
+# "232j kickoff"): q_max within +-10 % of the FE B-bar q_max on the same domain at that resolution
+# (tests/data/mpm/implicit/fe_footing.json, build f37e2ff19): 141.43 / 130.66 / 122.53 kPa, bands
+# [127.29, 155.58], [117.60, 143.73], [110.28, 134.78]; every run reaches s = 0.2 m (t = 110). A
+# stop is a miss. Reported: q/exact against 138.907 (the retired [0.90, 1.10] band's verdict), the
+# plateau (t >= 95), s at q_max, failed attempts, relaxed steps, halvings, F1's fallback shares.
+case footing_mildcone_r1_al
+kind run
+mode quasistatic
+desc L4 non-associated mild-cone footing, h = 0.5 (4 cells across B), anti-locking on, K6 ladder
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.5
+cells 24 14
+material 1 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+pforce 1 box 0.0 -0.25 12.0 0.0 0.0 -2.5
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.5 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 110
+newton NormUnbalance 1e-6 40
+ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve 5e-4
+ref FE B-bar (LadrunoBrick, rough, this domain and staging, build f37e2ff19): q_max 141.43 kPa.
+expect cond_pressure_max footing y 1.0 ge 127.29
+expect cond_pressure_max footing y 1.0 le 155.58
+expect reach_t eq 110.0 tol 1e-9 0
+expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10 report
+expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
+expect cond_pressure_argmax footing y 1.0 report
+end
+
+case footing_mildcone_r2_al
+kind run
+mode quasistatic
+desc L4 non-associated mild-cone footing, h = 0.25 (8 cells across B), anti-locking on, K6 ladder
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.25
+cells 48 28
+material 1 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+pforce 1 box 0.0 -0.125 12.0 0.0 0.0 -1.25
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.25 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 110
+newton NormUnbalance 1e-6 40
+ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve 5e-4
+ref FE B-bar (LadrunoBrick, rough, this domain and staging, build f37e2ff19): q_max 130.66 kPa.
+expect cond_pressure_max footing y 1.0 ge 117.6
+expect cond_pressure_max footing y 1.0 le 143.73
+expect reach_t eq 110.0 tol 1e-9 0
+expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10 report
+expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
+expect cond_pressure_argmax footing y 1.0 report
+end
+
+case footing_mildcone_r3_al
+kind run
+mode quasistatic
+desc L4 non-associated mild-cone footing, h = 0.125 (16 cells across B), anti-locking on, K6 ladder
+ndm 2
+basis gimp
+origin 0.0 -6.0
+h 0.125
+cells 96 56
+material 1 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
+pforce 1 box 0.0 -0.0625 12.0 0.0 0.0 -0.625
+fix xmin x
+fix xmax x
+fix ymin xy
+gridvel footing box -0.125 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+series linear 10.0
+dt 1.0
+steps 110
+newton NormUnbalance 1e-6 40
+ladder KrylovNewton 1e-6 40 NewtonLineSearch 1e-6 60 KrylovNewton 1e-5 80 relaxed 3 halve 5e-4
+ref FE B-bar (LadrunoBrick, rough, this domain and staging, build f37e2ff19): q_max 122.53 kPa.
+expect cond_pressure_max footing y 1.0 ge 110.28
+expect cond_pressure_max footing y 1.0 le 134.78
+expect reach_t eq 110.0 tol 1e-9 0
+expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10 report
+expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report
+expect cond_pressure_argmax footing y 1.0 report
+end
+
+# ============================================================================
+# L5: the MMS orders kept, anti-locking on (232j-C)
+# ============================================================================
+# Rows G2 (mode F, small amplitude) and G4 (mode A, quasi-static) of tests/mpm_bspline_cases.txt,
+# bspline2, their 232i ladders and definitions, `mpm antiLocking fbar` added before the first
+# step. Gate (wp-briefs.md "232j" L5): p >= 1.8 and e non-increasing (the rows' own p_ge, nonincr).
+case mms_G2_al
+kind mms
+row G2
+desc L5 MMS G2 (mode F, bspline2, small amplitude), anti-locking on
+expect mms_p ge 1.8
+expect mms_nonincr eq 1.0 tol 0 0
+end
+
+case mms_G4_al
+kind mms
+row G4
+desc L5 MMS G4 (mode A quasi-static, bspline2, small amplitude), anti-locking on
+expect mms_p ge 1.8
+expect mms_nonincr eq 1.0 tol 0 0
+end
+
+# ============================================================================
+# L7: the Zone-A switch oracle (232j-C; freeze amendment 3)
+# ============================================================================
+# footing_j2_r1 (the L3 block above), on and off. L3's closed-form band is an r3 gate and the FE
+# B-bar itself sits at 1.109x at r1, so the oracle uses L3's fallback form at r1: on within +-10 %
+# of the FE B-bar q_lim at r1, 570.10 kPa (tests/data/mpm/implicit/fe_footing_j2.json, build
+# 1d2a692ba): [513.09, 627.11]; off OUTSIDE it (FE std, locked: 650.72). The oracle goes red if
+# the averaging is the identity. Fixed at the freeze, before any MPM number. Only these r1 legs
+# of L3 run before L3's admission (freeze F2).
+case switch_j2_r1_on
+kind run
+base footing_j2_r1
+status gate
+desc L7 switch oracle, on: footing_j2_r1 with anti-locking on
+expect cond_pressure_window footing y 1.0 25.0 35.0 ge 513.09
+expect cond_pressure_window footing y 1.0 25.0 35.0 le 627.11
+end
+
+case switch_j2_r1_off
+kind run
+base footing_j2_r1
+status gate
+antilocking off
+desc L7 switch oracle, off: footing_j2_r1 with anti-locking off (locked)
+expect cond_pressure_window footing y 1.0 25.0 35.0 out 513.09 627.11
+end
+
+# ============================================================================
+# L9: energy (232j-C, critic round C1; pre-registered in wp-briefs.md "232j", critic block)
+# ============================================================================
+# The critic's probe: 2D free block 1 x 1.5 m on `fix ymin xy`, grid origin (-4, 0), h = 0.25,
+# 40 x 16 cells, ppc 2, rho 1800, ElasticIsotropic E = 2e5, gravity -9.81; bases gimp, linear,
+# bspline2; nu 0.3 and 0.45. Mode F: FLIP alpha 1, dt = 0.15 dt_crit, 4000 steps; v0 = 1 m/s at
+# 0.05 dt_crit, 9000 steps. Mode A: Newmark average acceleration, 400 steps of dt_crit (the
+# explicit estimate; implicit off is stable there). Gate: KE_max(on) <= 1.5 KE_max(off), and both
+# runs take every step (no particle leaves the grid).
+case energy_F_gimp_nu03
+kind energy
+desc L9 energy, mode F, gimp, nu = 0.3
+ndm 2
+basis gimp
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.15
+steps 4000
+sample 20
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_Fv0_gimp_nu03
+kind energy
+desc L9 energy, mode F, v0 = 1 m/s, gimp, nu = 0.3
+ndm 2
+basis gimp
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.05
+steps 9000
+sample 20
+v0 1.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_A_gimp_nu03
+kind energy
+desc L9 energy, mode A, gimp, nu = 0.3
+ndm 2
+basis gimp
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode A
+dt_factor 1.0
+steps 400
+sample 10
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_F_gimp_nu045
+kind energy
+desc L9 energy, mode F, gimp, nu = 0.45
+ndm 2
+basis gimp
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.15
+steps 4000
+sample 20
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_Fv0_gimp_nu045
+kind energy
+desc L9 energy, mode F, v0 = 1 m/s, gimp, nu = 0.45
+ndm 2
+basis gimp
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.05
+steps 9000
+sample 20
+v0 1.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_A_gimp_nu045
+kind energy
+desc L9 energy, mode A, gimp, nu = 0.45
+ndm 2
+basis gimp
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode A
+dt_factor 1.0
+steps 400
+sample 10
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_F_linear_nu03
+kind energy
+desc L9 energy, mode F, linear, nu = 0.3
+ndm 2
+basis linear
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.15
+steps 4000
+sample 20
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_Fv0_linear_nu03
+kind energy
+desc L9 energy, mode F, v0 = 1 m/s, linear, nu = 0.3
+ndm 2
+basis linear
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.05
+steps 9000
+sample 20
+v0 1.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_A_linear_nu03
+kind energy
+desc L9 energy, mode A, linear, nu = 0.3
+ndm 2
+basis linear
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode A
+dt_factor 1.0
+steps 400
+sample 10
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_F_linear_nu045
+kind energy
+desc L9 energy, mode F, linear, nu = 0.45
+ndm 2
+basis linear
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.15
+steps 4000
+sample 20
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_Fv0_linear_nu045
+kind energy
+desc L9 energy, mode F, v0 = 1 m/s, linear, nu = 0.45
+ndm 2
+basis linear
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.05
+steps 9000
+sample 20
+v0 1.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_A_linear_nu045
+kind energy
+desc L9 energy, mode A, linear, nu = 0.45
+ndm 2
+basis linear
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode A
+dt_factor 1.0
+steps 400
+sample 10
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_F_bspline2_nu03
+kind energy
+desc L9 energy, mode F, bspline2, nu = 0.3
+ndm 2
+basis bspline2
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.15
+steps 4000
+sample 20
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_Fv0_bspline2_nu03
+kind energy
+desc L9 energy, mode F, v0 = 1 m/s, bspline2, nu = 0.3
+ndm 2
+basis bspline2
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.05
+steps 9000
+sample 20
+v0 1.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_A_bspline2_nu03
+kind energy
+desc L9 energy, mode A, bspline2, nu = 0.3
+ndm 2
+basis bspline2
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.3
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode A
+dt_factor 1.0
+steps 400
+sample 10
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_F_bspline2_nu045
+kind energy
+desc L9 energy, mode F, bspline2, nu = 0.45
+ndm 2
+basis bspline2
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.15
+steps 4000
+sample 20
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_Fv0_bspline2_nu045
+kind energy
+desc L9 energy, mode F, v0 = 1 m/s, bspline2, nu = 0.45
+ndm 2
+basis bspline2
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode F
+dt_factor 0.05
+steps 9000
+sample 20
+v0 1.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+case energy_A_bspline2_nu045
+kind energy
+desc L9 energy, mode A, bspline2, nu = 0.45
+ndm 2
+basis bspline2
+origin -4.0 0.0
+h 0.25
+cells 40 16
+material 1 elastic 2.0e5 0.45
+body 1 box 0.0 0.0 1.0 1.5 ppc 2 mat 1 rho 1800.0
+fix ymin xy
+gravity 0.0 -9.81
+energy_mode A
+dt_factor 1.0
+steps 400
+sample 10
+v0 0.0
+expect ke_ratio le 1.5
+expect completed eq 1.0 tol 0 0
+end
+
+# The S1 explicit energy ledger with anti-locking on: bar_flip_2d (energy_ratio_end >= 0.95,
+# period within 1 %) and impact_discs_2d (energy growth <= 1 %), their frozen tolerances; the
+# oracle-equality lines (the off arithmetic's exact values) are not gates here.
+case ledger_bar_flip_2d
+kind ledger
+ledger_case bar_flip_2d
+expect energy_ratio_end ge 0.95
+expect period_comx eq 10.0 tol 0 0.01
+end
+
+case ledger_impact_discs_2d
+kind ledger
+ledger_case impact_discs_2d
+expect energy_ratio_end le 1.01
+end

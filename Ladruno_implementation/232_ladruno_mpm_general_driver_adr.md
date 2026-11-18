@@ -720,6 +720,70 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 > - **For phase 4 and later.** Large-deformation work should prefer `bspline3`, or accept the
 >   quadratic's reduced peak-error order.
 
+> **Amendment (232j kickoff, 2026-11-17) — the footing gate, redesigned before any phase-4 MPM
+> number.** This settles the gate the 232f amendment left owed. It was fixed at 232j's kickoff
+> (`wp-briefs.md` "232j", row L4), before any anti-locking run.
+>
+> - **The reference is the fork's FE on the same domain at the same resolution, not the closed
+>   form.** The 232f-V record (`tests/data/mpm/implicit/fe_footing.json`, build `f37e2ff19`)
+>   holds LadrunoBrick B-bar on the case's domain, staging and rough footing. Its q_max is 141.43 /
+>   130.66 / 122.53 kPa at 4 / 8 / 16 cells across B. The gate: at each of r1, r2 and r3, the
+>   MPM q_max with anti-locking on lies within ±10 % of the FE B-bar q_max at that resolution.
+>   Each run must reach s = 0.2 m. Both MPM and FE may use the same solution ladder, defined in
+>   the brief.
+> - **Why it is reachable and why it discriminates.** The FE B-bar reaches it by construction:
+>   it is the discretisation the band is centred on, at every rung. Locking falls outside it at
+>   every rung. Standard (locked) H8 on the same domain sits at 1.549 / 1.371 / 1.262 × the FE
+>   B-bar value, and the MPM with no anti-locking sits at 1.33 × at r1 (188.6 kPa, 232f).
+> - **The closed form stays as context.** q₀·N_q = 138.9 kPa and its old band, [0.90, 1.10] ×
+>   exact, are retired as a gate, unwidened. With non-associated flow the collapse load depends
+>   on the mesh (ADR-79), so no fixed band around exact is a valid acceptance test. Each run
+>   still reports q/exact, so the record keeps the old band's verdict. The strict xfail
+>   `test_footing_gate` is replaced by the L4 test in 232j's PR.
+> - **A closed-form anti-locking gate stands beside it (L3).** It is the rough strip footing on a
+>   weightless von Mises (`LadrunoJ2`) soil: associated, isochoric flow, Prandtl
+>   q_u = (2 + π) k. FE converges to this limit, so a fixed band around exact is valid here. That
+>   band is admitted only if the fork's FE B-bar on the same domain lands inside it at the finest
+>   rung, measured before any MPM number. Otherwise the row falls back to L4's FE-relative form.
+
+> **Amendment (232j, 2026-11-17) — phase 4: anti-locking in rate form.**
+>
+> - **Scheme.** `mpm antiLocking off | fbar` sets it, default `off`, fixed per epoch. With it
+>   off, every answer is bit for bit unchanged.
+>   - Kinematics: a cell-centre F-bar on each step's increment,
+>     ΔF̄ = (det ΔF_c / det ΔF)^{1/d} ΔF. ΔF_c is the Q1 field of the particle's background cell,
+>     taken at the cell centre. In plane strain, d = 2. The total F is never averaged.
+>   - Force: the work-conjugate B-bar force,
+>     f_a = w̄ [σ̄ g_a + p̄_d (ĝ_a − g_a)], with p̄_d = tr_d σ̄ / d, in both modes.
+>   - Mode A's tangent is consistent and unsymmetric, so mode A refuses every symmetric-storage
+>     system, including PARDISO and MUMPS with a symmetric matrix type.
+>   - One rule covers `gimp`, `linear`, `bspline2` and `bspline3`. The cell's corners always lie
+>     inside the particle's own support, so mode A's element and memory are unchanged.
+>   - The design is `tests/mpm_antilocking_interface.md` (J1–J13, §11–§12). The results are in
+>     `232j_mpm_antilocking.md`.
+> - **Review.** The Fable critic returned AMEND. Its C1 finding: the first force, w̄σ̄·g_a, was
+>   not conjugate to the F-bar rate, so explicit FLIP gained energy (KE 503 → 1.3e4). The
+>   conjugate force fixes it. Gate L9, an energy row, was pre-registered before any number on
+>   the fix. The `/code-review high` follow-ups are #1106.
+> - **Gates** (`wp-briefs.md` "232j"), warrant build `4df5764b7`, run on esmeralda with GCC:
+>   - L1, L2, L6, L7 and L9 pass. L2 includes the critic's added rows. L6: the MPM suite gives
+>     503 passed and 0 failed. L7: on 556.4, off 630.19. L9: 18 rows, on/off KE ratio
+>     0.86–1.22.
+>   - L5: G2 p = 2.021, G4 p = 1.947.
+>   - L3 is admitted: the FE B-bar q_lim at 16 cells across B is 0.9926×. The MPM gives r3
+>     q_lim = 500.77 kPa, inside [498.73, 555.29]. L3 cannot discriminate at r3, because the
+>     locked FE gives 1.067×. Locking still shows at r1 and r2 and through L7.
+>   - L4, the redesigned footing: r1 gives 129.23 kPa and r2 gives 120.52 kPa, both pass.
+>     **r3 is a pre-registered miss.** It stops at s = 0.094 m on the halving floor, although its
+>     q_max of 115.64 kPa is inside the band. The diagnosis is Newton stagnation of
+>     non-associated Drucker–Prager at 16 cells across B: the fork's FE B-bar needs 887 failed
+>     attempts on the same ladder. The anti-locking tangent agrees with finite differences at
+>     plastic states, and the worst-residual particles are not at the apex. The test is a
+>     strict xfail. Band, ladder and floor are unchanged. **The owner accepted the miss**
+>     (2026-11-17). The shared FE/MPM stagnation is tracked in #1107.
+> - **Use.** Turn it on for nearly incompressible or isochoric-plastic soils in mode A and in
+>   mode F. It is opt-in until the owner flips the default.
+
 **Mutation gate (ADR-87 D2)**, through the fork's existing mechanism: a new family `MPM` in the
 `LADRUNO_MUTATE_FAMILY` list (`CMakeLists.txt`, a vanilla-ledgered line), in the options of
 `.github/workflows/ladruno_mutation.yml` and in `Ladruno_scripts/mutation_gate.py`; the mutant is
@@ -895,6 +959,13 @@ ADR-88).
   ADR-87 D4: the owner's kickoff instruction for 232i named the other-family critic at ready-flip,
   followed by landing. The Fable critic and `/code-review high` are therefore the review of
   record, as for 232c, 232f and 232g.
+- **2026-11-17** — 232j (phase 4, #1105): anti-locking in rate form. It is a cell-centre F-bar
+  on the increment with a conjugate B-bar force, in both modes, opt-in (amendment after the §8
+  table).
+  - The footing gate was redesigned at kickoff to be FE-relative per rung.
+  - Every gate passes except L4 r3, a pre-registered miss with its diagnosis.
+  - The warrant ran on esmeralda (the owner's instruction).
+  - Review of record: the Fable critic (AMEND, applied) and `/code-review high` (#1106).
 
 ---
 

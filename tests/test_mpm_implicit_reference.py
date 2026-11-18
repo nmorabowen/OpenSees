@@ -6,7 +6,9 @@
 * the elastica ODE is converged;
 * the stored fork FE runs (tests/data/mpm/implicit/*.json) carry their provenance, converged in
   their own meshes, and the cases file's expected values are exactly what they give;
-* the plate seeding rule reproduces the case's checksums and writes a valid Contract-1 file.
+* the plate seeding rule reproduces the case's checksums and writes a valid Contract-1 file;
+* WP-232j (232j-V), gate L3: the (2 + pi) k closed form, the FE record fe_footing_j2.json's
+  shape and admission block, and the L3 block of tests/mpm_antilocking_cases.txt.
 
 numpy only, except the Contract-1 write (h5py; skipped without it). No fork binary needed: the FE
 legs are re-run by `python3.12 tests/mpm_implicit_reference.py fe_<leg>`.
@@ -320,3 +322,148 @@ def test_holeplate_cells_tile_the_region_at_any_resolution():
         assert vol.sum() == pytest.approx(4.0 - math.pi / 4, abs=1e-12)
         assert np.all(np.hypot(pos[:, 0], pos[:, 1]) > 1.0)
         assert np.all(pos >= lp - 1e-15) and np.all(pos + lp <= 2.0 + 1e-15)
+
+
+# ----------------------------------------------------------------------------------------------
+# WP-232j (232j-V), gate L3: the von Mises strip footing -- closed form and the FE record.
+# Never MPM: the MPM side of L3 is 232j-C's test.
+# ----------------------------------------------------------------------------------------------
+AL_CASES_PATH = HERE / "mpm_antilocking_cases.txt"
+J2_RUNGS = {"r1": 4, "r2": 8, "r3": 16}
+
+
+def test_footing_j2_closed_form():
+    c = R.footing_j2_closed()
+    assert c["k"] == pytest.approx(100.0, rel=1e-14)               # k = sigma_y / sqrt(3)
+    assert c["q_u"] == pytest.approx((2.0 + math.pi) * 100.0, rel=1e-14)
+    assert round(c["q_u"], 2) == 514.16
+    assert c["band_factor"] == [0.97, 1.08]                        # wp-briefs.md "232j" row L3
+    assert c["band"] == pytest.approx([498.7345, 555.2920], abs=1e-4)
+    K, G = R.j2_moduli()
+    assert K == pytest.approx(1.0e5 / 1.2) and G == pytest.approx(1.0e5 / 2.6)
+    assert 9 * K * G / (3 * K + G) == pytest.approx(1.0e5)           # E back
+    assert (3 * K - 2 * G) / (2 * (3 * K + G)) == pytest.approx(0.3)  # nu back
+
+
+def test_q_lim_is_the_window_mean():
+    s = np.arange(1, 51) * 0.002
+    q = 1000.0 * s
+    out = R.q_lim([[a, b] for a, b in zip(s, q)])
+    assert out["n"] == 11
+    assert out["mean"] == pytest.approx(40.0) and out["trapz"] == pytest.approx(40.0)
+    # a run that stops before the window closes has no q_lim
+    assert R.q_lim([[a, b] for a, b in zip(s[:20], q[:20])])["mean"] is None
+
+
+def _j2_record():
+    d = _json("fe_footing_j2")
+    return d, d["legs"]
+
+
+def test_footing_j2_record_provenance_and_setup():
+    d, legs = _j2_record()
+    assert re.fullmatch(r"[0-9a-f]{40}", d["build"]), d["build"]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", d["date"])
+    assert d["deck"] == "tests/mpm_implicit_reference.py::leg_footing_j2"
+    assert d["output"] == "tests/data/mpm/implicit/fe_footing_j2.json"
+    st = d["setup"]
+    assert (st["q0"], st["weight"], st["rough"]) == (0.0, 0.0, True)
+    assert (st["ds"], st["s_max"], st["s_lim"]) == (0.002, 0.1, [0.03, 0.05])
+    assert st["ladder"] == [["KrylovNewton", 1e-6, 40], ["NewtonLineSearch", 1e-6, 60],
+                            ["KrylovNewton", 1e-5, 80]]
+    m = d["material"]
+    assert m["command"][0] == "LadrunoJ2" and m["command"][4:6] == ["-iso", "voce"]
+    assert m["command"][6] == pytest.approx(100.0 * math.sqrt(3.0))
+    assert m["command"][7:] == [0.0, 0.0, 0.0]                       # perfectly plastic
+    assert d["closed"]["q_u"] == pytest.approx(R.footing_j2_closed()["q_u"], rel=1e-14)
+    # r1 is always present in both forms; every leg is from the record's build
+    for form in ("bbar", "std"):
+        assert "4" in legs[form], form
+    for form, by_n in legs.items():
+        assert form in ("bbar", "std")
+        for n, r in by_n.items():
+            assert r["build"] == d["build"], (form, n)
+            assert r["material"] == "j2" and r["form"] == form and r["n_across_b"] == int(n)
+
+
+def test_footing_j2_legs_shape_and_q_lim():
+    d, legs = _j2_record()
+    qu = d["closed"]["q_u"]
+    for form, by_n in legs.items():
+        for n, r in by_n.items():
+            c = np.array(r["curve"])
+            assert np.all(np.diff(c[:, 0]) > 0), (form, n)           # s increases
+            assert r["reached_s_max"] and r["s_end"] == pytest.approx(0.1, abs=1e-9)
+            assert r["steps"] == len(c)
+            assert isinstance(r["failed_attempts"], int) and isinstance(r["relaxed"], int)
+            assert r["wall_s"] >= 0
+            ql = R.q_lim(r["curve"])
+            assert r["q_lim"] == pytest.approx(ql["mean"], rel=1e-12)
+            assert r["q_lim_n"] >= 11
+            assert r["q_max"] == pytest.approx(c[:, 1].max(), rel=1e-12)
+            assert r["q_lim_over_exact"] == pytest.approx(r["q_lim"] / qu, rel=1e-12)
+    # full integration locks under isochoric flow: std above B-bar at every rung run
+    for n in legs["bbar"]:
+        if n in legs["std"]:
+            assert legs["std"][n]["q_lim"] > legs["bbar"][n]["q_lim"], n
+
+
+def test_footing_j2_admission_block_reads_the_band():
+    """The admission verdict is recomputed from the legs; the band is the pre-registered one."""
+    d, legs = _j2_record()
+    a = d["admission"]
+    assert a == R.footing_j2_admission(legs)
+    assert a["band"] == pytest.approx(R.footing_j2_closed()["band"])
+    if "16" in legs.get("bbar", {}):
+        q = legs["bbar"]["16"]["q_lim"]
+        assert a["admitted"] == (a["band"][0] <= q <= a["band"][1])
+
+
+def test_antilocking_cases_l3_block():
+    cases = R.parse_cases(AL_CASES_PATH)
+    c = R.footing_j2_closed()
+    K, G = R.j2_moduli()
+    _, legs = _j2_record()
+    for r, n in J2_RUNGS.items():
+        name = f"footing_j2_{r}"
+        kv = cases[name]["kv"]
+        mild = CASES[f"footing_mildcone_{r}"]["kv"]
+        # same domain, grid, seeding, footing and staging as footing_mildcone
+        for key in ("ndm", "basis", "origin", "h", "cells", "body", "fix", "gridvel", "series",
+                    "dt"):
+            assert kv[key] == mild[key], (name, key)
+        assert kv["mode"] == [["quasistatic"]]
+        assert "pforce" not in kv and "gravity" not in kv         # weightless, no surcharge
+        assert float(kv["h"][0][0]) == pytest.approx(2.0 / n)
+        (mat,) = kv["material"]
+        assert mat[1] == "ladrunoj2"
+        assert [float(x) for x in mat[2:]] == pytest.approx([K, G, 100.0 * math.sqrt(3.0)])
+        # 10 empty staging steps + 50 pushes of 2 mm = s 0.1 m; the window t 25..35 = s .03..05
+        assert int(kv["steps"][0][0]) == 60
+        assert kv["ladder"] == [["KrylovNewton", "1e-6", "40", "NewtonLineSearch", "1e-6", "60",
+                                 "KrylovNewton", "1e-5", "80", "relaxed", "3", "halve"]]
+        win = [t for t in kv["expect"] if t[0] == "cond_pressure_window"]
+        assert sorted(t[6] for t in win) == ["ge", "le"]
+        for t in win:
+            assert t[1:6] == ["footing", "y", "1.0", "25.0", "35.0"]
+            assert 0.002 * (float(t[4]) - 10.0) == pytest.approx(0.03)
+            assert 0.002 * (float(t[5]) - 10.0) == pytest.approx(0.05)
+            band = c["band"][0] if t[6] == "ge" else c["band"][1]
+            assert float(t[7]) == pytest.approx(band, abs=1e-3)
+        refs = " ".join(" ".join(t) for t in kv["ref"])
+        assert "514.159" in refs
+        if str(n) in legs.get("bbar", {}):
+            assert f"{legs['bbar'][str(n)]['q_lim']:.2f}" in refs, name
+            assert "PENDING" not in refs, name
+        else:
+            assert "PENDING" in refs, name
+    # the r3 refs state the record's admission verdict
+    a = _json("fe_footing_j2")["admission"]
+    if "admitted" in a:
+        r3 = " ".join(" ".join(t) for t in cases["footing_j2_r3"]["kv"]["ref"])
+        assert ("ADMITTED" in r3) == a["admitted"]
+        assert ("non-discriminating at r3" in r3) == bool(a.get("non_discriminating_at_r3"))
+    # the gate is at r3; r1 and r2 report
+    assert cases["footing_j2_r1"]["kv"]["status"] == [["report"]]
+    assert cases["footing_j2_r2"]["kv"]["status"] == [["report"]]
+    assert "status" not in cases["footing_j2_r3"]["kv"]
