@@ -1044,6 +1044,29 @@ r1 and r2 on the K9 ladder). Under S3's 20 kPa surcharge the separation cutoff s
 each record reports its separation count, and a non-zero count is reported, not tuned. TIMs' own
 q(s) on its own geometry is context only, never a gate (different B, box, footing model).
 
+**Ruling (2026-11-18) — D19a, D21a, D23 counting; K0 mode A.** The orchestrator's first mode-F
+legs (elastic and DP only, no soil model) exposed a defect in the frozen D19 floor: each node row
+leaving the moving `gridvel` set released the bottom row's reaction at once (σ_yy error −0.64 ρgl0
+at Y = 0.125, column drop −2.522 against D = 2.5; mode A had no support at all under the 5e-2
+cutoff). 232k-C ruled out (b) (0.5 s and 2.0 s settles give identical meters) and (d) (drop now
+D + compression, reference untouched). **Accepted as a defect fix, not tuning**, because it was
+made before any SANISAND or HS mode-F number and leaves the gate rule unchanged:
+- **D19a:** an elastic carrier block (body 2, y ∈ [−1.5, 0], excluded from the meter) under the
+  column; grid origin (0, −5), 2 × 31 cells. Mode A prescribes the block rows 2–4 cells below the
+  soil with the D17 gridvel.
+- **D21a:** mode F carries the column in an accelerated frame instead: the block floats on an
+  upward body force equal to the whole weight, and every particle takes −v·φ′(t). Local damping is
+  0 during the translation (it is not Galilean invariant) and 0.8 elsewhere. The inertia max now
+  equals the ramp prediction, 0.0051.
+- **D23 counting:** floor and clamp events count from the flip on. Stage 0 of both soil models is
+  pressure-independent, so its "floor" samples are not the plastic floor D23 guards; they are
+  reported apart. No gated leg has a post-flip floor event, so D23 is not triggered.
+- **K0, mode A: pass on both bases** (build `b94c9d75d`, records at `cbbb87a89`). A = m(SANISAND)/m(DP)
+  = 0.01429 / 0.01441 = **0.992** (gimp) and 0.00273 / 0.00258 = **1.058** (bspline2). SANISAND
+  drift: Δe ≤ 1.1e-4, ‖Δα‖ = 0. Owed in the results document: why the bspline2 twins (v = 0) carry
+  a larger meter than the translated legs. Mode F is pending on esmeralda; the K0 verdict waits
+  for it.
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
