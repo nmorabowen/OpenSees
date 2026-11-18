@@ -79,9 +79,11 @@ post-flip floor events and no twin had any. These records are reported only:
 |---|---|---|---|---|
 | gimp | 0.18557 (13 post-flip floor events) | 0.02335 | **7.95** | **miss** |
 | bspline2 | 0.01616 (no floor events) | 0.02434 | **0.664** | pass |
+| bspline3 (`f235a001f`) | 0.00899 (no floor events) | 0.00543 | **1.656** | pass |
 
-Also capped: elastic 0.0335 / 0.0285, HS 0.0182 / 0.0206 (A_HS 0.78 / 0.85), dp_mildcone
-0.0277 / 0.0311.
+Also capped: elastic 0.0335 / 0.0285 / 0.00829, HS 0.0182 / 0.0206 / 0.02285 (A_HS 0.78 / 0.85
+/ 4.21, reported), dp_mildcone 0.0277 / 0.0311 / 0.03809 (gimp / bspline2 / bspline3). On
+bspline3 SANISAND's α did not move (‖Δα‖ = 0), as on the other capped passes.
 
 **Diagnosis of the gimp miss.** It is a numerical interaction, not a code defect. Records are
 diagnostic only, on harness `dfb117de5`, and reproduce 0.18557 exactly.
@@ -117,8 +119,27 @@ hypoelastic response under cell crossing, not its plasticity. **K0p** (pre-regis
 round) adds a stage-1 pre-shear (ν 0.05 and gravity +30 %) so that α moves before the
 translation; its validity check (≥ 50 % of the particles moved α) runs before any meter. Windows
 probe of the pre-shear on `7c932089c`: α moved in 160 of 160 particles in mode A gimp (max 0.085)
-and in mode F bspline2 (max 0.159). The K0p meters wait for 232k-V's FE reference and run on
-esmeralda, with K0 capped mode F on bspline3.
+and in mode F bspline2 (max 0.159).
+
+**K0p results** (records `k0_meter_<mode>_<basis>_k0p_<leg>.json`, esmeralda, build `f235a001f`,
+against 232k-V's `k0p_column_capped.json` at `after_hold2`, reference build `7c932089c`). The gate
+is A_p = m(SANISAND) / m(DP) ≤ 2, or m ≤ 0.01; every leg is valid (α moved in 160 of 160
+particles in the pre-shear) and has no post-flip floor event.
+
+| mode, basis | SANISAND | DP | A_p | pre-shear max ‖Δα‖ | ‖Δα‖ in the translation | verdict |
+|---|---|---|---|---|---|---|
+| A gimp | 0.01822 | 0.01922 | **0.948** | 0.085 | 0.052 | pass |
+| A bspline2 | 0.00607 | 0.03365 | **0.180** | 0.089 | 0.025 | pass |
+| F bspline2 | 0.04727 | 0.04722 | **1.001** | 0.159 | 0.498 | pass |
+| F bspline3 | 0.03215 | 0.04786 | **0.672** | 0.159 | 0.390 | pass |
+
+Reported legs (elastic / HS / dp_mildcone): A gimp 0.0190 / 0.01747 / 0.01801; A bspline2
+0.00366 / 0.0274 / 0.07715; F bspline2 0.01441 / 0.02734 / 0.10364; F bspline3 0.02867 / 0.03297 /
+0.10619. In mode F the untranslated twins meter about as high as the translated legs (SANISAND
+0.04634 / 0.04653 against 0.04727 / 0.03215), so the mode-F K0p meter is set mostly by the
+pre-shear's dynamic state, not by cell crossing. α moves during the translation in mode F (0.50,
+0.39) and much less in mode A (0.052, 0.025): the mode-F legs do measure SANISAND plasticity
+under crossing.
 
 Mode-A A_HS = m(HS) / m(DP): 0.94 (gimp), 6.71 (bspline2), reported (HS's bspline2 twin is
 0.0218 itself).
@@ -143,13 +164,13 @@ Builds `7b00fcf13` / `7c932089c`, Windows MSVC, unless noted.
 | S1 one-point identity (`s1_mpm.json`) | HS: 12 legs × 2 modes, max rel 1.2e-11. SANISAND: 22 of 24 pass (mode F on bspline2). SANISAND 3D mode A misses at step 12, the second plastic step, one step before the FE's own Gauss-point spread passes 1e-8: triax 3.2e-6, oedo 1.06e-8, with the FE's substep counts (5, 4). Option legs (`s1_onepoint_options.json`, rulings at f6ae63d79; build `f235a001f`): see "S1 option legs" below. | 22 pass; **2 pre-registered misses** (strict xfail, ruling at 926d27153); option legs: pass, except **IntScheme 2 shear, a pre-registered miss** (strict xfail, ruling d683e0db8) |
 | S2 column + surcharge (`s2_mpm_hs_diagnosis.json`, `s2_mpm_sanisand.json`) | End of stage 0 and after the flip pass: HS 0.0128 / 0.0069, SANISAND 0.0127 / 0.0069. After the surcharge (registered top-row body force), max syy is HS 0.274 / 0.576 and SANISAND 0.265 / 0.776, at the top cell. | **recorded miss** (#1110; strict xfail) |
 | S3 footing, HS (`s3_mpm_hs_r1_fbar.json`) | r1 fbar: q / q_FE 0.977 / 0.973 / 0.960 at s/B 0.01 / 0.02 / 0.05; reached the target; 0 failed attempts; 3.1 s. r1 off and r2 on reached on esmeralda; r3 and r2-off are running. | r1 pass; r2/r3 pending on esmeralda |
-| S3 footing, SANISAND | Waits for the FE deck (probe v0 running; v1–v4 failed to reach). | pending |
+| S3 footing, SANISAND | No FE variant reached s = 0.1 m: v1–v4 (a15fdeb60) and v0 `tims_r1sep` (n4 stopped at the 2 h wall cap at s = 0.0215, q_max 636 kPa, 1341 relaxed steps; n8 at s = 0.0037). Per the freeze, reported only; no S3 SANISAND MPM leg was run (the owner's call). | reported, no reference |
 | S4 stage parity (`s4_mpm_same_state.json`) | (i) The low-g column's flip map matches the rule exactly in both modes, with ≥ 1 reset particle each (g 0.25). (ii) Same-state leg: the **fallback branch** ran; see below. | pass |
 | S5 refusal | SANISAND `-implex -maxSubsteps 1` aborts in both modes and in classic Tcl. Particles are unmoved bit for bit, the message names the material and tag, and later steps are refused until `mpm reset`. HS at γ = 10 fails loudly with no abort. | pass |
 | S6 restart, mode A | SANISAND and HS mid-stage-1: the continued run is bit for bit. The restored host re-asserts SANISAND's stage flag (restart pack v4). | pass |
 | S7 refusals and options | Symmetric-storage solvers refused (K7); unadmitted schemes refused; HS `-sig0` refused; Q2 offset refused; K2 (`ladrunoThreads 4` prints the serial warning, answer bit-identical); the K0 basis rule; `mpm info materials`. | pass |
 | S8 unchanged answers | MPM suite: 615 passed, 16 skipped, 6 xfailed (all pre-registered), 0 failed; the same counts again on `f235a001f`. GCC on esmeralda: L4 r1 is bit for bit against the 232j record (346 of 346 values). | pass |
-| S9 mutation | MPM family ZERO / SCALE: run by the orchestrator. Zone-A soil oracle: `test_s9_onepoint_triax` (HS and SANISAND, plane strain, both modes). | oracle in place; scores pending |
+| S9 mutation | MPM mutation gate on CI (run 44318604262 at 42bbefac6): ZERO 0.500 (floor 0.46), SCALE 0.398 (floor 0.38). Zone-A soil oracle `test_s9_onepoint_triax` (HS and SANISAND, plane strain, both modes), demonstrated red by hand (`tests/mpm_soil_s9_red_probe.py`, record `s9_red_probe.json`, build `f235a001f`): unmutated, all 4 pass; skipping the stage flip goes red at step 11 (HS err_sig 0.036, err_state 0.999; SANISAND 0.014 / 0.41); skipping the material update on step 11 goes red at step 11 (HS 0.088 / 0.052; SANISAND 0.225 / 0.179); dropping the update's stress output goes red at step 2 (0.5), all against the 1e-8 band, in both modes. | pass |
 | S10 engines | Classic Tcl equals Python on the S1 hs_ps_triax leg (≤ 1e-12). | pass |
 
 **S1, the 3D mode-A misses.** These are not kinematic errors:

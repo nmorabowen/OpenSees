@@ -67,6 +67,14 @@ def test_k0_mode_f_capped_bspline2_passes():
     assert s["state_drift"]["dalpha_max"] == 0.0          # C1
 
 
+def test_k0_mode_f_capped_bspline3_passes():
+    """esmeralda, build f235a001f: SANISAND 0.00899 against DP 0.00543 (A 1.66), alpha unmoved."""
+    s, d = _leg("bspline3", "F", "sanisand", True), _leg("bspline3", "F", "dp", True)
+    assert s["translated"]["floor_hits"] == 0
+    assert _gate(s["translated"]["meter"], d["translated"]["meter"])
+    assert s["state_drift"]["dalpha_max"] == 0.0          # C1
+
+
 @pytest.mark.xfail(strict=True, reason=(
     "recorded miss (K0 verdict 2026-11-18, build 15b109ad8): mode F capped gimp, SANISAND 0.18557"
     " (13 post-flip floor events) against DP 0.02335, A = 7.95. Diagnosis: GIMP's two-rows-per-"
