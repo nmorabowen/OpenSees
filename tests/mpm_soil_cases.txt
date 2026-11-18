@@ -249,3 +249,25 @@ data tests/data/mpm/soil/s1_onepoint_options.json
 field legs.<option>_<3d|ps>_<path>.{options, F, dF, steps[k].{sig, state, substeps, substeps_gp, gp_rel_spread}, fe_self_consistency}
 ref fork FE, LadrunoBrick -geom hypo, as s1_ref_onepoint
 end
+
+# ============================================================================
+# K0p with SANISAND -implex (REPORTED; ruling 2026-11-18: the boundary-value leg that admits
+# -implex is K0p in mode A on gimp). k0p_ref_column_capped's model and staging exactly (flip at
+# every point, nu -> 0.05, gravity x 1.3 on the K9 ladder, 2-step hold), SANISAND with
+# -implex -maxSubsteps 1000 (the cap is required, LadrunoSANISAND.cpp:3132). The FE runs it on the
+# K9 ladder with no retry (10 steps, 0 failed attempts).
+# Measured: alpha moved at 320 of 320 points (||d alpha|| 0.094 .. 0.097); sxx/syy after hold2
+# 0.408988 (bottom) .. 0.407471 (top), against the scheme-1 leg's 0.406131 .. 0.404478: max
+# |d sxx| = 0.0040 rho g l0. implexError (per point, LadrunoSANISAND.cpp:5443-5452): max 4.5e-4
+# after the pre-shear, 2.7e-5 after hold2. Under -implex the COMMITTED stress (the companion's) is
+# not the equilibrated one: the element-centre syy misses the closed form by 0.076 kPa after the
+# pre-shear and 0.006 kPa after hold2 (scheme 1: <= 1e-7); the reference stays syy closed form,
+# sxx and szz = FE ratio x syy.
+case k0p_ref_column_capped_implex
+kind reference
+status report
+material 3 sanisand 264.32 0.3129 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0 -implex -maxSubsteps 1000
+data tests/data/mpm/soil/k0p_column_capped_implex.json
+field legs.sanisand.<after_hold|after_preshear|after_hold2>.{particles, rows, alpha_rows, implex_error_rows [Y_centre, max, mean]}
+ref fork FE, LadrunoBrick B-bar capped column, as k0p_ref_column_capped
+end

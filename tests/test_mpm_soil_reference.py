@@ -292,3 +292,15 @@ def test_s1_options_record():
         sd = legs[f"hs_deck_{dim}_tension"]["steps"][-1]["sig"]
         assert abs(sum(st[:3]) / 3 - 5.0) < 1e-6       # mean stress held at sigma_t
         assert abs(sum(sd[:3]) / 3) < 1e-6              # the deck: sigma_t = 0
+
+
+def test_k0p_implex_record():
+    d = _json("k0p_column_capped_implex")
+    _provenance_ok(d)
+    assert d["options"] == ["-implex", "-maxSubsteps", 1000]
+    L = d["legs"]["sanisand"]
+    assert L["preshear_ladder"]["steps"] == 10 and L["alpha_moved"]["fraction"] == 1.0
+    for p in L["after_hold2"]["particles"]:
+        assert math.isclose(p["syy"], -1.3 * (2.0 * 9.81 * (10.0 - p["Y"]) + 20.0), rel_tol=1e-13)
+    assert all(r[1] < 1e-3 for r in L["after_hold2"]["implex_error_rows"])
+    assert 0.0 < d["vs_plain"]["max_abs_dsxx_over_rho_g_l0"] < 0.01
