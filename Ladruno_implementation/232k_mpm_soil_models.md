@@ -289,7 +289,9 @@ moved, not shared state (each leg is a fresh process with its own material). The
 *The gate staging (the harness default now).* Gravity and a smooth gate on the free face, both as
 per-particle body forces (lateral pressure 0.5 ρg(2a − y) on the outer particle column); stage 0,
 damped, 1 s; the flip under the gate (face q/p 1.83, no M_c raise); 0.5 s damped; release; 4 s
-undamped. Windows, `f235a001f` (records `collapse/collapse_dp*.json` replace the first staging's):
+undamped. Windows, `f235a001f` (records `collapse/collapse_{dp,dp_mildcone,hs,sanisand}.json`;
+they replace the first staging's; SANISAND's is the partial run the wall cap stopped, which a
+6 h esmeralda rerun was not worth for a reported row):
 
 | leg | runout | H∞/2a | Σ V_p at the end (of 2.0) | det F range at the end | floor hits | wall |
 |---|---|---|---|---|---|---|

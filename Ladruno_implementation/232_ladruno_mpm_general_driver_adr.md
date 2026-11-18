@@ -459,7 +459,9 @@ The plane-strain embedding is new work (the shipped lane is 3D-only).
 | `DruckerPrager` (UW, post-`31322a47a`) | ThreeDimensional, PlaneStrain (`DruckerPrager3D`, `DruckerPragerPlaneStrain`) | gated in the `-geom hypo` lane (ADR-79 §8–9) | `materialState` (`DruckerPrager.cpp:1045`, response 5); `updateMaterialStage` returns −1 (`:1063-1064`) | 232c | not allowlisted → serial | no | **admitted** |
 | `J2Plasticity` | — | — | none | yes (`J2Plasticity.h:137-139`) | not allowlisted | no | not in v1 (`LadrunoJ2` covers J2) |
 | concrete and steel length consumers | — | — | — | — | — | yes, through the global | not in v1 |
-| SANISAND, HS, NorSand, PDMY, PM4Sand | — | — | — | — | not allowlisted | no | later phase, with the SANISAND cell-crossing meter first (§11) |
+| `LadrunoSANISAND` (IntScheme 1/2/129, `-implex`) | ThreeDimensional, PlaneStrain | gated in 232k (S1) | `mpm stage` walk, ids 1 and 5, `Elastic2Plastic` reset at every particle | class-wide `mElastFlag` (`ManzariDafalias.h:557`), guarded at `mpm analyze`, re-asserted on restart | not allowlisted → serial (W14) | no | **admitted (232k)**; mode F only on B-spline bases (K0) |
+| `LadrunoHS` / `HSSmall` | ThreeDimensional, PlaneStrain | gated in 232k (S1) | `mpm stage` walk, ids 1 and 13 | per-tag stage registry (`LadrunoHS.cpp:54-73`), shared by FE and MPM instances of a tag | not allowlisted → serial (W14) | no | **admitted (232k)**; `-sig0`/`-sig03` refused |
+| NorSand, PDMY, PM4Sand | — | — | — | — | not allowlisted | no | later phase; NorSand after #896 |
 
 **Parameters and stages.** Mode A: particles are elements, so the stock element walks
 (`updateMaterialStage`, `parameter … material`) reach them (W12). Mode F:
@@ -813,6 +815,92 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 > - **Runs** on esmeralda, budgeted from M0b's SANISAND/DP cost ratio (341 at 2.6e-4, 647 at
 >   9.4e-4); 232k records the strain increment particles actually see.
 
+> **Amendment (232k, 2026-11-18) — phase 5: soil models at particles.** The decisions, rulings
+> and gate table are in `wp-briefs.md` "232k"; the interface is `tests/mpm_soil_interface.md`
+> (D1–D23 with D19a/D21a); the results are in `232k_mpm_soil_models.md`.
+>
+> - **Admitted.**
+>   - `LadrunoSANISAND`: IntScheme 1, 2 and 129, and `-implex`.
+>   - `LadrunoHS` / `HSSmall`: including `-implex`, `-smallStrain` and `-sigmat`.
+>   - Both: ThreeDimensional and PlaneStrain; serial (W14); no initial-stress offset (Q2
+>     stays), and HS `-sig0`/`-sig03` are refused.
+>   - **SANISAND in mode F is admitted only on B-spline bases.** `mpm analyze` refuses it on
+>     `gimp`/`linear`, citing K0 (the owner's decision, 2026-11-18). Mode A admits every basis;
+>     that rests on quasi-static runs only.
+>   - **NorSand is deferred until #896 lands.**
+> - **Staging.** One host walk: `mpm stage <tag> <s>`, plus the `parameter … loadPattern` route
+>   and mode A's `updateMaterialStage`.
+>   - SANISAND and HS accept s ∈ {0, 1}; DruckerPrager accepts 0/1/2, where 2 is plastic.
+>   - Every particle gets SANISAND's `Elastic2Plastic` reset.
+>   - A guard refuses `mpm analyze` when SANISAND's class-wide flag moved outside the walk.
+>   - A soil particle added after a non-zero walk is refused.
+>   - Restart re-asserts the flag (pack v4; packs below 4 are refused with soil particles).
+> - **Refusals.** A trial refusal fails the step (mode F) or cuts it (mode A). A commit refusal
+>   (the `-implex` companion cap) aborts the run (W17), naming the particle, material and tag.
+>   Symmetric-storage systems are refused with a soil tangent unless `-implex` is on.
+> - **Grid conditions.** `gridvel … affine` / `setAffine` and `profile … translate` are added.
+>   Mode F now applies `gridvel` and refuses `pforce` and `condForce`: it had silently ignored
+>   them in every release (#1109). A moving box is checked against the `fix`-face ghost layer
+>   every step.
+> - **K0, the SANISAND cell-crossing meter (§11).**
+>   - The case: a staged column translated rigidly through five cells.
+>   - Floor fix (D19a, D21a): a carrier block, and in mode F an accelerated frame with local
+>     damping off during the drift.
+>   - Uncapped mode-F legs hit the pressure floor and were not admitted (D23); the capped
+>     re-run is the measurement.
+>   - A = m(SANISAND)/m(DP):
+>     - mode A: 0.992 (gimp), 1.058 (bspline2);
+>     - mode F capped: 0.664 (bspline2), 1.656 (bspline3), and **7.95 (gimp), a miss**.
+>   - The gimp miss: α moved in 70 of 160 particles. The diagnosis (GIMP's two-row mode at
+>     ppc 2, excited by explicit crossing noise) does not separate plasticity from
+>     p-dependent elastic instability.
+>   - **The critic's C1:** none of the admitted K0 legs moved α, so K0 measured SANISAND's
+>     hypoelastic response only.
+> - **K0p, the plastic meter (pre-registered after C1, before any K0p number).**
+>   - A stage-1 pre-shear (ν → 0.05, g × 1.3) puts every particle on the yield surface:
+>     α moved at 160 of 160.
+>   - A_p: mode A 0.948 (gimp), 0.180 (bspline2); mode F 1.001 (bspline2), 0.672 (bspline3).
+>     All pass, with Δα during the translation up to 0.50.
+>   - So the B-spline restriction holds with plasticity engaged. In mode F the twins meter
+>     about as high as the translated legs, so the K0p mode-F meter is set mostly by the
+>     pre-shear's dynamic state.
+> - **S rows.**
+>   - **S1:** HS 12/12 at ≤ 1.2e-11; SANISAND 22/24. **Owner-accepted misses:**
+>     - the 3D mode-A legs (mode A's 1.3e-12 strain round-off, amplified by ModifiedEuler
+>       substepping);
+>     - the IntScheme-2 shear legs (outside the FE Gauss-point envelope; the Gauss points
+>       themselves split onto different return-map branches).
+>   - **S1 option legs pass**, including the `-implex` boundary-value leg (σ RMS 0.0186 ρgl0
+>     against 0.02). Under `-implex`, particle stress output shows the trial (equilibrated)
+>     stress, not the committed one (quirk).
+>   - **S2: an owner-accepted miss for both materials** (the surcharge carrier, #1110).
+>   - **S3:**
+>     - HS r1 0.977/0.973/0.960 and r2 0.969/0.968/0.907 of FE B-bar: pass.
+>     - HS r3 is reported: it collapses past s ≈ 0.75h, a `track` footing artifact (#1112),
+>       which also bears on #1107.
+>     - **SANISAND is reported only.** No FE deck reaches s = 0.05 B, including the TIMs
+>       option set, and MPM r1 stalls at the same depth as the FE (0.0220 against 0.0215 m).
+>   - **S4–S7, S10:** pass. S4's same-state comparison ran the fallback branch.
+>   - **S8:** 615 passed, 0 failed; 232j's L4 r1 reproduces bit for bit on GCC.
+>   - **S9:** mutation gate ZERO 0.500, SCALE 0.398; the soil oracle's red is demonstrated.
+>   - **Soil set:** 160 passed, 10 recorded xfails, 0 failed.
+> - **Cost.** At the strain increments particles actually see (1e-8 to 1e-7 per step),
+>   SANISAND costs 3–4× DruckerPrager per particle-step (esmeralda wall-time ratio about 2.1).
+>   M0b's 341–647 was per plastic call at increments three orders larger.
+> - **Column collapse (reported).** Under the original staging, SANISAND and HS stood because of
+>   their materials (ManzariDafalias raises M_c at the stage switch; HS's c = 10 kPa holds a 2 m cut);
+>   the harness now stages behind a gate. Runout (L∞ − L₀)/a: DP 3.49, SANISAND 0.81 when the 2 h
+>   cap stopped it, still flowing, HS 0.0008 (stands, correctly). Both flowing columns dilate at
+>   the free surface (Σ V_p +23 % DP, +33 % SANISAND, with 215 pressure-floor hits).
+> - **Found along the way:**
+>   - #1109: mode F ignored `gridvel`.
+>   - #1110: no particle surcharge carrier.
+>   - #1111: `eleLoad` silently accepts an unknown `-type`; 232f's FE cantilever "ramp" was a
+>     sudden load.
+>   - #1112: the `track` footing artifact.
+> - **Review of record (ADR-87 D4):** the Fable critic (AMEND; every finding fixed or ruled)
+>   and `/code-review high`.
+
 **Mutation gate (ADR-87 D2)**, through the fork's existing mechanism: a new family `MPM` in the
 `LADRUNO_MUTATE_FAMILY` list (`CMakeLists.txt`, a vanilla-ledgered line), in the options of
 `.github/workflows/ladruno_mutation.yml` and in `Ladruno_scripts/mutation_gate.py`; the mutant is
@@ -998,6 +1086,10 @@ ADR-88).
 - **2026-11-17** — 232k (phase 5, soil models) kicked off: SANISAND and HS; NorSand deferred
   until #896 lands. The SANISAND cell-crossing meter is gate K0 and runs first (amendment
   "232k kickoff", after the §8 table).
+- **2026-11-18** — 232k closed (amendment "232k, 2026-11-18", after the kickoff amendment):
+  SANISAND and HS admitted at particles; SANISAND mode F only on B-spline bases (the K0 gimp
+  miss, owner's decision); the K0p plastic meter passes on every admitted leg; S1 (3D mode A,
+  IntScheme-2 shear) and S2 are owner-accepted misses; S3 SANISAND reported only. Found #1109–#1112.
 
 ---
 
