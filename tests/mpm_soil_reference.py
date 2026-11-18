@@ -29,7 +29,19 @@ STAGE ROUTES, recorded in every JSON (`flip_route`):
   transition). For SANISAND that difference is inert where every point has p > Pmin and
   eta < M_c at the flip; each record carries min p and max eta to show it.
 * DruckerPrager is staged by `parameter ... element e materialState` over every element (all 8
-  points each): materialState 0 before gravity, 1 at the flip.
+  points each): materialState 0 before gravity, 2 at the flip (1 is still elastic).
+
+S3 SANISAND, DIAGNOSIS (2026-11-18; no variant v0-v4 reaches s = 0.05 B, so it is reported only):
+The FE B-bar footing stalls on its convergence test, not on a material collapse. v0 at r1 takes
+1342 steps, 1341 of them on the relaxed rung (1e-5 kN). The step halves to ~4e-6 m by
+s = 0.0215 m, with 20 SAS-ME refusals and 0 separations. K9's tolerance is absolute: 1e-6 / 1e-5
+kN at footing loads of ~10^2 kN. That sits below the scheme's integration noise (TolR 1e-4).
+TIMs' strip scales its test: 1e-5 x tol_ref x tol_factor 25 / 50 (strip.py:1200-1202, :2510,
+:2581), with tol_ref = max(|Q0|, |R0|, 1). Its stresses are also an order lower: B 0.9 m, a
+1 kPa surcharge plus 14.4 kPa seating, against B 2 m, 20 kPa and 600 kPa at 0.01 B here. Its
+element is LadrunoQuad B-bar (2D) at B/8, not a 3D LadrunoBrick slab at B/4 and B/8. Its
+constants are Toyoura DM04 (h0 7.05, nb 1.1), not ours (h0 1.3, nb 3.5, dense, psi = -0.11).
+The records keep no per-point failure data.
 """
 from __future__ import annotations
 
