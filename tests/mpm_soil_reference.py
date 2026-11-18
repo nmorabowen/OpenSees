@@ -71,13 +71,20 @@ HS_K0NC = 1.0 - math.sin(math.radians(38.0))   # the default K0nc = 1 - sin(phi)
 EL_NU = SAN_PARAMS[1]
 EL_E = 2.0 * san_g0() * (1.0 + EL_NU)
 
-# DruckerPrager (UW): the program's admitted deck, tests/mpm_implicit_cases.txt:286-301 (the
-# 232f/232j mild cone): K 1.5e5, G 15517.24, sigma_y 0.2, rho_dp 0.210128, rho_bar 0 (non-assoc.).
-DP_ARGS = [1.5e5, 15517.241379310342, 0.2, 0.21012821217029673, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-           0.0, 0.0]
-DP_NU = 0.45
+# DruckerPrager (UW). GATED leg `dp` (orchestrator's ruling, 2026-11-17): SANISAND's stage-0 K
+# and G (so A = m(SANISAND)/m(DP) shares the elastic operator) with the mild cone's strength and
+# flow: sigma_y 0.2, rho_dp 0.210128, rho_bar 0 (non-associated), the rest 0.
+DP_K = EL_E / (3.0 * (1.0 - 2.0 * EL_NU))
+DP_G = EL_E / (2.0 * (1.0 + EL_NU))
+DP_ARGS = [DP_K, DP_G, 0.2, 0.21012821217029673, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+DP_NU = EL_NU
+# REPORTED leg `dp_mildcone`: the program's admitted deck, tests/mpm_implicit_cases.txt:286-301
+# (232f/232j): K 1.5e5, G 15517.24 (nu 0.45), the same cone.
+DPM_ARGS = [1.5e5, 15517.241379310342, 0.2, 0.21012821217029673, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0]
+DPM_NU = 0.45
 
-MATERIALS = ("elastic", "dp", "sanisand", "hs")
+MATERIALS = ("elastic", "dp", "sanisand", "hs", "dp_mildcone")
 
 # The K0 column, interface D19: x in [0, 1.0], y in [0, 10], h 0.5, ppc 2 (160 particles).
 COL = dict(W=1.0, L0=10.0, h=0.5, ppc=2)
@@ -141,8 +148,11 @@ def decks() -> dict:
         elastic=dict(cmd="nDMaterial ElasticIsotropic 1 E nu", E=EL_E, nu=EL_NU,
                      note="SANISAND's stage-0 operator: G = G0 P_atm (2.97-e)^2/(1+e)"),
         dp=dict(cmd="nDMaterial DruckerPrager 1 " + " ".join(repr(x) for x in DP_ARGS),
-                note="tests/mpm_implicit_cases.txt:286-301 (232f/232j mild cone); staged "
-                     "materialState 0 first"),
+                note="GATED: SANISAND's stage-0 K, G with the mild cone's sigma_y, rho, rho_bar; "
+                     "staged materialState 0 first"),
+        dp_mildcone=dict(cmd="nDMaterial DruckerPrager 1 " + " ".join(repr(x) for x in DPM_ARGS),
+                         note="REPORTED: tests/mpm_implicit_cases.txt:286-301 (232f/232j mild "
+                              "cone); staged materialState 0 first"),
         sanisand=dict(cmd="nDMaterial LadrunoSANISAND 1 " + " ".join(repr(x) for x in SAN_PARAMS),
                       note="tests/test_ladruno_sanisand.py:245-263, scheme 1 defaults "
                            "(-maxSubsteps 0, honorTolR 0)"),
@@ -156,6 +166,8 @@ def _material(ops, mat: str, tag: int = 1, san_opts=()) -> None:
         ops.nDMaterial("ElasticIsotropic", tag, EL_E, EL_NU)
     elif mat == "dp":
         ops.nDMaterial("DruckerPrager", tag, *DP_ARGS)
+    elif mat == "dp_mildcone":
+        ops.nDMaterial("DruckerPrager", tag, *DPM_ARGS)
     elif mat == "sanisand":
         ops.nDMaterial("LadrunoSANISAND", tag, *SAN_PARAMS, *san_opts)
     elif mat == "hs":
@@ -166,12 +178,18 @@ def _material(ops, mat: str, tag: int = 1, san_opts=()) -> None:
 
 def _stage(ops, mat: str, stage: int, elems) -> str:
     """Stage every soil point the way its deck does; return the route recorded in the JSON."""
-    if mat == "dp":
+    if mat in ("dp", "dp_mildcone"):
+        # UW DruckerPrager's materialState: 0 elastic; 1 STILL ELASTIC, with K and G rescaled once
+        # by sqrt(1 + sigma_m / P_atm) (updateElasticParam, DruckerPrager.cpp:823-838, and the
+        # `|| mElastFlag < 2` elastic exit at :446); 2 elastoplastic (the constructor default,
+        # :160). So DP's plastic flip is materialState 2, not 1.
+        val = 0 if stage == 0 else 2
         ops.parameter(900 + stage)
         for e in elems:
             ops.addToParameter(900 + stage, "element", e, "materialState")
-        ops.updateParameter(900 + stage, float(stage))
-        return "parameter element e materialState over every element (all points)"
+        ops.updateParameter(900 + stage, float(val))
+        return (f"parameter element e materialState over every element (all points), value {val}"
+                " (DP: 0 elastic, 2 elastoplastic; 1 is elastic with rescaled moduli)")
     if mat in ("sanisand", "hs"):
         ops.updateMaterialStage("-material", 1, "-stage", stage)
         return ("updateMaterialStage -material 1: reaches ONE element's points; the rest flip "
@@ -182,9 +200,6 @@ def _stage(ops, mat: str, stage: int, elems) -> str:
 # ----------------------------------------------------------------------------------------------
 # K0: the FE column (no translation) on the D19 domain
 # ----------------------------------------------------------------------------------------------
-_GP = 1.0 / math.sqrt(3.0)
-
-
 def _column_model(ops, mat, g=G_GRAV, capped=False, L0=COL["L0"], h=COL["h"], W=COL["W"]):
     """Plane-strain slab of LadrunoBrick B-bar, nx = W/h, ny = L0/h (+1 cap row), thickness h,
     z fixed everywhere; sides x = 0 and x = W rollers (fix x), base fixed. Soil is material 1,
@@ -367,6 +382,7 @@ def leg_k0() -> dict:
                        closed_form=dict(
                            K0_elastic=EL_NU / (1 - EL_NU), K0_sanisand_stage0=EL_NU / (1 - EL_NU),
                            K0_hs_stage0=HS_K0NC, K0_dp_stage0=DP_NU / (1 - DP_NU),
+                           K0_dp_mildcone_stage0=DPM_NU / (1 - DPM_NU),
                            note="laterally confined (oedometric) isotropic elastic stage 0 with a "
                                 "constant nu: sigma_xx = sigma_zz = nu/(1-nu) sigma_yy; HS stage 0 "
                                 "uses nu_s0 = max(nu_ur, K0nc/(1+K0nc)), so the ratio is K0nc "

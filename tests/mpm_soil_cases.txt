@@ -30,9 +30,15 @@
 #             (K3 / D6), -stage 0. K0nc = 1 - sin 38 deg = 0.384339 (the default).
 #   elastic   ElasticIsotropic with SANISAND's stage-0 operator: E = 2 G (1 + nu) = 214234.27337502,
 #             nu = 0.3129 (so the elastic leg IS SANISAND's stage 0).
-#   DP        the program's admitted mild cone, tests/mpm_implicit_cases.txt:286-301
-#             (K 1.5e5, G 15517.24, sigma_y 0.2, rho_dp 0.210128, rho_bar 0). Staged
-#             materialState 0 before gravity, 1 at the flip.
+#   DP        GATED leg (orchestrator's ruling): SANISAND's stage-0 operator, K = E/(3(1-2nu)) =
+#             190837.58540443616, G = 81588.19155115394, with the mild cone's sigma_y 0.2, rho_dp 0.210128,
+#             rho_bar 0 (non-associated), the rest 0.
+#   DP mild   REPORTED leg dp_mildcone: the program's admitted deck, tests/mpm_implicit_cases.txt
+#             :286-301 (K 1.5e5, G 15517.24, nu 0.45; the same cone).
+#   DP stages: materialState 0 before gravity, **2** at the flip. UW DruckerPrager's 1 is NOT
+#             plastic: it stays elastic (`|| mElastFlag < 2`, DruckerPrager.cpp:446) and rescales
+#             K, G once by sqrt(1 + sigma_m/P_atm) (updateElasticParam, :823-838); 2 is
+#             elastoplastic (the constructor default, :160). A DP particle staged "1" is elastic.
 # FE flips: SANISAND and HS with `updateMaterialStage -material 1 -stage 1` (their decks' route),
 # which reaches ONE element's points; the rest flip lazily (SANISAND without Elastic2Plastic). It
 # is inert on these domains: every record carries min p and max eta at the flip (p > Pmin = 0.101,
@@ -51,17 +57,19 @@
 #   sxx, szz = (FE ratio to syy at Y) x syy  -- the FE's B-bar hex is constant per element in this
 #   column, exact at the element centre only, so the record interpolates the RATIO between
 #   element centres, never the FE syy itself.
-# Measured ratios (constant over Y to 1e-13): elastic 0.455392 = nu/(1-nu); SANISAND 0.455392 (its
-# stage 0 is that elastic operator; flip and hold leave it); HS 0.384339 = K0nc; DP 0.818182 =
-# 0.45/0.55 (elastic: eta = 0.21, inside the cone).
+# Measured after_hold ratios: elastic 0.455392 = nu/(1-nu) (constant to 1e-13); SANISAND 0.455392
+# (its stage 0 is that elastic operator; flip and hold leave it); HS 0.384339 = K0nc; DP (gated)
+# 0.489610 at Y = 0.125 to 0.458885 at Y = 9.875 -- the K0 state (eta 0.855) is outside the cone
+# and returns at the first hold step; dp_mildcone 0.818182 = 0.45/0.55 (eta 0.21, inside).
 case k0_ref_column
 kind reference
 material 1 elastic 214234.27337502 0.3129
-material 2 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+material 2 druckerprager 190837.58540443616 81588.19155115394 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
 material 3 sanisand 264.32 0.3129 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0
 material 4 hs 35000.0 35000.0 105000.0 0.5 10.0 38.0 8.0 -nu 0.2 -pref 100.0 -Rf 0.9 -OCR 1.5 -stage 0
+material 6 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
 data tests/data/mpm/soil/k0_column.json
-field legs.<elastic|dp|sanisand|hs>.after_hold.particles  [{Y, sxx, syy, szz, sxy, ratio_xx, ratio_zz}] at the 40 particle Y
+field legs.<elastic|dp|sanisand|hs|dp_mildcone>.after_hold.particles  [{Y, sxx, syy, szz, sxy, ratio_xx, ratio_zz}] at the 40 particle Y
 field legs.<mat>.end_stage0 / after_flip  the same at the other checkpoints
 field legs.sanisand.flip_check  min p and max eta at the flip (Elastic2Plastic inert)
 ref fork FE, LadrunoBrick B-bar column, build in the record; ratios also closed form (record.closed_form)
