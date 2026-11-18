@@ -196,7 +196,7 @@ def _as_list(v):
 
 
 def build(ops, leg, mode, basis, translate=True, floor_top=None, floor=None, capped=False,
-          k0p=False):
+          k0p=False, extra_opts=()):
     tag, s0, _ = LEGS[leg]
     tl = TIMELINE[mode]
     mats = reference_materials()
@@ -207,7 +207,7 @@ def build(ops, leg, mode, basis, translate=True, floor_top=None, floor=None, cap
     origin, cells = GRID[floor]
     if capped:                                   # D23: one more cell row above the cap
         cells = (cells[0], cells[1] + 1)
-    ops.nDMaterial(*material_command(tag, kind, toks)[1:])
+    ops.nDMaterial(*material_command(tag, kind, toks)[1:], *extra_opts)
     ops.mpm("grid", HOST, "-origin", *origin, "-h", H, "-cells", *cells, "-basis", basis)
     ops.mpm("mode", "quasiStatic" if mode == "A" else "explicit")
     ops.mpm("body", 1, "box", 0.0, 0.0, W, L0, "-ppc", 2, "-mat", tag, "-rho", RHO)
@@ -276,14 +276,14 @@ def _floor_hits(sig, szz, pfloor):
 
 
 def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, history=False,
-        floor=None, capped=False, probe=None, k0p=False):
+        floor=None, capped=False, probe=None, k0p=False, extra_opts=(), ref_path=None):
     """One leg; returns the record (meter, crossings, inertia, floor hits, state)."""
     tag, _, s1 = LEGS[leg]
     tl = TIMELINE[mode]
     wall0 = time.time()
     floor = floor or ("float" if mode == "F" else FLOOR)
     origin = GRID[floor][0]
-    build(ops, leg, mode, basis, translate, floor_top, floor, capped, k0p)
+    build(ops, leg, mode, basis, translate, floor_top, floor, capped, k0p, extra_opts)
     x0 = _as_list(ops.mpm("particleData", "x"))
     body = _as_list(ops.mpm("particleData", "body"))
     N = sum(1 for b in body if b == 1.0)          # the soil (body 1, seeded first)
@@ -397,7 +397,7 @@ def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, histo
     sig = _as_list(ops.mpm("particleData", "sig"))
     szz = _as_list(ops.mpm("particleData", "sigZZ"))
     x = _as_list(ops.mpm("particleData", "x"))
-    ref_path = REF_JSON_K0P if k0p else (REF_JSON_CAPPED if capped else REF_JSON)
+    ref_path = ref_path or (REF_JSON_K0P if k0p else (REF_JSON_CAPPED if capped else REF_JSON))
     if k0p and (not ref_path.exists() or (k0p_rec and not k0p_rec["valid"])):
         # no meter before the FE reference exists, nor on a leg the validity check rejects
         return dict(leg=leg, mode=mode, basis=basis, translate=translate, particles=N,
@@ -479,6 +479,22 @@ def _preshear(ops, leg, tag, mode, tl, gfac, set_body_force, adv, advance, N):
     else:
         out["valid"] = True
     return out
+
+
+# The option ruling (2026-11-18): SANISAND -implex is admitted only with a boundary-value leg --
+# the K0p column (its staging; no translation) in mode A on gimp with -implex, against 232k-V's FE
+# capped column with -implex on the same staging (cases block k0p_ref_column_capped_implex),
+# gated at sigma RMS <= 0.02 rho g l0 (S2's bar).
+REF_JSON_K0P_IMPLEX = REPO / "tests" / "data" / "mpm" / "soil" / "k0p_column_capped_implex.json"
+IMPLEX_OPTS = ("-implex", "-maxSubsteps", 1000)
+
+
+def k0p_implex_bvp(ops):
+    r = run(ops, "sanisand", "A", "gimp", translate=False, capped=True, k0p=True,
+            extra_opts=IMPLEX_OPTS, ref_path=REF_JSON_K0P_IMPLEX)
+    r["gate"] = dict(rule="sigma RMS <= 0.02 rho g l0",
+                     passed=r.get("meter") is not None and r["meter"] <= 0.02)
+    return r
 
 
 def state_drift(rt, rz):
