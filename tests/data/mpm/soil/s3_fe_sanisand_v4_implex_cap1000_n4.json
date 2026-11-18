@@ -1,0 +1,104 @@
+{
+ "leg": "s3_fe_sanisand_v4_implex_cap1000_n4",
+ "build": "b94c9d75d81c91c7734b3f11d052f2348f5262f2",
+ "engine": "/mnt/deadmanschest/nmorabowen/ladruno_build_test/py232k/opensees.so",
+ "deck": "tests/mpm_soil_reference.py::fe_footing_soil",
+ "date": "2026-11-18",
+ "units": "kN, t, m, s, kPa; stress tension-positive (OpenSees sign)",
+ "decks": {
+  "elastic": {
+   "cmd": "nDMaterial ElasticIsotropic 1 E nu",
+   "E": 214234.27337502,
+   "nu": 0.3129,
+   "note": "SANISAND's stage-0 operator: G = G0 P_atm (2.97-e)^2/(1+e)"
+  },
+  "dp": {
+   "cmd": "nDMaterial DruckerPrager 1 190837.58540443616 81588.19155115394 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0",
+   "note": "GATED: SANISAND's stage-0 K, G with the mild cone's sigma_y, rho, rho_bar; staged materialState 0 first"
+  },
+  "dp_mildcone": {
+   "cmd": "nDMaterial DruckerPrager 1 150000.0 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0",
+   "note": "REPORTED: tests/mpm_implicit_cases.txt:286-301 (232f/232j mild cone); staged materialState 0 first"
+  },
+  "sanisand": {
+   "cmd": "nDMaterial LadrunoSANISAND 1 264.32 0.3129 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0",
+   "note": "tests/test_ladruno_sanisand.py:245-263, scheme 1 defaults (-maxSubsteps 0, honorTolR 0)"
+  },
+  "hs": {
+   "cmd": "nDMaterial LadrunoHS 1 35000.0 35000.0 105000.0 0.5 10.0 38.0 8.0 -nu 0.2 -pref 100.0 -Rf 0.9 -OCR 1.5 -stage 0",
+   "note": "tests/test_ladruno_hs_material.py:704-719 without -sig0 (K3/D6)"
+  },
+  "units": {
+   "rho": 2.0,
+   "g": 9.81
+  }
+ },
+ "material": "sanisand",
+ "variant": "v4_implex_cap1000",
+ "san_opts": [
+  "-implex",
+  "-maxSubsteps",
+  1000
+ ],
+ "n_across_b": 4,
+ "h": 0.5,
+ "hexes": 288,
+ "element": "LadrunoBrick -formulation bbar (small strain), plane-strain slab",
+ "stage0_route": "updateMaterialStage -material 1: reaches ONE element's points; the rest flip lazily (SANISAND without Elastic2Plastic; HS full transition)",
+ "flip_route": "updateMaterialStage -material 1: reaches ONE element's points; the rest flip lazily (SANISAND without Elastic2Plastic; HS full transition)",
+ "flip_check": {
+  "p_min_after_hold": 15.86269562897193,
+  "eta_max_after_hold": 0.8550536979206358,
+  "Pmin": 0.101,
+  "Mc": 1.3309,
+  "note": "GP 1 of every element after the flip and hold"
+ },
+ "F0": 3.774758283725532e-15,
+ "q0": 20.0,
+ "s_end": 0.004,
+ "reached": false,
+ "stopped": "halving floor at s = 0.004000",
+ "q_at": {},
+ "q_max": 265.92430287015134,
+ "steps": 2,
+ "failed_attempts": 33,
+ "relaxed": 0,
+ "halvings": 11,
+ "wall_s": 2.4,
+ "push_wall_s": 2.0,
+ "ladder": [
+  [
+   "KrylovNewton",
+   1e-06,
+   40
+  ],
+  [
+   "NewtonLineSearch",
+   1e-06,
+   60
+  ],
+  [
+   "KrylovNewton",
+   1e-05,
+   80
+  ],
+  [
+   "halving",
+   "floor",
+   0.0005
+  ]
+ ],
+ "curve": [
+  [
+   0.002,
+   139.0414917543231,
+   134.0414917543231
+  ],
+  [
+   0.004,
+   265.92430287015134,
+   260.92430287015134
+  ]
+ ],
+ "output": "tests/data/mpm/soil/s3_fe_sanisand_v4_implex_cap1000_n4.json"
+}

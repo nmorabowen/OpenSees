@@ -304,3 +304,14 @@ def test_k0p_implex_record():
         assert math.isclose(p["syy"], -1.3 * (2.0 * 9.81 * (10.0 - p["Y"]) + 20.0), rel_tol=1e-13)
     assert all(r[1] < 1e-3 for r in L["after_hold2"]["implex_error_rows"])
     assert 0.0 < d["vs_plain"]["max_abs_dsxx_over_rho_g_l0"] < 0.01
+
+
+@pytest.mark.parametrize("variant", ["v1_me_cap1000", "v2_sasme", "v3_cppm_refuse",
+                                     "v4_implex_cap1000"])
+def test_s3_sanisand_failed_probes(variant):
+    for n in (4, 8):
+        d = _json(f"s3_fe_sanisand_{variant}_n{n}")
+        _provenance_ok(d)
+        assert d["variant"] == variant and d["n_across_b"] == n
+        assert d["san_opts"] == list(R.SAN_VARIANTS[variant])
+        assert not d["reached"] and d["stopped"] and d["s_end"] < 0.05     # a failed probe
