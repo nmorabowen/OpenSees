@@ -1147,6 +1147,21 @@ orchestrator).**
    SANISAND S2 leg runs with the same registered mechanism and is recorded the same way if it
    misses.
 
+**Rulings (2026-11-18, SANISAND rows on build `7c932089c`).**
+- **S4 low-g, g 0.5 → 0.25: accepted.** The freeze fixed the requirement (at least one reset
+  particle at the flip), not g. At g = 0.5, mode A's gimp column put both top-cell rows at p =
+  0.159 kPa, above Pmin, so no particle reset. S4 (ii) took the fallback branch: row 0 pre-flip
+  2.2e-16, post-flip 0 (both at −Pmin·I); row 39 3.4e-12 before and after. Not widened.
+- **S1 SANISAND 3D mode A (triaxial 3.2e-6, oedometer 1.06e-8 at step 12): a pre-registered
+  miss.** Step 12 lies before the FE's own switch step (13). Diagnosis (232k-C): mode A's
+  particle strain carries 1.3e-12 of round-off from the constrained-displacement path, against
+  7e-17 in mode F. ModifiedEuler's adaptive substep sizes amplify it about 10⁶× while the substep
+  counts are equal (5 and 4). Mode F holds 3.4e-10 at the same step, and the other 22 of 24 legs
+  pass. Both legs are recorded as strict xfails; the miss goes to the owner at ready-flip. The
+  band does not change.
+- **S9:** the MPM mutation gate is dispatched on CI (`ladruno_mutation.yml`, family MPM, run
+  44318604262, head `42bbefac6`).
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
