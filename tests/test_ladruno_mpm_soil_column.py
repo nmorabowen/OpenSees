@@ -32,7 +32,7 @@ def _ops():
 
 
 S2_HS_MISS = pytest.mark.xfail(strict=True, reason=(
-    "pre-registered miss (ruling at e8e3fcb2a): the registered surcharge mechanism, a body force on"
+    "pre-registered miss (ruling at e8e3fcb2a; the carrier issue is #1110): the registered surcharge mechanism, a body force on"
     " the soil's top particle row, leaves the loaded row carrying about half the load in its own"
     " stress, so syy_max after the surcharge is 0.274 (gimp) / 0.576 (bspline2) against 0.03,"
     " at the top cell (gimp: rows below it <= 0.015; bspline2: 0.072 at Y 9.125, 0.027 at 8.625,"

@@ -48,11 +48,14 @@ def _ops():
 
 def _commands(mat, mode, dt):
     """A 2 x 2-cell plane-strain block in a wide grid (gamma = 10 moves particles +-3.75 m),
-    every node with mass on one affine gridvel."""
+    every node with mass on one affine gridvel. SANISAND in mode F runs on bspline2 (the owner's
+    K0 decision)."""
+    basis = "bspline2" if (mode == "F" and mat.startswith("LadrunoSANISAND")) else "gimp"
     t = mat.split()
     args = [t[0], 1] + [S._num(x) for x in t[2:]]
     cmds = [("wipe", []), ("model", ["basic", "-ndm", 2, "-ndf", 2]), ("nDMaterial", args),
-            ("mpm", ["grid", 232, "-origin", -4.0, -1.0, "-h", 0.5, "-cells", 18, 6]),
+            ("mpm", ["grid", 232, "-origin", -4.0, -1.0, "-h", 0.5, "-cells", 18, 6,
+                     "-basis", basis]),
             ("mpm", ["mode", "quasiStatic" if mode == "A" else "explicit"]),
             ("mpm", ["body", 1, "box", 0.0, 0.0, 1.0, 1.0, "-ppc", 2, "-mat", 1, "-rho", 2.0]),
             ("mpm", ["massCutoff", 0.0]),

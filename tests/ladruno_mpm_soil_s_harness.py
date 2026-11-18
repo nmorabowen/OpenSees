@@ -68,14 +68,21 @@ def s1_tolerance(leg_rec, step):
     return 1e-8 if (k is None or step < k) else 1e-3
 
 
-def s1_commands(rec, leg, mode, dt):
+def s1_basis(mat, mode):
+    """The owner's K0 decision: SANISAND in mode F only on a B-spline basis."""
+    return "bspline2" if (mat == "sanisand" and mode == "F") else "gimp"
+
+
+def s1_commands(rec, leg, mode, dt, basis=None):
     """[(command, args)] that build the S1 block (no steps)."""
     L = rec["legs"][leg]
     nd = 3 if L["dim"] == "3d" else 2
     mat = L["material"]
+    basis = basis or s1_basis(mat, mode)
     cmds = [("wipe", []), ("model", ["basic", "-ndm", nd, "-ndf", nd]),
             ("nDMaterial", deck_args(rec["decks"][mat]["cmd"])),
-            ("mpm", ["grid", HOST, "-origin", *([-1.0] * nd), "-h", 0.5, "-cells", *([6] * nd)]),
+            ("mpm", ["grid", HOST, "-origin", *([-1.0] * nd), "-h", 0.5, "-cells", *([6] * nd),
+                     "-basis", basis]),
             ("mpm", ["mode", "quasiStatic" if mode == "A" else "explicit"]),
             ("mpm", ["body", 1, "box", *([0.0] * nd), *([1.0] * nd), "-ppc", 2, "-mat", 1,
                      "-rho", RHO]),
@@ -300,12 +307,13 @@ def s2_run(ops, mat, basis, nsur=10, cap=False):
     return out
 
 
-def s4_flip_map(ops, mode, basis="gimp", g=0.5, l0=2.0):
+def s4_flip_map(ops, mode, basis=None, g=0.5, l0=2.0):
     """Stage 0 under low g, then the walk; returns per-particle (pre, post) and the check of the
     record's rule: p < Pmin -> sigma = -Pmin I and alpha = 0, else sigma bit for bit; alpha_in =
     alpha after the flip (-flipAlphaIn init)."""
     rec = load("s4_lowg.json")
     pmin = float(rec["Pmin"])
+    basis = basis or ("bspline2" if mode == "F" else "gimp")   # the owner's K0 decision
     column_build(ops, rec["decks"]["sanisand"]["cmd"], basis, mode, l0=l0, g=g)
     if mode == "A":
         ops.mpm("analyze", 10, 0.1)
@@ -352,7 +360,7 @@ def s4_affine(ops, mode, row, n=10):
     r = rec["rows"][row]
     s1 = load("s1_onepoint.json")
     dt = 1.0 if mode == "A" else 1e-4
-    cmds, nd = s1_commands(s1, "sanisand_ps_oedo", mode, dt)
+    cmds, nd = s1_commands(s1, "sanisand_ps_oedo", mode, dt, basis="bspline2")   # both modes
     for name, args in cmds:
         getattr(ops, name)(*args)
     eps = r["pre_flip"]["state"][1]

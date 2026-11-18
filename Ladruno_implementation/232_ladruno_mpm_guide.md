@@ -83,6 +83,7 @@ alike; a face with no condition just has free ghost nodes. Node ids count the gh
 | `ElasticIsotropic` | admitted; reproduces the interface's hypoelastic law, with initial stress as an offset |
 | `LadrunoJ2` | admitted; `-autoRegularization` refused (it reads an element length; there is none at particles) |
 | `DruckerPrager` (UW) | admitted; stage switch `materialState` through `parameter` (below) |
+| `LadrunoSANISAND`, `LadrunoHS` | admitted (WP-232k): see "Soil particles" below |
 | anything else | refused at `mpm body` / `mpm particle`, naming the class tag |
 
 **Initial stress** (`mpm stress`, `-s`) is accepted on `ElasticIsotropic` only. On LadrunoJ2 or
@@ -408,6 +409,50 @@ L7's switch oracle (in the MPM mutation suite). The long rows (L3, L4, L5) are t
 `tests/mpm_antilocking_warrant.py`, results in `tests/data/mpm/antilocking/` (checked by
 `tests/test_ladruno_mpm_antilocking_results.py`); L4 also replaces 232f's footing xfail in
 `tests/test_ladruno_mpm_implicit_gates.py`. Method and tables: [[232j_mpm_antilocking]].
+
+## Soil particles — LadrunoSANISAND and LadrunoHS (WP-232k)
+
+Interface `tests/mpm_soil_interface.md` (D1–D23); results [[232k_mpm_soil_models]].
+
+| Material | Admitted | Options |
+|---|---|---|
+| `LadrunoSANISAND` | 3D and PlaneStrain. Mode A on every basis; **mode F on `bspline2` / `bspline3` only** (K0, below) | IntScheme 1, 2, 129 (others refused); `-implex`; floors `-Pmin`, `-Presidual`, `-pRe` at their defaults unless you choose (ADR-93: the owner's) |
+| `LadrunoHS` / `LadrunoHSSmall` | 3D and PlaneStrain, both modes, every basis | `-smallStrain`, `-sigmat`, `-implex`; **`-sig0` / `-sig03` refused** |
+
+- **Serial.** Neither model is on the thread allowlist; with `ladrunoThreads N` mode A prints the
+  usual "not on the thread-safe allowlist … SERIAL" warning and the answer is unchanged.
+- **No initial stress.** Soil particles take no `mpm stress` offset (interface Q2). The geostatic
+  state comes from staging: stage 0 (elastic) under the gravity ramp, then the flip.
+- **The stage switch is `mpm stage <matTag> <s>`**, both modes. It walks every particle material
+  of the tag through the material's own `materialState`, so each particle gets the full switch
+  (SANISAND's `Elastic2Plastic` reset included). `s` passes through unchanged: SANISAND 0/1, HS
+  0/1, DruckerPrager 0/1/2 (UW DruckerPrager's 1 is still elastic; 2 is elastoplastic). A tag with
+  no stage is refused. `parameter <p> loadPattern <mpm> materialState|updateMaterialStage <tag>` +
+  `updateParameter <p> <s>` and, in mode A, `updateMaterialStage -material <tag> -stage <s>` route
+  into the same walk.
+- **SANISAND's stage is class-wide** (one static for every SANISAND tag in the process, FE and MPM).
+  If it moves by a route that missed the particles (an FE element answering `updateMaterialStage`
+  first, another tag's flip), `mpm analyze` is refused until `mpm stage` walks them. HS keeps its
+  stage per tag and flips every instance lazily with the full transition.
+- **Mode F needs a B-spline basis for SANISAND.** On `gimp` / `linear` the explicit cell-crossing
+  noise excites the two-rows-per-cell stress pattern of ppc 2, and SANISAND's plasticity locks it:
+  the K0 meter gave A = 7.95 against DruckerPrager (bspline2: 0.66). `mpm analyze` refuses it,
+  naming K0. Mode A is admitted on every basis (A 0.99 gimp, 1.06 bspline2).
+- **Symmetric systems** (ProfileSPD, BandSPD, SparseSYM, PARDISO/MUMPS symmetric) are refused in
+  mode A with a SANISAND or HS particle unless `-implex` (its tangent is the frozen isotropic
+  elastic one).
+- **Refusals.** A trial refusal fails the step (mode F) or cuts it (mode A), naming particle,
+  material and tag. A commit refusal (SANISAND `-implex` companion at its `-maxSubsteps` cap)
+  aborts the run with the particles unmoved (W17) until `mpm reset`. HS has no commit refusal at
+  particles.
+- **Queries:** `mpm particleData sigZZ`, `mpm particleResponse [-size] <args>` (e.g. `state`:
+  SANISAND alpha at 6–11, e at 24), `mpm info materials`.
+- **Restart** (mode A): the restored host re-asserts SANISAND's stage flag (pack v4).
+- **Cost** (M0b upper bounds): a SANISAND plastic call 0.6–1.2 ms; serial.
+- **Grid motion for drivers:** `mpm gridvel <name> box <lo> <hi> affine <L> [ref <x>]`, changed
+  per step with `mpm gridvel <name> setAffine <L>`; `mpm gridvel … profile <t0> <Tr> <t1>
+  translate <axis>` (a trapezoidal velocity, both bounds moving). Mode F now applies `gridvel`
+  and refuses `mpm pforce` (#1109: both were silently ignored before).
 
 ## Verification
 

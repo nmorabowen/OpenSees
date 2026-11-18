@@ -38,9 +38,10 @@ def _l(v):
 
 
 def _grid(ops, mode="explicit"):
+    # bspline2: SANISAND particles in mode F need a B-spline basis (the owner's K0 decision)
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
-    ops.mpm("grid", 232, "-origin", 0.0, -1.0, "-h", 0.5, "-cells", 2, 6)
+    ops.mpm("grid", 232, "-origin", 0.0, -1.0, "-h", 0.5, "-cells", 2, 6, "-basis", "bspline2")
     ops.mpm("mode", mode)
 
 
@@ -202,3 +203,47 @@ def test_s7_k2_threads_honoured_as_one(capfd):
     ops.ladrunoThreads(1)
     assert four == one
     assert "SERIAL" in (cap.err + cap.out) or "serial" in (cap.err + cap.out).lower()
+
+
+def _san_block(ops, basis, mode):
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 0.5, "-cells", 2, 4, "-basis", basis)
+    ops.mpm("mode", mode)
+    ops.nDMaterial("LadrunoSANISAND", 3, *SANISAND)
+    ops.mpm("body", 1, "box", 0.0, 0.0, 1.0, 1.0, "-ppc", 2, "-mat", 3, "-rho", 2.0)
+    ops.mpm("fix", "xmin", "x")
+    ops.mpm("fix", "xmax", "x")
+    ops.mpm("fix", "ymin", "y")
+    ops.mpm("gravity", 0.0, -9.81)
+
+
+@pytest.mark.parametrize("basis", ["gimp", "linear"])
+def test_s7_k0_sanisand_mode_f_needs_bspline(basis, capfd):
+    """The owner's K0 decision: SANISAND particles in explicit mode F are refused on gimp and
+    linear at `mpm analyze` (they fail the cell-crossing meter, A = 7.95 on gimp), with K0 named."""
+    ops = _ops()
+    _san_block(ops, basis, "explicit")
+    capfd.readouterr()
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 1, 1.0e-4)
+    cap = capfd.readouterr()
+    assert "K0" in (cap.err + cap.out) and "B-spline" in (cap.err + cap.out)
+
+
+def test_s7_k0_sanisand_admitted_where_decided():
+    """...and admitted in mode F on bspline2, in mode A on gimp; HS stays admitted on gimp in F."""
+    ops = _ops()
+    _san_block(ops, "bspline2", "explicit")
+    assert int(ops.mpm("analyze", 1, 1.0e-4)) == 0
+    _san_block(ops, "gimp", "quasiStatic")
+    ops.constraints("Plain")
+    ops.numberer("RCM")
+    ops.system("UmfPack")
+    ops.test("NormDispIncr", 1.0e-10, 25)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.1)
+    ops.analysis("Static")
+    assert int(ops.mpm("analyze", 1, 0.1)) == 0
+    _column(ops, HS, 4, kind="LadrunoHS")
+    assert int(ops.mpm("analyze", 1, 1.0e-4)) == 0

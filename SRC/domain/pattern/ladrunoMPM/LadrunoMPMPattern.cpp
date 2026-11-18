@@ -787,6 +787,19 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       return -1;
     }
   }
+  // WP-232k (owner's K0 decision): SANISAND particles in explicit mode F need a B-spline basis.
+  // On gimp / linear the explicit cell-crossing noise excites the two-rows-per-cell stress
+  // pattern, which SANISAND's plasticity locks (K0 meter A = 7.95 against DruckerPrager).
+  if (!ladruno_mpm::isBSpline(eng.par.basis))
+    for (NDMaterial *m : mats)
+      if (m != 0 && (m->getClassTag() == ND_TAG_LadrunoSANISAND3D ||
+                     m->getClassTag() == ND_TAG_LadrunoSANISANDPlaneStrain)) {
+        opserr << "ERROR mpm analyze -- LadrunoSANISAND (nDMaterial " << m->getTag()
+               << ") at particles in explicit mode F needs a B-spline basis (bspline2 /"
+                  " bspline3): on gimp / linear it fails the 232k cell-crossing meter (K0; guide"
+                  " \"Soil particles\"). Mode A admits it on every basis.\n";
+        return -1;
+      }
   // WP-232k (D18, #1109): mode F used to accept `mpm pforce` and ignore it, a silent wrong
   // answer. Particle point forces are mode A's (interface §5); refused here.
   for (double f : pforce)
