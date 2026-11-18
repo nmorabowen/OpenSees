@@ -390,6 +390,7 @@ All frame and wall elements share the canonical token matcher in [`SRC/element/L
 | `'chordRotation'` / `'chordDeformation'` / `'basicDeformation'` | `3`: `[eps, thetaZ_i, thetaZ_j]` | `6`: `[eps, thetaZ_i, thetaZ_j, thetaY_i, thetaY_j, thetaX]` |
 | `'plasticRotation'` / `'plasticDeformation'` / `'hingeRotation'` / `'hingeRotations'` | `3`: `[epsP, thetaZ_iP, thetaZ_jP]` | `6`: `[epsP, thetaZ_iP, thetaZ_jP, thetaY_iP, thetaY_jP, thetaXP]` |
 | `'hingeSummary'` / `'hingeState'` | `4`: `[theta_i, M_i, theta_j, M_j]` | `8`: `[thetaZ_i, Mz_i, thetaZ_j, Mz_j, thetaY_i, My_i, thetaY_j, My_j]` |
+| `'hingeStatus'` | `8`: `[kindZ_i, damageZ_i, kindZ_j, damageZ_j, kindY_i, damageY_i, kindY_j, damageY_j]` (Y slots absent) | `8`: same columns. `kind`: 0 absent, 1 uniaxial, 2 biaxial (one law fills the Z and Y slot of its end, with one shared damage). `damage`: the law's `damage` response, NaN where not defined |
 | `'hingeJump'` / `'hingeJumpI'` | `1`: `[theta_i]` | `2`: `[thetaZ_i, thetaY_i]` |
 | `'hingeJumpJ'` | `1`: `[theta_j]` | `2`: `[thetaZ_j, thetaY_j]` |
 | `'hinge'` / `'hingeI'` / `'hingeJ'` `$matResp...` | Forwards `$matResp` to major-axis ($z$) hinge material | Forwards `$matResp` to major-axis ($z$) hinge material |
@@ -419,6 +420,7 @@ All frame and wall elements share the canonical token matcher in [`SRC/element/L
 | `'hingeRotation'` / `'hingeRotations'` / `'plasticRotation'` / `'plasticDeformation'` | `2`: `[thetaH_Zi, thetaH_Zj]` | `4`: `[thetaH_Zi, thetaH_Zj, thetaH_Yi, thetaH_Yj]` |
 | `'hingeMoment'` / `'hingeMoments'` | `2`: `[M_Zi, M_Zj]` | `4`: `[M_Zi, M_Zj, M_Yi, M_Yj]` |
 | `'hingeSummary'` / `'hingeState'` | `4`: `[thetaH_Zi, M_Zi, thetaH_Zj, M_Zj]` | `8`: `[thetaH_Zi, M_Zi, thetaH_Zj, M_Zj, thetaH_Yi, M_Yi, thetaH_Yj, M_Yj]` |
+| `'hingeStatus'` | `8`: `[kindZ_i, damageZ_i, kindZ_j, damageZ_j, kindY_i, damageY_i, kindY_j, damageY_j]` (Y slots absent) | `8`: same columns. `kind`: 0 absent, 1 uniaxial, 2 biaxial (one law fills the Z and Y slot of its end, with one shared damage). `damage`: the law's `damage` response, NaN where not defined |
 | `'shearHinge'` *(1 arg)* | `2`: `[gamma_y, Vy]` | `4`: `[gamma_y, Vy, gamma_z, Vz]` |
 | `'shearHingeY'` / `'shearHingeZ'` *(1 arg)* | `2`: `[gamma_y, Vy]` (`'shearHingeY'`) | `2`: `[gamma_y, Vy]` or `[gamma_z, Vz]` |
 | `'shearHinge'` / `'shearHingeY'` / `'shearHingeZ'` `$matResp...` | Forwards `$matResp` to shear hinge `UniaxialMaterial` | Forwards `$matResp` to shear hinge `UniaxialMaterial` |
@@ -507,6 +509,7 @@ All element results are stored under `/MODEL_STAGE[i]/RESULTS/ON_ELEMENTS/<Resul
 | `localForce` | `'localForce'` | 2D beam/wall: `6`<br>3D beam: `12`<br>3D wall: `24` | Element-local nodal resisting forces. |
 | `endForces` | `'forces'` | 2D beam: `6`<br>3D beam: `12` | Whole-element end forces (`isWholeElementItem() == true`, 1 vector per element, never multiplied by `num_gauss_points`). |
 | `hingeState` | `'hingeSummary'` | 2D beam (`LadrunoDispBeamColumn2d`, `LadrunoForceBeamColumn2d`, `LadrunoIMKBeam2d`): `4` (`[th_i, M_i, th_j, M_j]`)<br>3D beam (`LadrunoDispBeamColumn3d`, `LadrunoForceBeamColumn3d`, `LadrunoIMKBeam`): `8` (`[thZ_i, Mz_i, thZ_j, Mz_j, thY_i, My_i, thY_j, My_j]`) | Whole-element hinge summary (`isWholeElementItem() == true`). Works uniformly across `LadrunoDispBeamColumn`, `LadrunoForceBeamColumn`, and `LadrunoIMKBeam`! |
+| `hingeStatus` | `'hingeStatus'` | 2D and 3D beam (`LadrunoDispBeamColumn`, `LadrunoForceBeamColumn`, `LadrunoIMKBeam`): `8` (`[kindZ_i, damageZ_i, kindZ_j, damageZ_j, kindY_i, damageY_i, kindY_j, damageY_j]`) | Hinge presence and damage per slot, also on an element with no hinge. `kind` 0 absent, 1 uniaxial, 2 biaxial; `damage` is NaN where the law defines none. |
 | `sectionForce` | `'section' $gp 'force'` | `N_gp * nSecForce` | Per-integration-point section stress resultants (`LadrunoDispBeamColumn`, `LadrunoForceBeamColumn`, `ForceBeamColumn`; for `LadrunoIMKBeam`, queries `'section' 1 'force'`). |
 | `sectionDeformation` | `'section' $gp 'deformation'` | `N_gp * nSecDef` | Per-integration-point section deformations (`LadrunoDispBeamColumn`, `LadrunoForceBeamColumn`, `ForceBeamColumn`). |
 | `localAxes` | `'localAxes'` | `9`: `[vx_x, vx_y, vx_z, vy_x, vy_y, vy_z, vz_x, vz_y, vz_z]` | Written once as static element orientation metadata and/or per step. |

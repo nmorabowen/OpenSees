@@ -78,6 +78,7 @@
 #include <elementAPI.h>
 #include <string>
 #include <LadrunoResponseTokens.h>
+#include <LadrunoHingeStatus.h>
 #include <LadrunoThreads.h>
 
 // Ladruno (ADR 32): active element for crack-band materials (see 2D sibling).
@@ -5286,6 +5287,11 @@ LadrunoDispBeamColumn3d::setResponse(const char **argv, int argc, OPS_Stream &ou
              (strcmp(argv[0],"hingeBiaxialJ") == 0 || strcmp(argv[0],"hingeBiaxial2") == 0 || strcmp(argv[0],"hingeCJ") == 0)) {
       theResponse = theHingeCJ->setResponse(&argv[1], argc-1, output);
     }
+    else if (LadrunoResp::is(argv[0], "hingeStatus")) {
+      LadrunoHingeStatus::tagColumns(output);
+      theResponse = new ElementResponse(this, LadrunoHingeStatus::responseID,
+                                        Vector(LadrunoHingeStatus::numColumns));
+    }
     else if (hingeOn && LadrunoResp::is(argv[0], "hingeSummary")) {
       output.tag("ResponseType", "thetaZ_i");
       output.tag("ResponseType", "Mz_i");
@@ -5350,6 +5356,16 @@ LadrunoDispBeamColumn3d::getResponse(int responseID, Information &eleInfo)
     crdTransf->getLocalAxes(vx, vy, vz);
     for (int i = 0; i < 3; i++) { la(i) = vx(i); la(i + 3) = vy(i); la(i + 6) = vz(i); }
     return eleInfo.setVector(la);
+  }
+
+  else if (responseID == LadrunoHingeStatus::responseID) {
+    static thread_local Vector status(LadrunoHingeStatus::numColumns);
+    LadrunoHingeStatus::reset(status);
+    if (hingeOn) {
+      LadrunoHingeStatus::fillEnd(status, LadrunoHingeStatus::endI, theHingeZ, theHingeY, theHingeC);
+      LadrunoHingeStatus::fillEnd(status, LadrunoHingeStatus::endJ, theHingeZJ, theHingeYJ, theHingeCJ);
+    }
+    return eleInfo.setVector(status);
   }
 
   else if (responseID == 31) {
