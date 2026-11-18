@@ -218,7 +218,8 @@ def _stage(ops, mat: str, stage: int, elems) -> str:
 # ----------------------------------------------------------------------------------------------
 # K0: the FE column (no translation) on the D19 domain
 # ----------------------------------------------------------------------------------------------
-def _column_model(ops, mat, g=G_GRAV, capped=False, L0=COL["L0"], h=COL["h"], W=COL["W"]):
+def _column_model(ops, mat, g=G_GRAV, capped=False, L0=COL["L0"], h=COL["h"], W=COL["W"],
+                  san_opts=()):
     """Plane-strain slab of LadrunoBrick B-bar, nx = W/h, ny = L0/h (+1 cap row), thickness h,
     z fixed everywhere; sides x = 0 and x = W rollers (fix x), base fixed. Soil is material 1,
     the cap (D23) ElasticIsotropic tag 2 with rho_cap g t = 20 kPa."""
@@ -240,7 +241,7 @@ def _column_model(ops, mat, g=G_GRAV, capped=False, L0=COL["L0"], h=COL["h"], W=
                     ops.fix(n, 1, 1, 1)
                 else:
                     ops.fix(n, 1 if i in (0, nx) else 0, 0, 1)
-    _material(ops, mat)
+    _material(ops, mat, san_opts=san_opts)
     if capped:
         ops.nDMaterial("ElasticIsotropic", 2, EL_E, EL_NU)
     soil, cap, e = [], [], 0
@@ -510,10 +511,10 @@ def _ladder_advance(ops, t_from, t_to, dt0, floor=5.0e-4):
                 ladder=[list(x) for x in K9])
 
 
-def fe_column_k0p(mat, g=G_GRAV):
+def fe_column_k0p(mat, g=G_GRAV, san_opts=()):
     ops = fe_engine()
     t0 = time.time()
-    m = _column_model(ops, mat, g=g, capped=True)
+    m = _column_model(ops, mat, g=g, capped=True, san_opts=san_opts)
     soil = [e for e, _ in m["soil"]]
     route0 = _stage(ops, mat, 0, soil)
     # ONE gravity pattern on a Path series: 0 -> 1 over t in [0, 1] (stage 0), 1 -> 1.3 over
@@ -539,6 +540,15 @@ def fe_column_k0p(mat, g=G_GRAV):
                   particles=_ratios(tab, ys, sy), cap_rows=_row_table(ops, m, which="cap")[0])
         if mat == "sanisand":
             cp["alpha_rows"], cp["_alpha_pts"] = _row_alpha(ops, m)
+        if "-implex" in san_opts:
+            # LadrunoSANISAND `implexError` (LadrunoSANISAND.cpp:5443-5452), one value per point:
+            # per element row, the max and mean over the row's 16 points
+            byrow = {}
+            for e, j in m["soil"]:
+                byrow.setdefault(j, []).extend(
+                    ops.eleResponse(e, "material", gp + 1, "implexError")[0] for gp in range(8))
+            cp["implex_error_rows"] = [[(j + 0.5) * COL["h"], float(np.max(v)), float(np.mean(v))]
+                                       for j, v in sorted(byrow.items())]
         return cp
 
     out = dict(material=mat, capped=True, g=g, rho=RHO, preshear=K0P, stage0_route=route0)
@@ -600,6 +610,28 @@ def leg_k0p() -> dict:
                                     "form (gravity +30 % acts on the cap too), sxx, szz = FE ratio "
                                     "x syy"))
     _save("k0p_column_capped", payload)
+    return payload
+
+
+K0P_IMPLEX_OPTS = ("-implex", "-maxSubsteps", 1000)    # as s1_onepoint_options' sanisand_implex
+
+
+def leg_k0p_implex() -> dict:
+    """K0p's capped column, SANISAND with -implex -maxSubsteps 1000, identical staging (ruling
+    2026-11-18: the boundary-value leg that admits -implex). Reported block."""
+    leg = fe_column_k0p("sanisand", san_opts=K0P_IMPLEX_OPTS)
+    leg["options"] = list(K0P_IMPLEX_OPTS)
+    plain = json.loads((DATA / "k0p_column_capped.json").read_text(encoding="utf-8"))
+    pl = plain["legs"]["sanisand"]["after_hold2"]["particles"]
+    im = leg["after_hold2"]["particles"]
+    payload = dict(_provenance("k0p_column_capped_implex", "fe_column_k0p(sanisand, -implex)"),
+                   decks=decks(), legs=dict(sanisand=leg), particle_y=column_particle_y(),
+                   preshear=K0P, options=list(K0P_IMPLEX_OPTS),
+                   vs_plain=dict(max_abs_dsxx_over_rho_g_l0=max(
+                       abs(a["sxx"] - b["sxx"]) for a, b in zip(im, pl)) / (RHO * G_GRAV * COL["L0"]),
+                       note="after_hold2 against k0p_column_capped.json's scheme-1 SANISAND leg"))
+    _save("k0p_column_capped_implex", payload)
+    print("K0P implex vs plain:", payload["vs_plain"]["max_abs_dsxx_over_rho_g_l0"], flush=True)
     return payload
 
 
@@ -1172,6 +1204,8 @@ def main(argv=None) -> None:
         leg_k0()
     elif what == "k0p":
         leg_k0p()
+    elif what == "k0p_implex":
+        leg_k0p_implex()
     elif what == "onepoint":
         leg_onepoint()
     elif what == "onepoint_options":
