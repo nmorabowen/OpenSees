@@ -1,0 +1,11 @@
+---
+wp: WP-228
+title: "Truss/TrussSection/Truss2 stiffness leaks the class-static scratch matrix's rotation entries across elements and wipe (apeGmsh #2859)"
+date: 2026-11-10
+pr: "#1070"
+files: ["`SRC/element/truss/Truss.cpp`", "`SRC/element/truss/TrussSection.cpp`", "`SRC/element/truss/Truss2.cpp`"]
+table: "upstreamable"
+---
+| `SRC/element/truss/Truss.cpp` | `// Ladruno (WP-228)` — **silent wrong stiffness on a 2-D `ndf = 3` truss.** `theMatrix` is the class-static `trussM6` for every 6-DOF truss; `getTangentStiff()` / `getInitialStiff()` filled only the `dimension×dimension` translational blocks and zeroed the matrix only in the `L == 0` branch, so rows/cols 2 and 5 (rotations) carried whatever the last `trussM6` user wrote. A 3-D `ndf = 3` truss with `-rho` leaves the lumped mass `0.5·rho·L` there after a mass assembly; after `wipe`, the next 2-D frame's braces add that value as a fake rotational spring at every brace end until some truss `getMass()` re-zeroes the matrix — the first eigen solve is wrong. Fix: `theMatrix->Zero()` hoisted to the top of both methods. `getDamp`, `getMass`, `getKiSensitivity`, `getMassSensitivity` already zeroed. Measured with `tests/test_wp228_truss_scratch_matrix_leak.py` (3-storey X-braced frame, `eigen -fullGenLapack 4`, poison `-rho 8000`): lambda_1 1005.46269190215 poisoned vs 1005.45351094937 clean (rel 9.1e-6) on stock openseespywin 3.7.1.2 and desk fork `011b02586`, both 2026-11-10. Same code on upstream master: **upstreamable**. | [#1070](https://github.com/nmorabowen/OpenSees/pull/1070) |
+| `SRC/element/truss/TrussSection.cpp` | `// Ladruno (WP-228)`: same leak, same fix in `getTangentStiff()` / `getInitialStiff()` (own static `trussM6`). Test: rel 2.4e-6 on lambda_1 before the fix, both engines above. **Upstreamable.** | [#1070](https://github.com/nmorabowen/OpenSees/pull/1070) |
+| `SRC/element/truss/Truss2.cpp` | `// Ladruno (WP-228)`: same pattern, same fix (own static `trussM6`, `ndm 2 / ndf 3` maps to it). Not exercised by the test (`Truss2` needs two extra "other" nodes); fixed by inspection. Audited clean, no edit: `CorotTruss`, `CorotTruss2`, `CorotTrussSection` (`K.Zero()` before filling; kept as controls in the test), `InertiaTruss`, `N4BiaxialTruss` (zero first). **Upstreamable.** | [#1070](https://github.com/nmorabowen/OpenSees/pull/1070) |
