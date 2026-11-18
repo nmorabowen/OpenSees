@@ -1076,6 +1076,17 @@ bitwise equal, the post-flip σ and `state` must be bitwise equal; if they diffe
 (mode A builds ΔF from displacements, mode F from velocities × dt), the post-flip difference must
 be at most 10 × the pre-flip difference (floor 1e-15 relative). Which branch ran is reported.
 
+**K0 mode F, uncapped (2026-11-18, build `b94c9d75d`, esmeralda) — D23 triggered, not admitted.**
+Every translated soil leg recorded post-flip floor events, while every twin recorded none:
+SANISAND 8 (gimp) and 2 (bspline2) particle-steps, HS 8 and 16. By D23 (pre-registered) these runs
+are **not admitted**, and the mode-F row re-runs with the bonded elastic cap (one cell, 20 kPa;
+reference `k0_column_capped.json`), all five legs, both bases, so that A compares like with like.
+The uncapped meters are kept as reported values (meter / twin): SANISAND 0.1513 / 0.0148 (gimp),
+0.0205 / 0.0055 (bspline2); HS 0.0191 / 0.0142, 0.0173 / 0.0222; DP 0.0179 / 0.0152, 0.0070 / 0.0066.
+On them, A would be 8.5 (gimp) and 2.9 (bspline2). They are recorded as a finding: cell crossing in
+explicit MPM drives free-surface soil particles to the pressure floor, which the motionless twin never
+reaches. Mode A had no post-flip floor event, and its pass stands.
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
