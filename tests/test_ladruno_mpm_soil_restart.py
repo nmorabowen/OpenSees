@@ -91,3 +91,82 @@ def test_s6_restart_mid_stage1(mat):
         got = _fields(ops)
     for f in ref:
         assert got[f] == ref[f], f"{mat}: field {f} differs after the restart"
+
+
+# --------------------------------------------------------------------------- #
+#  Review items 1-3 (/code-review high on #1108): the stage record in the pack  #
+# --------------------------------------------------------------------------- #
+def _save_restore(ops, td):
+    ops.database("File", str(Path(td) / "soildb"))
+    ops.save(3)
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.database("File", str(Path(td) / "soildb"))
+    ops.restore(3)
+    _analysis(ops)
+
+
+def test_restart_keeps_hs_add_after_walk_refusal():
+    """Item 1: AMEND A1's per-tag HS stage is in the v4 pack: after `mpm stage <hs> 1`, save,
+    wipe and restore, a body with that tag is still refused; another material's body is not."""
+    ops = _ops()
+    cmd = S.load("s2_column.json")["decks"]["hs"]["cmd"]
+    S.column_build(ops, cmd, "gimp", "A", l0=L0)
+    ops.mpm("analyze", 2, 0.1)
+    ops.mpm("stage", 1, 1)
+    ops.mpm("analyze", 1, 0.1)
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+        _save_restore(ops, td)
+        try:                                   # the restore does not re-register nDMaterials
+            ops.nDMaterial(*S.deck_args(cmd))
+        except Exception:
+            pass
+        n0 = len(S._l(ops.mpm("particleData", "m")))
+        with pytest.raises(Exception):
+            ops.mpm("body", 5, "box", 0.0, 0.0, 1.0, 0.5, "-ppc", 2, "-mat", 1, "-rho", 2.0)
+        assert len(S._l(ops.mpm("particleData", "m"))) == n0
+        ops.nDMaterial("ElasticIsotropic", 77, 1.0e4, 0.3)
+        ops.mpm("body", 6, "box", 0.0, 0.0, 1.0, 0.5, "-ppc", 2, "-mat", 77, "-rho", 2.0)
+        assert len(S._l(ops.mpm("particleData", "m"))) > n0
+
+
+def test_pack_version_3_then_soil_writes_v4():
+    """Item 3: `debug packVersion 3` set BEFORE the soil body is added used to write a v3 pack
+    (no stage record). packState re-checks: it writes v4 with a WARNING, so the SANISAND restart
+    continues bit for bit (a v3 pack would lose the class-wide stage and be refused)."""
+    ops = _ops()
+    cmd = S.load("s2_column.json")["decks"]["sanisand"]["cmd"]
+
+    class _PV3:                                # issue packVersion 3 before the first `mpm body`
+        def __init__(self, o):
+            self._o, self._done = o, False
+
+        def __getattr__(self, n):
+            return getattr(self._o, n)
+
+        def mpm(self, *a):
+            if a[:1] == ("body",) and not self._done:
+                self._done = True
+                self._o.mpm("debug", "packVersion", 3)
+            return self._o.mpm(*a)
+
+    def staged(o):
+        S.column_build(o, cmd, "gimp", "A", l0=L0)
+        ops.mpm("analyze", 10, 0.1)
+        ops.mpm("stage", 1, 1)
+        ops.mpm("analyze", 2, 0.1)
+        for i in (1, 2, 3):
+            _surcharge(ops, i)
+
+    staged(ops)
+    for i in (4, 5, 6):
+        _surcharge(ops, i)
+    ref = _fields(ops)
+    staged(_PV3(ops))
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+        _save_restore(ops, td)
+        for i in (4, 5, 6):
+            _surcharge(ops, i)
+        got = _fields(ops)
+    for f in ref:
+        assert got[f] == ref[f], f"field {f} differs after the restart"

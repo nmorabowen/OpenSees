@@ -614,6 +614,15 @@ LadrunoMPMPattern::relinkElements(std::string &err)
     mats[p] = e->material();
     matOwnedByEle[p] = 1;
   }
+  // review item 3: a version 2 / 3 pack carries no stage record; with soil particles the run
+  // would continue on a wrong class-wide SANISAND flag and lose AMEND A1's HS stages. Refused
+  // every time (elementsRestored stays set, so the next call checks again).
+  if (restoredPackVersion != 0 && restoredPackVersion < 4 && anySoil()) {
+    err = "restore: the restart pack is version " + std::to_string(restoredPackVersion) +
+          " (no stage record) and the particles carry LadrunoSANISAND / LadrunoHS: refused (a"
+          " soil restart needs version 4)";
+    return -1;
+  }
   elementsRestored = false;
   return 0;
 }
@@ -1543,8 +1552,15 @@ LadrunoMPMPattern::packState(Vector &out)
 {
   Packer k;
   const ladruno_mpm::Grid &G = eng.grid;
-  const int ver = packVersionOut ? packVersionOut : MPM_PACK_VERSION;   // WP-232j (L8 hook)
+  int ver = packVersionOut ? packVersionOut : MPM_PACK_VERSION;         // WP-232j (L8 hook)
   packVersionOut = 0;                                                   // C6: one save only
+  // review item 3: `debug packVersion 2|3` checks soil when it is set; soil added after it
+  // would still write a pack with no stage record. Checked again here: the current layout.
+  if (ver < 4 && anySoil()) {
+    opserr << "WARNING mpm restart pack -- version " << ver << " was requested, but soil particles"
+              " need version 4 (the stage record): writing version " << MPM_PACK_VERSION << "\n";
+    ver = MPM_PACK_VERSION;
+  }
   k.put(ver);
   k.put(G.ndm);
   for (int d = 0; d < 3; d++) k.put(G.x0[d]);
@@ -1587,6 +1603,9 @@ LadrunoMPMPattern::packState(Vector &out)
       for (int d = 0; d < 3; d++) k.put(g.ref[d]);
     }
     k.put(sanisandStage);
+    // review item 1: AMEND A1's per-tag HS stage, so add-after-walk stays refused on restore
+    k.put((double)hsWalked.size());
+    for (const auto &kv : hsWalked) { k.put(kv.first); k.put(kv.second); }
   }
   out.resize((int)k.d.size());
   for (int i = 0; i < (int)k.d.size(); i++) out(i) = k.d[i];
@@ -1657,6 +1676,7 @@ LadrunoMPMPattern::unpackState(const Vector &in)
   u.getv(eng.bodyForce);
   eng.par.antiLocking = (ver >= 3) ? ((int)u.get() != 0 ? 1 : 0) : 0;
   sanisandStage = 0;
+  hsWalked.clear();
   if (ver >= 4) {                                   // WP-232k (D17, D10)
     for (GridVel &g : gridVels) {
       g.translate = (int)u.get(); g.profiled = u.get() != 0.0;
@@ -1666,13 +1686,22 @@ LadrunoMPMPattern::unpackState(const Vector &in)
       for (int d = 0; d < 3; d++) g.ref[d] = u.get();
     }
     sanisandStage = (int)u.get();
+    const int nh = (int)u.get();                    // review item 1: AMEND A1's HS stages
+    for (int i = 0; i < nh && !u.bad; i++) {
+      const int tag = (int)u.get();
+      hsWalked[tag] = (int)u.get();
+    }
   }
+  if (u.bad) return -1;
+  // review item 3: a pack older than 4 has no stage record; relinkElements refuses it if the
+  // restored particle materials are soil (they are reachable only after the relink)
+  restoredPackVersion = ver;
   // WP-232k (S6): the restored particle materials carry their flipped state (LadrunoSANISAND
   // restores mFlipSeen, LadrunoSANISAND.cpp:2659-2667), but SANISAND's class-wide flag is a
   // process static that `wipe` zeroed: re-assert it, so the restored run continues bit for bit
-  // (a walk would re-run Elastic2Plastic on a mid-stage-1 state).
+  // (a walk would re-run Elastic2Plastic on a mid-stage-1 state). Review item 2: only for a
+  // pack that read cleanly.
   if (sanisandStage != 0) LadrunoSANISAND::ladrunoRestoreStageFlag(sanisandStage);
-  if (u.bad) return -1;
   // the per-step SPs are rebuilt by the next step; the materials live in the
   // restored elements (relinked at the next `mpm analyze`)
   hostSPTags.clear();

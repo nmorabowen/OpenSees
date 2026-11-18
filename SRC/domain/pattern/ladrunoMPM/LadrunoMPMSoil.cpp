@@ -61,14 +61,36 @@
 #include <map>
 #include <memory>
 
-namespace {
-
-bool isSanisandTag(int ct)
+// WP-232k (review item 7): the one definition of the soil class tags
+bool
+LadrunoMPMPattern::isSanisandTag(int ct)
 {
   return ct == ND_TAG_LadrunoSANISAND3D || ct == ND_TAG_LadrunoSANISANDPlaneStrain;
 }
 
-bool isSoilTag(int ct) { return isSanisandTag(ct) || ct == ND_TAG_LadrunoHS; }
+bool
+LadrunoMPMPattern::isHSTag(int ct)
+{
+  return ct == ND_TAG_LadrunoHS;
+}
+
+bool
+LadrunoMPMPattern::isSoilTag(int ct)
+{
+  return isSanisandTag(ct) || isHSTag(ct);
+}
+
+int
+LadrunoMPMPattern::stageRegId(int matTag, bool intPath)
+{
+  for (size_t k = 0; k < stageRegs.size(); k++)
+    if (stageRegs[k].matTag == matTag && stageRegs[k].intPath == intPath)
+      return STAGE_PARAM_BASE + (int)k;
+  stageRegs.push_back(StageReg{matTag, intPath});
+  return STAGE_PARAM_BASE + (int)stageRegs.size() - 1;
+}
+
+namespace {
 
 bool parseInt(const char *s, int &v)
 {
@@ -100,14 +122,16 @@ LadrunoMPMPattern::soilStageRequest(const char **argv, int argc, int &matTag) co
 // D9 (c): MaterialStageParameter reached a particle element. The command passes an
 // int (Domain::updateParameter(tag, int), OpenSeesNDMaterialCommands.cpp:371 and
 // TclUpdateMaterialStageCommand.cpp), so this registration reads theInt.
+// Review item 5: that Parameter is transient -- the command removes and deletes it right after
+// the update (OpenSeesNDMaterialCommands.cpp:375-376, TclUpdateMaterialStageCommand.cpp:80) --
+// so it is NOT recorded in paramRefs (detachParameters would hold a dangling address, and a
+// later Parameter reusing tag and address would be clean()ed by mistake).
 int
 LadrunoMPMPattern::mpmStageParameter(const char **argv, int argc, Parameter &param)
 {
   int matTag = 0;
   if (!soilStageRequest(argv, argc, matTag)) return -2;
-  stageRegs.push_back(StageReg{matTag, true});
-  paramRefs.push_back(ParamRef{this->getDomain(), param.getTag(), &param});
-  return param.addObject(STAGE_PARAM_BASE + (int)stageRegs.size() - 1, this);
+  return param.addObject(stageRegId(matTag, true), this);
 }
 
 // D7: the one stage walk. Each material registers through its OWN
@@ -128,7 +152,7 @@ LadrunoMPMPattern::stageWalk(int matTag, int stage, std::string &err)
     if (m != 0 && m->getTag() == matTag) {
       any = true;
       if (isSanisandTag(m->getClassTag())) sanisand = true;
-      if (m->getClassTag() == ND_TAG_LadrunoHS) hs = true;
+      if (isHSTag(m->getClassTag())) hs = true;
     }
   if (!any) {
     err = "no particle material has tag " + std::to_string(matTag);
@@ -222,7 +246,8 @@ LadrunoMPMPattern::stageGuard(void) const
   // AMEND A3: never advise a flip the particles did not take; re-stage from their own stage
   if (sanisandStage == 0)
     return head + "Run `mpm stage <tag> 0` (the particles' stage), then stage them again from 0"
-                  " as the run requires.";
+                  " as the run requires. The flag is class-wide: this also returns every FE"
+                  " LadrunoSANISAND element in the process to stage 0.";
   return head + "Put the flag back by the route that moved it, or `mpm reset` and re-stage the"
                 " particles from 0.";
 }
@@ -238,12 +263,14 @@ LadrunoMPMPattern::anySoil(void) const
 
 // AMEND A5 (232k): the WP-232i B10 rule at time t, for a box that may move
 std::string
-LadrunoMPMPattern::gridvelGhostConflict(double t) const
+LadrunoMPMPattern::gridvelGhostConflict(double t, bool staticAllTimes) const
 {
   if (!ladruno_mpm::isBSpline(eng.par.basis)) return "";
   const ladruno_mpm::Grid &G = eng.grid;
   for (const GridVel &gv : gridVels) {
-    if (!gv.presentAt(t)) continue;
+    // review item 4: a box that never moves is checked up front, also before its `start`
+    const bool moves = gv.track >= 0 || gv.translate >= 0;
+    if (!(staticAllTimes && !moves) && !gv.presentAt(t)) continue;
     double lo[3], hi[3];
     gv.boxAt(t, lo, hi);
     for (int d = 0; d < G.ndm; d++) {
@@ -268,7 +295,7 @@ LadrunoMPMPattern::unsymmetricSoil(void) const
     if (isSanisandTag(ct)) {
       if (!static_cast<LadrunoSANISAND *>(m)->getLadrunoImplexOptions().enabled)
         return "LadrunoSANISAND " + std::to_string(m->getTag()) + " (without -implex)";
-    } else if (ct == ND_TAG_LadrunoHS) {
+    } else if (isHSTag(ct)) {
       if (!static_cast<LadrunoHS *>(m)->usesImplex())
         return "LadrunoHS " + std::to_string(m->getTag()) + " (without -implex)";
     }
@@ -349,7 +376,7 @@ LadrunoMPMPattern::materialsInfo(std::vector<double> &out)
       scheme = s->ladrunoIntegrationScheme();
       implex = s->getLadrunoImplexOptions().enabled ? 1.0 : 0.0;
       stage = LadrunoSANISAND::ladrunoStageFlag();
-    } else if (ct == ND_TAG_LadrunoHS) {
+    } else if (isHSTag(ct)) {
       implex = static_cast<LadrunoHS *>(m)->usesImplex() ? 1.0 : 0.0;
     }
     out.push_back(kv.first);

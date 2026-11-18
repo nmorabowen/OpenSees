@@ -213,3 +213,28 @@ def test_modef_partial_node_set():
             assert x1[k + 1] == x0[k + 1] and x1[k] == x0[k]
             untouched += 1
     assert untouched > 0
+
+
+# --------------------------------------------------------------------------- #
+#  Review item 4 (/code-review high on #1108): a STATIC box in the ghost layer  #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("lo_y,refused", [(-0.4, True), (0.0, False)])
+def test_static_box_in_fix_ghost_refused_up_front(lo_y, refused):
+    """On a B-spline grid a gridvel box that does not move and reaches the ghost layer behind a
+    `fix` face is refused at the first `mpm analyze`, even while its `start` is still ahead
+    (the per-step check alone would refuse it only when start arrives). A box inside the grid,
+    the control, runs."""
+    ops = _ops()
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 100.0, 0.3)
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 0.5, "-cells", 4, 6, "-basis", "bspline2")
+    ops.mpm("body", 1, "box", 0.5, 1.0, 1.5, 2.0, "-ppc", 2, "-mat", 1, "-rho", 1.0)
+    ops.mpm("fix", "ymin", "y")
+    ops.mpm("gridvel", "g", "box", 0.0, lo_y, 2.0, 0.6, "v", 0.0, 0.0, "start", 5.0)
+    if refused:
+        with pytest.raises(Exception):
+            ops.mpm("analyze", 1, 0.01)
+        assert float(ops.mpm("info", "time")) == 0.0
+    else:
+        assert int(ops.mpm("analyze", 1, 0.01)) == 0

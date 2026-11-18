@@ -252,8 +252,10 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   // (LadrunoSANISAND or LadrunoHS without -implex)
   std::string unsymmetricSoil(void) const;
   // AMEND A5: "" or why a B-spline gridvel box, at time t (it may move: track / translate),
-  // reaches the ghost layer behind a `fix` face
-  std::string gridvelGhostConflict(double t) const;
+  // reaches the ghost layer behind a `fix` face. staticAllTimes (the up-front check, review
+  // item 4): a box that does not move is checked whether or not it is present yet (a future
+  // `start`); moving boxes are checked where they are at t.
+  std::string gridvelGhostConflict(double t, bool staticAllTimes = false) const;
   // AMEND A4: a SANISAND or HS particle material exists
   bool   anySoil(void) const;
   // D16 queries: sigma_zz per particle (plane strain: the material's; 3D: sig[2]);
@@ -394,8 +396,16 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   struct StageReg { int matTag; bool intPath; };
   std::vector<StageReg>   stageRegs;       // Parameter ids STAGE_PARAM_BASE + index
   static constexpr int    STAGE_PARAM_BASE = 1000000;
+  // the Parameter id of the (matTag, intPath) registration, reusing an existing one (review
+  // item 5: the list does not grow with every `updateMaterialStage`)
+  int                     stageRegId(int matTag, bool intPath);
   int                     sanisandStage = 0;   // the stage the last walk gave SANISAND particles
   std::map<int, int>      hsWalked;            // AMEND A1: HS tag -> the stage its last walk gave
+  int                     restoredPackVersion = 0;   // review item 3: the last unpack's layout
+  // WP-232k (review item 7): the soil class tags, in one place
+  static bool             isSanisandTag(int classTag);
+  static bool             isHSTag(int classTag);
+  static bool             isSoilTag(int classTag);
   int                     refusalBase = 0;     // mode A: the WP-99 count at the attempt start
   int                     firstRefuserA = -1;  // mode A: the first particle whose commit refused
   bool soilStageRequest(const char **argv, int argc, int &matTag) const;

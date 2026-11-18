@@ -362,9 +362,9 @@ LadrunoMPMPattern::setParameter(const char **argv, int argc, Parameter &param)
   // SANISAND's id 1 would read an indeterminate theInt (LadrunoSANISAND.cpp:5253-5257).
   int stageTag = 0;
   if (soilStageRequest(argv, argc, stageTag)) {
-    stageRegs.push_back(StageReg{stageTag, false});
+    // the user's Parameter lives in the Domain: recorded, so detachParameters can clean it
     paramRefs.push_back(ParamRef{this->getDomain(), param.getTag(), &param});
-    return param.addObject(STAGE_PARAM_BASE + (int)stageRegs.size() - 1, this);
+    return param.addObject(stageRegId(stageTag, false), this);
   }
   int res = -1;
   for (NDMaterial *m : mats)
@@ -427,8 +427,7 @@ LadrunoMPMPattern::admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic,
                         ct == ND_TAG_ElasticIsotropicThreeDimensional ||
                         ct == ND_TAG_LadrunoJ2 ||
                         ct == ND_TAG_DruckerPrager3D || ct == ND_TAG_DruckerPragerPlaneStrain ||
-                        ct == ND_TAG_LadrunoSANISAND3D || ct == ND_TAG_LadrunoSANISANDPlaneStrain ||
-                        ct == ND_TAG_LadrunoHS;                      // WP-232k (D1)
+                        isSoilTag(ct);                               // WP-232k (D1)
   if (!admitted) {
     err = "nDMaterial " + std::to_string(matTag) + " (class tag " + std::to_string(ct) +
           ") is not admitted at MPM particles. Admitted: ElasticIsotropic, LadrunoJ2"
@@ -448,7 +447,7 @@ LadrunoMPMPattern::admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic,
       return -1;
     }
   }
-  if (ct == ND_TAG_LadrunoSANISAND3D || ct == ND_TAG_LadrunoSANISANDPlaneStrain) {
+  if (isSanisandTag(ct)) {
     // WP-232k (D2): schemes 1 (ModifiedEuler), 2 (BackwardEuler_CPPM) and 129 (SAS-ME),
     // each with its S1 leg; scheme 4 also carries function-scope statics (ManzariDafalias.h:219)
     LadrunoSANISAND *ss = static_cast<LadrunoSANISAND *>(copy);
@@ -464,15 +463,14 @@ LadrunoMPMPattern::admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic,
   }
   // AMEND A1 (232k): a particle added after its tag was walked to a non-zero stage would miss
   // the walk (SANISAND's Elastic2Plastic, HS's seeding at the walk) and the guard would not see it.
-  if ((ct == ND_TAG_LadrunoSANISAND3D || ct == ND_TAG_LadrunoSANISANDPlaneStrain) &&
-      sanisandStage != 0) {
+  if (isSanisandTag(ct) && sanisandStage != 0) {
     err = "LadrunoSANISAND particles cannot be added after `mpm stage` moved SANISAND to stage " +
           std::to_string(sanisandStage) + ": add all bodies before `mpm stage` (or `mpm reset`)";
     delete copy;
     copy = 0;
     return -1;
   }
-  if (ct == ND_TAG_LadrunoHS) {
+  if (isHSTag(ct)) {
     const auto it = hsWalked.find(matTag);
     if (it != hsWalked.end() && it->second != 0) {
       err = "LadrunoHS " + std::to_string(matTag) + " particles cannot be added after `mpm stage`"
@@ -482,8 +480,6 @@ LadrunoMPMPattern::admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic,
       copy = 0;
       return -1;
     }
-  }
-  if (ct == ND_TAG_LadrunoHS) {
     LadrunoHS *hs = static_cast<LadrunoHS *>(copy);
     if (hs->hasInitialStress()) {
       // WP-232k (D6): mode F's first step reads the host's stress arrays, seeded from the
@@ -752,8 +748,9 @@ LadrunoMPMPattern::bsplineFaceConflict() const
              " B-spline grid (its `fix` ghosts are images, a wall is not; WP-232i B5)";
   // AMEND A5 (232k): a moving box (track / translate) is checked where it is NOW; the per-step
   // checks (prepareStep, buildPrescribed) refuse the step at which it enters the ghost layer.
+  // Review item 4: a box that does not move is checked up front, also before its `start`.
   const Domain *dom = const_cast<LadrunoMPMPattern *>(this)->getDomain();
-  return gridvelGhostConflict(dom != 0 ? const_cast<Domain *>(dom)->getCurrentTime() : 0.0);
+  return gridvelGhostConflict(dom != 0 ? const_cast<Domain *>(dom)->getCurrentTime() : 0.0, true);
 }
 
 int
@@ -808,8 +805,7 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
   // pattern, which SANISAND's plasticity locks (K0 meter A = 7.95 against DruckerPrager).
   if (!ladruno_mpm::isBSpline(eng.par.basis))
     for (NDMaterial *m : mats)
-      if (m != 0 && (m->getClassTag() == ND_TAG_LadrunoSANISAND3D ||
-                     m->getClassTag() == ND_TAG_LadrunoSANISANDPlaneStrain)) {
+      if (m != 0 && isSanisandTag(m->getClassTag())) {
         opserr << "ERROR mpm analyze -- LadrunoSANISAND (nDMaterial " << m->getTag()
                << ") at particles in explicit mode F needs a B-spline basis (bspline2 /"
                   " bspline3): on gimp / linear it fails the 232k cell-crossing meter (K0; guide"
@@ -980,6 +976,9 @@ LadrunoMPMPattern::reset(void)
   aborted = false;
   // Mode A: elements and grid nodes leave the Domain; their materials come back
   // to the host (a removed tag is never reused: eleBase moves on, W5).
+  // review item 3: a reset returns the particles to stage 0, so an old pack's missing stage
+  // record no longer matters
+  restoredPackVersion = 0;
   if (elementsRestored) {
     std::string err;
     if (relinkElements(err) < 0) opserr << "WARNING mpm reset -- " << err.c_str() << "\n";
