@@ -1019,6 +1019,15 @@ reads `gridVels` (its only uses are the B-spline ghost check and a clear, `Ladru
   without `Elastic2Plastic`. That is inert on the gated FE domains (η = 0.86 < M_c, p ≫ Pmin), and
   232k-V records it in each FE JSON.
 
+**Ruling (2026-11-17, before any S1 MPM number) — the S1 switch point.** 232k-V found that the
+FE reference cannot itself hold rel 1e-8 on SANISAND (scheme 1): the 8 Gauss points of one
+homogeneous LadrunoBrick see the same F to round-off, yet part at the third plastic step (step
+13, 3D triaxial) by up to 1.1e-4, one step BEFORE their substep counts first differ (step 14). So
+the freeze's substep-count switch fires late. **Rule:** for every S1 leg, 1e-8 holds up to the
+first step at which the FE's own Gauss-point spread exceeds 1e-8 (recorded per leg in
+`s1_onepoint.json` `fe_self_consistency`, build `fc82c1a41`); from that step on, rel 1e-3. HS never
+parts (2.5e-13) and stays at 1e-8 throughout. The MPM substep counts are still reported.
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
