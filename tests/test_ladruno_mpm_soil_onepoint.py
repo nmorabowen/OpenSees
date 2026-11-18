@@ -59,7 +59,7 @@ def test_s9_onepoint_triax(leg, mode):
 
 
 S1_3D_A_MISS = pytest.mark.xfail(strict=True, reason=(
-    "recorded miss (232k-C, build 7c932089c; ruling pending): SANISAND 3D in mode A at step 12, the"
+    "pre-registered miss (ruling at 926d27153; build 7c932089c): SANISAND 3D in mode A at step 12, the"
     " second plastic step, one step before the FE's own Gauss-point spread passes 1e-8 (step 13):"
     " triax rel 3.2e-6, oedo 1.06e-8, with the FE's substep counts (5, 4). Mode A's kinematics differ"
     " from mode F's by 1.3e-12 in epsHat (the SP displacement path; mode F 7e-17 between"

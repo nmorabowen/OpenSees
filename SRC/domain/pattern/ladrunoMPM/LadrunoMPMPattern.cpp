@@ -462,6 +462,27 @@ LadrunoMPMPattern::admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic,
       return -1;
     }
   }
+  // AMEND A1 (232k): a particle added after its tag was walked to a non-zero stage would miss
+  // the walk (SANISAND's Elastic2Plastic, HS's seeding at the walk) and the guard would not see it.
+  if ((ct == ND_TAG_LadrunoSANISAND3D || ct == ND_TAG_LadrunoSANISANDPlaneStrain) &&
+      sanisandStage != 0) {
+    err = "LadrunoSANISAND particles cannot be added after `mpm stage` moved SANISAND to stage " +
+          std::to_string(sanisandStage) + ": add all bodies before `mpm stage` (or `mpm reset`)";
+    delete copy;
+    copy = 0;
+    return -1;
+  }
+  if (ct == ND_TAG_LadrunoHS) {
+    const auto it = hsWalked.find(matTag);
+    if (it != hsWalked.end() && it->second != 0) {
+      err = "LadrunoHS " + std::to_string(matTag) + " particles cannot be added after `mpm stage`"
+            " moved the tag to stage " + std::to_string(it->second) + ": add all bodies before"
+            " `mpm stage` (or `mpm reset`)";
+      delete copy;
+      copy = 0;
+      return -1;
+    }
+  }
   if (ct == ND_TAG_LadrunoHS) {
     LadrunoHS *hs = static_cast<LadrunoHS *>(copy);
     if (hs->hasInitialStress()) {
@@ -729,15 +750,10 @@ LadrunoMPMPattern::bsplineFaceConflict() const
     if (eng.fc.fixMask[f] != 0u && eng.fc.wallMu[f] >= 0.0)
       return std::string("face ") + names[f] + " carries both `fix` and `wall`: refused on a"
              " B-spline grid (its `fix` ghosts are images, a wall is not; WP-232i B5)";
-  for (const GridVel &gv : gridVels)
-    for (int d = 0; d < G.ndm; d++) {
-      const double lo = G.x0[d], hi = G.x0[d] + G.n[d] * G.h, tol = 1e-9 * G.h;
-      if ((eng.fc.fixMask[2 * d] != 0u && gv.lo[d] < lo - tol) ||
-          (eng.fc.fixMask[2 * d + 1] != 0u && gv.hi[d] > hi + tol))
-        return "gridvel '" + gv.name + "' reaches the ghost layer behind a `fix` face: refused on a"
-               " B-spline grid (those ghosts are images; WP-232i B10)";
-    }
-  return "";
+  // AMEND A5 (232k): a moving box (track / translate) is checked where it is NOW; the per-step
+  // checks (prepareStep, buildPrescribed) refuse the step at which it enters the ghost layer.
+  const Domain *dom = const_cast<LadrunoMPMPattern *>(this)->getDomain();
+  return gridvelGhostConflict(dom != 0 ? const_cast<Domain *>(dom)->getCurrentTime() : 0.0);
 }
 
 int
@@ -797,7 +813,7 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
         opserr << "ERROR mpm analyze -- LadrunoSANISAND (nDMaterial " << m->getTag()
                << ") at particles in explicit mode F needs a B-spline basis (bspline2 /"
                   " bspline3): on gimp / linear it fails the 232k cell-crossing meter (K0; guide"
-                  " \"Soil particles\"). Mode A admits it on every basis.\n";
+                  " \"Soil particles\"). Mode A admits it on every basis (quasi-static runs).\n";
         return -1;
       }
   // WP-232k (D18, #1109): mode F used to accept `mpm pforce` and ignore it, a silent wrong
@@ -976,6 +992,7 @@ LadrunoMPMPattern::reset(void)
   for (GridVel &g : gridVels) { g.nodes.clear(); g.force.assign(eng.ndm(), 0.0); }
   eng.presc.clear();                // WP-232k (D18)
   sanisandStage = 0;                // WP-232k (D10): the particles go back to stage 0
+  hsWalked.clear();                 // AMEND A1
   for (NDMaterial *m : mats)
     if (m != 0) m->revertToStart();   // review item 6: a hand-removed particle element took its material
   lambda = 1.0;

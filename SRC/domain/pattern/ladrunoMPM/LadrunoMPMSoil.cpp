@@ -123,14 +123,22 @@ LadrunoMPMPattern::stageWalk(int matTag, int stage, std::string &err)
   // The value goes through unchanged, as update(double(stage)): each material reads its
   // own states (SANISAND 0/1, HS 0/1, UW DruckerPrager 0/1/2 -- its 1 is still elastic,
   // DruckerPrager.cpp:158-160, :446). No mapping here (orchestrator ruling at the freeze).
-  bool any = false, sanisand = false;
+  bool any = false, sanisand = false, hs = false;
   for (NDMaterial *m : mats)
     if (m != 0 && m->getTag() == matTag) {
       any = true;
       if (isSanisandTag(m->getClassTag())) sanisand = true;
+      if (m->getClassTag() == ND_TAG_LadrunoHS) hs = true;
     }
   if (!any) {
     err = "no particle material has tag " + std::to_string(matTag);
+    return -1;
+  }
+  // AMEND A2 (232k): SANISAND and HS know stages 0 and 1 only (SANISAND's Elastic2Plastic runs
+  // on 1 alone); DruckerPrager keeps the pass-through (0/1/2)
+  if ((sanisand || hs) && stage != 0 && stage != 1) {
+    err = std::string(sanisand ? "LadrunoSANISAND" : "LadrunoHS") + " has stages 0 and 1 only"
+          " (got " + std::to_string(stage) + ")";
     return -1;
   }
   // SANISAND's flag is class-wide: the walk reaches every SANISAND particle, of any tag,
@@ -191,6 +199,7 @@ LadrunoMPMPattern::stageWalk(int matTag, int stage, std::string &err)
     else ladruno_hypo::pushStressPlaneStrain(&Pt.R[nn * p], sh, &Pt.sig[nv * p]);
   }
   if (sanisand) sanisandStage = stage;
+  if (hs) hsWalked[matTag] = stage;                 // AMEND A1
   return answered;
 }
 
@@ -204,12 +213,49 @@ LadrunoMPMPattern::stageGuard(void) const
   if (!any) return "";
   const int f = LadrunoSANISAND::ladrunoStageFlag();
   if (f == sanisandStage) return "";
-  return "LadrunoSANISAND's stage flag (class-wide, every SANISAND tag in the process) is " +
-         std::to_string(f) + " but the particles were last staged " + std::to_string(sanisandStage) +
-         ": a route that did not reach them changed it (`updateMaterialStage` answered by an FE"
-         " element first, mode F's `updateMaterialStage` (W12), or another SANISAND tag's flip)."
-         " Run `mpm stage <tag> " + std::to_string(f) + "` so every particle gets the switch,"
-         " Elastic2Plastic included (WP-232k D10)";
+  const std::string head =
+      "LadrunoSANISAND's stage flag (class-wide, every SANISAND tag in the process) is " +
+      std::to_string(f) + " but the particles are at stage " + std::to_string(sanisandStage) +
+      ": a route that did not reach them changed it (`updateMaterialStage` answered by an FE"
+      " element first, mode F's `updateMaterialStage` (W12), another SANISAND tag's flip), or"
+      " `mpm reset` returned the particles to stage 0 under a flipped flag (WP-232k D10). ";
+  // AMEND A3: never advise a flip the particles did not take; re-stage from their own stage
+  if (sanisandStage == 0)
+    return head + "Run `mpm stage <tag> 0` (the particles' stage), then stage them again from 0"
+                  " as the run requires.";
+  return head + "Put the flag back by the route that moved it, or `mpm reset` and re-stage the"
+                " particles from 0.";
+}
+
+// AMEND A4
+bool
+LadrunoMPMPattern::anySoil(void) const
+{
+  for (NDMaterial *m : mats)
+    if (m != 0 && isSoilTag(m->getClassTag())) return true;
+  return false;
+}
+
+// AMEND A5 (232k): the WP-232i B10 rule at time t, for a box that may move
+std::string
+LadrunoMPMPattern::gridvelGhostConflict(double t) const
+{
+  if (!ladruno_mpm::isBSpline(eng.par.basis)) return "";
+  const ladruno_mpm::Grid &G = eng.grid;
+  for (const GridVel &gv : gridVels) {
+    if (!gv.presentAt(t)) continue;
+    double lo[3], hi[3];
+    gv.boxAt(t, lo, hi);
+    for (int d = 0; d < G.ndm; d++) {
+      const double a = G.x0[d], b = G.x0[d] + G.n[d] * G.h, tol = 1e-9 * G.h;
+      if ((eng.fc.fixMask[2 * d] != 0u && lo[d] < a - tol) ||
+          (eng.fc.fixMask[2 * d + 1] != 0u && hi[d] > b + tol))
+        return "gridvel '" + gv.name + "' reaches the ghost layer behind a `fix` face at t = " +
+               std::to_string(t) + ": refused on a B-spline grid (those ghosts are images;"
+               " WP-232i B10, checked where a moving box is)";
+    }
+  }
+  return "";
 }
 
 // D15
@@ -339,6 +385,10 @@ LadrunoMPMPattern::buildPrescribed(double t, double h, std::string &err)
 {
   eng.presc.clear();
   if (gridVels.empty()) return 0;
+  {
+    const std::string why = gridvelGhostConflict(t);   // AMEND A5
+    if (!why.empty()) { err = why; return -1; }
+  }
   const ladruno_mpm::Grid &G = eng.grid;
   const int nd = G.ndm;
   const double eps = 1e-9;

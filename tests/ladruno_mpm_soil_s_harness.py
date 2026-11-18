@@ -80,7 +80,8 @@ def s1_commands(rec, leg, mode, dt, basis=None):
     mat = L["material"]
     basis = basis or s1_basis(mat, mode)
     cmds = [("wipe", []), ("model", ["basic", "-ndm", nd, "-ndf", nd]),
-            ("nDMaterial", deck_args(rec["decks"][mat]["cmd"])),
+            # B3 option legs: a leg may carry its own deck (`cmd`, the full nDMaterial line)
+            ("nDMaterial", deck_args(L.get("cmd") or rec["decks"][mat]["cmd"])),
             ("mpm", ["grid", HOST, "-origin", *([-1.0] * nd), "-h", 0.5, "-cells", *([6] * nd),
                      "-basis", basis]),
             ("mpm", ["mode", "quasiStatic" if mode == "A" else "explicit"]),

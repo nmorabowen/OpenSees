@@ -780,6 +780,10 @@ LadrunoMPMPattern::prepareStep(double hStep, std::string &err)
   }
 
   MPM_PHASE_NEXT(ph, "mpm.a.sp");            // WP-232g: the grid conditions' spec
+  {
+    const std::string why = gridvelGhostConflict(t);   // AMEND A5: a moving box, checked each step
+    if (!why.empty()) { err = why; return -1; }
+  }
   // ---- the grid conditions, in lattice terms ------------------------------------------
   std::map<std::pair<long, int>, std::pair<double, bool>> spec;   // (ext,dof) -> (valueR, constant)
   std::vector<std::vector<long>> gvExt(gridVels.size());
@@ -1523,6 +1527,13 @@ int
 LadrunoMPMPattern::setPackVersion(int v)
 {
   if (v != 2 && v != 3 && v != MPM_PACK_VERSION) return -1;
+  // AMEND A4 (232k): packs 2 and 3 carry no stage record; with soil particles a restore would
+  // run on a wrong class-wide SANISAND flag
+  if (v < 4 && anySoil()) {
+    opserr << "WARNING mpm debug packVersion " << v << " -- refused with soil particles: the"
+              " restart pack needs version 4 (the stage record)\n";
+    return -1;
+  }
   packVersionOut = (v == MPM_PACK_VERSION) ? 0 : v;
   return 0;
 }

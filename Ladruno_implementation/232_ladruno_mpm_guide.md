@@ -416,7 +416,7 @@ Interface `tests/mpm_soil_interface.md` (D1–D23); results [[232k_mpm_soil_mode
 
 | Material | Admitted | Options |
 |---|---|---|
-| `LadrunoSANISAND` | 3D and PlaneStrain. Mode A on every basis; **mode F on `bspline2` / `bspline3` only** (K0, below) | IntScheme 1, 2, 129 (others refused); `-implex`; floors `-Pmin`, `-Presidual`, `-pRe` at their defaults unless you choose (ADR-93: the owner's) |
+| `LadrunoSANISAND` | 3D and PlaneStrain. Mode A on every basis (quasi-static runs only measured); **mode F on `bspline2` / `bspline3` only** (K0, below) | IntScheme 1, 2, 129 (others refused); `-implex`; floors `-Pmin`, `-Presidual`, `-pRe` at their defaults unless you choose (ADR-93: the owner's) |
 | `LadrunoHS` / `LadrunoHSSmall` | 3D and PlaneStrain, both modes, every basis | `-smallStrain`, `-sigmat`, `-implex`; **`-sig0` / `-sig03` refused** |
 
 - **Serial.** Neither model is on the thread allowlist; with `ladrunoThreads N` mode A prints the
@@ -435,9 +435,15 @@ Interface `tests/mpm_soil_interface.md` (D1–D23); results [[232k_mpm_soil_mode
   first, another tag's flip), `mpm analyze` is refused until `mpm stage` walks them. HS keeps its
   stage per tag and flips every instance lazily with the full transition.
 - **Mode F needs a B-spline basis for SANISAND.** On `gimp` / `linear` the explicit cell-crossing
-  noise excites the two-rows-per-cell stress pattern of ppc 2, and SANISAND's plasticity locks it:
+  noise excites the two-rows-per-cell stress pattern of ppc 2, and SANISAND locks it in (alpha
+  moved in 70 of 160 particles; plasticity is not separated from a p-dependent elastic instability):
   the K0 meter gave A = 7.95 against DruckerPrager (bspline2: 0.66). `mpm analyze` refuses it,
-  naming K0. Mode A is admitted on every basis (A 0.99 gimp, 1.06 bspline2).
+  naming K0. Mode A is admitted on every basis (A 0.99 gimp, 1.06 bspline2), on quasi-static runs
+  only. The admitted K0 passes engaged no SANISAND plasticity (alpha never moved); the plastic
+  meter is K0p.
+- **Add all bodies before `mpm stage`.** A SANISAND or HS particle added after its tag was staged to
+  a non-zero stage would miss the walk, and is refused. `mpm stage` takes 0 or 1 for SANISAND and HS
+  (DruckerPrager 0/1/2). Restart packs older than 4 are refused with soil particles.
 - **Symmetric systems** (ProfileSPD, BandSPD, SparseSYM, PARDISO/MUMPS symmetric) are refused in
   mode A with a SANISAND or HS particle unless `-implex` (its tangent is the frozen isotropic
   elastic one).
@@ -452,7 +458,11 @@ Interface `tests/mpm_soil_interface.md` (D1–D23); results [[232k_mpm_soil_mode
 - **Grid motion for drivers:** `mpm gridvel <name> box <lo> <hi> affine <L> [ref <x>]`, changed
   per step with `mpm gridvel <name> setAffine <L>`; `mpm gridvel … profile <t0> <Tr> <t1>
   translate <axis>` (a trapezoidal velocity, both bounds moving). Mode F now applies `gridvel`
-  and refuses `mpm pforce` (#1109: both were silently ignored before).
+  and refuses `mpm pforce` (#1109: both were silently ignored before); `mpm condForce` is mode
+  A's and is refused in mode F. On a B-spline grid a moving box is checked each step: the step at
+  which it reaches the ghost layer behind a `fix` face is refused (B10).
+- **Local damping is not Galilean invariant** (`mpm damping local` acts on the absolute grid
+  velocity): turn it off for a rigid translation and back on to settle.
 
 ## Verification
 

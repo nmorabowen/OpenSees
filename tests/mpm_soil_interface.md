@@ -1,6 +1,8 @@
-# WP-232k — soil particles: the interface (232k-C, round 1, the freeze candidate)
+# WP-232k — soil particles: the interface (232k-C)
 
-Status: **proposed** by 232k-C, 2026-11-17; binding once the orchestrator says "frozen". Authority:
+Status: **frozen** (2026-11-17, `wp-briefs.md` "232k", the freeze block; amended by the rulings
+recorded there: D19a, D21a, the D23 counting, D14's γ = 10, the AMEND round). Proposed by 232k-C,
+2026-11-17. Authority:
 the ADR (`Ladruno_implementation/232_ladruno_mpm_general_driver_adr.md`, §4–§6, §8, §9, amendment
 "232k kickoff") and `wp-briefs.md` "232k" (K1–K9, K0, S1–S10). Anchors on `fc82c1a41`; lines drift.
 232k-V's reference scripts were not read. Decisions are numbered (D*n*) for review.
@@ -125,7 +127,8 @@ clears (`:871`). So HS has no reachable W17 path at particles.
 - **D13 naming the first refuser:** the particle commit is serial in both modes. `Mats::commitState(p)`
   and `LadrunoMPMPoint::commitState` record the first p whose commit raised
   `ladrunoPendingCommitRefusals()`. The message adds "particle id, nDMaterial class and tag".
-- **D14 HS (amend S5's HS leg):** `|Δε|² > 25` from one affine simple-shear step γ = 6
+- **D14 HS (amend S5's HS leg):** `|Δε|² > 25` from one affine simple-shear step γ = 10 (ruled;
+  γ = 6 gives a de-rotated |Δε|² of 20.7 < 25 and never trips it)
   (Hughes–Winget leaves γ unbounded, `LadrunoHypoKernel.h:276-330`), with `mpm cut 2 0` in mode A.
   The gate: the step fails loudly, the message names the material and tag, the particles keep
   the last accepted step, and there is **no abort**: a later `mpm analyze` is admitted.

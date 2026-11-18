@@ -247,3 +247,87 @@ def test_s7_k0_sanisand_admitted_where_decided():
     assert int(ops.mpm("analyze", 1, 0.1)) == 0
     _column(ops, HS, 4, kind="LadrunoHS")
     assert int(ops.mpm("analyze", 1, 1.0e-4)) == 0
+
+
+# --------------------------------------------------------------------------- #
+#  The AMEND round (critic at 926d27153): A1-A5                                 #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("mat", ["san", "hs"])
+def test_a1_no_particles_after_a_nonzero_walk(mat):
+    """A1: a particle added after its tag was walked to a non-zero stage would miss the walk;
+    it is refused ('add all bodies before `mpm stage`'). Stage 0 does not lock it."""
+    ops = _ops()
+    if mat == "san":
+        _column(ops, SANISAND, 3)
+        tag = 3
+    else:
+        _column(ops, HS, 4, kind="LadrunoHS")
+        tag = 4
+    ops.mpm("stage", tag, 0)
+    ops.mpm("body", 2, "box", 0.0, 1.0, 1.0, 1.5, "-ppc", 2, "-mat", tag, "-rho", 2.0)
+    ops.mpm("stage", tag, 1)
+    with pytest.raises(Exception):
+        ops.mpm("body", 3, "box", 0.0, 1.5, 1.0, 2.0, "-ppc", 2, "-mat", tag, "-rho", 2.0)
+
+
+def test_a2_stage_values():
+    """A2: SANISAND and HS know stages 0 and 1 only; DruckerPrager keeps 0/1/2."""
+    ops = _ops()
+    _column(ops, SANISAND, 3)
+    with pytest.raises(Exception):
+        ops.mpm("stage", 3, 2)
+    _column(ops, HS, 4, kind="LadrunoHS")
+    with pytest.raises(Exception):
+        ops.mpm("stage", 4, 2)
+    _grid(ops)
+    ops.nDMaterial("DruckerPrager", 2, 1.5e5, 15517.24, 0.2, 0.21, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                   0.0, 0.0)
+    ops.mpm("body", 1, "box", 0.0, 0.0, 1.0, 1.0, "-ppc", 2, "-mat", 2, "-rho", 2.0)
+    assert int(ops.mpm("stage", 2, 2)) == 16
+
+
+def test_a3_guard_after_reset_says_stage_0(capfd):
+    """A3: after `mpm reset` the particles are at stage 0 under a flipped flag; the guard asks for
+    `mpm stage <tag> 0` and never for a flip the particles did not take."""
+    ops = _ops()
+    _column(ops, SANISAND, 3)
+    ops.mpm("stage", 3, 1)
+    ops.mpm("analyze", 2, 1.0e-4)
+    ops.mpm("reset")
+    capfd.readouterr()
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 1, 1.0e-4)
+    cap = capfd.readouterr()
+    msg = cap.err + cap.out
+    assert "mpm stage <tag> 0" in msg and "mpm stage <tag> 1" not in msg, msg[-1500:]
+    ops.mpm("stage", 3, 0)
+    assert int(ops.mpm("analyze", 1, 1.0e-4)) == 0
+
+
+def test_a4_old_pack_refused_with_soil():
+    """A4: restart packs 2 and 3 carry no stage record: refused with soil particles."""
+    ops = _ops()
+    _column(ops, HS, 4, mode="quasiStatic", kind="LadrunoHS")
+    with pytest.raises(Exception):
+        ops.mpm("debug", "packVersion", 3)
+    with pytest.raises(Exception):
+        ops.mpm("debug", "packVersion", 2)
+
+
+def test_a5_moving_box_into_fix_ghost_refused():
+    """A5: on a B-spline grid, a `translate` box that is legal at the start but moves into the
+    ghost layer behind `fix ymin` is refused at the step it gets there (B10 where the box IS)."""
+    ops = _ops()
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 100.0, 0.3)
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 0.5, "-cells", 4, 6, "-basis", "bspline2")
+    ops.mpm("body", 1, "box", 0.5, 1.0, 1.5, 2.0, "-ppc", 2, "-mat", 1, "-rho", 1.0)
+    ops.mpm("fix", "ymin", "y")
+    # the box's bottom starts at y = 0.1 (inside the grid) and comes down at 1 m/s
+    ops.mpm("gridvel", "g", "box", 0.0, 0.1, 2.0, 0.6, "v", 0.0, -1.0, "profile", 0.0, 0.0, 10.0,
+            "translate", "y")
+    ops.mpm("analyze", 5, 0.01)            # bottom at 0.05: still inside
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 10, 0.01)       # crosses y = 0 at t = 0.1
+    assert float(ops.mpm("info", "time")) <= 0.115     # refused at the step it gets there

@@ -64,6 +64,9 @@ The fix is a bonded elastic block under the column (excluded from the meter):
 
 There were no post-flip floor events in mode A. SANISAND's drift was Δe ≤ 1.1e-4 and ‖Δα‖ = 0.
 
+Mode-F records (esmeralda) are committed as `k0_meter_F_<basis>[_capped]_<leg>.json`; the
+diagnosis probes as `k0_diagnosis/k0_F_gimp_capped_sanisand_<probe>.json`.
+
 **Mode F, uncapped** (`b94c9d75d`, esmeralda). D23 was triggered: every translated soil leg had
 post-flip floor events and no twin had any. These records are reported only:
 - SANISAND: 0.1513 / 0.0148 (gimp), 0.0205 / 0.0055 (bspline2);
@@ -91,8 +94,10 @@ diagnostic only, on harness `dfb117de5`, and reproduce 0.18557 exactly.
   | Y 5.625 / 5.875 | 66 / 66 | 27 / 104 |
   | Y 7.125 / 7.375 | 47 / 47 | 2 / 96 |
 
-- This is GIMP's grid-invisible, alternating two-row stress mode at ppc 2. SANISAND's
-  pressure-dependent stiffness and its plastic flow lock that mode in.
+- This is GIMP's grid-invisible, alternating two-row stress mode at ppc 2, and SANISAND locks
+  it in. In that record alpha moved in 70 of 160 particles (max 0.58) and e by up to −0.0041, so
+  plastic flow was engaged; whether the plasticity or a p-dependent elastic instability came first
+  is not separated (critic C2).
 - Probes:
   - Halving dt gives 0.112, so it is not a time-step effect.
   - Holding SANISAND in stage 0 gives 0.0335, the elastic value, so the plastic stage is the
@@ -102,7 +107,21 @@ diagnostic only, on harness `dfb117de5`, and reproduce 0.18557 exactly.
   stage walk's array refresh runs once, before the translation.
 
 **Owner decision.** SANISAND is admitted in mode A on every basis, and in mode F on B-spline bases
-only. HS is admitted everywhere.
+only. HS is admitted everywhere. "Mode A on every basis" rests on quasi-static runs only.
+
+**What the admitted passes measured (critic C1, verified).** In both mode-A records and in the
+passing capped mode-F bspline2 record, SANISAND's back-stress never moved across the translation
+(max |Δα| = 0 over 160 particles): the K0 stage-0 state sits on the cone axis and an oedometric
+perturbation keeps it there. Those passes therefore measure SANISAND's pressure-dependent
+hypoelastic response under cell crossing, not its plasticity. **K0p** (pre-registered in the AMEND
+round) adds a stage-1 pre-shear (ν 0.05 and gravity +30 %) so that α moves before the
+translation; its validity check (≥ 50 % of the particles moved α) runs before any meter. Windows
+probe of the pre-shear on `7c932089c`: α moved in 160 of 160 particles in mode A gimp (max 0.085)
+and in mode F bspline2 (max 0.159). The K0p meters wait for 232k-V's FE reference and run on
+esmeralda, with K0 capped mode F on bspline3.
+
+Mode-A A_HS = m(HS) / m(DP): 0.94 (gimp), 6.71 (bspline2), reported (HS's bspline2 twin is
+0.0218 itself).
 
 **Why the bspline2 twins carry a larger meter than the translated legs.** Mode A elastic on
 bspline2 gives 0.0057 for the twin and 0.0023 translated. The twin's error sits at the soil–block
@@ -121,7 +140,7 @@ Builds `7b00fcf13` / `7c932089c`, Windows MSVC, unless noted.
 
 | Row | Result | Verdict |
 |---|---|---|
-| S1 one-point identity (`s1_mpm.json`) | HS: 12 legs × 2 modes, max rel 1.2e-11. SANISAND: 22 of 24 pass (mode F on bspline2). SANISAND 3D mode A misses at step 12, the second plastic step, one step before the FE's own Gauss-point spread passes 1e-8: triax 3.2e-6, oedo 1.06e-8, with the FE's substep counts (5, 4). | 22 pass; **2 recorded misses** (strict xfail; ruling pending) |
+| S1 one-point identity (`s1_mpm.json`) | HS: 12 legs × 2 modes, max rel 1.2e-11. SANISAND: 22 of 24 pass (mode F on bspline2). SANISAND 3D mode A misses at step 12, the second plastic step, one step before the FE's own Gauss-point spread passes 1e-8: triax 3.2e-6, oedo 1.06e-8, with the FE's substep counts (5, 4). Option legs (IntScheme 2, 129, `-implex`; HS `-implex`, `-smallStrain`, `-sigmat`): wait for 232k-V's references (`test_ladruno_mpm_soil_options.py`). | 22 pass; **2 pre-registered misses** (strict xfail, ruling at 926d27153) |
 | S2 column + surcharge (`s2_mpm_hs_diagnosis.json`, `s2_mpm_sanisand.json`) | End of stage 0 and after the flip pass: HS 0.0128 / 0.0069, SANISAND 0.0127 / 0.0069. After the surcharge (registered top-row body force), max syy is HS 0.274 / 0.576 and SANISAND 0.265 / 0.776, at the top cell. | **recorded miss** (#1110; strict xfail) |
 | S3 footing, HS (`s3_mpm_hs_r1_fbar.json`) | r1 fbar: q / q_FE 0.977 / 0.973 / 0.960 at s/B 0.01 / 0.02 / 0.05; reached the target; 0 failed attempts; 3.1 s. r1 off and r2 on reached on esmeralda; r3 and r2-off are running. | r1 pass; r2/r3 pending on esmeralda |
 | S3 footing, SANISAND | Waits for the FE deck (probe v0 running; v1–v4 failed to reach). | pending |

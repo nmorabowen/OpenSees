@@ -101,10 +101,20 @@ P_FLOOR = {"sanisand": 1e-3 * 101.0, "hs": 1e-3 * 100.0}
 
 TIMELINE = {
     "A": dict(gravity=(10, 0.1), hold1=(2, 0.1), translate=(40, 0.0625), hold2=(2, 0.1),
-              v=1.0, Tr=0.0, Tg=1.0),
+              v=1.0, Tr=0.0, Tg=1.0, preshear=(10, 0.1), preshear_settle=(0, 0.1)),
     "F": dict(gravity=(3000, 5e-4), hold1=(500, 5e-4), translate=(54000, 5e-4), hold2=(1000, 5e-4),
-              v=0.1, Tr=2.0, Tg=1.0),
+              v=0.1, Tr=2.0, Tg=1.0, preshear=(2000, 5e-4), preshear_settle=(1000, 5e-4)),
 }
+
+# K0p (gate pre-registered 2026-11-18, the AMEND round): after the flip and the hold, a stage-1
+# pre-shear -- SANISAND poissonRatio 0.05 through the parameter route, DruckerPrager K and G for
+# nu = 0.05 at the same E, and gravity +30 % (mode A: 10 steps; mode F: a 1 s ramp and a 0.5 s
+# settle) -- then K0's hold, translation and settle. Valid only if >= 50 % of the SANISAND
+# particles moved alpha in the pre-shear (checked before the meter).
+K0P_NU = 0.05
+K0P_GFAC = 1.3
+K0P_VALID_FRACTION = 0.5
+REF_JSON_K0P = REPO / "tests" / "data" / "mpm" / "soil" / "k0p_column.json"
 
 
 # --------------------------------------------------------------------------- #
@@ -185,7 +195,8 @@ def _as_list(v):
     return [float(v)]
 
 
-def build(ops, leg, mode, basis, translate=True, floor_top=None, floor=None, capped=False):
+def build(ops, leg, mode, basis, translate=True, floor_top=None, floor=None, capped=False,
+          k0p=False):
     tag, s0, _ = LEGS[leg]
     tl = TIMELINE[mode]
     mats = reference_materials()
@@ -211,6 +222,8 @@ def build(ops, leg, mode, basis, translate=True, floor_top=None, floor=None, cap
     ops.mpm("fix", "xmin", "x")
     ops.mpm("fix", "xmax", "x")
     t0 = sum(n * dt for n, dt in (tl["gravity"], tl["hold1"]))
+    if k0p:                                      # the pre-shear, its settle and the second hold
+        t0 += sum(n * dt for n, dt in (tl["preshear"], tl["preshear_settle"], tl["hold1"]))
     n, dt = tl["translate"]
     t1 = t0 + n * dt
     v = -tl["v"] if translate else 0.0
@@ -234,7 +247,9 @@ def build(ops, leg, mode, basis, translate=True, floor_top=None, floor=None, cap
         ops.constraints("Transformation")
         ops.numberer("RCM")
         ops.system("UmfPack")
-        ops.test("NormDispIncr", 1.0e-10, 25)
+        # K0p: SANISAND's stage-1 residual stagnates near 6e-10 (the pre-shear's first plastic
+        # steps, cut-independent): 1e-8 there; K0 keeps the frozen 1e-10
+        ops.test("NormDispIncr", 1.0e-8 if k0p else 1.0e-10, 25)
         ops.algorithm("Newton")
         ops.integrator("LoadControl", tl["gravity"][1])
         ops.analysis("Static")
@@ -261,14 +276,14 @@ def _floor_hits(sig, szz, pfloor):
 
 
 def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, history=False,
-        floor=None, capped=False, probe=None):
+        floor=None, capped=False, probe=None, k0p=False):
     """One leg; returns the record (meter, crossings, inertia, floor hits, state)."""
     tag, _, s1 = LEGS[leg]
     tl = TIMELINE[mode]
     wall0 = time.time()
     floor = floor or ("float" if mode == "F" else FLOOR)
     origin = GRID[floor][0]
-    build(ops, leg, mode, basis, translate, floor_top, floor, capped)
+    build(ops, leg, mode, basis, translate, floor_top, floor, capped, k0p)
     x0 = _as_list(ops.mpm("particleData", "x"))
     body = _as_list(ops.mpm("particleData", "body"))
     N = sum(1 for b in body if b == 1.0)          # the soil (body 1, seeded first)
@@ -323,13 +338,16 @@ def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, histo
     M_tot = sum(m_all)
     M_blk = sum(mm for mm, b in zip(m_all, body) if b == 2.0)
 
+    gfac = [1.0]                                 # K0p: the gravity factor (1 -> 1.3)
+
     def set_body_force(acc):
         if floor != "float":
             return
-        up = G * M_tot / M_blk if M_blk > 0 else 0.0
+        g = G * gfac[0]
+        up = g * M_tot / M_blk if M_blk > 0 else 0.0
         bf = []
         for b in body:
-            bf += [0.0, -G + acc + (up if b == 2.0 else 0.0)]
+            bf += [0.0, -g + acc + (up if b == 2.0 else 0.0)]
         ops.mpm("particleBodyForce", *bf)
 
     v_tr = -tl["v"] if translate else 0.0
@@ -370,12 +388,25 @@ def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, histo
         ops.mpm("stage", tag, s1)
     advance(*tl["hold1"], "hold1")
     state_before = _state(ops, leg)
+    k0p_rec = None
+    if k0p:
+        k0p_rec = _preshear(ops, leg, tag, mode, tl, gfac, set_body_force, adv, advance, N)
+        state_before = _state(ops, leg)
     advance(*tl["translate"], "translate")
     advance(*tl["hold2"], "hold2")
     sig = _as_list(ops.mpm("particleData", "sig"))
     szz = _as_list(ops.mpm("particleData", "sigZZ"))
     x = _as_list(ops.mpm("particleData", "x"))
-    rows, ref_build = reference_rows(leg, REF_JSON_CAPPED if capped else REF_JSON)
+    ref_path = REF_JSON_K0P if k0p else (REF_JSON_CAPPED if capped else REF_JSON)
+    if k0p and (not ref_path.exists() or (k0p_rec and not k0p_rec["valid"])):
+        # no meter before the FE reference exists, nor on a leg the validity check rejects
+        return dict(leg=leg, mode=mode, basis=basis, translate=translate, particles=N,
+                    floor=floor, capped=capped, k0p=k0p_rec, meter=None,
+                    reason=("K0p not valid" if (k0p_rec and not k0p_rec["valid"])
+                            else "the K0p FE reference does not exist yet"),
+                    floor_hits=floor_hits, floor_hits_stage0=floor_stage0[0],
+                    wall_s=time.time() - wall0)
+    rows, ref_build = reference_rows(leg, ref_path)
     sq = 0.0
     for k in range(N):
         r = _ref_at(rows, Y[k])
@@ -385,7 +416,7 @@ def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, histo
     meter = math.sqrt(sq / N) / RHO_G_L0
     drop = sum(x[2 * k + 1] - Y[k] for k in range(N)) / N
     rec = dict(leg=leg, mode=mode, basis=basis, translate=translate, particles=N, floor=floor,
-               capped=capped,
+               capped=capped, k0p=k0p_rec,
                meter=meter, mean_displacement_y=drop,
                crossings=dict(min=min(crossings), max=max(crossings),
                               mean=sum(crossings) / N, per_particle=crossings),
@@ -402,6 +433,54 @@ def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, histo
     return rec
 
 
+def _dp_E(tokens):
+    K, Gm = float(tokens[0]), float(tokens[1])
+    return 9.0 * K * Gm / (3.0 * K + Gm)
+
+
+def _preshear(ops, leg, tag, mode, tl, gfac, set_body_force, adv, advance, N):
+    """K0p's stage-1 pre-shear; returns the validity record (SANISAND: the share of particles
+    whose alpha moved, against the post-flip, post-hold state)."""
+    a0 = _as_list(ops.mpm("particleResponse", "state")) if leg == "sanisand" else None
+    if leg == "sanisand":
+        ops.parameter(9101, "loadPattern", HOST, "poissonRatio", tag)
+        ops.updateParameter(9101, K0P_NU)
+    elif leg in ("dp", "dp_mildcone"):
+        kind, toks = reference_materials()[tag]
+        E = _dp_E(toks)
+        for ptag, name, val in ((9102, "bulkModulus", E / (3.0 * (1.0 - 2.0 * K0P_NU))),
+                                (9103, "shearModulus", E / (2.0 * (1.0 + K0P_NU)))):
+            ops.parameter(ptag, "loadPattern", HOST, name)
+            ops.updateParameter(ptag, val)
+    n, dt = tl["preshear"]
+    if mode == "A":
+        for i in range(1, n + 1):
+            gfac[0] = 1.0 + (K0P_GFAC - 1.0) * i / n
+            ops.mpm("gravity", 0.0, -G * gfac[0])
+            adv(1, dt, "preshear")
+    else:
+        k = 20
+        for i in range(1, k + 1):
+            gfac[0] = 1.0 + (K0P_GFAC - 1.0) * i / k
+            set_body_force(0.0)
+            adv(n // k, dt, "preshear")
+        ns, dts = tl["preshear_settle"]
+        adv(ns, dts, "preshear")
+    advance(*tl["hold1"], "hold1b")
+    out = {"nu": K0P_NU, "gravity_factor": K0P_GFAC}
+    if leg == "sanisand":
+        a1 = _as_list(ops.mpm("particleResponse", "state"))
+        moved = sum(1 for k in range(N)
+                    if max(abs(a1[26 * k + i] - a0[26 * k + i]) for i in range(6, 12)) > 1e-12)
+        out.update(alpha_moved=moved, particles=N, alpha_moved_fraction=moved / N,
+                   alpha_dmax=max(abs(a1[26 * k + i] - a0[26 * k + i])
+                                  for k in range(N) for i in range(6, 12)),
+                   valid=moved / N >= K0P_VALID_FRACTION)
+    else:
+        out["valid"] = True
+    return out
+
+
 def state_drift(rt, rz):
     """SANISAND: per-particle |e_t - e_twin| and |alpha_t - alpha_twin| (state: alpha at 6-11,
     e at 24, 26 values per particle), max and RMS."""
@@ -416,22 +495,24 @@ def state_drift(rt, rz):
                 dalpha_max=max(da), dalpha_rms=math.sqrt(sum(v * v for v in da) / n))
 
 
-def k0(ops, mode, basis, legs=None, capped=False):
+def k0(ops, mode, basis, legs=None, capped=False, k0p=False):
     legs = legs or list(LEGS)
-    out = dict(case="K0", mode=mode, basis=basis, build=str(ops.ladrunoBuild()),
+    out = dict(case="K0p" if k0p else "K0", mode=mode, basis=basis, build=str(ops.ladrunoBuild()),
                rho_g_l0=RHO_G_L0, capped=capped, legs={})
     for leg in legs:
-        rt = run(ops, leg, mode, basis, translate=True, capped=capped)
-        rz = run(ops, leg, mode, basis, translate=False, capped=capped)
+        rt = run(ops, leg, mode, basis, translate=True, capped=capped, k0p=k0p)
+        rz = run(ops, leg, mode, basis, translate=False, capped=capped, k0p=k0p)
         out["legs"][leg] = dict(translated=rt, twin=rz, state_drift=state_drift(rt, rz))
     L = out["legs"]
-    if "sanisand" in L and "dp" in L:
+    if "sanisand" in L and "dp" in L and L["sanisand"]["translated"]["meter"] is not None \
+            and L["dp"]["translated"]["meter"] is not None:
         ms, md = L["sanisand"]["translated"]["meter"], L["dp"]["translated"]["meter"]
         out["A_sanisand"] = ms / md if md > 0 else float("inf")
         out["gate"] = dict(rule="A <= 2 or m(SANISAND) <= 0.01",
                            passed=bool(out["A_sanisand"] <= 2.0 or ms <= 0.01))
     for leg in ("elastic", "hs", "dp_mildcone"):
-        if leg in L and "dp" in L:
+        if leg in L and "dp" in L and L[leg]["translated"]["meter"] is not None \
+                and L["dp"]["translated"]["meter"] is not None:
             md = L["dp"]["translated"]["meter"]
             out[f"A_{leg}"] = L[leg]["translated"]["meter"] / md if md > 0 else float("inf")
     return out
@@ -441,23 +522,27 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("what", choices=["k0"])
     ap.add_argument("--mode", choices=["A", "F"], required=True)
-    ap.add_argument("--basis", choices=["gimp", "bspline2"], required=True)
+    ap.add_argument("--basis", choices=["gimp", "bspline2", "bspline3"], required=True)
     ap.add_argument("--mat", action="append", choices=list(LEGS))
     ap.add_argument("--out", default=None)
     ap.add_argument("--capped", action="store_true", help="D23: the bonded 20 kPa elastic cap")
+    ap.add_argument("--k0p", action="store_true", help="K0p: the plastic pre-shear (implies --capped)")
     a = ap.parse_args(argv)
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from _testbed import ops   # noqa: E402
-    res = k0(ops, a.mode, a.basis, a.mat, capped=a.capped)
-    suffix = ("_capped" if a.capped else "") + ("" if not a.mat else "_" + "_".join(a.mat))
+    capped = a.capped or a.k0p
+    res = k0(ops, a.mode, a.basis, a.mat, capped=capped, k0p=a.k0p)
+    suffix = ("_k0p" if a.k0p else ("_capped" if capped else "")) + \
+        ("" if not a.mat else "_" + "_".join(a.mat))
     path = Path(a.out) if a.out else OUT_DIR / f"k0_meter_{a.mode}_{a.basis}{suffix}.json"
     path.write_text(json.dumps(res, indent=1), encoding="utf-8")
     print(json.dumps({k: v for k, v in res.items() if k != "legs"}, indent=1))
     for leg, r in res["legs"].items():
-        print(leg, "meter", r["translated"]["meter"], "twin", r["twin"]["meter"],
-              "crossings", {k: v for k, v in r["translated"]["crossings"].items() if k != "per_particle"},
-              "drop", r["translated"]["mean_displacement_y"], "floor_hits",
-              r["translated"]["floor_hits"])
+        t = r["translated"]
+        print(leg, "meter", t["meter"], "twin", r["twin"]["meter"],
+              "crossings", {k: v for k, v in t.get("crossings", {}).items() if k != "per_particle"},
+              "drop", t.get("mean_displacement_y"), "floor_hits", t["floor_hits"],
+              "k0p", t.get("k0p"), t.get("reason", ""))
     return 0
 
 
