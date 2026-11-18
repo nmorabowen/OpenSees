@@ -286,6 +286,13 @@ Gotchas:
   127 silently. Use the sequential layer:
   `LD_PRELOAD=/lib/x86_64-linux-gnu/libmkl_core.so:/lib/x86_64-linux-gnu/libmkl_sequential.so:/lib/x86_64-linux-gnu/libmkl_gf_lp64.so`
   (WP-232j; plain UmfPack decks import fine without it).
+- **Never overwrite a loaded `opensees.so` in place.** `cp -f OpenSeesPy.so
+  tests/opensees.so` rewrites the same inode. Every running Python job that
+  mapped it then dies without a traceback, and its log just stops. Install a new
+  binary by copying it to a temporary name and then `mv` (a new inode), and only
+  when `cmp` says it changed. Or give each campaign its own directory for the
+  `.so`. WP-232k, 2026-11-18: two HS footing runs died when a later job sourced
+  the old copy-in-place setup.
 - **Build on the head node.** The compute nodes have no `cmake` (the generated
   Makefiles call it) and no internet (`git clone` and `conan install` fail on
   DNS). A cold build of `OpenSees` + `OpenSeesPy` took ~3 min at `-j22` here.
