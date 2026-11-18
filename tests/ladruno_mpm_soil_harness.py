@@ -261,7 +261,7 @@ def _floor_hits(sig, szz, pfloor):
 
 
 def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, history=False,
-        floor=None, capped=False):
+        floor=None, capped=False, probe=None):
     """One leg; returns the record (meter, crossings, inertia, floor hits, state)."""
     tag, _, s1 = LEGS[leg]
     tl = TIMELINE[mode]
@@ -286,6 +286,8 @@ def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, histo
 
     def sample(phase):
         nonlocal floor_hits, mom_prev, t_prev, inertia, inertia_max
+        if probe is not None:                    # diagnosis hook: probe(ops, phase)
+            probe(ops, phase)
         x = _as_list(ops.mpm("particleData", "x"))
         for k in range(N):
             c = math.floor((x[2 * k + 1] - origin[1]) / H)
