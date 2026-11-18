@@ -960,6 +960,65 @@ their lines, in the cases file.
 K1–K4 and the meter harness → **the K0 meter runs before any other soil MPM case** → K0's verdict
 (a miss goes to the owner) → S1–S10 → the warrant run on one build.
 
+**Freeze (2026-11-17, orchestrator, on `tests/mpm_soil_interface.md` @ `766cc1450` and 232k-V's
+Round-1 report).** Frozen as D1–D23, before any soil-model MPM number. The orchestrator verified the
+objections in-tree: `track` moves only the lower bound (`LadrunoMPMImplicit.cpp:661`); mode F never
+reads `gridVels` (its only uses are the B-spline ghost check and a clear, `LadrunoMPMPattern.cpp:669`,
+`:873`); a mode-F trial refusal reverts and fails the step (`LadrunoMPMCore.h:990-995`). Rulings:
+
+- **Units and case (D19).** kN, t, m, s, kPa: ρ = 2.0 t/m³ (the kickoff's "2000" is kg/m³),
+  g = 9.81, ρ g l0 = 196.2 kPa. The K0 column is **two cells wide** (B-spline grids need 2 cells
+  per axis); the problem stays 1D. No `fix ymin`; the floor is the D17 `profile … translate`
+  gridvel; translation D = 2.5 m (5 cells). Accepted as amendments to the K0 row; no band changes.
+- **D17 accepted:** `mpm gridvel … profile <t0> <T_r> <t1> translate <axis>`; `start`/`track`
+  unchanged.
+- **D18 accepted, and it is a defect fix:** mode F applies `gridvel` (both projections) and refuses
+  `pforce` loudly. Filed as an issue for the released binaries; the fix lands here, with D18's test.
+- **D20/D21 accepted** as the K0 timelines. The mode-F inertia ratio (|dP_y/dt| / W over 100 steps)
+  is gated at ≤ 1 % at the measurement; its maximum is reported. The meter is read after the
+  ramp-down and settle (D21: local damping is not Galilean invariant).
+- **D23 accepted** as the pre-registered K5 contingency: a gated K0 run with any floor or clamp
+  particle-step is not admitted, and the row re-runs with a bonded elastic cap (one cell, 20 kPa),
+  with its FE reference.
+- **K0 references:** 232k-V's FE column on the same domain for all four materials (its Round 1
+  shows it equals K0 = ν/(1−ν) for SANISAND's stage 0 and K0nc for HS; DP is staged with
+  `materialState` 0 first). One source for every leg.
+- **D7–D11 (K4) accepted:** one host walk, three routes (`mpm stage`, `parameter … loadPattern`
+  registering the host, mode A's `updateMaterialStage` handing the host the registration), and the
+  D10 guard refusing `mpm analyze` on a stage mismatch.
+- **S4 corrected (a fact, not a band):** SANISAND's reset fires at tr σ < 3·Pmin, i.e. **p < Pmin**
+  (`ManzariDafalias.cpp:5789`), not p < 3·Pmin as the kickoff text said. The S2 column never reaches
+  it (top p ≈ 1.6 kPa). S4 adds a **low-g twin** of the S2 column, g chosen so that at least one
+  particle row sits at p < Pmin at the flip; the test asserts ≥ 1 reset particle in both modes. Its
+  reference is the one-point FE driver flipped by a route that reaches that point (direct
+  `updateParameter`), so `Elastic2Plastic` runs there too.
+- **S5 amended (D12–D14):** the W17 abort leg is SANISAND `-implex -maxSubsteps 1` on one stage-1
+  shear step, both modes, after the one-point FE confirms the trigger fires. HS has no reachable
+  commit refusal at particles: its leg is the trial refusal (γ = 6 simple shear), which must fail
+  the step loudly, name material and tag, keep the last accepted step, and **not** abort.
+- **S1 tolerance under substepping (pre-registered now):** triaxial and oedometer at rel 1e-8
+  against `LadrunoBrick -geom hypo -formulation std`. The 3-cycle shear is at rel 1e-8 up to the first step
+  at which the MPM and FE substep counts differ (reported); from that step on it is at rel 1e-3
+  (10 × the deck's ModifiedEuler TolE 1e-4).
+- **S3 SANISAND: the FE deck is unreachable as kicked off.** 232k-V: with the deck's defaults
+  (scheme 1, `-maxSubsteps 0`, TolE 1e-4) the FE B-bar r1 cannot take its first push step on the
+  K9 ladder (15 failed attempts to the floor). Settled before any MPM number by a bounded FE probe
+  (each leg ≤ 2 h on esmeralda), in this fixed order; **the first variant whose FE B-bar reaches
+  s = 0.05 B at r1 and r2 on the K9 ladder becomes the S3 SANISAND deck**, for MPM and FE alike:
+  1. scheme 1 with `-maxSubsteps 1000` (#792's cap);
+  2. scheme 129 (SAS-ME) with its defaults;
+  3. scheme 2 with `-cppmOnFail refuse` (WP-130);
+  4. scheme 1 with `-implex -maxSubsteps 1000` (ADR-92).
+  If none reaches, S3 SANISAND becomes reported only, with 232k-V's diagnosis, and the orchestrator
+  raises it to the program orchestrator before any S3 SANISAND MPM run. K0, S1 and S2 keep the
+  deck defaults.
+- **S3 rungs:** HS r1 and r2 gated, r3 run and reported. SANISAND r1 gated; r2 gated if its FE
+  reaches (MPM cost 8–15 h, accepted, run side by side); r3 not run (30–60 h).
+- **Costs (§7) accepted** as upper bounds; the R row measures the real increments.
+- **232k-V's FE flips:** `updateMaterialStage` reaches one element's points; the rest flip lazily
+  without `Elastic2Plastic`. That is inert on the gated FE domains (η = 0.86 < M_c, p ≫ Pmin), and
+  232k-V records it in each FE JSON.
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
