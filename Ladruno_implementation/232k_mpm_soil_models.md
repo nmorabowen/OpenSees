@@ -163,7 +163,7 @@ Builds `7b00fcf13` / `7c932089c`, Windows MSVC, unless noted.
 |---|---|---|
 | S1 one-point identity (`s1_mpm.json`) | HS: 12 legs × 2 modes, max rel 1.2e-11. SANISAND: 22 of 24 pass (mode F on bspline2). SANISAND 3D mode A misses at step 12, the second plastic step, one step before the FE's own Gauss-point spread passes 1e-8: triax 3.2e-6, oedo 1.06e-8, with the FE's substep counts (5, 4). Option legs (`s1_onepoint_options.json`, rulings at f6ae63d79; build `f235a001f`): see "S1 option legs" below. | 22 pass; **2 pre-registered misses** (strict xfail, ruling at 926d27153); option legs: pass, except **IntScheme 2 shear, a pre-registered miss** (strict xfail, ruling d683e0db8) |
 | S2 column + surcharge (`s2_mpm_hs_diagnosis.json`, `s2_mpm_sanisand.json`) | End of stage 0 and after the flip pass: HS 0.0128 / 0.0069, SANISAND 0.0127 / 0.0069. After the surcharge (registered top-row body force), max syy is HS 0.274 / 0.576 and SANISAND 0.265 / 0.776, at the top cell. | **recorded miss** (#1110; strict xfail) |
-| S3 footing, HS (`s3_mpm_hs_r1_fbar.json`) | r1 fbar: q / q_FE 0.977 / 0.973 / 0.960 at s/B 0.01 / 0.02 / 0.05; reached the target; 0 failed attempts; 3.1 s. r1 off and r2 on reached on esmeralda; r3 and r2-off are running. | r1 pass; r2/r3 pending on esmeralda |
+| S3 footing, HS (`s3_mpm_hs_r<r>_<fbar\|off>.json`) | q / q_FE at s/B 0.01 / 0.02 / 0.05. Gated: r1 fbar 0.977 / 0.973 / 0.960 (0 failed attempts, 3 s); r2 fbar 0.969 / 0.968 / 0.907 (11 failed, 36 s, esmeralda), thin at s/B 0.05. Reported: r1 off 1.005 / 1.013 / 1.020; r2 off 0.987 / 0.992 / 0.982 (80 failed, 7 relaxed, 18 halvings); **r3 fbar 0.961 / 0.931 / 0.162** (56 failed, 10 relaxed, 5 halvings, 744 s), a deck artifact, see below. | r1, r2 pass; r3 and off reported |
 | S3 footing, SANISAND | No FE variant reached s = 0.1 m: v1–v4 (a15fdeb60) and v0 `tims_r1sep` (n4 stopped at the 2 h wall cap at s = 0.0215, q_max 636 kPa, 1341 relaxed steps; n8 at s = 0.0037). Per the freeze, reported only; no S3 SANISAND MPM leg was run (the owner's call). | reported, no reference |
 | S4 stage parity (`s4_mpm_same_state.json`) | (i) The low-g column's flip map matches the rule exactly in both modes, with ≥ 1 reset particle each (g 0.25). (ii) Same-state leg: the **fallback branch** ran; see below. | pass |
 | S5 refusal | SANISAND `-implex -maxSubsteps 1` aborts in both modes and in classic Tcl. Particles are unmoved bit for bit, the message names the material and tag, and later steps are refused until `mpm reset`. HS at γ = 10 fails loudly with no abort. | pass |
@@ -210,6 +210,33 @@ mode F on bspline2):
 - **`-implex` boundary-value leg** (`k0p_meter_A_gimp_implex.json`): K0p column, mode A gimp,
   capped, staging only, against `k0p_column_capped_implex.json` (232k-V, 185aacefd). α moved in
   160 of 160 particles (max 0.081); σ RMS 0.01862 ρgl0 against the gate 0.02. **Pass.**
+
+**S3, the r3 collapse: an artifact of the footing condition in the S3 deck.** At s = 0.096 m
+(s/h = 0.768, h = 0.125) q falls from 868 to 38 kPa in one step, then climbs like a fresh contact
+(+54, +63 kPa per step); the run "reaches" s = 0.1 with q 155. It is neither physical (HS has no
+softening; the FE n16 curve is monotone to 958 kPa) nor the ladder (a relaxed step still meets
+NormUnbalance 1e-5, so it is equilibrated; the relaxed steps are a symptom). The mechanism:
+- The footing is a set of prescribed grid nodes on the fixed row y = 0. `track y` only lowers the
+  box's lower bound to y = −s, so the next node row joins at s = h.
+- The soil under it moves down by about s. At ppc 2 the particle centres start at −h/4 and −3h/4,
+  so the second row leaves the top cell at s ≈ h/4 and the top row at s ≈ 3h/4. Past that the cell
+  next to the footing nodes is empty and the footing loses the soil until s = h.
+- Both events sit at the same s/h on every rung. The first irregular q increment is at s/h = 0.256
+  in r2 fbar (s = 0.064) and in r3 fbar (s = 0.032), with the same size (+10.5 against the usual
+  +17.5); the collapse is at s/h = 0.768. r1 (s/h ≤ 0.2) meets neither; the off runs show no
+  increment jump at 0.25 (F-bar's cell-centre average is what changes when a row leaves a cell).
+- Trace (`tests/mpm_soil_s3_trace.py`, r2 run on to s = 0.2 m, Windows, `f235a001f`, records in
+  `s3_diagnosis/`). fbar reproduces the esmeralda q (790.85 at s = 0.088). The footing's
+  particles still in the top cell row drop 16 → 10 → 9 → 8 at s/h 0.248–0.264, on the first
+  irregular increment. At s/h 0.760 the top row starts to leave (8 → 5), q drops from 1690 to
+  1435 kPa, and then swings (1501, 1402, 1498, 1140) as top-row particles move back up and in and
+  out of the cell. The off run, on Windows, stops at the halving floor at s/h 0.256, the same
+  crossing (esmeralda's r2 off got past it with 80 failed attempts).
+
+So s/B = 0.05 at r3 (s = 0.8h) is past the range in which this footing condition holds (about
+0.75h); r1 (0.2h) and r2 (0.4h) are inside it. A footing that follows the soil (a node row inside
+the tracked box before the top row leaves, or s_end/h ≤ 0.5 at every rung) is the owner's call;
+r3 stays a reported row.
 
 **S1, rotation.** The FE record stores GP 1's material-frame stress, so S1 compares the particle's
 unrotated σ̂ (`sigHat`). This is a reading of the record's convention, not a band change (ruling).
