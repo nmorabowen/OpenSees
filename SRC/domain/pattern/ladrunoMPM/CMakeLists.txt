@@ -16,6 +16,7 @@ target_sources(OPS_Domain
     OPS_LadrunoMPM.cpp              # Ladruno (WP-232): the `mpm` command
     LadrunoMPMIO.cpp                # Ladruno (WP-232 c2): contract 1 reader, contract 2 writer
     LadrunoMPMImplicit.cpp          # Ladruno (WP-232f): mode A, particles as LadrunoMPMPoint elements
+    LadrunoMPMSoil.cpp              # Ladruno (WP-232k): soil particles -- stage walk, guard, queries, mode-F gridvel
     PUBLIC
     LadrunoMPMPattern.h
     LadrunoMPMCore.h

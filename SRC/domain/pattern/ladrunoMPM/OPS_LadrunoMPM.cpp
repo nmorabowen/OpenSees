@@ -69,6 +69,14 @@
 //   mpm info g2p|acceptedSteps|retries|domainChanges|connectivityChanges|gridNodes|mode
 //   mpm info dtHistory | gridNodeTags     -> lists
 //   mpm debug failAttempt <k> [<attempts>] | reseed default|always|skip
+// WP-232k (tests/mpm_soil_interface.md):
+//   mpm stage <matTag> <s>                the one stage walk over every particle material of
+//                                         the tag (SANISAND 0/1, HS 0/1, DruckerPrager 0/1/2);
+//                                         s goes through unchanged (D7-D9)
+//   mpm gridvel ... [translate <axis>] [profile <t0> <Tr> <t1>]   (D17; mode F too, D18)
+//   mpm particleData sigZZ                sigma_zz per particle (D16)
+//   mpm particleResponse [-size] <args..> a material response per particle, flat (D16)
+//   mpm info materials                    [tag classTag scheme implex stage count] per tag
 // WP-232i (tests/mpm_bspline_interface.md):
 //   mpm info basis                        -> 0 gimp, 1 linear, 2 bspline2, 3 bspline3
 //   mpm particleBodyForce <ndm*N doubles> | -clear   body force per unit mass, storage order,
@@ -394,12 +402,37 @@ void summary(const ladruno_mpm::Particles &P, int nd, std::vector<double> &out)
 int cmdGridVel(LadrunoMPMPattern *h)
 {
   const int nd = h->engine().ndm();
-  const char *usage = "gridvel <name> box <lo..> <hi..> v <value|free ..> [start <t0>] [track x|y|z]";
+  const char *usage = "gridvel <name> box <lo..> <hi..> v <value|free ..> [start <t0>] [track x|y|z]"
+                      " [translate x|y|z] [profile <t0> <Tr> <t1>]";
   if (OPS_GetNumRemainingInputArgs() < 2) return fail(usage);
   const std::string name = OPS_GetString();
-  if (std::string(OPS_GetString()) != "box") return fail(usage);
+  const std::string kw = OPS_GetString();
+  if (kw == "setAffine") {                                             // WP-232k (S1)
+    double L[9];
+    if (!readDoubles(nd * nd, L)) return fail("gridvel <name> setAffine <L: ndm*ndm, row-major>");
+    std::string err;
+    if (h->setGridVelAffine(name, L, err) < 0) return fail("gridvel -- " + err);
+    return 0;
+  }
+  if (kw != "box") return fail(usage);
   double lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0}, v[3] = {0, 0, 0};
   if (!readDoubles(nd, lo) || !readDoubles(nd, hi)) return fail(usage);
+  if (OPS_GetNumRemainingInputArgs() > 0) {                            // WP-232k (S1): affine
+    const std::string k2 = OPS_GetString();
+    if (k2 == "affine") {
+      double L[9], ref[3] = {0, 0, 0};
+      if (!readDoubles(nd * nd, L))
+        return fail("gridvel <name> box <lo> <hi> affine <L: ndm*ndm, row-major> [ref <x: ndm>]");
+      if (OPS_GetNumRemainingInputArgs() > 0) {
+        if (std::string(OPS_GetString()) != "ref" || !readDoubles(nd, ref))
+          return fail("gridvel ... affine <L> [ref <x: ndm>]");
+      }
+      std::string err;
+      if (h->addGridVelAffine(name, lo, hi, L, ref, err) < 0) return fail("gridvel -- " + err);
+      return 0;
+    }
+    OPS_ResetCurrentInputArg(-1);
+  }
   if (OPS_GetNumRemainingInputArgs() < nd + 1 || std::string(OPS_GetString()) != "v") return fail(usage);
   unsigned freeMask = 0;
   for (int d = 0; d < nd; d++) {
@@ -413,7 +446,9 @@ int cmdGridVel(LadrunoMPMPattern *h)
       return fail("gridvel -- component " + std::to_string(d) + " is not a number or 'free'");
   }
   double start = -1e300;
-  int track = -1;
+  int track = -1, translate = -1;
+  double prof[3];
+  bool hasProfile = false;
   while (OPS_GetNumRemainingInputArgs() > 0) {
     const std::string opt = OPS_GetString();
     if (opt == "start") {
@@ -422,12 +457,21 @@ int cmdGridVel(LadrunoMPMPattern *h)
       const std::string ax = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
       track = ax.empty() ? -1 : ax[0] - 'x';
       if (ax.size() != 1 || track < 0 || track >= nd) return fail("gridvel track x|y[|z]");
+    } else if (opt == "translate") {                                   // WP-232k (D17)
+      const std::string ax = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+      translate = ax.empty() ? -1 : ax[0] - 'x';
+      if (ax.size() != 1 || translate < 0 || translate >= nd) return fail("gridvel translate x|y[|z]");
+    } else if (opt == "profile") {                                     // WP-232k (D17)
+      if (!readDoubles(3, prof)) return fail("gridvel profile <t0> <Tr> <t1>");
+      hasProfile = true;
     } else {
       return fail("gridvel -- unknown option '" + opt + "'");
     }
   }
   std::string err;
-  if (h->addGridVel(name, lo, hi, v, freeMask, start, track, err) < 0) return fail("gridvel -- " + err);
+  if (h->addGridVel(name, lo, hi, v, freeMask, start, track, err, translate,
+                    hasProfile ? prof : 0) < 0)
+    return fail("gridvel -- " + err);
   return 0;
 }
 
@@ -536,7 +580,7 @@ int cmdDebug(LadrunoMPMPattern *h)
   }
   if (what == "packVersion") {                                         // WP-232j (L8)
     int v;
-    if (!readInt(v) || h->setPackVersion(v) < 0) return fail("debug packVersion 2|3");
+    if (!readInt(v) || h->setPackVersion(v) < 0) return fail("debug packVersion 2|3|4");
     return 0;
   }
   if (what == "affineCheck") {                                         // WP-232j (L1)
@@ -579,8 +623,10 @@ int ladrunoMPMDoubleQuery(Domain *dom, const std::vector<std::string> &a, std::v
   if (a.empty()) return 0;
   const std::string &sub = a[0];
   const bool q = sub == "criticalTimeStep" || sub == "particleData" || sub == "condForce" ||
+                 sub == "particleResponse" ||                          // WP-232k (D16)
                  (sub == "info" && a.size() > 1 && (a[1] == "time" || a[1] == "summary" ||
-                                                     a[1] == "dtHistory" || a[1] == "gridNodeTags"));
+                                                     a[1] == "dtHistory" || a[1] == "gridNodeTags" ||
+                                                     a[1] == "materials"));
   if (!q) return 0;
   if (ladruno_parallelBuild())
     return fail("-- refused in OpenSeesSP / OpenSeesMP: v1 MPM is serial (ADR 232 §5.1)");
@@ -590,6 +636,11 @@ int ladrunoMPMDoubleQuery(Domain *dom, const std::vector<std::string> &a, std::v
   if (sub == "criticalTimeStep") { out.assign(1, h->criticalTimeStep()); return 1; }
   if (sub == "particleData") {
     if (a.size() < 2) return fail("particleData <field>");
+    if (a[1] == "sigZZ") {                // WP-232k (D16)
+      std::string err;
+      if (h->particleSigZZ(out, err) < 0) return fail("particleData sigZZ -- " + err);
+      return 1;
+    }
     if (a[1] == "antiLocking") {         // WP-232j (F1): last accepted step, 0 / 1 averaged / 2 fallback
       out.assign(E.P.size(), 0.0);
       if ((int)E.alFlag.size() == E.P.size())
@@ -597,6 +648,14 @@ int ladrunoMPMDoubleQuery(Domain *dom, const std::vector<std::string> &a, std::v
       return 1;
     }
     return particleField(E.P, a[1], out) < 0 ? -1 : 1;
+  }
+  if (sub == "particleResponse") {       // WP-232k (D16)
+    std::vector<std::string> args(a.begin() + 1, a.end());
+    bool sizeOnly = false;
+    if (!args.empty() && args[0] == "-size") { sizeOnly = true; args.erase(args.begin()); }
+    std::string err;
+    if (h->particleResponse(args, sizeOnly, out, err) < 0) return fail("particleResponse -- " + err);
+    return 1;
   }
   if (sub == "condForce") {
     if (a.size() < 2) return fail("condForce <name>");
@@ -607,6 +666,7 @@ int ladrunoMPMDoubleQuery(Domain *dom, const std::vector<std::string> &a, std::v
   if (a[1] == "time") { out.assign(1, dom->getCurrentTime()); return 1; }
   if (a[1] == "dtHistory") { out = h->dtHistory(); return 1; }
   if (a[1] == "gridNodeTags") { h->gridNodeTags(out); return 1; }
+  if (a[1] == "materials") { h->materialsInfo(out); return 1; }       // WP-232k (D16)
   summary(E.P, E.ndm(), out);
   return 1;
 }
@@ -646,7 +706,7 @@ int OPS_LadrunoMPM(void)
     return fail("<grid|body|particles|units|output|shift|particle|velocity|particleVelocity|particleBodyForce|"
                 "stress|fix|wall|gravity|timeSeries|damping|flip|"
                 "massCutoff|safety|criticalTimeStep|analyze|reset|info|particleData|debug|mode|gridvel|"
-                "condForce|pforce|emptyNodes|cut|tagBase|rayleigh|antiLocking> ...");
+                "condForce|pforce|emptyNodes|cut|tagBase|rayleigh|antiLocking|stage|particleResponse> ...");
   const std::string sub = OPS_GetString();
   if (sub == "grid") return cmdGrid(dom);
 
@@ -798,6 +858,16 @@ int OPS_LadrunoMPM(void)
     return 0;
   }
   if (sub == "gridvel") return cmdGridVel(h);
+  if (sub == "stage") {                                                // WP-232k (D7-D9)
+    int tag, st;
+    if (!readInt(tag) || !readInt(st))
+      return fail("stage <matTag> <s> (s as the material reads it: LadrunoSANISAND 0/1, LadrunoHS"
+                  " 0/1, DruckerPrager 0/1/2)");
+    std::string err;
+    const int n = h->stageWalk(tag, st, err);
+    if (n < 0) return fail("stage -- " + err);
+    return outInt(n);
+  }
   if (sub == "pforce") {
     int body;
     double lo[3], hi[3], f[3];
@@ -852,9 +922,13 @@ int OPS_LadrunoMPM(void)
     return 0;
   }
   if (sub == "criticalTimeStep" || sub == "particleData" || sub == "condForce" ||
-      (sub == "info" && OPS_GetNumRemainingInputArgs() > 0)) {
+      sub == "particleResponse" || (sub == "info" && OPS_GetNumRemainingInputArgs() > 0)) {
     std::vector<std::string> a(1, sub);
-    if (sub != "criticalTimeStep" && OPS_GetNumRemainingInputArgs() > 0) a.push_back(OPS_GetString());
+    if (sub == "particleResponse") {                                   // WP-232k: every token
+      while (OPS_GetNumRemainingInputArgs() > 0) a.push_back(OPS_GetString());
+    } else if (sub != "criticalTimeStep" && OPS_GetNumRemainingInputArgs() > 0) {
+      a.push_back(OPS_GetString());
+    }
     std::vector<double> out;
     const int q = ladrunoMPMDoubleQuery(dom, a, out);
     if (q < 0) return -1;
@@ -864,6 +938,7 @@ int OPS_LadrunoMPM(void)
     if (sub == "info") OPS_ResetCurrentInputArg(-1);   // not a double query: the int forms below
     if (sub == "particleData") return fail("particleData <field>");
     if (sub == "condForce") return fail("condForce <name>");
+    if (sub == "particleResponse") return fail("particleResponse [-size] <args..>");
   }
   if (sub == "analyze") {
     int n;
@@ -891,7 +966,7 @@ int OPS_LadrunoMPM(void)
     bool ok = false;
     const long c = h->infoCounter(what, ok);
     if (ok) return outInt((int)c);
-    return fail("info -- numParticles, epoch, basis, antiLocking, antiLockingCounts, time, summary,"
+    return fail("info -- numParticles, epoch, basis, antiLocking, antiLockingCounts, time, summary, materials,"
                 " g2p, acceptedSteps, retries, dtHistory, domainChanges, connectivityChanges,"
                 " gridNodes, gridNodeTags or mode");
   }

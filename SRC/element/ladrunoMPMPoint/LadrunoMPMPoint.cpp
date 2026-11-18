@@ -336,7 +336,11 @@ LadrunoMPMPoint::computeTrial(void)
     epsT[k] = PP.eps[nv * p + k] + deps[k];
     e(k) = epsT[k];
   }
-  if (mat->setTrialStrain(e) < 0) return -4;
+  if (mat->setTrialStrain(e) < 0) {
+    LadrunoMPMPointHost *hh = host();             // WP-232k (D14): the host names the material
+    if (hh != 0) hh->mpmTrialRefused(p);
+    return -4;
+  }
   if (diagnose) {                         // WP-232j: `mpm debug failDump`
     // COPY the current tangent before asking for the initial one: a material may return
     // both through ONE member buffer (DruckerPragerPlaneStrain.cpp:129-164 fills `tangent`
@@ -1108,6 +1112,18 @@ int
 LadrunoMPMPoint::setParameter(const char **argv, int argc, Parameter &param)
 {
   if (argc < 1 || mat == 0) return -1;
+  // WP-232k (tests/mpm_soil_interface.md D9 (c)): MaterialStageParameter stops at the first
+  // element that answers (MaterialStageParameter.cpp:79), so a particle that answered alone
+  // would leave every sibling to SANISAND's lazy flip, which skips Elastic2Plastic. A soil
+  // stage request is handed to the host, which registers itself and walks every particle.
+  if (argc >= 2 && strcmp(argv[0], "updateMaterialStage") == 0 &&
+      param.getClassTag() == PARAMETER_TAG_MaterialStageParameter) {
+    LadrunoMPMPointHost *h = host();
+    if (h != 0) {
+      const int r = h->mpmStageParameter(argv, argc, param);
+      if (r != -2) return r;
+    }
+  }
   // `parameter ... element <tag> material 1 <args>` or a forall broadcast
   if (LadrunoShell::isMaterialPointToken(argv[0]))
     return LadrunoShell::forwardToMaterialPoint(&mat, 1, true, argv, argc, param);

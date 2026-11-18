@@ -55,6 +55,7 @@
 #include <OPS_Globals.h>
 #include <OPS_Stream.h>
 #include <LadrunoMaterialStatus.h>
+#include <LadrunoSANISAND.h>         // WP-232k (S6): the class-wide stage flag at restore
 #include <StaticAnalysis.h>
 #include <DirectIntegrationAnalysis.h>
 #include <VariableTimeStepDirectIntegrationAnalysis.h>
@@ -128,8 +129,11 @@ LadrunoMPMPattern::mpmTrialAdmissible(int p, const double *x)
 // refusal is pending (a read that does not clear: Domain::commit acts on it
 // right after the element loop), in which case nothing moves (W17).
 void
-LadrunoMPMPattern::mpmParticleCommitted(int)
+LadrunoMPMPattern::mpmParticleCommitted(int p)
 {
+  // WP-232k (D13): Domain::commit walks the elements serially; the first particle whose
+  // material commit raised the WP-99 count above the attempt's baseline is the refuser.
+  if (firstRefuserA < 0 && ladrunoPendingCommitRefusals() > refusalBase) firstRefuserA = p;
   committedCount++;
   if (committedCount != armedCount) return;
   if (ladrunoPendingCommitRefusals() > 0) {
@@ -265,13 +269,30 @@ LadrunoMPMPattern::gridNodeTags(std::vector<double> &out) const
 int
 LadrunoMPMPattern::addGridVel(const std::string &name, const double *lo, const double *hi,
                               const double *v, unsigned freeMask, double start, int track,
-                              std::string &err)
+                              std::string &err, int translate, const double *profile)
 {
   const int nd = eng.ndm();
   for (const GridVel &g : gridVels)
     if (g.name == name) { err = "a gridvel named '" + name + "' exists"; return -1; }
   if (track >= nd) { err = "track axis out of range"; return -1; }
+  if (translate >= nd) { err = "translate axis out of range"; return -1; }
+  if (track >= 0 && translate >= 0) { err = "track and translate exclude each other"; return -1; }
+  if (profile != 0) {
+    // WP-232k (D17): the trapezoid needs t1 >= t0 + 2 Tr, Tr >= 0; it replaces `start`
+    if (start > -1e299) { err = "profile replaces start (the condition is present from t = 0)"; return -1; }
+    if (!(profile[1] >= 0.0) || !(profile[2] >= profile[0] + 2.0 * profile[1])) {
+      err = "profile <t0> <Tr> <t1> needs Tr >= 0 and t1 >= t0 + 2 Tr";
+      return -1;
+    }
+  }
   GridVel g;
+  g.translate = translate;
+  if (profile != 0) {
+    g.profiled = true;
+    g.pT0 = profile[0];
+    g.pTr = profile[1];
+    g.pT1 = profile[2];
+  }
   g.name = name;
   for (int d = 0; d < 3; d++) {
     g.lo[d] = (d < nd) ? lo[d] : 0.0;
@@ -287,8 +308,46 @@ LadrunoMPMPattern::addGridVel(const std::string &name, const double *lo, const d
 }
 
 int
+LadrunoMPMPattern::addGridVelAffine(const std::string &name, const double *lo, const double *hi,
+                                    const double *L, const double *ref, std::string &err)
+{
+  const int nd = eng.ndm();
+  const double zero[3] = {0.0, 0.0, 0.0};
+  if (addGridVel(name, lo, hi, zero, 0u, -1e300, -1, err) < 0) return -1;
+  GridVel &g = gridVels.back();
+  g.affine = true;
+  for (int k = 0; k < nd * nd; k++) g.L[k] = L[k];
+  for (int d = 0; d < nd; d++) g.ref[d] = (ref != 0) ? ref[d] : 0.0;
+  return 0;
+}
+
+int
+LadrunoMPMPattern::setGridVelAffine(const std::string &name, const double *L, std::string &err)
+{
+  const int nd = eng.ndm();
+  for (GridVel &g : gridVels)
+    if (g.name == name) {
+      if (!g.affine) { err = "gridvel '" + name + "' is not affine"; return -1; }
+      for (int k = 0; k < nd * nd; k++) g.L[k] = L[k];
+      return 0;
+    }
+  err = "no gridvel named '" + name + "'";
+  return -1;
+}
+
+void
+LadrunoMPMPattern::mpmTrialRefused(int p)
+{
+  if (firstTrialRefuserA < 0) firstTrialRefuserA = p;
+}
+
+int
 LadrunoMPMPattern::condForce(const std::string &name, std::vector<double> &out, std::string &err)
 {
+  if (theMode == MODE_EXPLICIT) {   // WP-232k (D18): mode F prescribes, it does not sum
+    err = "condForce is mode A's (the explicit engine does not sum the gridvel's force)";
+    return -1;
+  }
   for (const GridVel &g : gridVels)
     if (g.name == name) { out = g.force; return 0; }
   err = "no gridvel named '" + name + "'";
@@ -381,7 +440,7 @@ LadrunoMPMPattern::admitAnalysis(const LadrunoMPMAnalysisRefs &A, std::string &e
   bool nonHomog = false;
   for (const GridVel &g : gridVels)
     for (int d = 0; d < eng.ndm(); d++)
-      if (!(g.freeMask & (1u << d)) && g.v[d] != 0.0) nonHomog = true;
+      if (!(g.freeMask & (1u << d)) && (g.v[d] != 0.0 || g.affine)) nonHomog = true;   // WP-232k: affine
   if (nonHomog && A.handler != 0 && A.handler->getClassTag() == HANDLER_TAG_PlainHandler) {
     err = "a prescribed-velocity gridvel needs `constraints Transformation`, `Penalty` or `Lagrange`:"
           " the Plain handler assumes every constraint homogeneous (PlainHandler.cpp:92)";
@@ -402,9 +461,17 @@ LadrunoMPMPattern::admitAnalysis(const LadrunoMPMAnalysisRefs &A, std::string &e
     err = "`mpm damping local` is mode F only";
     return -1;
   }
+  // WP-232k (D10): no particle may take SANISAND's lazy flip without Elastic2Plastic
+  {
+    const std::string why = stageGuard();
+    if (!why.empty()) { err = why; return -1; }
+  }
   // WP-232j (K3, amendment 5): the F-bar tangent is unsymmetric even for elastic
   // materials (J10); a symmetric-storage system would solve a different matrix.
-  if (eng.par.antiLocking && A.soe != 0) {
+  // WP-232k (D15): so are SANISAND's and HS's unless -implex freezes an isotropic
+  // elastic operator (LadrunoHS.cpp:669; ladrunoImplexFreezeTangent).
+  const std::string unsymSoil = unsymmetricSoil();
+  if ((eng.par.antiLocking || !unsymSoil.empty()) && A.soe != 0) {
     const int t = A.soe->getClassTag();
     // C3: every symmetric-storage SOE class (classTags.h), and the two whose symmetry is a
     // matType option (PARDISO -matType / -sym, MUMPS -matrixType 1|2), read by the bridges
@@ -416,7 +483,8 @@ LadrunoMPMPattern::admitAnalysis(const LadrunoMPMAnalysisRefs &A, std::string &e
                      t == LinSOE_TAGS_DistributedProfileSPDLinSOE ||
                      t == LinSOE_TAGS_SProfileSPDLinSOE || solverSym;
     if (sym) {
-      err = "`mpm antiLocking fbar` makes the particle tangent unsymmetric in general: the"
+      err = std::string(eng.par.antiLocking ? "`mpm antiLocking fbar`" : unsymSoil.c_str()) +
+            " makes the particle tangent unsymmetric in general: the"
             " symmetric-storage system (class tag " + std::to_string(t) +
             (solverSym ? ", a symmetric matrix type" : "") +
             ") is refused; use an unsymmetric one: UmfPack, SparseGEN, FullGeneral,"
@@ -546,12 +614,94 @@ LadrunoMPMPattern::relinkElements(std::string &err)
     mats[p] = e->material();
     matOwnedByEle[p] = 1;
   }
+  // review item 3: a version 2 / 3 pack carries no stage record; with soil particles the run
+  // would continue on a wrong class-wide SANISAND flag and lose AMEND A1's HS stages. Refused
+  // every time (elementsRestored stays set, so the next call checks again).
+  if (restoredPackVersion != 0 && restoredPackVersion < 4 && anySoil()) {
+    err = "restore: the restart pack is version " + std::to_string(restoredPackVersion) +
+          " (no stage record) and the particles carry LadrunoSANISAND / LadrunoHS: refused (a"
+          " soil restart needs version 4)";
+    return -1;
+  }
   elementsRestored = false;
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+//  WP-232k (tests/mpm_soil_interface.md D17): the gridvel's time functions, shared by
+//  mode A (prepareStep) and mode F (buildPrescribed). Without `profile` they are the
+//  232f semantics bit for bit: absent before `start`, velocity v, `track` moving the
+//  lower bound by v max(t - start, 0). With `profile t0 Tr t1` the condition is present
+//  from t = 0 with velocity v phi(t), phi the trapezoid (0 before t0, a linear ramp over
+//  Tr, 1, a linear ramp down ending at t1, 0 after); the box moves by v Phi(t), Phi = the
+//  integral of phi, and a step [t, t + h] prescribes the exact mean v (Phi(t+h) - Phi(t))/h.
+// ---------------------------------------------------------------------------
+namespace {
+double profilePhi(double t0, double tr, double t1, double t)
+{
+  if (t <= t0 || t >= t1) return 0.0;
+  if (tr > 0.0 && t < t0 + tr) return (t - t0) / tr;
+  if (tr > 0.0 && t > t1 - tr) return (t1 - t) / tr;
+  return 1.0;
+}
+double profileIntegral(double t0, double tr, double t1, double t)
+{
+  const double full = (t1 - t0) - tr;                 // the integral over [t0, t1]
+  if (t <= t0) return 0.0;
+  if (t >= t1) return full;
+  if (tr > 0.0 && t < t0 + tr) return 0.5 * (t - t0) * (t - t0) / tr;
+  if (tr > 0.0 && t > t1 - tr) return full - 0.5 * (t1 - t) * (t1 - t) / tr;
+  return 0.5 * tr + (t - t0 - tr);
+}
+}  // namespace
+
+bool
+LadrunoMPMPattern::GridVel::presentAt(double t) const
+{
+  if (profiled) return true;
+  return !(t < start - 1e-12 * std::max(1.0, std::fabs(start)));
+}
+
+double
+LadrunoMPMPattern::GridVel::displacementFactor(double t) const
+{
+  if (profiled) return profileIntegral(pT0, pTr, pT1, t);
+  return std::max(t - start, 0.0);
+}
+
+double
+LadrunoMPMPattern::GridVel::stepFactor(double t, double h) const
+{
+  if (!profiled) return 1.0;
+  if (!(h > 0.0)) return profilePhi(pT0, pTr, pT1, t);
+  return (profileIntegral(pT0, pTr, pT1, t + h) - profileIntegral(pT0, pTr, pT1, t)) / h;
+}
+
+double
+LadrunoMPMPattern::GridVel::valueAt(int a, const double *c, int nd, double fac) const
+{
+  if (affine) {                                     // WP-232k (S1)
+    double s = 0.0;
+    for (int b = 0; b < nd; b++) s += L[a * nd + b] * (c[b] - ref[b]);
+    return s;
+  }
+  return profiled ? v[a] * fac : v[a];
+}
+
+void
+LadrunoMPMPattern::GridVel::boxAt(double t, double lo_[3], double hi_[3]) const
+{
+  for (int d = 0; d < 3; d++) { lo_[d] = lo[d]; hi_[d] = hi[d]; }
+  if (track >= 0) lo_[track] += v[track] * displacementFactor(t);
+  if (translate >= 0) {
+    const double s = v[translate] * displacementFactor(t);
+    lo_[translate] += s;
+    hi_[translate] += s;
+  }
+}
+
 int
-LadrunoMPMPattern::prepareStep(double, std::string &err)
+LadrunoMPMPattern::prepareStep(double hStep, std::string &err)
 {
   Domain *dom = this->getDomain();
   ladruno_mpm::Particles &P = eng.P;
@@ -639,6 +789,10 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
   }
 
   MPM_PHASE_NEXT(ph, "mpm.a.sp");            // WP-232g: the grid conditions' spec
+  {
+    const std::string why = gridvelGhostConflict(t);   // AMEND A5: a moving box, checked each step
+    if (!why.empty()) { err = why; return -1; }
+  }
   // ---- the grid conditions, in lattice terms ------------------------------------------
   std::map<std::pair<long, int>, std::pair<double, bool>> spec;   // (ext,dof) -> (valueR, constant)
   std::vector<std::vector<long>> gvExt(gridVels.size());
@@ -656,29 +810,33 @@ LadrunoMPMPattern::prepareStep(double, std::string &err)
   }
   for (size_t gi = 0; gi < gridVels.size(); gi++) {
     const GridVel &gv = gridVels[gi];
-    if (t < gv.start - 1e-12 * std::max(1.0, std::fabs(gv.start))) continue;   // absent before start
-    double lo[3] = {gv.lo[0], gv.lo[1], gv.lo[2]};
-    if (gv.track >= 0) lo[gv.track] += gv.v[gv.track] * std::max(t - gv.start, 0.0);
+    if (!gv.presentAt(t)) continue;                 // absent before start (not with a profile)
+    double lo[3], hi[3];
+    gv.boxAt(t, lo, hi);                            // WP-232k (D17): track / translate
+    const double fac = gv.stepFactor(t, hStep);     // WP-232k (D17): 1 without a profile
     for (long x : want) {
       int ijk[3];
       G.extIJK(x, ijk);
       bool in = true;
       for (int d = 0; d < nd; d++) {
         const double c = G.x0[d] + ijk[d] * G.h;
-        in = in && c >= lo[d] - tol && c <= gv.hi[d] + tol;
+        in = in && c >= lo[d] - tol && c <= hi[d] + tol;
       }
       if (!in) continue;
       gvExt[gi].push_back(x);
       for (int a = 0; a < nd; a++) {
         if (gv.freeMask & (1u << a)) continue;
+        double cx[3] = {0, 0, 0};
+        for (int d = 0; d < nd; d++) cx[d] = G.x0[d] + ijk[d] * G.h;
+        const double val = gv.valueAt(a, cx, nd, fac);
         auto key = std::make_pair(x, a);
         auto it = spec.find(key);
-        if (it != spec.end() && it->second.first != gv.v[a]) {
+        if (it != spec.end() && it->second.first != val) {
           err = "gridvel '" + gv.name + "' and another condition prescribe different values on one"
                 " node component (a malformed case)";
           return -1;
         }
-        spec[key] = std::make_pair(gv.v[a], gv.v[a] == 0.0);
+        spec[key] = std::make_pair(val, val == 0.0);
       }
     }
   }
@@ -1239,6 +1397,9 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
                << " is made to fail before commit\n";
       armedCount = N;
       committedCount = 0;
+      refusalBase = ladrunoPendingCommitRefusals();   // WP-232k (D13)
+      firstRefuserA = -1;
+      firstTrialRefuserA = -1;                         // WP-232k (D14)
       g2pRan = g2pSkipped = false;
       inStep = true;
       int res;
@@ -1254,7 +1415,8 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
       if (res >= 0 || committedCount > 0) {
         aborted = true;
         if (g2pSkipped)
-          opserr << "ERROR mpm analyze -- a particle material REFUSED this commit (ADR 232 W17): the"
+          opserr << "ERROR mpm analyze -- a particle material REFUSED this commit (ADR 232 W17;"
+                    " first refusing: " << refuserText(firstRefuserA).c_str() << "): the"
                     " run is aborted with the particles unmoved, until `mpm reset`\n";
         else
           opserr << "ERROR mpm analyze -- the step failed after its commit began (" << res
@@ -1263,6 +1425,9 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
         break;
       }
       // failed before any commit: nothing to undo — cut and retry
+      if (firstTrialRefuserA >= 0)                                  // WP-232k (D14)
+        opserr << "mpm analyze -- a particle material refused the trial strain at t = " << stepT0
+               << " (first: " << refuserText(firstTrialRefuserA).c_str() << ")\n";
       if (!failDumpPath.empty()) writeFailDump(stepT0, attempt);   // WP-232j diagnosis
       nRetries++;
       if (++cuts > maxCutCount) {
@@ -1362,13 +1527,22 @@ void getParticles(Unpacker &u, ladruno_mpm::Particles &P)
 }  // namespace
 
 // WP-232i: 2, + the particle body force. WP-232j (J13): 3, + the anti-locking setting;
-// a version-2 pack restores with anti-locking off.
-const int MPM_PACK_VERSION = 3;
+// a version-2 pack restores with anti-locking off. WP-232k: 4, + each gridvel's
+// `translate` / `profile` (D17) and the SANISAND stage the last walk gave (D10); a
+// version-3 pack restores them as absent / 0.
+const int MPM_PACK_VERSION = 4;
 
 int
 LadrunoMPMPattern::setPackVersion(int v)
 {
-  if (v != 2 && v != MPM_PACK_VERSION) return -1;
+  if (v != 2 && v != 3 && v != MPM_PACK_VERSION) return -1;
+  // AMEND A4 (232k): packs 2 and 3 carry no stage record; with soil particles a restore would
+  // run on a wrong class-wide SANISAND flag
+  if (v < 4 && anySoil()) {
+    opserr << "WARNING mpm debug packVersion " << v << " -- refused with soil particles: the"
+              " restart pack needs version 4 (the stage record)\n";
+    return -1;
+  }
   packVersionOut = (v == MPM_PACK_VERSION) ? 0 : v;
   return 0;
 }
@@ -1378,8 +1552,15 @@ LadrunoMPMPattern::packState(Vector &out)
 {
   Packer k;
   const ladruno_mpm::Grid &G = eng.grid;
-  const int ver = packVersionOut ? packVersionOut : MPM_PACK_VERSION;   // WP-232j (L8 hook)
+  int ver = packVersionOut ? packVersionOut : MPM_PACK_VERSION;         // WP-232j (L8 hook)
   packVersionOut = 0;                                                   // C6: one save only
+  // review item 3: `debug packVersion 2|3` checks soil when it is set; soil added after it
+  // would still write a pack with no stage record. Checked again here: the current layout.
+  if (ver < 4 && anySoil()) {
+    opserr << "WARNING mpm restart pack -- version " << ver << " was requested, but soil particles"
+              " need version 4 (the stage record): writing version " << MPM_PACK_VERSION << "\n";
+    ver = MPM_PACK_VERSION;
+  }
   k.put(ver);
   k.put(G.ndm);
   for (int d = 0; d < 3; d++) k.put(G.x0[d]);
@@ -1414,6 +1595,20 @@ LadrunoMPMPattern::packState(Vector &out)
   k.puts(unitL); k.puts(unitF); k.puts(unitT); k.puts(unitSystem); k.put(unitsFromFile);
   k.putv(eng.bodyForce);
   if (ver >= 3) k.put(eng.par.antiLocking);        // WP-232j (J13)
+  if (ver >= 4) {                                   // WP-232k (D17, D10)
+    for (const GridVel &g : gridVels) {
+      k.put(g.translate); k.put(g.profiled ? 1 : 0); k.put(g.pT0); k.put(g.pTr); k.put(g.pT1);
+      k.put(g.affine ? 1 : 0);
+      for (int i = 0; i < 9; i++) k.put(g.L[i]);
+      for (int d = 0; d < 3; d++) k.put(g.ref[d]);
+    }
+    k.put(sanisandStage);
+    // review item 1: AMEND A1's per-tag HS stage, for a complete state record. Not reachable
+    // as a refusal today: mode A saves only after the first step and no body is admitted
+    // after it; mode F has no restart path.
+    k.put((double)hsWalked.size());
+    for (const auto &kv : hsWalked) { k.put(kv.first); k.put(kv.second); }
+  }
   out.resize((int)k.d.size());
   for (int i = 0; i < (int)k.d.size(); i++) out(i) = k.d[i];
   return 0;
@@ -1424,7 +1619,7 @@ LadrunoMPMPattern::unpackState(const Vector &in)
 {
   Unpacker u(in);
   const int ver = (int)u.get();
-  if (ver != MPM_PACK_VERSION && ver != 2) return -1;    // WP-232j (J13): 2 restores as off
+  if (ver != MPM_PACK_VERSION && ver != 3 && ver != 2) return -1;   // WP-232j (J13): 2 restores as off
   int ndm = (int)u.get();
   double x0[3], h;
   int n[3];
@@ -1482,7 +1677,33 @@ LadrunoMPMPattern::unpackState(const Vector &in)
   unitsFromFile = u.get() != 0.0;
   u.getv(eng.bodyForce);
   eng.par.antiLocking = (ver >= 3) ? ((int)u.get() != 0 ? 1 : 0) : 0;
+  sanisandStage = 0;
+  hsWalked.clear();
+  if (ver >= 4) {                                   // WP-232k (D17, D10)
+    for (GridVel &g : gridVels) {
+      g.translate = (int)u.get(); g.profiled = u.get() != 0.0;
+      g.pT0 = u.get(); g.pTr = u.get(); g.pT1 = u.get();
+      g.affine = u.get() != 0.0;
+      for (int i = 0; i < 9; i++) g.L[i] = u.get();
+      for (int d = 0; d < 3; d++) g.ref[d] = u.get();
+    }
+    sanisandStage = (int)u.get();
+    const int nh = (int)u.get();                    // review item 1: AMEND A1's HS stages
+    for (int i = 0; i < nh && !u.bad; i++) {
+      const int tag = (int)u.get();
+      hsWalked[tag] = (int)u.get();
+    }
+  }
   if (u.bad) return -1;
+  // review item 3: a pack older than 4 has no stage record; relinkElements refuses it if the
+  // restored particle materials are soil (they are reachable only after the relink)
+  restoredPackVersion = ver;
+  // WP-232k (S6): the restored particle materials carry their flipped state (LadrunoSANISAND
+  // restores mFlipSeen, LadrunoSANISAND.cpp:2659-2667), but SANISAND's class-wide flag is a
+  // process static that `wipe` zeroed: re-assert it, so the restored run continues bit for bit
+  // (a walk would re-run Elastic2Plastic on a mid-stage-1 state). Review item 2: only for a
+  // pack that read cleanly.
+  if (sanisandStage != 0) LadrunoSANISAND::ladrunoRestoreStageFlag(sanisandStage);
   // the per-step SPs are rebuilt by the next step; the materials live in the
   // restored elements (relinked at the next `mpm analyze`)
   hostSPTags.clear();

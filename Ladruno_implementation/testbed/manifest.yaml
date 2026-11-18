@@ -2328,6 +2328,17 @@ features:
       - tests/test_ladruno_mpm_bspline_basis.py      # WP-232i: G1, G1-K4, G7, G8 (+ classic Tcl deck)
       - tests/test_ladruno_mpm_bspline_mms.py        # WP-232i: MMS rows on 1/h = 8, 16, 32
       - tests/test_mpm_mms_reference.py              # WP-232i: the MMS derivation by finite differences
+      - tests/test_ladruno_mpm_soil_admission.py       # WP-232k: soil admission table, refusals (D1-D5)
+      - tests/test_ladruno_mpm_soil_stage.py           # WP-232k: the stage walk, both modes (S5; classic Tcl deck)
+      - tests/test_ladruno_mpm_soil_onepoint.py        # WP-232k: S1 one-particle legs against FE (classic Tcl deck)
+      - tests/test_ladruno_mpm_soil_options.py         # WP-232k: S1 option legs (IntScheme 2/129, -implex, HS options)
+      - tests/test_ladruno_mpm_soil_gridvel.py         # WP-232k: gridvel affine/translate/profile; mode F gridvel (#1109)
+      - tests/test_ladruno_mpm_soil_column.py          # WP-232k: S2 K0 column (owner-accepted miss, #1110)
+      - tests/test_ladruno_mpm_soil_k0.py              # WP-232k: K0 / K0p cell-crossing meter records
+      - tests/test_ladruno_mpm_soil_footing.py         # WP-232k: S3 footing records against FE B-bar
+      - tests/test_ladruno_mpm_soil_refusal.py         # WP-232k: W17 refusal abort (classic Tcl deck)
+      - tests/test_ladruno_mpm_soil_restart.py         # WP-232k: restart pack 4, stage flag re-asserted
+      - tests/test_mpm_soil_reference.py               # WP-232k: the FE reference records' own checks
     tcl: WAIVED(classic-Tcl runs through OpenSees.exe inside the pytest files -- tests/ladruno_mpm_harness.py writes one deck per case, and test_ladruno_mpm_lifecycle.py carries the refusal / loadPattern-stage deck)
     zone_b: []
     core_files:

@@ -1,0 +1,23 @@
+{
+ "leg": "d12_trigger",
+ "build": "fc82c1a4194d2292941f549de7c482424b143f4f",
+ "engine": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\zen-ramanujan-2cdc20\\dist\\bin\\opensees.pyd",
+ "deck": "tests/mpm_soil_reference.py::leg_d12",
+ "date": "2026-11-17",
+ "units": "kN, t, m, s, kPa; stress tension-positive (OpenSees sign)",
+ "opts": [
+  "-implex",
+  "-maxSubsteps",
+  1
+ ],
+ "dgamma": 0.001,
+ "analyze_return": -4,
+ "commitStats": [
+  10.0,
+  2.0,
+  1.7849852267431658e-16
+ ],
+ "fires": true,
+ "note": "one LadrunoBrick -geom hypo, isotropic stage 0 to p0 = 100 kPa, updateMaterialStage 1, one simple-shear step dgamma",
+ "output": "tests/data/mpm/soil/d12_trigger.json"
+}

@@ -89,6 +89,12 @@ class LadrunoHS : public NDMaterial {
 
   double getRho(void) override { return rho_; }
 
+  // Ladruno WP-232k (MPM soil particles, tests/mpm_soil_interface.md D4): the MPM host
+  // refuses -sig0/-sig03 at particles (D6) and admits a symmetric system only under
+  // -implex (D15).
+  bool usesImplex(void) const { return implex_; }
+  bool hasInitialStress(void) const { return has_sig0_; }
+
   int sendSelf(int commitTag, Channel& theChannel) override;
   int recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker& theBroker) override;
   void Print(OPS_Stream& s, int flag = 0) override;

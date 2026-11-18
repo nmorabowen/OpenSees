@@ -34,6 +34,8 @@
 #include <LoadPatternIter.h>
 #include <NDMaterial.h>
 #include <LadrunoJ2.h>
+#include <LadrunoSANISAND.h>         // WP-232k: admission (D2), the stage guard (D10)
+#include <LadrunoHS.h>               // WP-232k: admission (D3, D6)
 #include <TimeSeries.h>
 #include <Vector.h>
 #include <Matrix.h>
@@ -85,6 +87,7 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
     Vector &eps = (nv == 6) ? eps6 : eps3;
     for (int k = 0; k < nv; k++) eps(k) = e[k];
     const int res = mat->setTrialStrain(eps);
+    if (res < 0 && trialFail < 0) trialFail = p;   // WP-232k (D14): named by the host
     const Vector &sig = mat->getStress();
     for (int k = 0; k < nv; k++) s[k] = sig(k);
     return (res < 0) ? -1 : 0;
@@ -92,7 +95,12 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
   int commitState(int p) override
   {
     OPS_PROFILE_ELEMPTR_SCOPE((*matTmr), mats[p]);   // WP-232g
-    return mats[p]->commitState();
+    // WP-232k (D13): the commit loop is serial, so the first particle whose commit
+    // raised the WP-99 count is the first refusing one -- named in the abort message.
+    const int before = ladrunoPendingCommitRefusals();
+    const int r = mats[p]->commitState();
+    if (firstRefuser < 0 && ladrunoPendingCommitRefusals() > before) firstRefuser = p;
+    return r;
   }
   int revertToLastCommit(int p) override { return mats[p]->revertToLastCommit(); }
   int pendingRefusals() override
@@ -104,7 +112,9 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
     return n;
   }
   int injected = 0;
-  void clearRefusals() override { ladrunoClearCommitRefusals(); }
+  int firstRefuser = -1;      // WP-232k (D13): this commit's first refusing particle, or -1
+  int trialFail = -1;         // WP-232k (D14): this step's first trial refusal, or -1
+  void clearRefusals() override { ladrunoClearCommitRefusals(); firstRefuser = -1; }
   // The INITIAL (elastic) tangent bounds the wave speed (interface Amendment 6,
   // review F6): a softened current tangent (DruckerPrager's apex mCep =
   // 1e-3 mCe) would overestimate the stable Δt by up to 31x.
@@ -346,6 +356,16 @@ LadrunoMPMPattern::getCopy(void)
 int
 LadrunoMPMPattern::setParameter(const char **argv, int argc, Parameter &param)
 {
+  // WP-232k (D9 (b)): a soil stage name registers the HOST, whose updateParameter runs the
+  // one stage walk (D7) with (int)theDouble -- both engines' `updateParameter` passes a
+  // double (TclParameterCommands.cpp:327-334, OpenSeesParameterCommands.cpp:498-504), and
+  // SANISAND's id 1 would read an indeterminate theInt (LadrunoSANISAND.cpp:5253-5257).
+  int stageTag = 0;
+  if (soilStageRequest(argv, argc, stageTag)) {
+    // the user's Parameter lives in the Domain: recorded, so detachParameters can clean it
+    paramRefs.push_back(ParamRef{this->getDomain(), param.getTag(), &param});
+    return param.addObject(stageRegId(stageTag, false), this);
+  }
   int res = -1;
   for (NDMaterial *m : mats)
     if (m->setParameter(argv, argc, param) >= 0) res = 0;
@@ -358,8 +378,22 @@ LadrunoMPMPattern::setParameter(const char **argv, int argc, Parameter &param)
 }
 
 int
-LadrunoMPMPattern::updateParameter(int, Information &)
+LadrunoMPMPattern::updateParameter(int parameterID, Information &info)
 {
+  // WP-232k (D9): a stage registration made by setParameter (double path) or handed over
+  // by a particle element from MaterialStageParameter (int path, mpmStageParameter)
+  const int k = parameterID - STAGE_PARAM_BASE;
+  if (k >= 0 && k < (int)stageRegs.size()) {
+    const StageReg &r = stageRegs[k];
+    const int stage = r.intPath ? info.theInt : (int)info.theDouble;
+    std::string err;
+    if (this->stageWalk(r.matTag, stage, err) < 0) {
+      opserr << "WARNING LadrunoMPMPattern " << this->getTag() << " -- stage " << stage
+             << " of nDMaterial " << r.matTag << ": " << err.c_str() << "\n";
+      return -1;
+    }
+    return 0;
+  }
   return 0;
 }
 
@@ -392,11 +426,13 @@ LadrunoMPMPattern::admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic,
   const bool admitted = ct == ND_TAG_ElasticIsotropicPlaneStrain2d ||
                         ct == ND_TAG_ElasticIsotropicThreeDimensional ||
                         ct == ND_TAG_LadrunoJ2 ||
-                        ct == ND_TAG_DruckerPrager3D || ct == ND_TAG_DruckerPragerPlaneStrain;
+                        ct == ND_TAG_DruckerPrager3D || ct == ND_TAG_DruckerPragerPlaneStrain ||
+                        isSoilTag(ct);                               // WP-232k (D1)
   if (!admitted) {
     err = "nDMaterial " + std::to_string(matTag) + " (class tag " + std::to_string(ct) +
-          ") is not admitted at MPM particles in v1. Admitted: ElasticIsotropic, LadrunoJ2"
-          " (without -autoRegularization) and DruckerPrager (ADR 232 §6)";
+          ") is not admitted at MPM particles. Admitted: ElasticIsotropic, LadrunoJ2"
+          " (without -autoRegularization), DruckerPrager, LadrunoSANISAND and LadrunoHS"
+          " (ADR 232 §6, WP-232k)";
     delete copy;
     copy = 0;
     return -1;
@@ -406,6 +442,50 @@ LadrunoMPMPattern::admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic,
     if (j2 != 0 && j2->usesAutoRegularization()) {
       err = "LadrunoJ2 " + std::to_string(matTag) + " uses -autoRegularization, which reads"
             " an element length; v1 offers no length at particles (ADR 232 §6, W9)";
+      delete copy;
+      copy = 0;
+      return -1;
+    }
+  }
+  if (isSanisandTag(ct)) {
+    // WP-232k (D2): schemes 1 (ModifiedEuler), 2 (BackwardEuler_CPPM) and 129 (SAS-ME),
+    // each with its S1 leg; scheme 4 also carries function-scope statics (ManzariDafalias.h:219)
+    LadrunoSANISAND *ss = static_cast<LadrunoSANISAND *>(copy);
+    const int sc = ss->ladrunoIntegrationScheme();
+    if (sc != 1 && sc != 2 && sc != 129) {
+      err = "LadrunoSANISAND " + std::to_string(matTag) + " uses IntScheme " + std::to_string(sc) +
+            ", not admitted at particles: 1 (ModifiedEuler), 2 (BackwardEuler_CPPM) and 129"
+            " (SAS-ME) are (WP-232k D2)";
+      delete copy;
+      copy = 0;
+      return -1;
+    }
+  }
+  // AMEND A1 (232k): a particle added after its tag was walked to a non-zero stage would miss
+  // the walk (SANISAND's Elastic2Plastic, HS's seeding at the walk) and the guard would not see it.
+  if (isSanisandTag(ct) && sanisandStage != 0) {
+    err = "LadrunoSANISAND particles cannot be added after `mpm stage` moved SANISAND to stage " +
+          std::to_string(sanisandStage) + ": add all bodies before `mpm stage` (or `mpm reset`)";
+    delete copy;
+    copy = 0;
+    return -1;
+  }
+  if (isHSTag(ct)) {
+    const auto it = hsWalked.find(matTag);
+    if (it != hsWalked.end() && it->second != 0) {
+      err = "LadrunoHS " + std::to_string(matTag) + " particles cannot be added after `mpm stage`"
+            " moved the tag to stage " + std::to_string(it->second) + ": add all bodies before"
+            " `mpm stage` (or `mpm reset`)";
+      delete copy;
+      copy = 0;
+      return -1;
+    }
+    LadrunoHS *hs = static_cast<LadrunoHS *>(copy);
+    if (hs->hasInitialStress()) {
+      // WP-232k (D6): mode F's first step reads the host's stress arrays, seeded from the
+      // Q2 offset (zero for a soil particle), not from the material's own sigma_0.
+      err = "LadrunoHS " + std::to_string(matTag) + " uses -sig0/-sig03: refused at particles"
+            " (WP-232k K3/D6: stage 0 under gravity, then the flip, is the geostatic route)";
       delete copy;
       copy = 0;
       return -1;
@@ -666,15 +746,11 @@ LadrunoMPMPattern::bsplineFaceConflict() const
     if (eng.fc.fixMask[f] != 0u && eng.fc.wallMu[f] >= 0.0)
       return std::string("face ") + names[f] + " carries both `fix` and `wall`: refused on a"
              " B-spline grid (its `fix` ghosts are images, a wall is not; WP-232i B5)";
-  for (const GridVel &gv : gridVels)
-    for (int d = 0; d < G.ndm; d++) {
-      const double lo = G.x0[d], hi = G.x0[d] + G.n[d] * G.h, tol = 1e-9 * G.h;
-      if ((eng.fc.fixMask[2 * d] != 0u && gv.lo[d] < lo - tol) ||
-          (eng.fc.fixMask[2 * d + 1] != 0u && gv.hi[d] > hi + tol))
-        return "gridvel '" + gv.name + "' reaches the ghost layer behind a `fix` face: refused on a"
-               " B-spline grid (those ghosts are images; WP-232i B10)";
-    }
-  return "";
+  // AMEND A5 (232k): a moving box (track / translate) is checked where it is NOW; the per-step
+  // checks (prepareStep, buildPrescribed) refuse the step at which it enters the ghost layer.
+  // Review item 4: a box that does not move is checked up front, also before its `start`.
+  const Domain *dom = const_cast<LadrunoMPMPattern *>(this)->getDomain();
+  return gridvelGhostConflict(dom != 0 ? const_cast<Domain *>(dom)->getCurrentTime() : 0.0, true);
 }
 
 int
@@ -717,6 +793,33 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       return -1;
     }
   }
+  {
+    const std::string why = stageGuard();            // WP-232k (D10)
+    if (!why.empty()) {
+      opserr << "ERROR mpm analyze -- " << why.c_str() << "\n";
+      return -1;
+    }
+  }
+  // WP-232k (owner's K0 decision): SANISAND particles in explicit mode F need a B-spline basis.
+  // On gimp / linear the explicit cell-crossing noise excites the two-rows-per-cell stress
+  // pattern, which SANISAND's plasticity locks (K0 meter A = 7.95 against DruckerPrager).
+  if (!ladruno_mpm::isBSpline(eng.par.basis))
+    for (NDMaterial *m : mats)
+      if (m != 0 && isSanisandTag(m->getClassTag())) {
+        opserr << "ERROR mpm analyze -- LadrunoSANISAND (nDMaterial " << m->getTag()
+               << ") at particles in explicit mode F needs a B-spline basis (bspline2 /"
+                  " bspline3): on gimp / linear it fails the 232k cell-crossing meter (K0; guide"
+                  " \"Soil particles\"). Mode A admits it on every basis (quasi-static runs).\n";
+        return -1;
+      }
+  // WP-232k (D18, #1109): mode F used to accept `mpm pforce` and ignore it, a silent wrong
+  // answer. Particle point forces are mode A's (interface §5); refused here.
+  for (double f : pforce)
+    if (f != 0.0) {
+      opserr << "ERROR mpm analyze -- `mpm pforce` is mode A only: the explicit engine has no"
+                " particle point force (it was accepted and ignored before #1109); refused\n";
+      return -1;
+    }
   // The `mpm reset` snapshot is the state before the first ACCEPTED step: it is
   // retaken by every analyze until a step is accepted, so a refused or
   // zero-step analyze followed by more bodies is covered (review F1).
@@ -763,6 +866,13 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
     }
     // ---- 2. loads and time -------------------------------------------------
     const double t0 = dom->getCurrentTime();
+    // WP-232k (D17, D18, #1109): this step's prescribed grid velocities (`mpm gridvel`),
+    // on the node set at the step start, applied in both projections' grid conditions
+    if (buildPrescribed(t0, dt, err) < 0) {
+      opserr << "ERROR mpm analyze -- " << err.c_str() << "; step refused, nothing changed\n";
+      rc = -1;
+      break;
+    }
     inStep = true;
     dom->applyLoad(t0 + dt);
     inStep = false;
@@ -777,14 +887,18 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       OPS_PROFILE_SCOPE_DEEP_NAMED(matTmr, "mpm.f.material");
       adapter->setTimer(&matTmr);
 #endif
+      adapter->trialFail = -1;                       // WP-232k (D14)
       res = eng.advance(dt, lambda, *adapter, err);
 #ifndef OPS_PROFILE_DISABLE
       adapter->setTimer(0);
 #endif
     }
     ops_TheActiveElement = saved;
+    eng.presc.clear();          // WP-232k (D18): per step; nothing else (affineCheck) sees it
     if (res == -1) {
       dom->revertToLastCommit();
+      if (adapter->trialFail >= 0)                   // WP-232k (D14): name the material and tag
+        err += " (" + refuserText(adapter->trialFail) + ")";
       opserr << "ERROR mpm analyze -- step failed at t = " << t0 + dt << ": " << err.c_str()
              << "; particles keep their committed state\n";
       rc = -1;
@@ -793,8 +907,9 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
     if (res == -2) {
       dom->revertToLastCommit();
       aborted = true;      // W17: only `mpm reset` makes the state usable again
-      opserr << "ERROR mpm analyze -- " << err.c_str() << ". Particles were not moved; the run is"
-                " aborted until `mpm reset`.\n";
+      opserr << "ERROR mpm analyze -- " << err.c_str() << " (first refusing: "
+             << refuserText(adapter->firstRefuser).c_str() << "). Particles were not moved; the"
+                " run is aborted until `mpm reset`.\n";
       rc = -1;
       break;
     }
@@ -861,6 +976,9 @@ LadrunoMPMPattern::reset(void)
   aborted = false;
   // Mode A: elements and grid nodes leave the Domain; their materials come back
   // to the host (a removed tag is never reused: eleBase moves on, W5).
+  // review item 3: a reset returns the particles to stage 0, so an old pack's missing stage
+  // record no longer matters
+  restoredPackVersion = 0;
   if (elementsRestored) {
     std::string err;
     if (relinkElements(err) < 0) opserr << "WARNING mpm reset -- " << err.c_str() << "\n";
@@ -871,6 +989,9 @@ LadrunoMPMPattern::reset(void)
   eng.alFlag.clear();               // WP-232j (F1): the counts are per epoch
   eng.alAveraged = eng.alFallback = 0;
   for (GridVel &g : gridVels) { g.nodes.clear(); g.force.assign(eng.ndm(), 0.0); }
+  eng.presc.clear();                // WP-232k (D18)
+  sanisandStage = 0;                // WP-232k (D10): the particles go back to stage 0
+  hsWalked.clear();                 // AMEND A1
   for (NDMaterial *m : mats)
     if (m != 0) m->revertToStart();   // review item 6: a hand-removed particle element took its material
   lambda = 1.0;

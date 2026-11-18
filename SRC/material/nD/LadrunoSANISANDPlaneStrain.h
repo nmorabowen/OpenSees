@@ -65,6 +65,9 @@ class LadrunoSANISANDPlaneStrain : public LadrunoSANISAND // Ladruno
 {
   public :
 
+  // Ladruno WP-232k (D13/D14): named in the MPM refusal messages
+  const char *getClassType(void) const { return "LadrunoSANISANDPlaneStrain"; }
+
   //full constructor
   LadrunoSANISANDPlaneStrain(int tag, double G0, double nu, double e_init, double Mc, double c, double lambda_c, double e0, double ksi,
 	double P_atm, double m, double h0, double ch, double nb, double A0, double nd, double z_max, double cz, double mDen, int integrationScheme = 2,
@@ -92,6 +95,7 @@ class LadrunoSANISANDPlaneStrain : public LadrunoSANISAND // Ladruno
   //send back the stress
   const Vector& getStress();
   const Vector& getStressToRecord();
+  double getStressZZ(void);   // Ladruno WP-232k (D4): plane-strain sigma_zz, for `mpm particleData sigZZ`
 
   //send back the tangent
   const Matrix& getTangent();

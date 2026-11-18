@@ -1,0 +1,153 @@
+{
+ "build": "f235a001f934263c8aab7691bef5211f693a4816",
+ "rows": {
+  "hs_ps_triax:A:none": {
+   "passed": true,
+   "first_fail": null,
+   "max_err": 8.960321723626628e-13
+  },
+  "hs_ps_triax:A:no_flip": {
+   "passed": false,
+   "first_fail": {
+    "step": 11,
+    "err_sig": 0.03640340201002897,
+    "err_state": 0.9993459118449789,
+    "tol": 1e-08
+   },
+   "max_err": 0.9993459118449789
+  },
+  "hs_ps_triax:A:skip_update": {
+   "passed": false,
+   "first_fail": {
+    "step": 11,
+    "err_sig": 0.0882731339933055,
+    "err_state": 0.051790504612010846,
+    "tol": 1e-08
+   },
+   "max_err": 0.0882731339933055
+  },
+  "hs_ps_triax:A:stale_stress": {
+   "passed": false,
+   "first_fail": {
+    "step": 2,
+    "err_sig": 0.5000149190980911,
+    "err_state": 8.45495398686631e-14,
+    "tol": 1e-08
+   },
+   "max_err": 0.5000149190980911
+  },
+  "hs_ps_triax:F:none": {
+   "passed": true,
+   "first_fail": null,
+   "max_err": 6.204851333155224e-13
+  },
+  "hs_ps_triax:F:no_flip": {
+   "passed": false,
+   "first_fail": {
+    "step": 11,
+    "err_sig": 0.036403402009830825,
+    "err_state": 0.9993459118449789,
+    "tol": 1e-08
+   },
+   "max_err": 0.9993459118449789
+  },
+  "hs_ps_triax:F:skip_update": {
+   "passed": false,
+   "first_fail": {
+    "step": 11,
+    "err_sig": 0.08827313399327737,
+    "err_state": 0.051790504612010846,
+    "tol": 1e-08
+   },
+   "max_err": 0.08827313399327737
+  },
+  "hs_ps_triax:F:stale_stress": {
+   "passed": false,
+   "first_fail": {
+    "step": 2,
+    "err_sig": 0.5000149190980911,
+    "err_state": 8.45495398686631e-14,
+    "tol": 1e-08
+   },
+   "max_err": 0.5000149190980911
+  },
+  "sanisand_ps_triax:A:none": {
+   "passed": true,
+   "first_fail": null,
+   "max_err": 3.958031829461801e-05
+  },
+  "sanisand_ps_triax:A:no_flip": {
+   "passed": false,
+   "first_fail": {
+    "step": 11,
+    "err_sig": 0.013870804603242779,
+    "err_state": 0.4110717629191928,
+    "tol": 1e-08,
+    "substeps": 0.0
+   },
+   "max_err": 0.5040537854338107
+  },
+  "sanisand_ps_triax:A:skip_update": {
+   "passed": false,
+   "first_fail": {
+    "step": 11,
+    "err_sig": 0.22457437705576855,
+    "err_state": 0.17868002182406506,
+    "tol": 1e-08,
+    "substeps": 0.0
+   },
+   "max_err": 0.22457437705576855
+  },
+  "sanisand_ps_triax:A:stale_stress": {
+   "passed": false,
+   "first_fail": {
+    "step": 2,
+    "err_sig": 0.5000065502429535,
+    "err_state": 6.526867451967141e-13,
+    "tol": 1e-08,
+    "substeps": 0.0
+   },
+   "max_err": 0.5000065502429535
+  },
+  "sanisand_ps_triax:F:none": {
+   "passed": true,
+   "first_fail": null,
+   "max_err": 3.9580318021866935e-05
+  },
+  "sanisand_ps_triax:F:no_flip": {
+   "passed": false,
+   "first_fail": {
+    "step": 11,
+    "err_sig": 0.013870804602934276,
+    "err_state": 0.4110717629191928,
+    "tol": 1e-08,
+    "substeps": 0.0
+   },
+   "max_err": 0.5040537854337556
+  },
+  "sanisand_ps_triax:F:skip_update": {
+   "passed": false,
+   "first_fail": {
+    "step": 11,
+    "err_sig": 0.22457437705531694,
+    "err_state": 0.17868002182380374,
+    "tol": 1e-08,
+    "substeps": 0.0
+   },
+   "max_err": 0.22457437705531694
+  },
+  "sanisand_ps_triax:F:stale_stress": {
+   "passed": false,
+   "first_fail": {
+    "step": 2,
+    "err_sig": 0.5000065502429535,
+    "err_state": 4.797697361323473e-16,
+    "tol": 1e-08,
+    "substeps": 0.0
+   },
+   "max_err": 0.5000065502429535
+  }
+ },
+ "all_mutants_caught": true,
+ "unmutated_pass": true
+}

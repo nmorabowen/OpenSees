@@ -1,0 +1,312 @@
+# mpm_soil_cases.txt -- soil particles (WP-232k, ADR-232 §9 phase 5). Format version: mpm-soil-cases 1.
+#
+# Two kinds of block live here:
+#   * REFERENCE blocks (kind reference), written by the verification worker 232k-V from the fork's
+#     own FE or a closed form (tests/mpm_soil_reference.py; never MPM). Each names its JSON record
+#     under tests/data/mpm/soil/ and the decks. The C++ worker reads these; it never reads
+#     tests/mpm_soil_reference.py.
+#   * MPM blocks (kind run | refusal | protocol), added by 232k-C (interface
+#     tests/mpm_soil_interface.md §8).
+# Gates are the pre-registered rows of .claude/skills/ladruno-mpm/references/wp-briefs.md "232k"
+# (K0, S1-S10) and its freeze block -- copied, never widened.
+#
+# FORMAT: that of tests/mpm_implicit_cases.txt (its header is authoritative for every key it
+# defines). Units here: kN, t, m, s, kPa (interface D19): rho = 2.0 t/m^3, g = 9.81. Sign: tension
+# positive. Keys added by the reference blocks:
+#   kind      reference
+#   material  <tag> sanisand <18 positional: G0 nu e_init Mc c lambda_c e0 ksi P_atm m h0 ch nb A0
+#             nd z_max cz Rho> [options]            nDMaterial LadrunoSANISAND
+#   material  <tag> hs <E50 Eoed Eur m c phi psi> [options]   nDMaterial LadrunoHS
+#   data      <path>          the JSON record (provenance: build hash, deck, date)
+#   field     <name> <meaning>  a field of that record the MPM harness reads
+#   ref, gap  free text
+#
+# THE DECKS (quoted):
+#   SANISAND  tests/test_ladruno_sanisand.py:245-263 (_PARAMS, kPa; Rho = 2.0) with the scheme-1
+#             defaults of `_build_confined` (:590, opts = ()): -maxSubsteps 0 (uncapped),
+#             honorTolR 0 (ModifiedEuler TolE 1e-4). Stage 0 G = G0 P_atm (2.97-e)^2/(1+e) =
+#             81588.19 kPa, pressure independent; nu 0.3129.
+#   HS        tests/test_ladruno_hs_material.py:704-719 (the strip-footing deck) WITHOUT -sig0
+#             (K3 / D6), -stage 0. K0nc = 1 - sin 38 deg = 0.384339 (the default).
+#   elastic   ElasticIsotropic with SANISAND's stage-0 operator: E = 2 G (1 + nu) = 214234.27337502,
+#             nu = 0.3129 (so the elastic leg IS SANISAND's stage 0).
+#   DP        GATED leg (orchestrator's ruling): SANISAND's stage-0 operator, K = E/(3(1-2nu)) =
+#             190837.58540443616, G = 81588.19155115394, with the mild cone's sigma_y 0.2, rho_dp 0.210128,
+#             rho_bar 0 (non-associated), the rest 0.
+#   DP mild   REPORTED leg dp_mildcone: the program's admitted deck, tests/mpm_implicit_cases.txt
+#             :286-301 (K 1.5e5, G 15517.24, nu 0.45; the same cone).
+#   DP stages: materialState 0 before gravity, **2** at the flip. UW DruckerPrager's 1 is NOT
+#             plastic: it stays elastic (`|| mElastFlag < 2`, DruckerPrager.cpp:446) and rescales
+#             K, G once by sqrt(1 + sigma_m/P_atm) (updateElasticParam, :823-838); 2 is
+#             elastoplastic (the constructor default, :160). A DP particle staged "1" is elastic.
+# FE flips: SANISAND and HS with `updateMaterialStage -material 1 -stage 1` (their decks' route),
+# which reaches ONE element's points; the rest flip lazily (SANISAND without Elastic2Plastic). It
+# is inert on these domains: every record carries min p and max eta at the flip (p > Pmin = 0.101,
+# eta = 0.855 < Mc = 1.3309).
+
+# ============================================================================
+# K0 -- the FE column references (interface D19; the meter's sigma_ref)
+# ============================================================================
+# Domain D19 without the translation: x in [0, 1.0], y in [0, 10], h 0.5 (2 x 20 cells), base
+# fixed, sides fix x. FE: LadrunoBrick -formulation bbar (small strain), plane-strain slab (one
+# hex thick, z fixed), gravity -brickW in 10 LoadControl steps (stage 0), then the flip, then 2
+# hold steps (LoadControl 0). Checkpoints: end_stage0, after_flip, after_hold.
+# sigma_ref(Y_p) for the meter = the record's legs.<mat>.after_hold.particles[k] at the particle's
+# INITIAL Y (Y_p = (k + 1/2) 0.25, k = 0..39; the four particles of a row share it):
+#   syy = -rho g (l0 - Y)  (equilibrium, closed form)
+#   sxx, szz = (FE ratio to syy at Y) x syy  -- the FE's B-bar hex is constant per element in this
+#   column, exact at the element centre only, so the record interpolates the RATIO between
+#   element centres, never the FE syy itself.
+# Measured after_hold ratios: elastic 0.455392 = nu/(1-nu) (constant to 1e-13); SANISAND 0.455392
+# (its stage 0 is that elastic operator; flip and hold leave it); HS 0.384339 = K0nc; DP (gated)
+# 0.489610 at Y = 0.125 to 0.458885 at Y = 9.875 -- the K0 state (eta 0.855) is outside the cone
+# and returns at the first hold step; dp_mildcone 0.818182 = 0.45/0.55 (eta 0.21, inside).
+case k0_ref_column
+kind reference
+material 1 elastic 214234.27337502 0.3129
+material 2 druckerprager 190837.58540443616 81588.19155115394 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+material 3 sanisand 264.32 0.3129 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0
+material 4 hs 35000.0 35000.0 105000.0 0.5 10.0 38.0 8.0 -nu 0.2 -pref 100.0 -Rf 0.9 -OCR 1.5 -stage 0
+material 6 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+data tests/data/mpm/soil/k0_column.json
+field legs.<elastic|dp|sanisand|hs|dp_mildcone>.after_hold.particles  [{Y, sxx, syy, szz, sxy, ratio_xx, ratio_zz}] at the 40 particle Y
+field legs.<mat>.end_stage0 / after_flip  the same at the other checkpoints
+field legs.sanisand.flip_check  min p and max eta at the flip (Elastic2Plastic inert)
+ref fork FE, LadrunoBrick B-bar column, build in the record; ratios also closed form (record.closed_form)
+gap the FE column does not translate: the meter compares a translated MPM column with the static reference
+end
+
+# D23 (K5 contingency, pre-registered): the same column with a bonded elastic cap one cell thick
+# on top, y in [10, 10.5], ElasticIsotropic (the elastic leg's E, nu) with rho_cap = 20 / (g 0.5) =
+# 4.077471967380224 t/m^3, so its weight is 20 kPa. Soil syy = -(20 + rho g (l0 - Y)). The cap is
+# not in the meter's particle set; its rows are in cap_rows.
+case k0_ref_column_capped
+kind reference
+material 5 elastic 214234.27337502 0.3129
+body cap y 10.0 10.5 mat 5 rho 4.077471967380224
+data tests/data/mpm/soil/k0_column_capped.json
+field legs.<mat>.after_hold.particles  soil particles only, as k0_ref_column
+ref fork FE, as k0_ref_column, with the cap as one row of elastic hexes
+end
+
+# ============================================================================
+# S1 -- one-point drivers (LadrunoBrick -geom hypo -formulation std, unit cube, every node
+# prescribed u = (F - I) X, zero free equations). Both materials, 3D and plane strain (the FE
+# plane-strain leg is the 3D brick with u_z = 0 and the 3D material; LadrunoSANISANDPlaneStrain
+# zero-embeds into the same 6-vector integrator). Path: isotropic stage-0 confinement to p0 =
+# 100 kPa in 10 steps (3D: F_ii = 1 - a, a = p0 / (3 K_stage0); plane strain: xx, yy only,
+# a = p0 / (2 K_stage0)), the flip (updateMaterialStage: one element, so all 8 points, with
+# Elastic2Plastic) before step 11, then:
+#   triax  40 steps to F_yy = 1 - 5e-3 (x and z: 1 + 0.25 e; plane strain x only)
+#   oedo   40 steps to F_yy = 1 - 5e-3, lateral fixed
+#   shear  3 cycles of isochoric simple shear F_xy = gamma, amplitude 2e-3, 10 steps per quarter
+#          (0 -> +ga -> -ga -> 0 per cycle; 120 steps), applied as S F_conf
+# The record gives F[n], dF[n] = F[n+1] F[n]^-1 (L = (dF - I)/dt), and per step sigma, state,
+# SANISAND substeps (GP 1, and at all 8 GPs).
+# FE SELF-CONSISTENCY (a fact for the S1 tolerance, measured before any MPM number): the 8 Gauss
+# points of one homogeneous brick see F to round-off (their dN/dX differ). For SANISAND scheme 1
+# they part at the 3rd plastic step: 3D triax first step with GP rel spread > 1e-8 = 13 (3rd
+# plastic step; GP substep counts still EQUAL there: 3,3,...,3, they first differ at step 14),
+# 3D oedo 13 (14), 3D shear 14 (14), PS triax 24 (30), PS shear 15 (16), PS oedo never; max GP
+# rel spread 1.1e-4. HS: never (max 2.5e-13). So "rel 1e-8 against the FE" is unreachable by the
+# FE itself for SANISAND triax/oedo past those steps, and the freeze's substep-count switch can
+# come one step late (3D triax: the spread opens at 13, the counts differ at 14). Per-leg values
+# are fe_self_consistency in the record.
+case s1_ref_onepoint
+kind reference
+data tests/data/mpm/soil/s1_onepoint.json
+field legs.<sanisand|hs>_<3d|ps>_<triax|oedo|shear>.{F, dF, steps[k].{sig, state, substeps, substeps_gp, gp_rel_spread}, fe_self_consistency}
+ref fork FE, LadrunoBrick -geom hypo (hypoIncrement; the particles use hypoIncrementFromF: same algebra, different rounding)
+end
+
+# ============================================================================
+# S2 -- the K0 column + a surcharge rho g l0 = 196.2 kPa (mode A QS). The k0_ref_column model,
+# then nodal top loads (tributary) ramped in 10 (and, for sensitivity, 20) LoadControl steps after
+# the flip and the 2-step hold. syy = -(rho g (l0 - Y) + 196.2) closed form; sxx, szz from the FE
+# ratio. SANISAND stays exactly elastic (K0 loading keeps s/p on the cone axis: ratio 0.455392 to
+# 1e-13, so its S2 reference is the closed form); HS's cap moves the ratio to 0.420-0.426. Step
+# count sensitivity: max |d sxx| / rho g l0 = 4e-16 (SANISAND), 3.3e-4 (HS), against the 0.02 gate.
+case s2_ref_column
+kind reference
+data tests/data/mpm/soil/s2_column.json
+field legs.<sanisand|hs>_nsur<10|20>.<end_stage0|after_flip|after_hold|after_surcharge>.particles
+ref fork FE, LadrunoBrick B-bar column, as k0_ref_column
+end
+
+# ============================================================================
+# S4 -- the low-g twin. Rows by depth d from the top, d = (k + 1/2) 0.25 (the S2 twin, l0 10; a
+# 2 x 4-cell column, l0 2, uses k < 8). At the flip p = (1 + 2 K0)/3 rho g d with K0 = 0.455392:
+# >= 1 row at p < Pmin = 0.101 kPa needs g < 0.634294; >= 2 rows, g < 0.211431. Chosen g = 0.5:
+# exactly the top row (p = 0.0796 kPa). Reference: per depth, a one-point SANISAND (oedometric
+# stage 0 to syy = -rho g d) flipped by `parameter ... element 1 materialState 1` +
+# `updateParameter 1.0` (id 5: Elastic2Plastic at every point). Measured: the reset row commits
+# sigma = -Pmin I (exactly -0.101) and alpha = 0; every other row keeps its sigma bit for bit.
+# Trap recorded: ManzariDafalias::setParameter needs the material tag after the name
+# (`materialState 1`); without it argc < 2 returns -1 silently and nothing flips.
+case s4_ref_lowg
+kind reference
+data tests/data/mpm/soil/s4_lowg.json
+field rows[k].{depth, p_pre, below_Pmin, pre_flip, after_flip, after_hold}.{sig, state}
+ref fork FE one-point (LadrunoBrick -geom hypo), direct updateParameter flip
+end
+
+# ============================================================================
+# D12 -- the W17 trigger, confirmed on the one-point FE: SANISAND -implex -maxSubsteps 1,
+# isotropic stage 0 to 100 kPa, flip, one simple-shear step dgamma = 1e-3. Domain::commit
+# reports 8 refusing points (-33086) and analyze returns -4; the material latches.
+case d12_ref_trigger
+kind reference
+data tests/data/mpm/soil/d12_trigger.json
+ref fork FE one-point
+end
+
+# ============================================================================
+# S3 -- the strip footing, FE B-bar references (232j L4 domain: half model x in [0, 12],
+# y in [-6, 0], B = 2, rough footing = top nodes x <= 1). Stage 0: gravity (rho 2.0, g 9.81) and
+# the 20 kPa surcharge ramp together in 10 steps; the flip; 2 hold steps; push 2 mm/step to
+# s = 0.05 B = 0.1 m on the K9 ladder (KrylovNewton 1e-6/40 -> NewtonLineSearch 1e-6/60 ->
+# KrylovNewton 1e-5/80 relaxed -> halving, floor 5e-4 of the 2 mm step). q = (F + r_corr) / (B/2)
+# (232f/232j's convention; the MPM's -cond_force(footing, y) / (B/2)). Gate: q at s/B = 0.01,
+# 0.02, 0.05 within +-10 % of the record at that rung.
+# HS (the footing deck without -sig0): records s3_fe_hs_n4 / n8 / n16 (n16 reported only).
+# SANISAND: the deck (scheme-1 defaults) cannot take the first push step at r1 (Round 1); the
+# probe order v0_tims_r1sep (ruling 2026-11-17: the TIMs model-of-record option set on our 18
+# constants -- 129 0 1 1e-7 1e-4 -Presidual 0.0 -honorTolR 0 -flipAlphaIn init -Pmin 0.0101
+# -maxSubsteps 2000 -sasHFloor 1.0 -sasReseatHyst 1 -sasSoftCap 0.5 -sasTensionCutoff 0.5 1.0),
+# then the freeze's v1_me_cap1000, v2_sasme, v3_cppm_refuse, v4_implex_cap1000, runs on
+# esmeralda; records s3_fe_sanisand_<variant>_n<4|8>. Each SANISAND record carries sas_counts:
+# the `sasStats` separation entries (tension, low p), exits, points separated at the end, and
+# SAS-ME refusals, summed over every Gauss point; a non-zero separation count is reported, not
+# tuned.
+#
+# HS -- FINAL. q at s/B = 0.01 / 0.02 / 0.05 (kPa), each reaching s = 0.1 m:
+#   r1 (n4)  260.06 / 452.26 / 1035.40   0 failed attempts      Windows, build 7c932089c, 6.9 s
+#   r2 (n8)  249.49 / 435.01 /  989.38   3 failed, 1 relaxed    Windows, build 7c932089c, 56 s
+#   r3 (n16) 244.43 / 426.39 /  958.66   91 failed, 17 halvings esmeralda, build b94c9d75d, 2133 s
+#   (b94c9d75d -> 7c932089c changes no HS, ladrunoBrick or interpreter source; SANISAND gains
+#   only getClassType and a static stage-restore accessor.) r1 and r2 gated, r3 reported.
+# SANISAND -- REPORTED ONLY (freeze rule: no variant v0-v4 reaches s = 0.05 B at r1 and r2).
+#   v0_tims_r1sep      n4 wall cap at s = 0.0215 (6714 failed, 1344 halvings, 1341 of 1342
+#                      accepted steps on the relaxed 1e-5 rung; 20 SAS-ME refusals, 0 separation
+#                      events; q(0.01 B) = 594.8); n8 wall cap at 0.0037 (11 refusals, 0 separations)
+# Diagnosis (tests/mpm_soil_reference.py docstring): K9's absolute 1e-6 / 1e-5 kN residual sits
+# below the scheme's integration noise at these load levels; TIMs' strip scales its test with
+# the load (1e-5 x tol_ref x 25 / 50) and works at an order lower stress, with other constants.
+# The freeze's v1-v4 (esmeralda, b94c9d75d, cap 2 h, launched from 42c11333a, before sas_counts
+# existed) are failed probes too; none reaches s = 0.1 m at r1:
+#   v1_me_cap1000      n4 wall cap at s = 0.0081 (4451 failed, 1362 halvings); n8 wall cap at 0.0035
+#   v2_sasme           n4 halving floor at s = 0.0398 (890 failed; q(0.01 B) = 595.5); n8 wall cap at 0.0129
+#   v3_cppm_refuse     n4 halving floor at s = 0.0159 (3953 failed); n8 floor at 0.0037
+#   v4_implex_cap1000  n4 floor at s = 0.0040 in 2.4 s, n8 at 0.0020 in 7.3 s: the -implex
+#                      companion hits the cap at commit and latches (commit refusal, W17)
+case s3_ref_footing
+kind reference
+data tests/data/mpm/soil/s3_fe_hs_n4.json
+data tests/data/mpm/soil/s3_fe_hs_n8.json
+data tests/data/mpm/soil/s3_fe_hs_n16.json
+field q_at.{0.01,0.02,0.05}, reached, stopped, failed_attempts, relaxed, halvings, curve [s, q, q_excess]
+ref fork FE, LadrunoBrick B-bar, the K9 ladder
+end
+
+case s3_ref_footing_sanisand_probes
+kind reference
+status report
+data tests/data/mpm/soil/s3_fe_sanisand_v0_tims_r1sep_n4.json
+data tests/data/mpm/soil/s3_fe_sanisand_v0_tims_r1sep_n8.json
+data tests/data/mpm/soil/s3_fe_sanisand_v1_me_cap1000_n4.json
+data tests/data/mpm/soil/s3_fe_sanisand_v1_me_cap1000_n8.json
+data tests/data/mpm/soil/s3_fe_sanisand_v2_sasme_n4.json
+data tests/data/mpm/soil/s3_fe_sanisand_v2_sasme_n8.json
+data tests/data/mpm/soil/s3_fe_sanisand_v3_cppm_refuse_n4.json
+data tests/data/mpm/soil/s3_fe_sanisand_v3_cppm_refuse_n8.json
+data tests/data/mpm/soil/s3_fe_sanisand_v4_implex_cap1000_n4.json
+data tests/data/mpm/soil/s3_fe_sanisand_v4_implex_cap1000_n8.json
+field reached (false in all), s_end, stopped, failed_attempts, halvings, wall_s, curve
+ref fork FE, LadrunoBrick B-bar, the K9 ladder; no winner: S3 SANISAND is reported only
+end
+
+# ============================================================================
+# K0p -- the plastic cell-crossing meter's reference (gate K0p, pre-registered 2026-11-18). The
+# k0_ref_column_capped model and staging, then a stage-1 pre-shear and a hold:
+#   stage 0: gravity ramp 0 -> 1 in 10 steps (one Path series, -BrickW); the flip; 2 hold steps;
+#   pre-shear: nu -> 0.05, then gravity 1 -> 1.3 in 10 steps (soil AND cap: gravity is global),
+#   on the K9 ladder (none needed a retry); 2 hold steps.
+# Flip route: EVERY soil point (parameter element e materialState 1 + updateParameter 1.0 over
+# every soil element: SANISAND id 5, Elastic2Plastic at every point; HS id 13; DP materialState 2).
+# Pre-shear parameters: SANISAND `poissonRatio` (ManzariDafalias.cpp:955-956 -> id 7, :995-997
+# `m_nu = info.theDouble`) = 0.05 at every soil point. DP (gated) `shearModulus` (id 10) =
+# 102016.32065477144 and `bulkModulus` (id 11) = 79346.02717593333 (nu 0.05 at E =
+# 214234.27337502; DruckerPrager.cpp:1097-1107 rebuild mCe); dp_mildcone likewise at its E 45000.
+# HS answers no Poisson parameter (LadrunoHS::setParameter): gravity +30 % only. Elastic:
+# gravity +30 % only.
+# sigma_ref(Y_p) = legs.<mat>.after_hold2.particles: syy = -1.3 (rho g (l0 - Y) + 20) closed form;
+# sxx, szz = FE ratio x syy. Measured ratios after the pre-shear and hold: elastic 0.455392; DP
+# 0.489816 (bottom) .. 0.485924 (top, on the cone); SANISAND 0.406131 .. 0.404478; HS 0.353337;
+# dp_mildcone as DP. SANISAND alpha moved at every FE point (320 of 320, ||d alpha|| 0.100 ..
+# 0.104; the hold after it moves alpha by <= 7.6e-10). alpha per element row before (after_hold)
+# and after (after_preshear, after_hold2) is in alpha_rows.
+case k0p_ref_column_capped
+kind reference
+data tests/data/mpm/soil/k0p_column_capped.json
+field legs.<elastic|dp|sanisand|hs|dp_mildcone>.<end_stage0|after_hold|after_preshear|after_hold2>.particles
+field legs.sanisand.<after_hold|after_preshear|after_hold2>.alpha_rows  [Y_centre, alpha 6 comps]
+field legs.sanisand.alpha_moved, legs.<mat>.preshear_params, legs.<mat>.flip_route, legs.<mat>.preshear_ladder
+ref fork FE, LadrunoBrick B-bar capped column
+end
+
+# ============================================================================
+# S1 options (critic AMEND, 2026-11-18): the admitted options on the S1 one-point driver, the same
+# paths as s1_ref_onepoint (3D and plane strain), plus a `tension` path (F_xx -> 1 + 5e-3 after
+# the flip, the only path that reaches HS's tension cut-off). Legs <option>_<3d|ps>_<path>:
+#   sanisand_is2     IntScheme 2 (BackwardEuler_CPPM)               triax oedo shear
+#   sanisand_is129   IntScheme 129 (SAS-ME), defaults              triax oedo shear
+#   sanisand_implex  -implex -maxSubsteps 1000 (the cap is REQUIRED: "-implex on IntScheme 1
+#                    REQUIRES -maxSubsteps > 0", LadrunoSANISAND.cpp:3132)   triax oedo shear
+#   hs_implex        -implex                                        triax oedo shear
+#   hs_smallstrain   -smallStrain 140000 1.5e-4 (HSSmall)           shear (3 cycles)
+#   hs_sigmat        -sigmat 5.0                                    triax oedo shear tension
+#   hs_deck          (the deck, for the tension leg's contrast)     tension
+# FE self-consistency (8 GPs of one brick), first step with GP rel spread > 1e-8 / max spread:
+# IntScheme 2 shear 3D 61 / 1.4e-2 and PS 21 / 5.2e-2 (CPPM; triax and oedo never); IntScheme 129
+# never (<= 3.2e-14); -implex as the deck's scheme 1 (13 / 1.1e-4 in 3D triax); HS options never
+# (<= 5.5e-13).
+# TWO VACUITY FACTS, measured against s1_onepoint.json before any MPM number:
+#  * SANISAND -implex: every committed sigma is BIT-IDENTICAL to the scheme-1 deck leg (0.0 rel
+#    on all 6 legs). With every DOF prescribed, the committed state is the implicit companion's;
+#    IMPL-EX only changes the trial stress the global Newton sees. A committed-sigma comparison
+#    therefore cannot tell -implex from the deck; its S1 leg checks only that -implex is admitted
+#    and commits the companion's state.
+#  * HS -sigmat 5: bit-identical to the deck on triax / oedo / shear (no tension). On `tension`
+#    it differs: the cut-off acts on the MEAN stress (LadrunoHSKernel.h:1598-1606, "Surface 4
+#    on the MEAN stress, p >= p_cut"), so p ends at +5.0 kPa (sigma 10.24 / 2.38 / 2.38 in 3D)
+#    against the deck's p = 0 (8.48 / -4.24 / -4.24). sigma_xx exceeds 5 kPa by design.
+# -smallStrain differs from the deck by 16 % (rel) at the end of the cyclic shear; -implex (HS)
+# by 1.1e-4 .. 2.2e-4 on triax / oedo, 0 on shear.
+case s1_ref_onepoint_options
+kind reference
+data tests/data/mpm/soil/s1_onepoint_options.json
+field legs.<option>_<3d|ps>_<path>.{options, F, dF, steps[k].{sig, state, substeps, substeps_gp, gp_rel_spread}, fe_self_consistency}
+ref fork FE, LadrunoBrick -geom hypo, as s1_ref_onepoint
+end
+
+# ============================================================================
+# K0p with SANISAND -implex (REPORTED; ruling 2026-11-18: the boundary-value leg that admits
+# -implex is K0p in mode A on gimp). k0p_ref_column_capped's model and staging exactly (flip at
+# every point, nu -> 0.05, gravity x 1.3 on the K9 ladder, 2-step hold), SANISAND with
+# -implex -maxSubsteps 1000 (the cap is required, LadrunoSANISAND.cpp:3132). The FE runs it on the
+# K9 ladder with no retry (10 steps, 0 failed attempts).
+# Measured: alpha moved at 320 of 320 points (||d alpha|| 0.094 .. 0.097); sxx/syy after hold2
+# 0.408988 (bottom) .. 0.407471 (top), against the scheme-1 leg's 0.406131 .. 0.404478: max
+# |d sxx| = 0.0040 rho g l0. implexError (per point, LadrunoSANISAND.cpp:5443-5452): max 4.5e-4
+# after the pre-shear, 2.7e-5 after hold2. Under -implex the COMMITTED stress (the companion's) is
+# not the equilibrated one: the element-centre syy misses the closed form by 0.076 kPa after the
+# pre-shear and 0.006 kPa after hold2 (scheme 1: <= 1e-7); the reference stays syy closed form,
+# sxx and szz = FE ratio x syy.
+case k0p_ref_column_capped_implex
+kind reference
+status report
+material 3 sanisand 264.32 0.3129 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0 -implex -maxSubsteps 1000
+data tests/data/mpm/soil/k0p_column_capped_implex.json
+field legs.sanisand.<after_hold|after_preshear|after_hold2>.{particles, rows, alpha_rows, implex_error_rows [Y_centre, max, mean]}
+ref fork FE, LadrunoBrick B-bar capped column, as k0p_ref_column_capped
+end

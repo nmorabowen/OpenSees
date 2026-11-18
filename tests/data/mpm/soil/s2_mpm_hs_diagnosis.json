@@ -1,0 +1,147 @@
+{
+ "gimp_toprow": {
+  "mat": "hs",
+  "basis": "gimp",
+  "checkpoints": {
+   "end_stage0": {
+    "syy_max": 0.012818916030527644,
+    "sxx_rms": 0.004730137839112537
+   },
+   "after_flip": {
+    "syy_max": 0.012818916030527644,
+    "sxx_rms": 0.004730137839112537
+   },
+   "after_hold": {
+    "syy_max": 0.01283396593561918,
+    "sxx_rms": 0.0047301470698810225
+   },
+   "after_surcharge": {
+    "syy_max": 0.27440500558753966,
+    "sxx_rms": 0.023968186345711278
+   }
+  },
+  "cap": false,
+  "passed": false
+ },
+ "gimp_elastic_cap": {
+  "mat": "hs",
+  "basis": "gimp",
+  "checkpoints": {
+   "end_stage0": {
+    "syy_max": 0.012818916030608188,
+    "sxx_rms": 0.004730139020425807
+   },
+   "after_flip": {
+    "syy_max": 0.012818916030608188,
+    "sxx_rms": 0.004730139020425807
+   },
+   "after_hold": {
+    "syy_max": 0.012833965935685237,
+    "sxx_rms": 0.004730148463416628
+   },
+   "after_surcharge": {
+    "syy_max": 0.021178029255031466,
+    "sxx_rms": 0.004880204581539408
+   }
+  },
+  "cap": true,
+  "passed": true
+ },
+ "gimp_soil_cap": {
+  "mat": "hs",
+  "basis": "gimp",
+  "checkpoints": {
+   "end_stage0": {
+    "syy_max": 0.012818916030688729,
+    "sxx_rms": 0.0047301383963347
+   },
+   "after_flip": {
+    "syy_max": 0.012818916030688729,
+    "sxx_rms": 0.0047301383963347
+   },
+   "after_hold": {
+    "syy_max": 0.01283396593576578,
+    "sxx_rms": 0.004730147588346724
+   },
+   "after_surcharge": {
+    "syy_max": 0.057867804288162426,
+    "sxx_rms": 0.006046672231347494
+   }
+  },
+  "cap": true,
+  "passed": false
+ },
+ "bspline2_toprow": {
+  "mat": "hs",
+  "basis": "bspline2",
+  "checkpoints": {
+   "end_stage0": {
+    "syy_max": 0.006949807867026658,
+    "sxx_rms": 0.0006840288924956649
+   },
+   "after_flip": {
+    "syy_max": 0.006949807867026658,
+    "sxx_rms": 0.0006840288924956649
+   },
+   "after_hold": {
+    "syy_max": 0.006949511179653254,
+    "sxx_rms": 0.000685983208249043
+   },
+   "after_surcharge": {
+    "syy_max": 0.575670614290765,
+    "sxx_rms": 0.037411421990245525
+   }
+  },
+  "cap": false,
+  "passed": false
+ },
+ "bspline2_elastic_cap": {
+  "mat": "hs",
+  "basis": "bspline2",
+  "checkpoints": {
+   "end_stage0": {
+    "syy_max": 0.00694980786469121,
+    "sxx_rms": 0.0004974789258245748
+   },
+   "after_flip": {
+    "syy_max": 0.00694980786469121,
+    "sxx_rms": 0.0004974789258245748
+   },
+   "after_hold": {
+    "syy_max": 0.006949511177157591,
+    "sxx_rms": 0.000497473960338823
+   },
+   "after_surcharge": {
+    "syy_max": 0.3001437463459558,
+    "sxx_rms": 0.01844120973101731
+   }
+  },
+  "cap": true,
+  "passed": false
+ },
+ "bspline2_soil_cap": {
+  "mat": "hs",
+  "basis": "bspline2",
+  "checkpoints": {
+   "end_stage0": {
+    "syy_max": 0.006949807864672667,
+    "sxx_rms": 0.0004919168388156414
+   },
+   "after_flip": {
+    "syy_max": 0.006949807864672667,
+    "sxx_rms": 0.0004919168388156414
+   },
+   "after_hold": {
+    "syy_max": 0.00694951117724219,
+    "sxx_rms": 0.00048500463154364164
+   },
+   "after_surcharge": {
+    "syy_max": 0.06857889577699122,
+    "sxx_rms": 0.004576303640964268
+   }
+  },
+  "cap": true,
+  "passed": false
+ },
+ "build": "7b00fcf136987bddff03bd76c5139da980820e45"
+}
