@@ -1,0 +1,82 @@
+# mpm_soil_cases.txt -- soil particles (WP-232k, ADR-232 §9 phase 5). Format version: mpm-soil-cases 1.
+#
+# Two kinds of block live here:
+#   * REFERENCE blocks (kind reference), written by the verification worker 232k-V from the fork's
+#     own FE or a closed form (tests/mpm_soil_reference.py; never MPM). Each names its JSON record
+#     under tests/data/mpm/soil/ and the decks. The C++ worker reads these; it never reads
+#     tests/mpm_soil_reference.py.
+#   * MPM blocks (kind run | refusal | protocol), added by 232k-C (interface
+#     tests/mpm_soil_interface.md §8).
+# Gates are the pre-registered rows of .claude/skills/ladruno-mpm/references/wp-briefs.md "232k"
+# (K0, S1-S10) and its freeze block -- copied, never widened.
+#
+# FORMAT: that of tests/mpm_implicit_cases.txt (its header is authoritative for every key it
+# defines). Units here: kN, t, m, s, kPa (interface D19): rho = 2.0 t/m^3, g = 9.81. Sign: tension
+# positive. Keys added by the reference blocks:
+#   kind      reference
+#   material  <tag> sanisand <18 positional: G0 nu e_init Mc c lambda_c e0 ksi P_atm m h0 ch nb A0
+#             nd z_max cz Rho> [options]            nDMaterial LadrunoSANISAND
+#   material  <tag> hs <E50 Eoed Eur m c phi psi> [options]   nDMaterial LadrunoHS
+#   data      <path>          the JSON record (provenance: build hash, deck, date)
+#   field     <name> <meaning>  a field of that record the MPM harness reads
+#   ref, gap  free text
+#
+# THE DECKS (quoted):
+#   SANISAND  tests/test_ladruno_sanisand.py:245-263 (_PARAMS, kPa; Rho = 2.0) with the scheme-1
+#             defaults of `_build_confined` (:590, opts = ()): -maxSubsteps 0 (uncapped),
+#             honorTolR 0 (ModifiedEuler TolE 1e-4). Stage 0 G = G0 P_atm (2.97-e)^2/(1+e) =
+#             81588.19 kPa, pressure independent; nu 0.3129.
+#   HS        tests/test_ladruno_hs_material.py:704-719 (the strip-footing deck) WITHOUT -sig0
+#             (K3 / D6), -stage 0. K0nc = 1 - sin 38 deg = 0.384339 (the default).
+#   elastic   ElasticIsotropic with SANISAND's stage-0 operator: E = 2 G (1 + nu) = 214234.27337502,
+#             nu = 0.3129 (so the elastic leg IS SANISAND's stage 0).
+#   DP        the program's admitted mild cone, tests/mpm_implicit_cases.txt:286-301
+#             (K 1.5e5, G 15517.24, sigma_y 0.2, rho_dp 0.210128, rho_bar 0). Staged
+#             materialState 0 before gravity, 1 at the flip.
+# FE flips: SANISAND and HS with `updateMaterialStage -material 1 -stage 1` (their decks' route),
+# which reaches ONE element's points; the rest flip lazily (SANISAND without Elastic2Plastic). It
+# is inert on these domains: every record carries min p and max eta at the flip (p > Pmin = 0.101,
+# eta = 0.855 < Mc = 1.3309).
+
+# ============================================================================
+# K0 -- the FE column references (interface D19; the meter's sigma_ref)
+# ============================================================================
+# Domain D19 without the translation: x in [0, 1.0], y in [0, 10], h 0.5 (2 x 20 cells), base
+# fixed, sides fix x. FE: LadrunoBrick -formulation bbar (small strain), plane-strain slab (one
+# hex thick, z fixed), gravity -brickW in 10 LoadControl steps (stage 0), then the flip, then 2
+# hold steps (LoadControl 0). Checkpoints: end_stage0, after_flip, after_hold.
+# sigma_ref(Y_p) for the meter = the record's legs.<mat>.after_hold.particles[k] at the particle's
+# INITIAL Y (Y_p = (k + 1/2) 0.25, k = 0..39; the four particles of a row share it):
+#   syy = -rho g (l0 - Y)  (equilibrium, closed form)
+#   sxx, szz = (FE ratio to syy at Y) x syy  -- the FE's B-bar hex is constant per element in this
+#   column, exact at the element centre only, so the record interpolates the RATIO between
+#   element centres, never the FE syy itself.
+# Measured ratios (constant over Y to 1e-13): elastic 0.455392 = nu/(1-nu); SANISAND 0.455392 (its
+# stage 0 is that elastic operator; flip and hold leave it); HS 0.384339 = K0nc; DP 0.818182 =
+# 0.45/0.55 (elastic: eta = 0.21, inside the cone).
+case k0_ref_column
+kind reference
+material 1 elastic 214234.27337502 0.3129
+material 2 druckerprager 1.5e5 15517.241379310342 0.2 0.21012821217029673 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+material 3 sanisand 264.32 0.3129 0.6944 1.3309 0.71 0.027 0.83 0.45 101.0 0.005 1.3 0.968 3.5 0.05 5.75 12.5 1100.0 2.0
+material 4 hs 35000.0 35000.0 105000.0 0.5 10.0 38.0 8.0 -nu 0.2 -pref 100.0 -Rf 0.9 -OCR 1.5 -stage 0
+data tests/data/mpm/soil/k0_column.json
+field legs.<elastic|dp|sanisand|hs>.after_hold.particles  [{Y, sxx, syy, szz, sxy, ratio_xx, ratio_zz}] at the 40 particle Y
+field legs.<mat>.end_stage0 / after_flip  the same at the other checkpoints
+field legs.sanisand.flip_check  min p and max eta at the flip (Elastic2Plastic inert)
+ref fork FE, LadrunoBrick B-bar column, build in the record; ratios also closed form (record.closed_form)
+gap the FE column does not translate: the meter compares a translated MPM column with the static reference
+end
+
+# D23 (K5 contingency, pre-registered): the same column with a bonded elastic cap one cell thick
+# on top, y in [10, 10.5], ElasticIsotropic (the elastic leg's E, nu) with rho_cap = 20 / (g 0.5) =
+# 4.077471967380224 t/m^3, so its weight is 20 kPa. Soil syy = -(20 + rho g (l0 - Y)). The cap is
+# not in the meter's particle set; its rows are in cap_rows.
+case k0_ref_column_capped
+kind reference
+material 5 elastic 214234.27337502 0.3129
+body cap y 10.0 10.5 mat 5 rho 4.077471967380224
+data tests/data/mpm/soil/k0_column_capped.json
+field legs.<mat>.after_hold.particles  soil particles only, as k0_ref_column
+ref fork FE, as k0_ref_column, with the cap as one row of elastic hexes
+end
