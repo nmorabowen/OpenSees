@@ -1106,6 +1106,21 @@ reaches. Mode A had no post-flip floor event, and its pass stands.
   same q_max to 7 digits) is reported as the compiler difference it is. The suite counts (615
   passed, 16 skipped, 6 xfailed, 0 failed) stand.
 
+**K0 verdict (2026-11-18, capped mode F, build `15b109ad8`, esmeralda): SANISAND MISSES in mode F
+on `gimp`; passes everywhere else.** (meter / twin; A = m(SANISAND) / m(DP))
+
+| | mode A (uncapped, admitted) | mode F capped |
+|---|---|---|
+| gimp | 0.01429 / 0.01441 → A **0.992** pass | SANISAND 0.18557 (13 post-flip floor events), DP 0.02335 → A **7.95, miss** |
+| bspline2 | 0.00273 / 0.00258 → A **1.058** pass | SANISAND 0.01616, DP 0.02434 → A **0.664** pass (no floor events) |
+
+Capped elastic 0.0335 / 0.0285, HS 0.0182 / 0.0206 (A_HS 0.78 / 0.85), dp_mildcone 0.0277 /
+0.0311. The gimp mode-F error is not at the free surface: it lies at Y ≈ 4.6–9.9 m, up to 0.39
+ρgl0, in a cell-pair pattern. D23 has no second re-run, so the capped run is the row's measurement.
+**By the pre-registered rule, SANISAND stops at K0** and the miss goes to the owner. Before the
+owner decides, the K0 row is diagnosed (re-runs of this one case only; no other SANISAND MPM
+case runs). HS continues.
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
