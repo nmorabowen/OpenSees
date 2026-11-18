@@ -901,6 +901,44 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 > - **Review of record (ADR-87 D4):** the Fable critic (AMEND; every finding fixed or ruled)
 >   and `/code-review high`.
 
+> **Amendment (232l kickoff, 2026-11-18) — phase 6's scope, its two routes and its gates, fixed
+> before any two-phase MPM number.** The brief is `wp-briefs.md` "232l" (decisions U1–U12, gates
+> T0–T12).
+>
+> - **Scope.** Saturated Biot u-p at single-point particles: ADR-71's zones I and II, one set of
+>   particles carrying the skeleton and the pore fluid. Unsaturated (ADR-86 D1, Track U),
+>   double-point particles and full Biot u-U (zone III) are out. Anura3D's double-point work stays
+>   papers-only (§2).
+> - **The two routes the §9 item names are both built and compared, one per mode.**
+>   - **Route E, mode A: stabilized equal-order, monolithic.** Grid nodes under a two-phase body
+>     carry a pressure DOF. Each particle adds Q, H, S and H̃ through the pure helpers of
+>     `LadrunoUPKernel.h` at its own (N, ∇N, V_p), with LadrunoUP's block placement and sign
+>     convention. With linear shapes and particles at the Gauss points, it must reproduce
+>     LadrunoUP Q4 / H8 exactly (gate T1). This is why route E reuses the kernel rather than
+>     writing a new one.
+>   - **Route S, mode F: semi-implicit.** Explicit MUSL for the skeleton, an implicit pressure
+>     solve on the active grid every step. Round 1 picks the scheme, with a written argument:
+>     either ADR-73's fixed-stress rate form, which the fork ships and has measured, moved onto the
+>     grid, or the fractional step of Berkeley geomechanics/mpm (MIT, source may be read). The
+>     chosen scheme gets a numpy oracle before any C++, as every new numeric has (§11).
+>   - Each route is gated on its own. The "versus" is reported: the TIMs first-settlement
+>     diagnostic, the checkerboard index, the cost per step and the time-step limit of each, so
+>     that the owner can choose the default afterwards.
+> - **The pressure lives on the particles.** Mode A resets the grid every step (W1), and so does
+>   mode F. Each particle therefore carries its pore pressure p (and ṗ for Newmark), projected to
+>   the grid and read back each step. Round 1 picks the projection and the update (incremental or
+>   total) against the oracle. The projection's own diffusion is measured and reported.
+> - **Consolidation is transient.** Mode A's quasi-static path admits `LoadControl` only, and a
+>   static solve sees no S or Qᵀ rate terms, so it cannot consolidate. Two-phase mode A therefore
+>   runs Newmark, as LadrunoUP does (`LadrunoUP.cpp:1450-1503`). A two-phase body under a static
+>   analysis is refused loudly.
+> - **References** are the closed forms (Terzaghi, Mandel, hydrostatics) and the fork's own
+>   LadrunoUP on the same grid, time step and integrator. They are never MPM. Mandel has no test
+>   in the tree today (ADR-86 O1), so 232l writes its closed form and its FE reference.
+> - **Serial.** Two-phase particles run on one thread in phase 6.
+> - **No contract change** beyond the additive pore-pressure field that `232a_mpm_contracts.md:636`
+>   reserves. The gates read p through `mpm` queries, and any apeGmsh reader work goes to T.
+
 **Mutation gate (ADR-87 D2)**, through the fork's existing mechanism: a new family `MPM` in the
 `LADRUNO_MUTATE_FAMILY` list (`CMakeLists.txt`, a vanilla-ledgered line), in the options of
 `.github/workflows/ladruno_mutation.yml` and in `Ladruno_scripts/mutation_gate.py`; the mutant is
@@ -1090,6 +1128,10 @@ ADR-88).
   SANISAND and HS admitted at particles; SANISAND mode F only on B-spline bases (the K0 gimp
   miss, owner's decision); the K0p plastic meter passes on every admitted leg; S1 (3D mode A,
   IntScheme-2 shear) and S2 are owner-accepted misses; S3 SANISAND reported only. Found #1109–#1112.
+- **2026-11-18** — 232l (phase 6, two-phase particles) kicked off: saturated Biot u-p at
+  single-point particles; route E (stabilized equal-order, monolithic, mode A) and route S
+  (semi-implicit, mode F), each gated on its own, compared in a reported row (amendment
+  "232l kickoff", after the 232k amendment).
 
 ---
 

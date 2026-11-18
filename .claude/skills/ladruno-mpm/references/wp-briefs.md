@@ -1328,3 +1328,262 @@ Done when: every gated row is green (or a reported miss with diagnosis); the rep
 Ladruno_implementation/232k_mpm_soil_models.md; the ci/ gates are clean; ladrunoBuild matches your
 head on the exe and the pyd. Report per the Worker rules.
 ```
+
+## 232l — phase 6: two-phase particles, stabilized equal-order (mode A) against semi-implicit (mode F)
+
+Kickoff 2026-11-18 (orchestrator, Opus 5.5, from the owner's `/ladruno-mpm 232l`). Branch
+`wp/232l-mpm-two-phase`, one draft PR for the WP. Base `ladruno` at `cfe478254` (232k #1108
+merged; the last release is `ladruno-v20261118`, 232i + 232j). ADR §9 phase 6 and §8's row
+"Terzaghi + Mandel on particles (+ TIMs' first-settlement diagnostic)". The ADR carries
+"Amendment (232l kickoff, 2026-11-18)", written with this section and before any two-phase MPM
+number. Done when the gate table below is green (or each miss is reported with its diagnosis,
+never a widened band), the warrant package is in the PR, and the ADR carries "Amendment (232l,
+<date>)" with the route comparison and the §6 table's two-phase column filled.
+
+**Facts checked at kickoff** (source-verified on `cfe478254`; the workers re-quote, never recall):
+- **The kernel is reusable at a point.** `SRC/element/ladrunoUP/LadrunoUPKernel.h` is pure (no
+  OpenSees dependency, `:31-38`). `addQ` (`:87`, Q = ∫Bᵀ α m N_p dV), `addH` (`:104`), `addS`
+  (`:120`), `addHtilde` (`:136`, into the damp p-p slot, S* = S + H̃), `addFseep` (`:153`) take
+  (N, ∇N, dv) and accumulate into caller-zeroed buffers. Two catches: `stabAlphaAuto(h, K, G, α₀)`
+  = α₀h²/(K + 4G/3) (`:175-178`) needs a length h, which a particle lacks (FE uses the longest
+  element edge, `LadrunoUPShapes.h:67`); `dofMap` (`:203-216`) assumes p last on each node. The
+  overlay already calls the kernel outside an element (`LadrunoPorousOverlay.cpp:642`, `:658-671`).
+- **LadrunoUP's blocks** (ELE 33017; ndf = ndm + 1 for equal order, `OPS_LadrunoUP.cpp:195-199`;
+  the nodal DOF is p itself, ṗ from the velocity slot, `LadrunoUP.cpp:1681`, `:1704-1705`):
+  tangent [K, −Q; 0, H] (`:1360-1408`); damp [C_Ray, 0; Qᵀ, S+H̃] (`:1450-1503`); mass [M, 0; 0, 0]
+  (`:1505-1521`); resisting force [∫Bᵀσ′ − Qp − body; Hp − f_seep] (`:1523-1526`). Sign: σ = σ′ −
+  α m p, tension-positive σ, compression-positive p (`:2235-2236`). Unsymmetric: ProfileSPD
+  silently drops a block (quirk `LEGACY-symmetric-storage-solvers-silently-drop-one-u-p`). Defaults:
+  α 1, Ks −1 (incompressible grains), `-stab auto` α₀ 0.25, `-dynSeepage` off.
+- **Mode A cannot carry p today.** Grid nodes are built with ndf = ndm as a literal
+  (`LadrunoMPMImplicit.cpp:885-886`); `LadrunoMPMPoint::getNumDOF` returns `nen * ndm`
+  (`LadrunoMPMPoint.h:188`; the header says every grid node has ndf = ndm, `:32`). Mode A admits
+  Newmark, HHT and GeneralizedAlpha (`LadrunoMPMImplicit.cpp:403-416`) and, quasi-static,
+  `LoadControl` only (`:433-437`); symmetric storage is refused with an unsymmetric tangent
+  (`:469-490`).
+- **Mode F has no scalar field.** `Particles` (`LadrunoMPMCore.h:531-548`) carry id, body, mat,
+  flags, m, V0, lp, x, v, V, F, R, eps, sigHat, sig, sig0, a. Grid arrays `gm, gp, gfi, gfe, gv1,
+  ga, gvs` are sized nN or nd·nN (`:1141`, `:1179-1183`). `advance()` at `:785`: P2G `:797`, grid
+  update `:873`, MUSL `:903`, commit `:1016`, G2P `:1026`. There is no linear solve in the engine.
+- **The overlay is the fork's semi-implicit precedent** (ADR-73; `LadrunoPorousOverlay`, pattern
+  tag 33022, `classTags.h:649`). Its own p vector on FE nodes, its own CSR H, S*, L and a
+  Jacobi-preconditioned CG (`LadrunoPorousOverlay.cpp:887-982`). Fixed-stress rate form, solid
+  first: (S* + L + Δt H) p = (S* + L) p₀ + L Δp_ref − Qᵀ Δu + Δt f_seep (`.h:41-55`), with
+  L = α²/K_dr by default (`.cpp:602-629`). `-fluidUpdate explicit` is its explicit lane. It meshes
+  T3, Q4 and H8 cells only (`.cpp:229-231`), so it cannot be pointed at particles as it stands.
+- **No porous material is admitted** at particles (`admitMaterial`, `LadrunoMPMPattern.cpp:409-504`);
+  PDMY, PIMY and FluidSolidPorous fall to the generic refusal (`:431-438`).
+- **Contract 2** has no pore-pressure field (`LadrunoMPMIO.cpp:50-64`); `232a_mpm_contracts.md:636`
+  reserves "a pore pressure in phase 6" as additive.
+- **References in the tree.** Terzaghi: `tests/test_ladruno_up_element_analytic.py`
+  (`terzaghi_series` `:89`, `terzaghi_U` `:98`; Q4 1×10, `-stab off`, dt 0.02; p gates 0.15 / 0.02
+  / 0.01 / 0.005 at Tv 0.05 / 0.1 / 0.2 / 0.5, `:252-255`; |ΔU| < 0.02 at Tv 0.1–0.5, `:259-263`).
+  The checkerboard index: `tests/test_ladruno_up_element_equiv.py` B4 (`:332-345`, `:441-455`;
+  CB_lap(off) ≥ 0.5, CB_lap(auto 0.25) ≤ 0.3, ratio ≥ 3). **Mandel is not in `tests/`**: ADR 232
+  `:181` cites the TIMs C0-up result (peak 1.0754 against 1.0757) from outside the tree, and ADR-86
+  O1 proposes the oracle. The 1.71× first settlement appears only at ADR 232 `:171`.
+- **Quirks that bind u-p runs:** honest-p LadrunoUP under central difference is unstable (no p
+  mass); `-body` is an acceleration in LadrunoUP; the contact handler guards ndf 3 on every node;
+  a staged non-zero pressure SP added mid-analysis converges to a wrong state under Transformation.
+
+**Model and effort, re-decided at kickoff.**
+- C++ worker 232l-C: opus · high. Both routes, sequentially (route E first): the grid pressure DOF
+  in mode A, the particle u-p element, the particle pressure state and its projection, route S in
+  the mode-F engine, the refusals, restart, the harness.
+- Verification worker 232l-V: opus · high, a different agent. The numpy oracle (particle u-p
+  assembly, the pressure projection, one route-S step), the closed forms (Terzaghi, Mandel,
+  hydrostatics) and the FE LadrunoUP references on the same grids. It never reads the MPM C++.
+- Ready-flip critic: fable · high, plus `/code-review high`: the review of record (ADR-87 D4).
+- Runs: esmeralda for anything over 10 min. A fresh `git clone --depth 1 --branch
+  wp/232l-mpm-two-phase` into `~/ladruno_build_test/OpenSees_232l`; never touch
+  `~/ladruno_build_test/OpenSees`; never overwrite a loaded `.so` in place. The orchestrator
+  launches every build and every long run, and deletes the clone and run folders after the merge.
+
+**Decisions fixed at kickoff** (a worker may object in its Round-1 report; the orchestrator
+decides):
+
+- **U1 — scope.** Saturated Biot u-p, single-point particles, zones I/II. Out: unsaturated,
+  double-point, u-U, porous materials (PDMY, PIMY, FluidSolidPorous stay refused). The skeleton
+  material is any admitted effective-stress material (§6 table); the gates use ElasticIsotropic
+  and DruckerPrager, the soils are reported (R).
+- **U2 — route E, the grid pressure DOF (mode A).** Grid nodes under a two-phase body carry
+  ndf = ndm + 1, p last (LadrunoUP's `dofMap`). Round 1 decides how nodes reached only by
+  single-phase particles are handled (uniform ndm + 1 with the stray p fixed, or mixed ndf) and
+  quotes what the numberer, the handler, `renormalize` empty support and the B-spline image
+  ghosts do with a p component. A p-row with no two-phase support must never reach the solver
+  singular: it is fixed or absent.
+- **U3 — route E, the particle element.** The particle calls `addQ`, `addH`, `addS`, `addHtilde`
+  and `addFseep` with its own N, ∇N and V_p, and places the blocks as `LadrunoUP.cpp:1360-1526`
+  does. The stabilization length is the grid spacing h, on every basis; α₀ and `-stab off|auto|α`
+  as LadrunoUP parses them. `-dynSeepage` stays off (its quirk). Kf, n, ρ_f, k (or k_H with γ_w),
+  α and Ks are per two-phase body, with LadrunoUP's flag names and defaults. Porosity is constant
+  in phase 6 (gates are small strain); Round 1 says what a J-update would need.
+- **U4 — the pressure lives on the particles.** The grid is reset every step in both modes, so
+  each particle carries p (and ṗ in mode A, for Newmark's re-seed in `domainChanged()`, W1). Round 1
+  picks the projection to the grid (volume- or mass-weighted, or a local least-squares) and the
+  update back (incremental, FLIP-like, or total, PIC-like), both checked against the oracle. The
+  projection's diffusion is measured on a no-motion column (reported, R).
+- **U5 — integrators.** Two-phase mode A runs Newmark (HHT and GeneralizedAlpha only if a test
+  admits them), like LadrunoUP. A two-phase body under a static analysis is refused loudly (no
+  rate terms, so no consolidation). Central difference and every mode-A explicit path are refused
+  with a two-phase body (the honest-p quirk).
+- **U6 — route S (mode F).** An explicit MUSL skeleton step and an implicit pressure solve on the
+  active grid each step. Round 1 picks, with a written argument quoting its sources:
+  (a) ADR-73's fixed-stress rate form moved onto the grid (the overlay's scheme and its CG, which
+  the fork has measured), or (b) the fractional step of Berkeley geomechanics/mpm (MIT; source may
+  be read and cited). Round 1 states the scheme's time-step limit (the drained skeleton wave
+  speed, not the undrained one, is the point of a semi-implicit route) and how the engine solves
+  the pressure system (an engine-owned CG on the active nodes, as the overlay has, or an OpenSees
+  SOE). The overlay itself is not reused as an object: it meshes FE cells only.
+- **U7 — pressure boundary conditions.** Drained (p = 0) and prescribed-p faces as grid
+  conditions on the p component, host-owned SPs in mode A (232f), engine-applied in mode F.
+  Impervious is natural. On B-spline `fix` faces, the p ghost is an image: odd for a drained face,
+  even for an impervious one (232i's method). Free-surface drainage at a particle boundary that is
+  not a grid face is out of phase 6 (reported if met); every gated case puts its drained faces on
+  grid lines.
+- **U8 — loads.** Gated cases load through grid conditions or a carrier body, never the
+  `footing_mildcone` body force on one particle row, which #1110 showed is not a traction. Round 1
+  picks Terzaghi's top load and Mandel's rigid frictionless plate (a stiff impervious carrier
+  block, or a host-owned tie of the top nodes' vertical DOF), and 232l-V's FE reference uses the
+  same mechanism.
+- **U9 — refusals.** Loud refusal for: a two-phase body with a symmetric-storage SOE (both
+  routes are unsymmetric unless Round 1 shows otherwise); a static analysis (U5); central
+  difference in mode A; a porous material at a particle; `mpm antiLocking fbar` with a two-phase
+  body unless Round 1 shows the composition with a test (LadrunoUP's own answer is `-formulation
+  bbar`); an initial-stress offset on a two-phase particle (Q2); a two-phase body with threads
+  above 1 (serial, honoured as 1 with one warning or refused, as 232k's K2 rule does).
+- **U10 — staging.** A two-phase body starts from zero excess pressure in the gated cases (no
+  gravity). Hydrostatic initialization (p = γ_w (H − Y)) with gravity is gate T4. Soil stage flips
+  on a two-phase body use 232k's `mpm stage` walk unchanged.
+- **U11 — contracts.** Contract 2 gains the additive `PORE_PRESSURE` field that
+  `232a_mpm_contracts.md:636` reserves, only if Round 1 quotes that it is additive with no format
+  bump the readers would reject. Otherwise it goes to T. apeGmsh reader work is queued with T, not
+  done here. The gates read p through `mpm` queries.
+- **U12 — restart.** The database pack carries p (and ṗ) and the body's fluid constants; a pack
+  version bump; older packs are refused with a two-phase body.
+
+**Pre-registered gates** (fixed here, before any two-phase MPM number; a band is never widened
+after a run, a miss is reported as a miss with its diagnosis). References are closed forms and
+the fork's own LadrunoUP on the same grid, time step and integrator — never MPM. "FE error" below
+means LadrunoUP's own error against the closed form on that grid, Δt and Newmark pair; MPM may not
+be worse than twice it, nor worse than the fixed floor. Both quantities are reported.
+
+| Row | Gate |
+|---|---|
+| **T0 oracle match — runs FIRST** | 232l-V's numpy oracle, from `tests/mpm_twophase_interface.md` alone: (i) one particle's u-p blocks and residual; (ii) the pressure projection and update (U4) over 3 steps with motion; (iii) 10 route-S steps on a 4×4 grid. The C++ matches each to rel 1e-9. No other two-phase MPM case runs before T0 passes. |
+| **T1 FE identity (route E, mode A)** | Linear basis, particles at the 2×2 (2D) / 2×2×2 (3D) Gauss points with V_p = the Gauss weight × detJ, small strain (`-geom` off at both sides), ElasticIsotropic and DruckerPrager, `-stab off` and `auto`, h = grid spacing = element edge. From a common non-zero state (u, p, ṗ prescribed), the assembled tangent and residual (`printA` / `printB`) equal LadrunoUP Q4 / H8 on the same mesh to rel 1e-12 in the Frobenius / 2-norm; the first Newmark step's u and p equal it to rel 1e-10. |
+| T2 Terzaghi, route E (mode A; `gimp`, `bspline2`) | 232l-V's column (the `test_ladruno_up_element_analytic.py` parameters, quoted; a B-spline grid is 2 cells wide), drained top on a grid line, impervious base, step or short-ramp load (U8), Newmark γ 0.6 / β 0.3025 as the FE test uses. Observables at Tv 0.1, 0.2, 0.5: max_z \|p − p_exact\| / p₀ and \|U − U_exact\|. **Gate:** each ≤ max(2 × FE error, 0.02). Tv 0.05 reported (the step transient, as the FE test treats it). `linear` reported. |
+| T3 Mandel, route E (mode A; `gimp`, `bspline2`) | Plane strain, rigid frictionless plate (U8), lateral drainage on grid lines; parameters chosen by 232l-V so the closed-form Mandel–Cryer peak is ≥ 1.05 p₀. Observables: p(0, t)/p₀ at five times 232l-V fixes in Round 1 (the peak among them). **Gate:** each ≤ max(2 × FE error, 0.02) against the closed form, and the MPM peak ≥ 1 + ½ (closed-form peak − 1). |
+| T4 hydrostatics + effective self-weight (mode A; `gimp`, `bspline2`) | A saturated column under gravity, drained top at p = 0, run to steady state. **Gate:** p within 0.01 γ_w H of γ_w (H − Y), σ′_yy within 0.03 ρ′ g H of closed form (the S1 self-weight bar), at every particle. |
+| T5 checkerboard (mode A, route E; and mode F, route S) | ADR-71's B4 footing (`test_ladruno_up_element_equiv.py:332-345`) on particles at the B4 grid, ppc 2, `gimp`. **Gate:** CB_lap ≤ 0.3 for route E `-stab auto` 0.25 and for route S; route E `-stab off` ≥ 0.5 (the test must see a checkerboard). The FE's own CB values are reported beside. |
+| T6 Terzaghi and Mandel, route S (mode F; `bspline2`; `gimp` reported) | T2's and T3's cases with a load ramp of at least 20 undrained wave transits (Round 1 states it), no damping during consolidation, read at the same Tv. Reference: the closed forms, and the FE error of LadrunoUP under Newmark with the same ramp. **Gate:** as T2 and T3. |
+| T7 time step (route S) | The scheme's stated Δt limit (U6): stable at 0.9 × the limit for 2000 steps on T6's column, unstable or refused at 1.5 ×. The undrained CFL that a fully explicit scheme would need is reported beside it. |
+| T8 refusals and options | Every U9 refusal, loud, in both modes where it applies; U2's stray-p rule tested; `mpm info` reports the body's route, fluid constants and stabilization. |
+| T9 restart (mode A) | The database round trip with two-phase particles mid-consolidation: the continued run equals the uninterrupted one bit for bit. |
+| T10 unchanged answers | The whole existing MPM suite passes unchanged (counts reported), and a single-phase body in a model with no two-phase body is bit for bit 232k's answer (L1 and the S1 triaxial). |
+| T11 mutation | The MPM family's ZERO and SCALE scores at or above 232k's 0.500 and 0.398. Plus a Zone-A two-phase oracle (T1 at one cell) that goes red if Q or the p projection is skipped. |
+| T12 engines | Classic Tcl and Python give the same T2 answer at small size. |
+| R reported, not gated | **The route comparison:** the TIMs first-settlement ratio u(0⁺)/u_undrained for route E at α₀ ∈ {off, 0.1, 0.25} and for route S (TIMs' C0-up FE: 1.71 with stabilization, 0.94 without but a 1.35 p₀ checkerboard); CB index; cost per step and Δt of each route against LadrunoUP. The projection's diffusion on a no-motion column (U4). A two-phase cell-crossing meter: T4's column translated through four cells (232k's K0 machinery), p error against hydrostatic. SANISAND and HS undrained one-point cyclic shear at a two-phase particle against LadrunoUP's one element. |
+
+**Order.** Round 1 (both workers, in parallel) → the orchestrator's freeze → 232l-V's oracle and
+232l-C's route E → **T0 (i, ii) and T1 are the first two-phase MPM numbers** → T2–T5, T8–T12 on
+route E → route S with T0 (iii) first → T6, T7 → the warrant run on one build.
+
+### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
+
+```text
+<header>  ADR sections: §4 (rows LadrunoUPKernel, LadrunoPorousOverlay, TIMs C0-up), §8 (the P6
+row), §9 phase 6, §11, and the amendment "232l kickoff". ADR-71 §3 and §6, ADR-73 §1 and its §12
+log. Your PR: #<pr>.
+Branch: work detached on origin/wp/232l-mpm-two-phase; commit; `git pull --rebase origin
+wp/232l-mpm-two-phase`; `git push origin HEAD:wp/232l-mpm-two-phase`. Another worker pushes C++
+to the same branch. You touch only tests/mpm_twophase_reference.py,
+tests/test_mpm_twophase_reference.py, tests/data/mpm/twophase/*.json and the reference blocks of
+tests/mpm_twophase_cases.txt (create it; the C++ worker adds the MPM blocks).
+Independence: read nothing under SRC/domain/pattern/ladrunoMPM/ or SRC/element/ladrunoMPMPoint/.
+Your oracle is written from tests/mpm_twophase_interface.md (232l-C writes it in Round 1) and the
+papers, never from the MPM C++. You may read and run LadrunoUP, its kernel and its tests, and the
+overlay. Read the "232l" section of .claude/skills/ladruno-mpm/references/wp-briefs.md first: the
+facts, U1–U12 and the gate table bind you. Never widen a band.
+Binary: <pyd path>, built by the orchestrator; print ops.ladrunoBuild() into every record.
+
+ROUND 1 — report before running anything long (at most 300 words + a plan):
+  - Terzaghi: the case you take from tests/test_ladruno_up_element_analytic.py, quoted with lines,
+    in kN, t, m, s; its FE error at Tv 0.1 / 0.2 / 0.5 on the grids T2 uses (gimp: 1 cell wide;
+    bspline2: 2 cells wide), so the max(2 × FE, 0.02) bands are known before any MPM number.
+  - Mandel: the closed form you implement (cite the paper and equation numbers), parameters with
+    a Mandel–Cryer peak ≥ 1.05 p₀, the five times, the plate mechanism you can build in LadrunoUP
+    (it must be one the MPM can build too: U8), and the FE error at those times.
+  - T4: the hydrostatic column and its FE steady state; T5: B4 on the MPM grid and its FE CB values.
+  - The oracle's scope (T0 i–iii) and what it needs from tests/mpm_twophase_interface.md.
+  - For T6: whether LadrunoUP under Newmark with T6's ramp reaches the T2 bands; if not, say so
+    with the number, before any MPM number.
+  - Anything in the gate table you find unreachable by the FE itself, with the number.
+ROUND 2 — on the orchestrator's "frozen":
+  1. The numpy oracle (T0 i–iii) and its self-checks (one-element consolidation ODE against
+     closed form; block symmetry pattern; Q against LadrunoUP's printA on one element).
+  2. Closed forms: Terzaghi (reuse terzaghi_series / terzaghi_U by import), Mandel, hydrostatics.
+  3. FE references: T1's LadrunoUP Q4/H8 tangent, residual and first step from the common state;
+     T2–T6 records with the FE error per observable; T5's CB values; the first-settlement ratio
+     for LadrunoUP at α₀ ∈ {off, 0.1, 0.25}.
+  4. tests/test_mpm_twophase_reference.py: shape and closed-form checks; never against MPM.
+Long FE runs: give the orchestrator the command; it launches them on esmeralda. Nothing over
+10 min yourself. python3.12; ruff F811 clean; the fork-checklist gates before every push. Report
+per the Worker rules.
+```
+
+### 232l-C — two-phase particles in C++ (opus · high; a different agent from 232l-V)
+
+```text
+<header>  ADR sections: §4 (W1–W17, especially W1, W9, W14, W15, W17; the LadrunoUPKernel and
+LadrunoPorousOverlay rows), §5.2, §5.3 and their amendments, §6, §8 (the P6 row), §9 phase 6,
+§11, and the amendments "232i", "232j", "232k" and "232l kickoff". ADR-71 §3 and §6; ADR-73.
+Your PR: #<pr>.
+Branch: work detached on origin/wp/232l-mpm-two-phase; commit; `git pull --rebase origin
+wp/232l-mpm-two-phase`; `git push origin HEAD:wp/232l-mpm-two-phase`.
+Read the "232l" section of .claude/skills/ladruno-mpm/references/wp-briefs.md first: the facts,
+U1–U12 and the gate table bind you. Never widen a band.
+Independence: read tests/mpm_interface.md, tests/mpm_implicit_interface.md,
+tests/mpm_bspline_interface.md, tests/mpm_antilocking_interface.md, tests/mpm_soil_interface.md
+and the cases files. Never read tests/mpm_reference.py, tests/mpm_implicit_reference.py,
+tests/mpm_soil_reference.py or tests/mpm_twophase_reference.py.
+Licences: Berkeley geomechanics/mpm (MIT) and Kratos (BSD-4, fork only) may be read and cited;
+never Anura3D, Karamelo, AMPLE, GeoTaichi, Matter or NairnMPM.
+Context: #1109–#1112 touch code near yours. Do not fix them unless your change rewrites that
+code; never regress them.
+
+ROUND 1 — stop and report after it (the orchestrator freezes it):
+  tests/mpm_twophase_interface.md, at most ~4 pages, deciding with code anchors quoted:
+  - U2: the grid pressure DOF in mode A — node creation (LadrunoMPMImplicit.cpp:885-886), the
+    particle element's DOF count (LadrunoMPMPoint.h:188), stray p rows, numberer, handler,
+    renormalize, B-spline image ghosts for p, SP grid conditions on p.
+  - U3: the particle u-p element — which kernel helpers, the block placement against
+    LadrunoUP.cpp:1360-1526, h, the body's fluid constants and their grammar.
+  - U4: the particle pressure state, the projection and the update, in both modes; what
+    domainChanged() re-seeds for p and ṗ under Newmark (W1).
+  - U5, U9: the integrator rule and every refusal with its message.
+  - U6: route S — (a) or (b), the argument, the equations, the Δt limit, the pressure solver,
+    where it sits in advance() (LadrunoMPMCore.h:785-1030), and what it reuses from the overlay.
+  - U7, U8: pressure conditions; Terzaghi's load and Mandel's plate mechanism.
+  - U11, U12: the output field (quote 232a_mpm_contracts.md:636) and the restart pack.
+  - Enough of the formulation (symbols, signs, the state per particle, each step's order) for
+    232l-V's oracle to be written from this file alone (T0 i–iii).
+  - The cases file tests/mpm_twophase_cases.txt layout and the test files, with each one's
+    Zone-A cost; a cost estimate for T2–T7 per leg.
+ROUND 2 — on the orchestrator's "frozen":
+  Route E first: U2–U5, U7–U9 and the harness; batch edits; ask the orchestrator for each build
+  (all five targets) and each mutant build; never start build.bat yourself. T0 (i, ii) and T1 are
+  the first two-phase MPM numbers: report them and stop for the orchestrator. Then T2–T5, T8–T12.
+  Then route S (U6): T0 (iii) first, then T6, T7. Tests tests/test_ladruno_mpm_twophase_*.py
+  (zone_a within its time budget). Long runs are the warrant run, which the orchestrator launches
+  on esmeralda. Results JSON under tests/data/mpm/twophase/ carry ladrunoBuild, the counts and
+  per-row values.
+  Registrations per fork-checklist.md: the ledger fragments WP-232l-mpm-two-phase.md
+  (implementations; vanilla rows and `// Ladruno` markers for any upstream file; a quirk for each
+  gotcha met), a banner line, the guide (Ladruno_implementation/232_ladruno_mpm_guide.md: the
+  two-phase rows, the routes, the integrator rule, the pressure conditions, serial), stamps.
+  Draft the ADR amendment text in your report; the orchestrator writes it.
+Done when: every gated row is green (or a reported miss with diagnosis); the reported rows are in
+Ladruno_implementation/232l_mpm_two_phase.md; the ci/ gates are clean; ladrunoBuild matches your
+head on the exe and the pyd. Report per the Worker rules.
+```
