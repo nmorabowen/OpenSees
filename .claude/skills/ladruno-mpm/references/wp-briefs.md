@@ -1137,6 +1137,16 @@ case runs). HS continues.
 - Open point for the owner: whether D21a's undamped translation is itself a measurement choice
   here. No valid damped-translation probe exists, because FLAC damping brakes rigid motion.
 
+**Owner decisions (2026-11-18, asked directly in the 232k session; also sent through the program
+orchestrator).**
+1. **K0 miss: SANISAND is admitted in mode A on every basis, and in mode F on B-spline bases
+   only.** SANISAND in mode F on `gimp` or `linear` is refused loudly, and the message cites K0.
+   S1–S6 continue for SANISAND under this rule (mode-F legs on `bspline2`). HS is admitted
+   everywhere (capped mode-F A_HS 0.78 / 0.85). The K0 gimp mode-F record stays as the evidence.
+2. **S2 miss: recorded as a strict-xfail miss with its diagnosis**; the carrier is #1110. The
+   SANISAND S2 leg runs with the same registered mechanism and is recorded the same way if it
+   misses.
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
