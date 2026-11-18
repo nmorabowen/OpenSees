@@ -88,3 +88,94 @@ data tests/data/mpm/soil/k0_column_capped.json
 field legs.<mat>.after_hold.particles  soil particles only, as k0_ref_column
 ref fork FE, as k0_ref_column, with the cap as one row of elastic hexes
 end
+
+# ============================================================================
+# S1 -- one-point drivers (LadrunoBrick -geom hypo -formulation std, unit cube, every node
+# prescribed u = (F - I) X, zero free equations). Both materials, 3D and plane strain (the FE
+# plane-strain leg is the 3D brick with u_z = 0 and the 3D material; LadrunoSANISANDPlaneStrain
+# zero-embeds into the same 6-vector integrator). Path: isotropic stage-0 confinement to p0 =
+# 100 kPa in 10 steps (3D: F_ii = 1 - a, a = p0 / (3 K_stage0); plane strain: xx, yy only,
+# a = p0 / (2 K_stage0)), the flip (updateMaterialStage: one element, so all 8 points, with
+# Elastic2Plastic) before step 11, then:
+#   triax  40 steps to F_yy = 1 - 5e-3 (x and z: 1 + 0.25 e; plane strain x only)
+#   oedo   40 steps to F_yy = 1 - 5e-3, lateral fixed
+#   shear  3 cycles of isochoric simple shear F_xy = gamma, amplitude 2e-3, 10 steps per quarter
+#          (0 -> +ga -> -ga -> 0 per cycle; 120 steps), applied as S F_conf
+# The record gives F[n], dF[n] = F[n+1] F[n]^-1 (L = (dF - I)/dt), and per step sigma, state,
+# SANISAND substeps (GP 1, and at all 8 GPs).
+# FE SELF-CONSISTENCY (a fact for the S1 tolerance, measured before any MPM number): the 8 Gauss
+# points of one homogeneous brick see F to round-off (their dN/dX differ). For SANISAND scheme 1
+# they part at the 3rd plastic step: 3D triax first step with GP rel spread > 1e-8 = 13 (3rd
+# plastic step; GP substep counts still EQUAL there: 3,3,...,3, they first differ at step 14),
+# 3D oedo 13 (14), 3D shear 14 (14), PS triax 24 (30), PS shear 15 (16), PS oedo never; max GP
+# rel spread 1.1e-4. HS: never (max 2.5e-13). So "rel 1e-8 against the FE" is unreachable by the
+# FE itself for SANISAND triax/oedo past those steps, and the freeze's substep-count switch can
+# come one step late (3D triax: the spread opens at 13, the counts differ at 14). Per-leg values
+# are fe_self_consistency in the record.
+case s1_ref_onepoint
+kind reference
+data tests/data/mpm/soil/s1_onepoint.json
+field legs.<sanisand|hs>_<3d|ps>_<triax|oedo|shear>.{F, dF, steps[k].{sig, state, substeps, substeps_gp, gp_rel_spread}, fe_self_consistency}
+ref fork FE, LadrunoBrick -geom hypo (hypoIncrement; the particles use hypoIncrementFromF: same algebra, different rounding)
+end
+
+# ============================================================================
+# S2 -- the K0 column + a surcharge rho g l0 = 196.2 kPa (mode A QS). The k0_ref_column model,
+# then nodal top loads (tributary) ramped in 10 (and, for sensitivity, 20) LoadControl steps after
+# the flip and the 2-step hold. syy = -(rho g (l0 - Y) + 196.2) closed form; sxx, szz from the FE
+# ratio. SANISAND stays exactly elastic (K0 loading keeps s/p on the cone axis: ratio 0.455392 to
+# 1e-13, so its S2 reference is the closed form); HS's cap moves the ratio to 0.420-0.426. Step
+# count sensitivity: max |d sxx| / rho g l0 = 4e-16 (SANISAND), 3.3e-4 (HS), against the 0.02 gate.
+case s2_ref_column
+kind reference
+data tests/data/mpm/soil/s2_column.json
+field legs.<sanisand|hs>_nsur<10|20>.<end_stage0|after_flip|after_hold|after_surcharge>.particles
+ref fork FE, LadrunoBrick B-bar column, as k0_ref_column
+end
+
+# ============================================================================
+# S4 -- the low-g twin. Rows by depth d from the top, d = (k + 1/2) 0.25 (the S2 twin, l0 10; a
+# 2 x 4-cell column, l0 2, uses k < 8). At the flip p = (1 + 2 K0)/3 rho g d with K0 = 0.455392:
+# >= 1 row at p < Pmin = 0.101 kPa needs g < 0.634294; >= 2 rows, g < 0.211431. Chosen g = 0.5:
+# exactly the top row (p = 0.0796 kPa). Reference: per depth, a one-point SANISAND (oedometric
+# stage 0 to syy = -rho g d) flipped by `parameter ... element 1 materialState 1` +
+# `updateParameter 1.0` (id 5: Elastic2Plastic at every point). Measured: the reset row commits
+# sigma = -Pmin I (exactly -0.101) and alpha = 0; every other row keeps its sigma bit for bit.
+# Trap recorded: ManzariDafalias::setParameter needs the material tag after the name
+# (`materialState 1`); without it argc < 2 returns -1 silently and nothing flips.
+case s4_ref_lowg
+kind reference
+data tests/data/mpm/soil/s4_lowg.json
+field rows[k].{depth, p_pre, below_Pmin, pre_flip, after_flip, after_hold}.{sig, state}
+ref fork FE one-point (LadrunoBrick -geom hypo), direct updateParameter flip
+end
+
+# ============================================================================
+# D12 -- the W17 trigger, confirmed on the one-point FE: SANISAND -implex -maxSubsteps 1,
+# isotropic stage 0 to 100 kPa, flip, one simple-shear step dgamma = 1e-3. Domain::commit
+# reports 8 refusing points (-33086) and analyze returns -4; the material latches.
+case d12_ref_trigger
+kind reference
+data tests/data/mpm/soil/d12_trigger.json
+ref fork FE one-point
+end
+
+# ============================================================================
+# S3 -- the strip footing, FE B-bar references (232j L4 domain: half model x in [0, 12],
+# y in [-6, 0], B = 2, rough footing = top nodes x <= 1). Stage 0: gravity (rho 2.0, g 9.81) and
+# the 20 kPa surcharge ramp together in 10 steps; the flip; 2 hold steps; push 2 mm/step to
+# s = 0.05 B = 0.1 m on the K9 ladder (KrylovNewton 1e-6/40 -> NewtonLineSearch 1e-6/60 ->
+# KrylovNewton 1e-5/80 relaxed -> halving, floor 5e-4 of the 2 mm step). q = (F + r_corr) / (B/2)
+# (232f/232j's convention; the MPM's -cond_force(footing, y) / (B/2)). Gate: q at s/B = 0.01,
+# 0.02, 0.05 within +-10 % of the record at that rung.
+# HS (the footing deck without -sig0): records s3_fe_hs_n4 / n8 / n16 (n16 reported only).
+# SANISAND: the deck (scheme-1 defaults) cannot take the first push step at r1 (Round 1); the
+# freeze's probe order v1_me_cap1000, v2_sasme, v3_cppm_refuse, v4_implex_cap1000 runs on
+# esmeralda; records s3_fe_sanisand_<variant>_n<4|8>.
+case s3_ref_footing
+kind reference
+data tests/data/mpm/soil/s3_fe_hs_n4.json
+data tests/data/mpm/soil/s3_fe_hs_n8.json
+field q_at.{0.01,0.02,0.05}, reached, stopped, failed_attempts, relaxed, halvings, curve [s, q, q_excess]
+ref fork FE, LadrunoBrick B-bar, the K9 ladder
+end

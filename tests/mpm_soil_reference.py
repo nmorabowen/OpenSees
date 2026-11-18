@@ -397,11 +397,503 @@ def leg_k0() -> dict:
 
 
 # ----------------------------------------------------------------------------------------------
+# S1: one-point drivers on LadrunoBrick -geom hypo -formulation std
+# ----------------------------------------------------------------------------------------------
+# Every path is a sequence of deformation gradients F_0 = I, F_1, ..., F_N (row-major 3x3; plane
+# strain has F[2][2] = 1 and no z coupling). The FE driver is one unit-cube LadrunoBrick with
+# every node prescribed u_a = (F_n - I) X_a (sp + Path series, zero free equations), so its
+# hypoIncrement sees exactly F_n -> F_n+1 at every Gauss point. The MPM harness imposes
+# dF_n = F_n+1 F_n^-1 (L_n = (dF_n - I) / dt). Stage 0 runs the confinement leg; the flip (one
+# element: updateMaterialStage reaches all 8 of its points, Elastic2Plastic included) comes after
+# it, before the path's first step.
+S1 = dict(p0=100.0, n_conf=10, eps_ax=5.0e-3, n_ax=40, lat_triax=0.25, gamma_a=2.0e-3,
+          n_quarter=10, cycles=3)
+
+
+def _hs_k_stage0() -> float:
+    """HS stage-0 bulk modulus (LadrunoHS.cpp integrate3D stage 0): nu_s0 = max(nu_ur,
+    min(0.49, K0nc/(1+K0nc))), Gur_ref = Eur_ref / (2 (1 + nu_ur)), K = Gur 2(1+nu_s0)/(3(1-2nu_s0))."""
+    nu_ur, eur = 0.2, HS_ARGS[2]
+    nu_s0 = max(nu_ur, min(0.49, HS_K0NC / (1.0 + HS_K0NC)))
+    gur = eur / (2.0 * (1.0 + nu_ur))
+    return gur * 2.0 * (1.0 + nu_s0) / (3.0 * (1.0 - 2.0 * nu_s0))
+
+
+def _k_stage0(mat: str) -> float:
+    # SANISAND stage 0: K = 2(1+nu)/(3(1-2nu)) G = E/(3(1-2nu)) with E = 2G(1+nu), i.e. DP_K
+    return {"sanisand": DP_K, "hs": _hs_k_stage0()}[mat]
+
+
+def s1_path(mat: str, dim: str, path: str) -> dict:
+    """The F sequence: isotropic confinement to p0 (stage 0, n_conf steps), then the path."""
+    nd = 3 if dim == "3d" else 2
+    a = S1["p0"] / (nd * _k_stage0(mat))          # per-direction compressive strain, stage 0
+    Fs = [np.eye(3)]
+    for k in range(1, S1["n_conf"] + 1):
+        F = np.eye(3)
+        for i in range(nd):
+            F[i, i] = 1.0 - a * k / S1["n_conf"]
+        Fs.append(F)
+    Fc = Fs[-1].copy()
+    steps = []
+    if path in ("triax", "oedo"):
+        lat = S1["lat_triax"] if path == "triax" else 0.0
+        for k in range(1, S1["n_ax"] + 1):
+            e = S1["eps_ax"] * k / S1["n_ax"]
+            D = np.eye(3)
+            D[1, 1] = 1.0 - e
+            D[0, 0] = 1.0 + lat * e
+            if nd == 3:
+                D[2, 2] = 1.0 + lat * e
+            steps.append(D @ Fc)
+    elif path == "shear":
+        q, ga = S1["n_quarter"], S1["gamma_a"]
+        g = []    # per cycle: 0 -> +ga (q steps), +ga -> -ga (2q), -ga -> 0 (q)
+        for _ in range(S1["cycles"]):
+            g += [ga * k / q for k in range(1, q + 1)]
+            g += [ga - 2 * ga * k / (2 * q) for k in range(1, 2 * q + 1)]
+            g += [-ga + ga * k / q for k in range(1, q + 1)]
+        for gk in g:
+            S = np.eye(3)
+            S[0, 1] = gk                                   # isochoric simple shear (det = 1)
+            steps.append(S @ Fc)
+    else:
+        raise ValueError(path)
+    return dict(F=Fs + steps, n_stage0=S1["n_conf"], conf_strain=a)
+
+
+def _onepoint_model(ops, mat, dim, Fs, san_opts=()):
+    X = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for a, x in enumerate(X, start=1):
+        ops.node(a, *map(float, x))
+        if dim == "ps":
+            ops.fix(a, 0, 0, 1)
+    _material(ops, mat, san_opts=san_opts)
+    ops.element("LadrunoBrick", 1, *range(1, 9), 1, "-geom", "hypo")
+    n = len(Fs)
+    tags = 0
+    for a, x in enumerate(X, start=1):
+        for i in range(3 if dim == "3d" else 2):
+            vals = [float(((F - np.eye(3)) @ np.array(x, float))[i]) for F in Fs]
+            tags += 1
+            ops.timeSeries("Path", tags, "-time", *[float(t) for t in range(n)], "-values", *vals)
+            ops.pattern("Plain", tags, tags)
+            ops.sp(a, i + 1, 1.0)
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("FullGeneral")
+    ops.test("NormDispIncr", 1.0e-13, 25, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+
+
+def _point_record(ops, mat):
+    sig = [list(ops.eleResponse(1, "material", gp + 1, "stress")) for gp in range(8)]
+    spread = float(np.max(np.ptp(np.array(sig), axis=0)))
+    rec = dict(sig=sig[0], gp_spread=spread, state=list(ops.eleResponse(1, "material", 1, "state")))
+    if mat == "sanisand":
+        rec["substeps"] = list(ops.eleResponse(1, "material", 1, "substeps"))
+        rec["substeps_gp"] = [int(ops.eleResponse(1, "material", gp + 1, "substeps")[0])
+                              for gp in range(8)]
+    rec["gp_rel_spread"] = spread / max(1.0, max(abs(v) for v in sig[0]))
+    return rec
+
+
+def fe_onepoint(mat, dim, path, san_opts=(), flip=True):
+    ops = fe_engine()
+    t0 = time.time()
+    P = s1_path(mat, dim, path)
+    Fs = P["F"]
+    _onepoint_model(ops, mat, dim, Fs, san_opts)
+    route = _stage(ops, mat, 0, [1])
+    recs, flip_at = [], P["n_stage0"]
+    for n in range(1, len(Fs)):
+        if flip and n == flip_at + 1:
+            route = _stage(ops, mat, 1, [1])
+        ok = ops.analyze(1)
+        if ok != 0:
+            recs.append(dict(step=n, failed=ok))
+            break
+        r = _point_record(ops, mat)
+        r["step"] = n
+        recs.append(r)
+    dF = [(Fs[n + 1] @ np.linalg.inv(Fs[n])).tolist() for n in range(len(Fs) - 1)]
+    ok_steps = [r for r in recs if "failed" not in r]
+    first_spread = next((r["step"] for r in ok_steps if r["gp_rel_spread"] > 1e-8), None)
+    first_sub = next((r["step"] for r in ok_steps
+                      if "substeps_gp" in r and len(set(r["substeps_gp"])) > 1), None)
+    out = dict(material=mat, dim=dim, path=path, n_stage0=P["n_stage0"], flip_before_step=flip_at + 1,
+               fe_self_consistency=dict(
+                   first_step_gp_rel_spread_gt_1e8=first_spread,
+                   first_step_gp_substeps_differ=first_sub,
+                   max_gp_rel_spread=max(r["gp_rel_spread"] for r in ok_steps),
+                   note="the 8 Gauss points of the homogeneous brick see the same F to round-off "
+                        "(different dN/dX); where they part, the FE itself cannot hold rel 1e-8"),
+               conf_strain=P["conf_strain"], flip_route=route + " (one element: all 8 points)",
+               F=[F.tolist() for F in Fs], dF=dF, steps=recs, wall_s=round(time.time() - t0, 2),
+               element="LadrunoBrick -geom hypo -formulation std, unit cube, every node "
+                       "prescribed (zero free equations)")
+    last = recs[-1]
+    print(f"S1 {mat} {dim} {path}: {len(recs)} steps, sig_last {np.round(last.get('sig', []), 4)}"
+          f" spread {last.get('gp_spread')} ({out['wall_s']} s)", flush=True)
+    return out
+
+
+def leg_onepoint() -> dict:
+    legs = {}
+    for mat in ("sanisand", "hs"):
+        for dim in ("3d", "ps"):
+            for path in ("triax", "oedo", "shear"):
+                legs[f"{mat}_{dim}_{path}"] = fe_onepoint(mat, dim, path)
+    payload = dict(_provenance("s1_onepoint", "fe_onepoint"), decks=decks(), paths=S1, legs=legs,
+                   conventions=dict(
+                       F="row-major 3x3 per step, F[0] = I; dF[n] = F[n+1] F[n]^-1; with "
+                         "quasi-static dt, L[n] = (dF[n] - I) / dt",
+                       steps="steps[k] is the committed state after F[k+1] (k = 0-based)",
+                       sig="GP 1 of the brick, 3D Voigt (xx, yy, zz, xy, yz, zx), tension positive; "
+                           "all 8 GPs agree to gp_spread",
+                       state="SANISAND: 26 (eps_e 0-5, alpha 6-11, fabric 12-17, alpha_in 18-23, "
+                             "e 24, dGamma 25); HS: its 7-vector 'state'",
+                       substeps="SANISAND 'substeps' response [ME substeps, capHit] of the last "
+                                "(converged) update, GP 1; substeps_gp: ME substeps at all 8 GPs"))
+    _save("s1_onepoint", payload)
+    return legs
+
+
+# ----------------------------------------------------------------------------------------------
+# S2: the K0 column (D19 domain, no translation) + a surcharge rho g l0 on the top, mode A QS
+# ----------------------------------------------------------------------------------------------
+S2 = dict(n_sur=(10, 20))
+
+
+def leg_s2() -> dict:
+    legs = {}
+    q = RHO * G_GRAV * COL["L0"]
+    for mat in ("sanisand", "hs"):
+        for n in S2["n_sur"]:
+            legs[f"{mat}_nsur{n}"] = fe_column(mat, surcharge=q, n_sur=n)
+    # step-count sensitivity of the reference itself (the MPM may use another step count)
+    sens = {}
+    for mat in ("sanisand", "hs"):
+        a = legs[f"{mat}_nsur{S2['n_sur'][0]}"]["after_surcharge"]["particles"]
+        b = legs[f"{mat}_nsur{S2['n_sur'][1]}"]["after_surcharge"]["particles"]
+        sens[mat] = max(abs(x["sxx"] - y["sxx"]) for x, y in zip(a, b)) / q
+    payload = dict(_provenance("s2_column", "fe_column(surcharge)"), decks=decks(), legs=legs,
+                   surcharge=q, nsur_sensitivity_over_rho_g_l0=sens,
+                   note="surcharge as nodal top loads (tributary), ramped in n_sur LoadControl "
+                        "steps after the flip and the 2-step hold; syy = -(rho g (l0 - Y) + q) "
+                        "closed form; sxx, szz from the FE ratio, as K0")
+    _save("s2_column", payload)
+    print("S2 n_sur sensitivity (max |dsxx| / rho g l0):", sens, flush=True)
+    return legs
+
+
+# ----------------------------------------------------------------------------------------------
+# S4: the low-g twin -- the one-point FE at each particle depth, flipped by a direct
+# updateParameter (materialState, id 5), so Elastic2Plastic runs at that point
+# ----------------------------------------------------------------------------------------------
+S4 = dict(g=0.5)
+
+
+def s4_g_threshold(rows: int = 1) -> float:
+    """The largest g with `rows` particle rows (from the top, depth (k + 1/2) h/ppc) at p < Pmin
+    at the flip: p = (1 + 2 K0)/3 rho g d with SANISAND's stage-0 K0 = nu / (1 - nu)."""
+    k0 = EL_NU / (1.0 - EL_NU)
+    d = (rows - 0.5) * COL["h"] / COL["ppc"]
+    return SAN_PMIN / ((1.0 + 2.0 * k0) / 3.0 * RHO * d)
+
+
+def fe_flip_point(syy: float, flip: str = "parameter") -> dict:
+    """One SANISAND point: stage-0 oedometric compression (eps_xx = eps_zz = 0) to sigma_yy =
+    syy in 10 steps (-geom hypo), then the flip, then one hold step."""
+    ops = fe_engine()
+    M = DP_K + 4.0 * DP_G / 3.0
+    e = syy / M
+    Fs = [np.eye(3)]
+    for k in range(1, 11):
+        F = np.eye(3)
+        F[1, 1] = 1.0 + e * k / 10.0
+        Fs.append(F)
+    Fs.append(Fs[-1].copy())                     # the hold
+    _onepoint_model(ops, "sanisand", "3d", Fs)
+    _stage(ops, "sanisand", 0, [1])
+    for _ in range(10):
+        if ops.analyze(1) != 0:
+            raise RuntimeError("S4 point stage 0 failed")
+    pre = _point_record(ops, "sanisand")
+    if flip == "parameter":
+        ops.parameter(950)
+        # ManzariDafalias::setParameter wants (name, matTag): argc < 2 returns -1 SILENTLY
+        # (ManzariDafalias.cpp:931-937), so `... materialState` without the tag flips nothing.
+        ops.addToParameter(950, "element", 1, "materialState", 1)
+        ops.updateParameter(950, 1.0)
+    else:
+        ops.updateMaterialStage("-material", 1, "-stage", 1)
+    post = _point_record(ops, "sanisand")
+    ok = ops.analyze(1)
+    hold = _point_record(ops, "sanisand") if ok == 0 else dict(failed=ok)
+    p_pre = -sum(pre["sig"][:3]) / 3.0
+    return dict(syy_target=syy, p_pre=p_pre, below_Pmin=bool(p_pre < SAN_PMIN), pre_flip=pre,
+                after_flip=post, after_hold=hold)
+
+
+def leg_s4(g: float = S4["g"]) -> dict:
+    rows = []
+    depths = [(k + 0.5) * COL["h"] / COL["ppc"] for k in range(int(COL["L0"] / (COL["h"] / COL["ppc"])))]
+    for d in depths:
+        r = fe_flip_point(-RHO * g * d)
+        r["depth"] = d
+        rows.append(r)
+    nres = sum(r["below_Pmin"] for r in rows)
+    payload = dict(_provenance("s4_lowg", "fe_flip_point"), decks=decks(), g=g, rows=rows,
+                   rows_below_Pmin=nres, Pmin=SAN_PMIN,
+                   g_threshold=dict(one_row=s4_g_threshold(1), two_rows=s4_g_threshold(2)),
+                   flip_route="parameter element 1 materialState + updateParameter 1.0 "
+                              "(ManzariDafalias id 5: Elastic2Plastic at every point of the element)",
+                   rule="Elastic2Plastic (ManzariDafalias.cpp:5787-5795): tr sigma < 3 Pmin (p < "
+                        "Pmin) -> sigma = sigma_n = Pmin I, alpha = alpha_n = 0; else sigma kept "
+                        "(and eta <= Mc here, no Outside Bounding). Rows by depth d from the top: "
+                        "d = (k + 1/2) 0.25, the same for the S2 twin (l0 10) and a 2 x 4-cell "
+                        "column (l0 2, k < 8).")
+    _save("s4_lowg", payload)
+    print(f"S4 g={g}: {nres} row(s) below Pmin; thresholds {payload['g_threshold']}", flush=True)
+    for r in rows[:3]:
+        print("  d", r["depth"], "p_pre", round(r["p_pre"], 5), "post sig",
+              [round(x, 6) for x in r["after_flip"]["sig"][:3]], "alpha",
+              [round(x, 6) for x in r["after_flip"]["state"][6:9]], flush=True)
+    return payload
+
+
+# ----------------------------------------------------------------------------------------------
+# D12: does SANISAND -implex -maxSubsteps 1 refuse at commit on one stage-1 shear step?
+# ----------------------------------------------------------------------------------------------
+def leg_d12(dgamma: float = 1.0e-3) -> dict:
+    ops = fe_engine()
+    P = s1_path("sanisand", "3d", "oedo")
+    Fs = P["F"][:P["n_stage0"] + 1]
+    S = np.eye(3)
+    S[0, 1] = dgamma
+    Fs.append(S @ Fs[-1])
+    opts = ("-implex", "-maxSubsteps", 1)
+    _onepoint_model(ops, "sanisand", "3d", Fs, san_opts=opts)
+    _stage(ops, "sanisand", 0, [1])
+    for _ in range(P["n_stage0"]):
+        if ops.analyze(1) != 0:
+            raise RuntimeError("D12 stage 0 failed")
+    _stage(ops, "sanisand", 1, [1])
+    ok = ops.analyze(1)
+    stats = list(ops.eleResponse(1, "material", 1, "commitStats"))
+    out = dict(_provenance("d12_trigger", "leg_d12"), opts=list(opts), dgamma=dgamma,
+               analyze_return=ok, commitStats=stats,
+               fires=bool(ok != 0),
+               note="one LadrunoBrick -geom hypo, isotropic stage 0 to p0 = 100 kPa, "
+                    "updateMaterialStage 1, one simple-shear step dgamma")
+    _save("d12_trigger", out)
+    print(f"D12: analyze returned {ok}; commitStats {stats}", flush=True)
+    return out
+
+
+# ----------------------------------------------------------------------------------------------
+# S3: the strip footing (232j L4 domain), gravity + 20 kPa surcharge, staged, K9 ladder
+# ----------------------------------------------------------------------------------------------
+FOOT = dict(B=2.0, X=12.0, D=6.0, q0=20.0, ds=0.002, s_max=0.1, floor=5.0e-4,
+            s_over_b=(0.01, 0.02, 0.05))
+# The freeze's fixed probe order for the S3 SANISAND deck (first that reaches s = 0.05 B at r1
+# AND r2 on the K9 ladder wins); options appended to SAN_PARAMS.
+SAN_VARIANTS = {
+    "deck": (),
+    "v1_me_cap1000": ("-maxSubsteps", 1000),
+    "v2_sasme": (129,),
+    "v3_cppm_refuse": (2, "-cppmOnFail", "refuse"),
+    "v4_implex_cap1000": ("-implex", "-maxSubsteps", 1000),
+}
+K9 = [("KrylovNewton", 1.0e-6, 40), ("NewtonLineSearch", 1.0e-6, 60), ("KrylovNewton", 1.0e-5, 80)]
+
+
+def fe_footing_soil(mat, n_across_b, variant="deck", max_wall=None, curve=True):
+    """Half model x in [0, 12], y in [-6, 0], h = B / n_across_b, LadrunoBrick B-bar plane-strain
+    slab. Stage 0: gravity (-brickW, rho 2.0, g 9.81) and the 20 kPa surcharge (tributary nodal
+    loads on every top node) ramp together in 10 LoadControl steps; loadConst; the flip; 2 hold
+    steps (LoadControl 0). Push: the rough footing (top nodes x <= B/2: u_y prescribed, u_x held)
+    descends 2 mm per step to s = 0.05 B = 0.1 m on the K9 ladder (KrylovNewton 1e-6/40 ->
+    NewtonLineSearch 1e-6/60 -> KrylovNewton 1e-5/80 relaxed -> halving, floor 5e-4 of ds).
+
+    q(s) (the GATED observable, `q_at`, curve column 2) is 232f/232j's convention, as
+    tests/mpm_implicit_reference.py fe_footing: (F + r_corr) / (B/2 t), F = -sum R_y over the
+    footing nodes after `reactions`, r_corr = the surcharge lumped on those nodes (their
+    tributary reaches h/2 past B/2, so q(0) = q0 (1 + h/B) + F0/(B/2 t), not q0) -- the MPM
+    case's -cond_force(footing, y) / (B/2), which also carries the surcharge particles under the
+    footing's nodes. Curve column 3: q0 + (F - F0) / (B/2 t), F0 = F at the zero-displacement
+    start (a LoadControl 0 step with the footing SPs on), reported."""
+    ops = fe_engine()
+    f = FOOT
+    h = f["B"] / n_across_b
+    nx, ny = int(round(f["X"] / h)), int(round(f["D"] / h))
+    xs = np.linspace(0.0, f["X"], nx + 1)
+    ys = np.linspace(-f["D"], 0.0, ny + 1)
+    t = h
+
+    def nid(i, j, k):
+        return 1 + i + (nx + 1) * (j + (ny + 1) * k)
+
+    t0 = time.time()
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+    for k in (0, 1):
+        for j in range(ny + 1):
+            for i in range(nx + 1):
+                n = nid(i, j, k)
+                ops.node(n, float(xs[i]), float(ys[j]), k * t)
+                if j == 0:
+                    ops.fix(n, 1, 1, 1)
+                else:
+                    ops.fix(n, 1 if i in (0, nx) else 0, 0, 1)
+    san_opts = SAN_VARIANTS[variant] if mat == "sanisand" else ()
+    _material(ops, mat, san_opts=san_opts)
+    ne = 0
+    for j in range(ny):
+        for i in range(nx):
+            ne += 1
+            ops.element("LadrunoBrick", ne, nid(i, j, 0), nid(i + 1, j, 0), nid(i + 1, j + 1, 0),
+                        nid(i, j + 1, 0), nid(i, j, 1), nid(i + 1, j, 1), nid(i + 1, j + 1, 1),
+                        nid(i, j + 1, 1), 1, "-formulation", "bbar", "-b", 0.0, -RHO * G_GRAV, 0.0)
+    elems = list(range(1, ne + 1))
+    route0 = _stage(ops, mat, 0, elems)
+    top = [(i, k) for k in (0, 1) for i in range(nx + 1)]
+    trib = {nid(i, ny, k): (h * t / 4.0) * (1 if i in (0, nx) else 2) for i, k in top}
+    foot = [nid(i, ny, k) for i, k in top if xs[i] <= f["B"] / 2 + 1e-9]
+    r_corr = f["q0"] * sum(trib[n] for n in foot)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.eleLoad("-ele", *elems, "-type", "-brickW")
+    for n, A in trib.items():
+        ops.load(n, 0.0, -f["q0"] * A, 0.0)
+    _analysis(ops, tol=1.0e-6)
+    ops.integrator("LoadControl", 0.1)
+    ops.analysis("Static")
+    for st in range(10):
+        if ops.analyze(1) != 0:
+            raise RuntimeError(f"footing stage-0 step {st + 1} failed")
+    ops.loadConst("-time", 0.0)
+    route1 = _stage(ops, mat, 1, elems)
+    ops.integrator("LoadControl", 0.0)
+    for st in range(2):
+        if ops.analyze(1) != 0:
+            raise RuntimeError(f"footing hold step {st + 1} failed")
+    flip_check = None
+    if mat == "sanisand":
+        pmin, etamax = math.inf, 0.0
+        for e in elems:
+            s = ops.eleResponse(e, "material", 1, "stress")
+            flip_check = _flip_inertness([[0.0, s[0], s[1], s[2], s[3]]])
+            pmin = min(pmin, flip_check["p_min_at_flip"])
+            etamax = max(etamax, flip_check["eta_max_at_flip"])
+        flip_check = dict(p_min_after_hold=pmin, eta_max_after_hold=etamax, Pmin=SAN_PMIN, Mc=SAN_MC,
+                          note="GP 1 of every element after the flip and hold")
+    s_max = f["s_max"]
+    uy0 = {n: ops.nodeDisp(n, 2) for n in foot}
+    ux0 = {n: ops.nodeDisp(n, 1) for n in foot}
+    for kk, n in enumerate(foot):
+        ops.timeSeries("Path", 100 + kk, "-time", 0.0, 1.0, "-values", uy0[n], uy0[n] - s_max,
+                       "-useLast")
+        ops.pattern("Plain", 100 + kk, 100 + kk)
+        ops.sp(n, 2, 1.0)
+        ops.sp(n, 1, ux0[n])
+    ops.wipeAnalysis()
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("UmfPack")
+    ops.test("NormUnbalance", 1.0e-6, 40, 0)
+    ops.algorithm("Newton")
+    ops.integrator("LoadControl", 0.0)
+    ops.analysis("Static")
+    if ops.analyze(1) != 0:
+        raise RuntimeError("footing zero step failed")
+    ops.reactions()
+    F0 = -sum(ops.nodeReaction(n, 2) for n in foot)
+    width = f["B"] / 2 * t
+    rows, dsc, nfail, nrelax, nhalv, stopped = [], f["ds"], 0, 0, 0, None
+    tp = time.time()
+    while True:
+        s_now = ops.getTime() * s_max
+        if s_now >= s_max - 1e-12:
+            break
+        if max_wall is not None and time.time() - t0 > max_wall:
+            stopped = f"wall cap {max_wall} s"
+            break
+        dsc = min(dsc, s_max - s_now)
+        ops.integrator("LoadControl", dsc / s_max)
+        ok = False
+        for i, (alg, tl, it) in enumerate(K9):
+            ops.test("NormUnbalance", tl, it, 0)
+            ops.algorithm(alg)
+            if ops.analyze(1) == 0:
+                ok, nrelax = True, nrelax + (i == 2)
+                break
+            nfail += 1
+        if not ok:
+            dsc *= 0.5
+            nhalv += 1
+            if dsc < f["floor"] * f["ds"]:
+                stopped = f"halving floor at s = {s_now:.6f}"
+                break
+            continue
+        dsc = min(2 * dsc, f["ds"])
+        ops.reactions()
+        F = -sum(ops.nodeReaction(n, 2) for n in foot)
+        rows.append((ops.getTime() * s_max, (F + r_corr) / width, f["q0"] + (F - F0) / width))
+    s = np.array([r[0] for r in rows]) if rows else np.zeros(1)
+    q = np.array([r[1] for r in rows]) if rows else np.zeros(1)
+    s_end = float(s[-1]) if rows else 0.0
+    out = dict(material=mat, variant=variant, san_opts=list(san_opts), n_across_b=n_across_b, h=h,
+               hexes=ne, element="LadrunoBrick -formulation bbar (small strain), plane-strain slab",
+               stage0_route=route0, flip_route=route1, flip_check=flip_check, F0=F0,
+               q0=f["q0"], s_end=s_end, reached=bool(s_end >= f["s_max"] - 1e-9), stopped=stopped,
+               q_at={f"{sb:.2f}": float(np.interp(sb * f["B"], s, q))
+                     for sb in f["s_over_b"] if rows and sb * f["B"] <= s_end + 1e-12},
+               q_max=float(q.max()) if rows else None,
+               steps=len(rows), failed_attempts=nfail, relaxed=nrelax, halvings=nhalv,
+               wall_s=round(time.time() - t0, 1), push_wall_s=round(time.time() - tp, 1),
+               ladder=[list(x) for x in K9] + [["halving", "floor", f["floor"]]])
+    if curve:
+        out["curve"] = [[float(a), float(b), float(c)] for a, b, c in rows]
+    print(f"FOOT {mat} {variant} n={n_across_b}: s_end {s_end:.4f} reached {out['reached']} "
+          f"q_at {out['q_at']} fails {nfail} relaxed {nrelax} halvings {nhalv} "
+          f"({out['wall_s']} s) {stopped or ''}", flush=True)
+    return out
+
+
+def leg_footing(mat, n_across_b, variant="deck", max_wall=None) -> dict:
+    res = fe_footing_soil(mat, n_across_b, variant, max_wall=max_wall)
+    name = f"s3_fe_{mat}_{variant}_n{n_across_b}" if mat == "sanisand" else f"s3_fe_{mat}_n{n_across_b}"
+    payload = dict(_provenance(name, "fe_footing_soil"), decks=decks(), **res)
+    _save(name, payload)
+    return payload
+
+
+# ----------------------------------------------------------------------------------------------
 def main(argv=None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
     what = argv[0] if argv else "k0"
     if what == "k0":
         leg_k0()
+    elif what == "onepoint":
+        leg_onepoint()
+    elif what == "s2":
+        leg_s2()
+    elif what == "s4":
+        leg_s4(float(argv[1]) if len(argv) > 1 else S4["g"])
+    elif what == "d12":
+        leg_d12()
+    elif what == "footing":
+        mw = None
+        if "--max-wall" in argv:
+            mw = float(argv[argv.index("--max-wall") + 1])
+        leg_footing(argv[1], int(argv[2]), argv[3] if len(argv) > 3 and not argv[3].startswith("--")
+                    else "deck", max_wall=mw)
     else:
         raise SystemExit(f"unknown leg {what!r}")
 
