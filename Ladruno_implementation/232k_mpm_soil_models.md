@@ -196,8 +196,9 @@ mode F on bspline2):
 - **IntScheme 2 shear, a recorded miss, owner-accepted 2026-11-18 (ruling d683e0db8).** Before the switch step (ps 21, 3D 61) every leg
   holds ≤ 1e-11. After it, the gate is the stress inside the FE's Gauss-point envelope widened by
   1e-3 relative. The record carries GP 1's stress and the GP spread, not per-GP min/max, so the
-  envelope used is GP 1 ± spread, which contains [min, max]. ps mode A stays inside (worst 0.94 of
-  the band). ps mode F has 26 of 110 post-switch steps outside (worst 1.46×, step 41); 3D mode A
+  envelope used is GP 1 ± spread, which contains [min, max]. ps mode A stays inside on Windows (worst 0.94 of
+  the band); on Linux (Zone-A at ffec57a09) it falls outside from step 22, particle 11, the same
+  branch mechanism on another libm/MKL round-off, so it is a strict xfail on Linux only. ps mode F has 26 of 110 post-switch steps outside (worst 1.46×, step 41); 3D mode A
   26 of 70 (1.71×, step 102); 3D mode F 9 of 70 (1.33×, step 102). Diagnosis: from the switch step
   the FE's 8 Gauss points take different CPPM branches (their substep counts part there). At step
   21 the ps particle sits at the far edge of the spread (distance to GP 1 = the spread to 1e-6).

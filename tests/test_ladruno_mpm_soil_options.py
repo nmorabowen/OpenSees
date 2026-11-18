@@ -123,11 +123,24 @@ _IS2_MISS = {
 }
 
 
+# The same mechanism, on Linux only: ps/A sits at 0.94 on Windows (the record's platform), and
+# Zone-A (Ubuntu, ffec57a09) put it outside from step 22, the first step after the switch, at
+# particle 11. The record and the 8-GP envelope are Windows numbers; a different libm/MKL
+# round-off picks another CPPM branch there. Strict on Linux, not applied elsewhere.
+_IS2_MISS_LINUX = {
+    ("sanisand_is2_ps_shear", "A"): "on Linux only (Zone-A, ffec57a09): outside from step 22, "
+                                    "particle 11; Windows holds 0.94 (s1_options_diagnosis.json)",
+}
+
+
 def _is2_params():
     out = []
     for leg in IS2_SHEAR or ["none"]:
         for mode in ("A", "F"):
             why = _IS2_MISS.get((leg, mode))
+            # ci-coverage: partial -- runs everywhere; ps/A is a strict xfail on Linux (Zone-A) and a gated pass on Windows, local-only until a Windows CI job exists (WP-143)
+            if why is None and sys.platform.startswith("linux"):
+                why = _IS2_MISS_LINUX.get((leg, mode))
             marks = [pytest.mark.xfail(strict=True, reason=(
                 "owner-accepted 2026-11-18 recorded miss (ruling d683e0db8; "
                 "s1_options_diagnosis.json): " + why +

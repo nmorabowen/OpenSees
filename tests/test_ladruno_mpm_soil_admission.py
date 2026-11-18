@@ -66,13 +66,40 @@ def test_k1_admits_sanisand_and_hs():
     assert info[0] == 4.0 and info[1] == ND_HS
 
 
+_D2_CHILD = '''
+import sys
+sys.path.insert(0, {here!r})
+from _testbed import ops
+ops.wipe()
+ops.model("basic", "-ndm", 2, "-ndf", 2)
+ops.mpm("grid", 232, "-origin", 0.0, -1.0, "-h", 0.5, "-cells", 2, 6, "-basis", "bspline2")
+ops.mpm("mode", "explicit")
+ops.nDMaterial("LadrunoSANISAND", 3, *{mat!r}, 3)
+try:
+    ops.mpm("body", 1, "box", 0.0, 0.0, 1.0, 1.0, "-ppc", 2, "-mat", 3, "-rho", 2.0)
+    print("D2-ADMITTED")
+except Exception:
+    print("D2-REFUSED")
+'''
+
+
 def test_d2_refuses_unadmitted_scheme():
-    """IntScheme 3 (no error control) is refused at particles; 1, 2 and 129 are admitted."""
+    """IntScheme 4 and 3 (no error control) are refused at particles; 1, 2 and 129 are admitted.
+
+    Scheme 3 runs in a child process: building a scheme-3/5 ManzariDafalias spends the base
+    class's once-per-process "no error estimate" warning latch, which
+    tests/test_manzari_safety_pack.py::test_scheme3_warns_no_error_control asserts later in the
+    same pytest process (Zone-A red at ffec57a09; the same trap as LadrunoSANISAND.cpp's ADR-92
+    note)."""
     ops = _ops()
     _grid(ops)
-    ops.nDMaterial("LadrunoSANISAND", 3, *SANISAND, 3)
+    ops.nDMaterial("LadrunoSANISAND", 3, *SANISAND, 4)
     with pytest.raises(Exception):
         ops.mpm("body", 1, "box", 0.0, 0.0, 1.0, 1.0, "-ppc", 2, "-mat", 3, "-rho", 2.0)
+    from _testbed.subprocess_run import run_python_script
+    here = os.path.dirname(os.path.abspath(__file__))
+    rc, out = run_python_script(_D2_CHILD.format(here=here, mat=SANISAND), cwd=here, timeout=300)
+    assert "D2-REFUSED" in out and "not admitted at particles" in out, (rc, out[-2000:])
     for scheme in (1, 2, 129):
         _grid(ops)
         ops.nDMaterial("LadrunoSANISAND", 3, *SANISAND, scheme)
