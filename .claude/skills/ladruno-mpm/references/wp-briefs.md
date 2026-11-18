@@ -833,3 +833,218 @@ Done when: every gated row is green (or a reported miss with diagnosis); the rep
 Ladruno_implementation/232j_mpm_antilocking.md (method, tables, off against on); the ci/ gates
 are clean; ladrunoBuild matches your head on the exe and the pyd. Report per the Worker rules.
 ```
+
+## 232k — phase 5: soil models at particles, the SANISAND cell-crossing meter first
+
+Kickoff 2026-11-17 (orchestrator, Opus 5.5, started by the program orchestrator per #1075).
+Branch `wp/232k-mpm-soil-models`, one draft PR for the WP. Base `ladruno` at `3e738308c` (232j
+#1105 merged; 232i and 232j are not in a release, the last being `ladruno-v20261116`). ADR §9
+phase 5. The ADR carries "Amendment (232k kickoff, 2026-11-17)", written with this section and
+before any soil-model MPM number. Done when the gate table below is green (or each miss is
+reported with its diagnosis, never a widened band), the warrant package is in the PR, and the ADR
+carries "Amendment (232k, <date>)" with the admission-table rows filled.
+
+**Facts checked at kickoff** (source-verified on `3e738308c`; the workers re-quote, never recall):
+- **NorSand is not on `ladruno`** (`grep -ril norsand SRC/` is empty). `LadrunoNORSAND` is the
+  draft #896 (WP-144). 232k does not pull it in. NorSand, its matched-material Berkeley track and
+  the §8 tailings flow-slide row are **deferred until #896 lands** (amendment).
+- **Scope:** `LadrunoSANISAND` (33019; `getCopy` gives 33020 3D / 33021 PlaneStrain, order 6 / 3;
+  integration schemes 1 ModifiedEuler (deck default), 2 BackwardEuler_CPPM, 129 SAS-ME, and
+  ADR-92 IMPL-EX opt-in) and `LadrunoHS` (33029; one class, `dim_` modes; `-smallStrain` /
+  `LadrunoHSSmall`; `-implex`; `-sigmat`). PM4Sand and PDMY stay out.
+- **Threads (W14):** `ManzariDafalias::ladrunoThreadSafeUpdate` returns false (`:1235-1269`), the
+  SANISAND subclass delegates (`LadrunoSANISAND.cpp:2741-2758`), and `LadrunoHS` inherits
+  `Material::ladrunoThreadSafeUpdate()` = false. Soil particles are serial.
+- **Refusals (W17):** both declare commit refusals (SANISAND: `cpp:4623-4695`, `:4884-4926`; HS:
+  `cpp:690-745`, `:832-834`). A refusal at particles aborts the run. The §8 P5 row (refusal at
+  commit aborts cleanly, with the first refusing material) moves here, per review row 6.
+- **Initial stress:** SANISAND has none (`initialize()` zeroes σ, `ManzariDafalias.cpp:1044-1047`);
+  HS has `-sig0` / `-sig03` (uniform per tag). MPM interface Q2 refuses an initial stress on a
+  non-elastic particle material (`LadrunoMPMPattern.cpp:442-447`, `:505-507`, `:531-534`,
+  `:968-976`): the offset is added outside the material and would bypass its yield check.
+- **Stages:** SANISAND's stage is a class-wide static `mElastFlag` (`ManzariDafalias.h:557`); id 1
+  ("updateMaterialStage", `theInt`) and id 5 ("materialState", `theDouble`). The flip's
+  `Elastic2Plastic()` (the p < 3·Pmin reset, `:5789-5794`) runs only on instances that
+  `updateParameter` reaches; the others flip lazily through `ladrunoRunStageFlipOnce`, which does
+  not call it (`LadrunoSANISAND.cpp:3390-3405`, `:5054`). HS keeps a mutex-guarded tag→stage map
+  and seeds p_p, γ_p from the committed stress at 0→1 (`LadrunoHS.cpp:54-73`, `:517-577`).
+  Mode F's `parameter … loadPattern` reaches every particle material
+  (`LadrunoMPMPattern.cpp:347-364`); mode A's `updateMaterialStage` stops at the first element that
+  answers (`MaterialStageParameter.cpp:79-81`). **The two modes therefore flip SANISAND
+  differently today.**
+- **Low p:** SANISAND `-Pmin` (default 1e-3 P_atm), `-Presidual` (0), `-pRe` (0, off), and the
+  SAS-ME tension cutoff (WP-152, off). SAS-ME refuses a committed start with p + p_r ≤ 0
+  (`LadrunoSANISANDSasME.cpp:72-75`). HS: p_min = max(1e-6, 1e-3 p_ref), `-sigmat`; it refuses
+  |Δε|² > 25. ADR-93's floors are "available, not adopted; the owner decides".
+- **Cost:** M0b (232g) SANISAND/DP plastic cost ratio **341 (222–477) at a strain increment of
+  2.56e-4, 647 (462–920) at 9.44e-4**: 0.61 ms and 1.16 ms per plastic call. The increment a
+  particle actually sees was not measurable while SANISAND was not admitted; 232k measures it.
+
+**Model and effort, re-decided at kickoff.**
+- C++ worker 232k-C: opus · high (the roster's fork C++ row). Admission, staging in both modes,
+  the refusal path, the harness and the meter's MPM leg.
+- Verification worker 232k-V: opus · high, a different agent. The FE references on the same
+  domains and the one-point drivers. It never reads the MPM soil C++.
+- Ready-flip critic: fable · high, from the other family, plus `/code-review high`: the review of
+  record (ADR-87 D4, as for 232c, 232f, 232g, 232i and 232j). No owner verdict is pre-booked.
+- Runs: esmeralda (the owner's instruction). A fresh `git clone --depth 1 --branch
+  wp/232k-mpm-soil-models` into `~/ladruno_build_test/OpenSees_232k`; never touch
+  `~/ladruno_build_test/OpenSees`. Soil runs are serial processes, run side by side (at most 20 at
+  once on its 24 cores). The orchestrator launches every build and every long run.
+
+**Decisions fixed at kickoff** (a worker may object in its Round-1 report; the orchestrator
+decides):
+
+- **K1 — admission.** Both materials join `admitMaterial`'s table for `ThreeDimensional` and
+  `PlaneStrain`, in both modes, with every option that reads no element length (none does).
+  Options with a mode-specific hazard are decided in Round 1 and either admitted with a test or
+  refused loudly: SANISAND schemes 1, 2, 129; IMPL-EX on both (its time source `ops_Dt` at
+  particles); HS `-implex`, `-sig0`/`-sig03` (K3). The §6 table's columns (type strings, hypo use,
+  stage path, process statics, threads, length consumer) are filled for both rows.
+- **K2 — serial.** Soil particles run serial (W14). A requested thread count above 1 with a soil
+  particle is honoured as 1 with one warning, or refused: Round 1 picks, and says which the
+  existing non-allowlisted materials already get.
+- **K3 — geostatic state by staging only.** Q2 stays: no initial-stress offset on soil particles.
+  The geostatic path is stage 0 (elastic) under the gravity ramp, then the flip to stage 1. HS's
+  own `-sig0`/`-sig03` (inside the material, so inside its yield check) is admitted only if Round 1
+  shows it is uniform-state-correct at particles; it is never the geostatic route.
+- **K4 — one stage flip, identical in both modes.** Every soil particle in mode A and mode F
+  reaches the same post-flip state as an FE Gauss point with the same committed stress, including
+  SANISAND's `Elastic2Plastic` reset. Round 1 decides the mechanism (for example, mode A forwarding
+  the stage to every particle element, or one `mpm`-level stage walk that both modes share) and
+  quotes why `MaterialStageParameter`'s first-answer stop and the lazy flip cannot leave a particle
+  un-reset. SANISAND's stage flag is process-static: an FE SANISAND and an MPM SANISAND in one
+  process share it; the table's "process statics" column says so and the manual warns.
+- **K5 — no floor decisions.** No default changes to `-Pmin`, `-Presidual`, `-pRe`, the SAS-ME
+  cutoff or HS's p_min: those are the owner's (ADR-93). Gated cases keep their confinement (a
+  surcharge or a confined domain) so that no gate depends on a floor choice. Free-surface cases are
+  reported, with counts of particle-steps at the floor, clamps and refusals.
+- **K6 — refusals abort.** A refusal in a gated case is a miss. The refusal test uses a real
+  refusing material with a deterministic trigger (Round 1 picks: HS's |Δε|² > 25, or a SAS-ME start
+  at p + p_r ≤ 0), in both modes: the run aborts, the particles are unmoved, the message names the
+  material and its tag, and a later `mpm analyze` is refused as after `injectRefusal`.
+- **K7 — mode A tangent.** SANISAND's and HS's tangents are unsymmetric unless IMPL-EX makes them
+  symmetric. Mode A refuses symmetric-storage systems with a soil particle unless Round 1 shows
+  the tangent is symmetric for the chosen options (reuse 232j's refusal list, its C3).
+- **K8 — contracts unchanged** unless Round 1 shows the particle output must carry material
+  internal variables (SANISAND's α, e, fabric; HS's hardening). Such a change goes to T, never
+  into apeGmsh from here; the gates do not need it (the harness reads them through `mpm` queries).
+- **K9 — the footing ladder and `fbar`.** Footing rows use 232j's K6 ladder (KrylovNewton
+  1e-6/40 → NewtonLineSearch 1e-6/60 → KrylovNewton 1e-5/80 relaxed → halving, floor 5e-4 in
+  pseudo-time) for MPM and FE alike, `mpm antiLocking fbar` on (FE reference B-bar), off reported.
+
+**Pre-registered gates** (fixed here, before any soil-model MPM number; a band is never widened
+after a run, a miss is reported as a miss with its diagnosis). References are the fork's own FE on
+the same domain, a one-point FE driver, or closed form — never MPM, and never ADR-79's
+1108–1152 kPa anchor. SANISAND deck: the fork's `_build_confined` parameters
+(`tests/test_ladruno_sanisand.py:590`, kPa), scheme 1 with `-maxSubsteps` as the deck uses it.
+HS deck: the oedometer/footing deck of `tests/test_ladruno_hs_material.py`. Both are quoted, with
+their lines, in the cases file.
+
+| Row | Gate |
+|---|---|
+| **K0 SANISAND cell-crossing meter — runs FIRST** (both modes; `gimp` and `bspline2`) | **Case:** the laterally confined column (2D plane strain, one cell wide, `fix xmin x`, `fix xmax x`), l0 = 10 m, h = 0.5, ppc 2, ρ = 2000, gravity. Stage 0 gravity ramp → flip → stage-1 hold → **translation**: the floor is a `gridvel` box under the column with v = (free, −v) and `track y` (`tests/mpm_implicit_interface.md:157`), so the stressed column slides down its frictionless walls through at least 4 cells while its exact stress stays static. Mode A QS (`LoadControl`, h/8 per step) and mode F (local damping as the S1 column; v small enough that inertia is at most 1 % of ρ g l0 — Round 1 states v and checks it). **Reference:** σ_yy = −ρ g (l0 − Y) exactly (equilibrium); σ_xx and σ_zz from 232k-V's FE column on the same domain, staging and material (no translation), at the particle's initial depth Y. **Meter:** m = RMS over particles of ‖σ_p − σ_ref(Y_p)‖ / (ρ g l0), over the in-plane components and σ_zz, after the full translation. Each material (ElasticIsotropic, DruckerPrager, LadrunoSANISAND, LadrunoHS) runs the identical case, plus a no-translation twin (v = 0). **Gate (admission of SANISAND for everything after K0):** in each mode and basis, A = m(SANISAND) / m(DP) ≤ 2, or m(SANISAND) ≤ 0.01. **Reported:** the twins, the crossing counts per particle, A for elastic and HS, and SANISAND's spurious state drift (Δe and ‖Δα‖ across the translation, against the twin). **A miss stops SANISAND** at this row: the orchestrator raises it to the owner before any further SANISAND MPM run. HS continues. |
+| S1 one-point identity (mode A QS, and mode F where homogeneous) | A homogeneous block under a prescribed affine grid motion (every particle sees the same ΔF): drained triaxial compression, oedometer, and a 3-cycle isochoric shear, each from the stage flip. Reference: 232k-V's one-point FE driver on the same strain path. Where a fork FE element drives the same hypo kernel entry (`-geom hypo`, ADR-79), particle σ and internal state match to rel 1e-8; otherwise small strain at ‖ε‖ ≤ 5e-4, rel 2e-3 (Round 1 says which, quoting the kernel entry). Both materials, 3D and plane strain. |
+| S2 K0 column against FE (mode A QS; `gimp`, `bspline2`) | K0's column without translation, then a surcharge equal to ρ g l0 on the top row (the surcharge mechanism of `footing_mildcone`). Gate: σ_yy against closed form within 0.03 of ρ g l0 (the S1 self-weight bar), and σ_xx RMS against 232k-V's FE column on the same domain within 0.02 of ρ g l0, at the end of stage 0, after the flip, and after the surcharge. Both materials. |
+| S3 strip footing against FE (mode A QS, `gimp`, ppc 2, K9) | The 232j L4 domain and rough `gridvel` footing at r1 / r2 (4 / 8 cells across B) with a 20 kPa surcharge (K5's confinement), stage 0 gravity → flip → push to s = 0.05 B. Observables q(s) at s/B = 0.01, 0.02, 0.05. Gate: each within ±10 % of 232k-V's FE B-bar on the same domain, staging and ladder at that rung; each run reaches s = 0.05 B (a stop is a miss). HS at r1 and r2; SANISAND at r1 and r2 if K0 passes. r3 is reported only, and only if Round 1's cost estimate puts it under 12 h on esmeralda; the orchestrator decides at the freeze, before any number. |
+| S4 stage parity (both modes) | After the flip on the S2 column (stage-0 state identical by construction), every particle's committed σ and internal state are bit for bit equal between mode A and mode F built on the same state, and equal to the FE Gauss point with the same committed stress, including particles with p < 3·Pmin (SANISAND's reset). |
+| S5 refusal (both modes; the §8 P5 row) | K6's deterministic refusal, per material: the run aborts, the particles are unmoved (positions, F and σ bit for bit at the last accepted step), the message names material and tag, and a later `mpm analyze` is refused. Classic Tcl and Python both. |
+| S6 restart (mode A) | The database round trip with SANISAND and HS particles mid-stage-1: the continued run equals the uninterrupted one bit for bit. |
+| S7 refusals and options | Loud refusal for: symmetric-storage SOEs with an unsymmetric soil tangent (K7); each option Round 1 refuses; a soil particle with an initial-stress offset (Q2). K2's thread rule tested. `mpm info` reports the material, scheme and stage. |
+| S8 unchanged answers | The whole existing MPM suite passes unchanged (counts reported); the 232j warrant figures re-run on L1 and L4 r1 bit for bit. |
+| S9 mutation | The MPM family's ZERO and SCALE scores at or above 0.46 and 0.38. Plus a Zone-A soil oracle: S1's triaxial at small size, which goes red if the stage flip or the material update is skipped at particles. |
+| S10 engines | Classic Tcl and Python give the same S1 triaxial answer. |
+| R reported, not gated | The cost per particle-step of SANISAND and HS at particles, with the strain increment particles actually see (closes M0b's 222–920 range). The granular-column collapse (Lube) with SANISAND and HS in mode F: runout against DP, floor and clamp counts, refusals. The S3 legs with `fbar` off. HSSmall's S1 cyclic shear. |
+
+**Order.** Round 1 (both workers, in parallel) → the orchestrator's freeze → 232k-C implements
+K1–K4 and the meter harness → **the K0 meter runs before any other soil MPM case** → K0's verdict
+(a miss goes to the owner) → S1–S10 → the warrant run on one build.
+
+### 232k-V — FE references (opus · high; never reads the MPM soil C++)
+
+```text
+<header>  ADR sections: §6 (the materials table), §8 (the cell-crossing meter row, the footing row
+and its 232f / 232j amendments), §9 phase 5, §11 (the value proposition), and the amendment
+"232k kickoff". Your PR: #<pr>.
+Branch: work detached on origin/wp/232k-mpm-soil-models; commit; `git pull --rebase origin
+wp/232k-mpm-soil-models`; `git push origin HEAD:wp/232k-mpm-soil-models`. Another worker pushes
+C++ to the same branch. You touch only tests/mpm_soil_reference.py, tests/test_mpm_soil_reference.py,
+tests/data/mpm/soil/*.json and the reference blocks of tests/mpm_soil_cases.txt (create it; the
+C++ worker reads it and adds the MPM blocks).
+Independence: read nothing under SRC/domain/pattern/ladrunoMPM/. You may read and run the fork's
+FE elements and materials, and tests/mpm_implicit_reference.py's fe_footing (you extend it).
+Read the "232k" section of .claude/skills/ladruno-mpm/references/wp-briefs.md first: the facts,
+K1–K9 and the gate table bind you. Never widen a band.
+Binary: <pyd path>, built by the orchestrator; print ops.ladrunoBuild() into every record.
+
+ROUND 1 — report before running anything long (at most 300 words + a plan):
+  - the two decks, quoted with file:line (SANISAND `_build_confined`, HS oedometer/footing), in
+    the units the MPM cases use; the stage sequence each deck uses (command, id, theInt/theDouble);
+  - for S1: whether a fork FE element drives the same hypo kernel entry as the particles
+    (`-geom hypo`, ADR-79): quote it, or say small strain applies;
+  - the FE column (K0, S2) and footing (S3) models: element, B-bar, mesh = the MPM grid, staging,
+    ladder; and a cost estimate per run (use the M0b ratio, 341 / 647 against DP, and your own
+    timing of one stage-1 FE step);
+  - anything in the gate table you consider unreachable by the FE itself (as 232f's footing was),
+    with the number that shows it — before any MPM number exists.
+ROUND 2 — on the orchestrator's "frozen":
+  1. K0 references: the FE column σ_xx(Y), σ_zz(Y) for each material, at the end of stage 0, after
+     the flip and after the hold; JSON with the build hash.
+  2. S1 one-point drivers: triaxial, oedometer, 3-cycle isochoric shear, both materials, 3D and
+     plane strain; the strain paths written so the MPM harness can impose the same ΔF.
+  3. S2 FE column with surcharge; S3 FE B-bar footing r1 / r2 (r3 if the freeze says so) with the
+     K9 ladder, q(s) at s/B 0.01 / 0.02 / 0.05, failed attempts, relaxed steps, wall time.
+  4. tests/test_mpm_soil_reference.py: shape and closed-form checks; never against MPM.
+Long FE runs: give the orchestrator the command; it launches them on esmeralda. Nothing over
+10 min yourself. python3.12; ruff F811 clean; the fork-checklist gates before every push. Report
+per the Worker rules.
+```
+
+### 232k-C — soil particles in C++ (opus · high; a different agent from 232k-V)
+
+```text
+<header>  ADR sections: §4 (W1–W17, especially W9, W12, W14, W17), §5.2 step 6, §5.3 and its
+amendments, §6, §8 (the meter row, the P5 refusal row), §9 phase 5, §11, and the amendments
+"232j" and "232k kickoff". Your PR: #<pr>.
+Branch: work detached on origin/wp/232k-mpm-soil-models; commit; `git pull --rebase origin
+wp/232k-mpm-soil-models`; `git push origin HEAD:wp/232k-mpm-soil-models`.
+Read the "232k" section of .claude/skills/ladruno-mpm/references/wp-briefs.md first: the facts,
+K1–K9 and the gate table bind you. Never widen a band.
+Independence: read tests/mpm_interface.md, tests/mpm_implicit_interface.md,
+tests/mpm_bspline_interface.md, tests/mpm_antilocking_interface.md and the cases files. Never read
+tests/mpm_reference.py, tests/mpm_implicit_reference.py or tests/mpm_soil_reference.py.
+Context: #1095, #1096, #1098, #1103, #1106 and #1107 touch code near yours. Do not fix them unless
+your change rewrites that code; never regress them.
+
+ROUND 1 — stop and report after it (the orchestrator freezes it):
+  tests/mpm_soil_interface.md, at most ~3 pages, deciding with code anchors quoted:
+  - K1: the admission rows for both materials; each option admitted (with its test) or refused
+    (with its message); IMPL-EX's `ops_Dt` at particles in each mode.
+  - K2: the thread rule, and what non-allowlisted materials get today.
+  - K3: whether HS `-sig0`/`-sig03` is admitted, and why.
+  - K4: the stage-flip mechanism for both modes; why no particle can miss SANISAND's
+    Elastic2Plastic reset or HS's 0→1 seeding; the process-static warning.
+  - K6: the deterministic refusal trigger per material, and the abort path you exercise.
+  - K7: the SOE refusal list.
+  - K8: whether the output must change.
+  - The K0 meter: v and the step for each mode, the inertia check (at most 1 % of ρ g l0 in mode
+    F), the domain height that allows at least 4 cells of translation, the run cost per material
+    from the M0b ratio, and how the harness queries particle σ and SANISAND's e and α.
+  - The cases file tests/mpm_soil_cases.txt (232k-V adds the reference blocks; you add the MPM
+    blocks) and the test files, with each one's Zone-A cost.
+ROUND 2 — on the orchestrator's "frozen":
+  Implement K1–K4 and the meter harness first, batching edits; ask the orchestrator for each
+  build (all five targets) and each mutant build; never start build.bat yourself. The K0 meter is
+  the first soil MPM number: report it and stop for the orchestrator's verdict. Then S1–S10.
+  Tests tests/test_ladruno_mpm_soil_*.py (zone_a within its time budget). The full K0, S2 and S3
+  runs are the warrant run, which the orchestrator launches on esmeralda. Results JSON under
+  tests/data/mpm/soil/ carry ladrunoBuild, the counts and per-row values.
+  Classic Tcl for S5 and S10. Registrations per fork-checklist.md: the ledger fragments
+  WP-232k-mpm-soil-models.md (implementations; vanilla rows and `// Ladruno` markers for any
+  upstream file), a banner line, the guide (Ladruno_implementation/232_ladruno_mpm_guide.md: the
+  soil rows, staging, the floors as the owner's, cost, serial), stamps.
+  Draft the ADR amendment text in your report; the orchestrator writes it.
+Done when: every gated row is green (or a reported miss with diagnosis); the reported rows are in
+Ladruno_implementation/232k_mpm_soil_models.md; the ci/ gates are clean; ladrunoBuild matches your
+head on the exe and the pyd. Report per the Worker rules.
+```

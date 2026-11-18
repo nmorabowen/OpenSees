@@ -784,6 +784,35 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 > - **Use.** Turn it on for nearly incompressible or isochoric-plastic soils in mode A and in
 >   mode F. It is opt-in until the owner flips the default.
 
+> **Amendment (232k kickoff, 2026-11-17) — phase 5's scope and its first gate, fixed before any
+> soil-model MPM number.** The brief is `wp-briefs.md` "232k" (decisions K1–K9, gates K0 and
+> S1–S10).
+>
+> - **Scope.** `LadrunoSANISAND` (with its SAS-ME scheme and ADR-92 IMPL-EX) and `LadrunoHS`
+>   (with HSSmall). **NorSand is deferred until `LadrunoNORSAND` (WP-144, draft #896) lands on
+>   `ladruno`**; it is not on the branch at kickoff. With it go the NorSand matched-material track
+>   against Berkeley and the §8 tailings flow-slide row. PM4Sand and PDMY stay out.
+> - **The SANISAND cell-crossing meter (§11) is gate K0 and runs first.** A laterally confined
+>   column is staged under gravity, flipped to stage 1, and then translated rigidly down its
+>   frictionless walls by a tracking `gridvel` floor, through at least four cells. Its exact
+>   stress stays static: σ_yy by equilibrium, σ_xx and σ_zz from the fork's FE column on the same
+>   domain. The meter is the RMS stress error after the translation, normalised by ρ g l0. The same
+>   case runs with ElasticIsotropic, DruckerPrager, SANISAND and HS. **SANISAND is admitted for the
+>   rest of the phase only if its meter is at most twice DruckerPrager's** (or at most 0.01), in
+>   both modes and on `gimp` and `bspline2`. A miss stops SANISAND at that row and goes to the
+>   owner. This is the "earn their place" test the risk register asks for.
+> - **The geostatic state comes from staging only.** Interface Q2 stays: a soil particle takes no
+>   initial-stress offset. Stage 0 under gravity, then the flip, which must reach every particle
+>   identically in both modes, including SANISAND's `Elastic2Plastic` reset (today mode A's
+>   `updateMaterialStage` stops at the first element that answers).
+> - **No floor decisions.** ADR-93's low-confinement floors stay the owner's. Gated cases keep
+>   their confinement; free-surface cases are reported with floor, clamp and refusal counts.
+> - **Refusals abort (W17).** The §8 P5 refusal row is tested here with a real refusing material
+>   and a deterministic trigger. A refusal in a gated case is a miss.
+> - **Serial (W14).** Neither material is thread-safe; soil particles run on one thread.
+> - **Runs** on esmeralda, budgeted from M0b's SANISAND/DP cost ratio (341 at 2.6e-4, 647 at
+>   9.4e-4); 232k records the strain increment particles actually see.
+
 **Mutation gate (ADR-87 D2)**, through the fork's existing mechanism: a new family `MPM` in the
 `LADRUNO_MUTATE_FAMILY` list (`CMakeLists.txt`, a vanilla-ledgered line), in the options of
 `.github/workflows/ladruno_mutation.yml` and in `Ladruno_scripts/mutation_gate.py`; the mutant is
@@ -966,6 +995,9 @@ ADR-88).
   - Every gate passes except L4 r3, a pre-registered miss with its diagnosis.
   - The warrant ran on esmeralda (the owner's instruction).
   - Review of record: the Fable critic (AMEND, applied) and `/code-review high` (#1106).
+- **2026-11-17** — 232k (phase 5, soil models) kicked off: SANISAND and HS; NorSand deferred
+  until #896 lands. The SANISAND cell-crossing meter is gate K0 and runs first (amendment
+  "232k kickoff", after the §8 table).
 
 ---
 
