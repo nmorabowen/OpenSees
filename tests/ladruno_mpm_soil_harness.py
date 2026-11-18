@@ -55,6 +55,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 CASES = REPO / "tests" / "mpm_soil_cases.txt"
 REF_JSON = REPO / "tests" / "data" / "mpm" / "soil" / "k0_column.json"
+REF_JSON_CAPPED = REPO / "tests" / "data" / "mpm" / "soil" / "k0_column_capped.json"
+CAP_TAG = 98                                     # D23: the bonded elastic cap (body 3)
 OUT_DIR = REPO / "tests" / "data" / "mpm" / "soil"
 HOST = 232
 TS_TAG = 9001
@@ -139,6 +141,29 @@ def material_command(tag, kind, tokens):
     return ["nDMaterial", name, tag, *args]
 
 
+def cap_spec():
+    """D23's cap from the cases block k0_ref_column_capped: (kind, tokens, y0, y1, rho)."""
+    mats = reference_materials("k0_ref_column_capped")
+    inside, body = False, None
+    for raw in CASES.read_text(encoding="utf-8").splitlines():
+        t = raw.split("#", 1)[0].split()
+        if not t:
+            continue
+        if t[0] == "case":
+            inside = (t[1] == "k0_ref_column_capped")
+            continue
+        if inside and t[0] == "end":
+            break
+        if inside and t[0] == "body" and t[1] == "cap":
+            body = t
+    # body cap y <y0> <y1> mat <tag> rho <rho>
+    y0, y1 = float(body[3]), float(body[4])
+    tag = int(body[body.index("mat") + 1])
+    rho = float(body[body.index("rho") + 1])
+    kind, toks = mats[tag]
+    return kind, toks, y0, y1, rho
+
+
 def reference_rows(leg, path=REF_JSON):
     rec = json.loads(Path(path).read_text(encoding="utf-8"))
     return rec["legs"][leg]["after_hold"]["particles"], rec.get("build")
@@ -160,7 +185,7 @@ def _as_list(v):
     return [float(v)]
 
 
-def build(ops, leg, mode, basis, translate=True, floor_top=None, floor=None):
+def build(ops, leg, mode, basis, translate=True, floor_top=None, floor=None, capped=False):
     tag, s0, _ = LEGS[leg]
     tl = TIMELINE[mode]
     mats = reference_materials()
@@ -169,6 +194,8 @@ def build(ops, leg, mode, basis, translate=True, floor_top=None, floor=None):
     ops.model("basic", "-ndm", 2, "-ndf", 2)
     floor = floor or ("float" if mode == "F" else FLOOR)
     origin, cells = GRID[floor]
+    if capped:                                   # D23: one more cell row above the cap
+        cells = (cells[0], cells[1] + 1)
     ops.nDMaterial(*material_command(tag, kind, toks)[1:])
     ops.mpm("grid", HOST, "-origin", *origin, "-h", H, "-cells", *cells, "-basis", basis)
     ops.mpm("mode", "quasiStatic" if mode == "A" else "explicit")
@@ -177,6 +204,10 @@ def build(ops, leg, mode, basis, translate=True, floor_top=None, floor=None):
         ek, et = mats[1]                         # the elastic leg's operator
         ops.nDMaterial(*material_command(BLOCK_TAG, ek, et)[1:])
         ops.mpm("body", 2, "box", 0.0, -BLOCK_T, W, 0.0, "-ppc", 2, "-mat", BLOCK_TAG, "-rho", RHO)
+    if capped:                                   # D23: the bonded elastic cap, body 3
+        ck, ct, y0, y1, crho = cap_spec()
+        ops.nDMaterial(*material_command(CAP_TAG, ck, ct)[1:])
+        ops.mpm("body", 3, "box", 0.0, y0, W, y1, "-ppc", 2, "-mat", CAP_TAG, "-rho", crho)
     ops.mpm("fix", "xmin", "x")
     ops.mpm("fix", "xmax", "x")
     t0 = sum(n * dt for n, dt in (tl["gravity"], tl["hold1"]))
@@ -230,14 +261,14 @@ def _floor_hits(sig, szz, pfloor):
 
 
 def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, history=False,
-        floor=None):
+        floor=None, capped=False):
     """One leg; returns the record (meter, crossings, inertia, floor hits, state)."""
     tag, _, s1 = LEGS[leg]
     tl = TIMELINE[mode]
     wall0 = time.time()
     floor = floor or ("float" if mode == "F" else FLOOR)
     origin = GRID[floor][0]
-    build(ops, leg, mode, basis, translate, floor_top, floor)
+    build(ops, leg, mode, basis, translate, floor_top, floor, capped)
     x0 = _as_list(ops.mpm("particleData", "x"))
     body = _as_list(ops.mpm("particleData", "body"))
     N = sum(1 for b in body if b == 1.0)          # the soil (body 1, seeded first)
@@ -342,7 +373,7 @@ def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, histo
     sig = _as_list(ops.mpm("particleData", "sig"))
     szz = _as_list(ops.mpm("particleData", "sigZZ"))
     x = _as_list(ops.mpm("particleData", "x"))
-    rows, ref_build = reference_rows(leg)
+    rows, ref_build = reference_rows(leg, REF_JSON_CAPPED if capped else REF_JSON)
     sq = 0.0
     for k in range(N):
         r = _ref_at(rows, Y[k])
@@ -352,6 +383,7 @@ def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, histo
     meter = math.sqrt(sq / N) / RHO_G_L0
     drop = sum(x[2 * k + 1] - Y[k] for k in range(N)) / N
     rec = dict(leg=leg, mode=mode, basis=basis, translate=translate, particles=N, floor=floor,
+               capped=capped,
                meter=meter, mean_displacement_y=drop,
                crossings=dict(min=min(crossings), max=max(crossings),
                               mean=sum(crossings) / N, per_particle=crossings),
@@ -382,13 +414,13 @@ def state_drift(rt, rz):
                 dalpha_max=max(da), dalpha_rms=math.sqrt(sum(v * v for v in da) / n))
 
 
-def k0(ops, mode, basis, legs=None):
+def k0(ops, mode, basis, legs=None, capped=False):
     legs = legs or list(LEGS)
     out = dict(case="K0", mode=mode, basis=basis, build=str(ops.ladrunoBuild()),
-               rho_g_l0=RHO_G_L0, legs={})
+               rho_g_l0=RHO_G_L0, capped=capped, legs={})
     for leg in legs:
-        rt = run(ops, leg, mode, basis, translate=True)
-        rz = run(ops, leg, mode, basis, translate=False)
+        rt = run(ops, leg, mode, basis, translate=True, capped=capped)
+        rz = run(ops, leg, mode, basis, translate=False, capped=capped)
         out["legs"][leg] = dict(translated=rt, twin=rz, state_drift=state_drift(rt, rz))
     L = out["legs"]
     if "sanisand" in L and "dp" in L:
@@ -410,11 +442,12 @@ def main(argv=None):
     ap.add_argument("--basis", choices=["gimp", "bspline2"], required=True)
     ap.add_argument("--mat", action="append", choices=list(LEGS))
     ap.add_argument("--out", default=None)
+    ap.add_argument("--capped", action="store_true", help="D23: the bonded 20 kPa elastic cap")
     a = ap.parse_args(argv)
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from _testbed import ops   # noqa: E402
-    res = k0(ops, a.mode, a.basis, a.mat)
-    suffix = "" if not a.mat else "_" + "_".join(a.mat)
+    res = k0(ops, a.mode, a.basis, a.mat, capped=a.capped)
+    suffix = ("_capped" if a.capped else "") + ("" if not a.mat else "_" + "_".join(a.mat))
     path = Path(a.out) if a.out else OUT_DIR / f"k0_meter_{a.mode}_{a.basis}{suffix}.json"
     path.write_text(json.dumps(res, indent=1), encoding="utf-8")
     print(json.dumps({k: v for k, v in res.items() if k != "legs"}, indent=1))
