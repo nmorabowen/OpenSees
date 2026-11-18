@@ -69,7 +69,7 @@ def test_modef_gridvel_moves_block_exactly():
     for k in range(0, len(x0), 2):
         assert abs(x1[k] - x0[k] - 0.2 * P) < 1e-10
         assert abs(x1[k + 1] - x0[k + 1] + 0.1 * P) < 1e-10
-    assert max(abs(s) for s in _l(ops.mpm("particleData", "sig"))) < 1e-9
+    assert max(abs(s) for s in _l(ops.mpm("particleData", "sig"))) < 1e-6   # E = 100: strain 1e-8
 
 
 def test_modef_without_gridvel_unchanged():
@@ -112,20 +112,23 @@ def test_profile_argument_checks():
 
 
 def test_modea_translating_floor_carries_column():
-    """D17, mode A: an elastic column on a `profile ... translate y` floor; between the end of
-    the gravity stage and the end of the translation the mean particle drop is D (to the column's
-    elastic compression, rho g l / E ~ 2e-4), and the stress stays the self-weight state it had,
-    to the cell-crossing error (the K0 meter's subject) -- a smoke test of the mechanism."""
+    """D17, mode A (with the D19a floor block): an elastic column on a 2-cell elastic block whose
+    lower rows a `profile ... translate y` gridvel carries; the prescribed rows stay 2 cells below
+    the column, so their entries and exits never touch a column particle's support. Between the
+    end of gravity and the end of the translation the mean column drop is D (to the column's
+    compression change, rho g l / E ~ 2e-4), and the stress keeps its self-weight state to the
+    cell-crossing error -- a smoke test of the mechanism."""
     ops = _ops()
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
     ops.nDMaterial("ElasticIsotropic", 1, 2.0e5, 0.3)
-    ops.mpm("grid", 232, "-origin", 0.0, -1.5, "-h", 0.5, "-cells", 2, 10)
+    ops.mpm("grid", 232, "-origin", 0.0, -2.5, "-h", 0.5, "-cells", 2, 12)
     ops.mpm("mode", "quasiStatic")
     ops.mpm("body", 1, "box", 0.0, 0.0, 1.0, 2.0, "-ppc", 2, "-mat", 1, "-rho", 2.0)
+    ops.mpm("body", 2, "box", 0.0, -1.0, 1.0, 0.0, "-ppc", 2, "-mat", 1, "-rho", 2.0)
     ops.mpm("fix", "xmin", "x")
     ops.mpm("fix", "xmax", "x")
-    ops.mpm("gridvel", "floor", "box", 0.0, -1.0, 1.0, 0.0, "v", "free", -1.0,
+    ops.mpm("gridvel", "floor", "box", 0.0, -1.5, 1.0, -0.5, "v", "free", -1.0,
             "profile", 0.5, 0.0, 1.0, "translate", "y")
     ops.mpm("gravity", 0.0, -9.81)
     ops.timeSeries("Path", 9001, "-time", 0.0, 0.4, 1.0e9, "-values", 0.0, 1.0, 1.0)
@@ -138,13 +141,13 @@ def test_modea_translating_floor_carries_column():
     ops.integrator("LoadControl", 0.1)
     ops.analysis("Static")
     ops.mpm("analyze", 5, 0.1)
-    xa = _l(ops.mpm("particleData", "x"))
-    sa = _l(ops.mpm("particleData", "sig"))
+    n = 16                                   # body 1 is seeded first: its 16 particles lead
+    xa = _l(ops.mpm("particleData", "x"))[:2 * n]
+    sa = _l(ops.mpm("particleData", "sig"))[:3 * n]
     ops.mpm("analyze", 8, 0.0625)
     ops.mpm("analyze", 2, 0.1)
-    xb = _l(ops.mpm("particleData", "x"))
-    sb = _l(ops.mpm("particleData", "sig"))
-    n = len(xa) // 2
+    xb = _l(ops.mpm("particleData", "x"))[:2 * n]
+    sb = _l(ops.mpm("particleData", "sig"))[:3 * n]
     drop = sum(xb[2 * k + 1] - xa[2 * k + 1] for k in range(n)) / n
     assert abs(drop + 0.5) < 2e-4
     scale = max(abs(s) for s in sa)

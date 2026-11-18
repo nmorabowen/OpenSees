@@ -236,3 +236,27 @@ S1's FE identity: no FE element drives `hypoIncrementFromF`. `-geom hypo` (Ladru
 drives `hypoIncrement`. The two have the same algebra but different rounding
 (`LadrunoHypoKernel.h:254-275`). So 3D S1 is held to rel 1e-8 against a one-element LadrunoBrick
 `-geom hypo`, and plane strain takes the small-strain rule (‖ε‖ ≤ 5e-4, rel 2e-3).
+
+## 9. Round-2 amendments proposed (232k-C, 2026-11-18, before any SANISAND / HS mode-F number)
+
+- **D19a — the floor.** The frozen floor (a `gridvel` box directly under the column) is a
+  defect of the measurement, not of the meter: each time a node row leaves the moving set, the
+  soil's bottom row is left on GIMP tails and the row's full reaction is released at once.
+  Measured (mode F, gimp, elastic, build `b94c9d75d`): meter 0.188 against a twin of 0.0147,
+  bottom-row σ_yy error −0.64 ρgl0 (rows above 2 m below 0.03), inertia max 0.208, mean drop
+  −2.522 against the floor's 2.5. Mode A failed outright (the renormalize cutoff drops the tail
+  nodes: no vertical support). A floor box raised h/2 halves it (0.0998) but does not remove it.
+  **Fix:** a bonded elastic block y ∈ [−1.5, 0] under the column (the elastic leg's E, ν, ρ;
+  excluded from the meter; grid origin (0, −5), 2 × 31 cells). Mode A: the D17 gridvel
+  prescribes the block's rows 2–4 cells below the soil. Mode F: no grid condition — the block
+  carries the weight as an upward body force and the translation is a uniform body acceleration
+  (the bspline2 block-gridvel variant still kicked 13 % of W once per cell of travel, the
+  released reaction). 1D equilibrium makes the soil's σ_yy the weight above in both, so the FE
+  reference is unchanged.
+- **D21a — mode-F damping.** Local damping is off during the body-force translation (it is not
+  Galilean invariant, interface §6.5, and braked the rigid acceleration to about 20 %) and 0.8
+  elsewhere. The meter does not move with the settle length (0.5 s and 2.0 s give 0.02526 /
+  0.01314 to all digits), so no transient is left.
+- **D23 counting.** Floor hits are counted from the flip on; the gravity stage's count is
+  reported apart (`floor_hits_stage0`), since both soil models' stage 0 is pressure independent
+  (ManzariDafalias.h:546-550; LadrunoHS stage-0 branch).

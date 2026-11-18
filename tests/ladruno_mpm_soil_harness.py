@@ -7,16 +7,33 @@ reference is the JSON record those blocks name: legs.<mat>.after_hold.particles,
 particle row (Y, sxx, syy, szz, sxy), read per particle by its INITIAL Y.
 
 The case (D19): kN, t, m, s, kPa; rho 2.0, g 9.81, l0 10, column two cells wide x in [0, 1],
-y in [0, 10], h 0.5, ppc 2 (160 particles); grid origin (0, -3.5), cells 2 x 28; `fix xmin x`,
-`fix xmax x`, no `fix ymin`; the floor is a `gridvel ... profile ... translate y` (D17) carrying
-the column down D = 2.5 m (5 cells). The twin runs the identical timeline with v = 0.
+y in [0, 10], h 0.5, ppc 2 (160 particles); `fix xmin x`, `fix xmax x`, no `fix ymin`; the
+column moves down D = 2.5 m (5 cells). The twin runs the identical timeline with v = 0.
+
+The floor (amendment D19a, proposed by 232k-C before any soil mode-F number): a bonded elastic
+block y in [-1.5, 0] (the elastic leg's E, nu, rho; body 2, excluded from the meter) under the
+column; grid origin (0, -5), cells 2 x 31. The frozen D19 floor (a gridvel box directly under
+the column) put the soil's bottom row on GIMP tails each time a node row left the moving set, and
+released the full column reaction at that row: mode F gimp elastic 0.188 (twin 0.015), bottom-row
+syy error -0.64 rho g l0, inertia max 0.208, drop -2.522 (the record of the diagnosis).
+  Mode A ("block"): the `gridvel ... profile ... translate y` (D17) prescribes rows 2-4 cells
+  below the soil, inside the block, so the set's entries and exits never touch a soil support.
+  Mode F ("float"): no grid condition; the block carries the whole weight as an upward body
+  force (`mpm particleBodyForce`, sum of external forces 0) and the translation is the uniform
+  body acceleration -v phi'(t) on every particle, with local damping off during it (FLAC local
+  damping is not Galilean invariant and would brake the acceleration itself; it is 0.8 in every
+  other phase). Gravity is applied at once in stage 0 (elastic in every leg) and settles.
 
 Mode A (D20): quasi-static LoadControl; gravity ramp over 10 steps of 0.1; the stage flip; a
 2-step hold; the translation at v = 1, dt = h/8 = 0.0625 (40 steps, Tr = 0); a 2-step hold.
-Mode F (D21): local damping 0.8, FLIP 1, dt 5e-4; gravity ramp 1.0 s, settle 0.5 s, the flip,
+Mode F (D21): local damping 0.8, FLIP 1, dt 5e-4; gravity (at once) and settle 1.5 s, the flip,
 hold 0.25 s, the translation at v = 0.1 with Tr = 2 s ramps (t1 = t0 + 27 s), settle 0.5 s:
-58,500 steps. Its inertia ratio |dP_y/dt| / W (100-step differences of `mpm info summary`) is
-gated <= 1 % at the measurement; its maximum over the run is reported.
+58,500 steps. Its inertia ratio |dP_y/dt| / (M g) (100-step differences of `mpm info summary`)
+is gated <= 1 % at the measurement; its maximum over the run is reported.
+
+Floor counts (K5 / D23): particle-steps with p <= the material's floor, sampled after every
+chunk, counted from the flip on (`floor_hits`); the gravity stage's count is reported apart
+(`floor_hits_stage0`) because stage 0 of both soil models is pressure independent.
 
 The meter: m = RMS over particles of |sigma_p - sigma_ref(Y_p)| / (rho g l0) over xx, yy, xy and
 zz, after the full translation (mode F: after the ramp-down and settle).
@@ -45,9 +62,26 @@ TS_TAG = 9001
 RHO, G, L0, W = 2.0, 9.81, 10.0, 1.0
 RHO_G_L0 = RHO * G * L0                          # 196.2 kPa
 H = 0.5
-ORIGIN = (0.0, -3.5)
-CELLS = (2, 28)
 D_TRANSLATE = 2.5
+# The floor (amendment D19a, 232k-C round 2, before any soil mode-F number). "block": a bonded
+# elastic floor block y in [-1.5, 0] (3 cells, the elastic leg's E, nu, rho) under the column;
+# the translating gridvel prescribes the nodes 2 to 4 cells BELOW the soil, inside the block, so
+# the prescribed set's node entries and exits never touch a soil particle's support (<= 1.5 h).
+# "nodes": the frozen D19 floor -- the gridvel box itself under the column (y in [-1, 0]); its
+# node exits put the soil's bottom row on GIMP tails and lock strain there (diagnosis record).
+# "float" (mode F): the same block, no grid condition at all -- the block carries the whole
+# column's weight as an upward body force (sum of external forces = 0), and the translation is a
+# uniform body acceleration a(t) = -v phi'(t) on every particle, so the set moves rigidly without
+# any boundary crossing the grid (diagnosis: a prescribed row that leaves the moving set releases
+# the full column reaction at once, a kick of up to 13 % of W per cell on bspline2).
+FLOOR = "block"                                  # mode A (mode F: "float")
+FLOOR_TOP = 0.0                                  # "nodes" only: the box top above the base
+BLOCK_T = 1.5                                    # "block": thickness
+BLOCK_TAG = 99
+FLOAT_DAMP_TRANSLATE = 0.0                       # "float": local damping during the translation
+GRID = {"nodes": ((0.0, -3.5), (2, 28)), "block": ((0.0, -5.0), (2, 31)),
+        "float": ((0.0, -5.0), (2, 31))}
+ORIGIN, CELLS = GRID[FLOOR]
 
 # leg -> (material tag in k0_ref_column, stage before gravity, stage at the flip)
 # (orchestrator ruling: `mpm stage` passes s through; DP is 0 / 2, SANISAND and HS 0 / 1)
@@ -126,29 +160,42 @@ def _as_list(v):
     return [float(v)]
 
 
-def build(ops, leg, mode, basis, translate=True):
+def build(ops, leg, mode, basis, translate=True, floor_top=None, floor=None):
     tag, s0, _ = LEGS[leg]
     tl = TIMELINE[mode]
     mats = reference_materials()
     kind, toks = mats[tag]
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
+    floor = floor or ("float" if mode == "F" else FLOOR)
+    origin, cells = GRID[floor]
     ops.nDMaterial(*material_command(tag, kind, toks)[1:])
-    ops.mpm("grid", HOST, "-origin", *ORIGIN, "-h", H, "-cells", *CELLS, "-basis", basis)
+    ops.mpm("grid", HOST, "-origin", *origin, "-h", H, "-cells", *cells, "-basis", basis)
     ops.mpm("mode", "quasiStatic" if mode == "A" else "explicit")
     ops.mpm("body", 1, "box", 0.0, 0.0, W, L0, "-ppc", 2, "-mat", tag, "-rho", RHO)
+    if floor in ("block", "float"):
+        ek, et = mats[1]                         # the elastic leg's operator
+        ops.nDMaterial(*material_command(BLOCK_TAG, ek, et)[1:])
+        ops.mpm("body", 2, "box", 0.0, -BLOCK_T, W, 0.0, "-ppc", 2, "-mat", BLOCK_TAG, "-rho", RHO)
     ops.mpm("fix", "xmin", "x")
     ops.mpm("fix", "xmax", "x")
     t0 = sum(n * dt for n, dt in (tl["gravity"], tl["hold1"]))
     n, dt = tl["translate"]
     t1 = t0 + n * dt
     v = -tl["v"] if translate else 0.0
-    # the floor: the column base row and the row below; it moves with the column (D17)
-    ops.mpm("gridvel", "floor", "box", 0.0, -1.0, W, 0.0, "v", "free", v,
-            "profile", t0, tl["Tr"], t1, "translate", "y")
-    ops.mpm("gravity", 0.0, -G)
-    ops.timeSeries("Path", TS_TAG, "-time", 0.0, tl["Tg"], 1.0e9, "-values", 0.0, 1.0, 1.0)
-    ops.mpm("timeSeries", TS_TAG)
+    # the floor; it moves with the column (D17)
+    if floor == "float":
+        lo = hi = None                                # no grid condition (body forces, run())
+    elif floor == "block":
+        lo, hi = -BLOCK_T - H, -BLOCK_T + H          # 2 to 4 cells below the soil
+    else:
+        lo, hi = -1.0, FLOOR_TOP if floor_top is None else floor_top
+    if floor != "float":
+        ops.mpm("gridvel", "floor", "box", 0.0, lo, W, hi, "v", "free", v,
+                "profile", t0, tl["Tr"], t1, "translate", "y")
+        ops.mpm("gravity", 0.0, -G)
+        ops.timeSeries("Path", TS_TAG, "-time", 0.0, tl["Tg"], 1.0e9, "-values", 0.0, 1.0, 1.0)
+        ops.mpm("timeSeries", TS_TAG)
     if mode == "F":
         ops.mpm("damping", "local", 0.8)
         ops.mpm("flip", 1.0)
@@ -182,44 +229,101 @@ def _floor_hits(sig, szz, pfloor):
     return hits
 
 
-def run(ops, leg, mode, basis, translate=True, chunk=None):
+def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, history=False,
+        floor=None):
     """One leg; returns the record (meter, crossings, inertia, floor hits, state)."""
     tag, _, s1 = LEGS[leg]
     tl = TIMELINE[mode]
     wall0 = time.time()
-    build(ops, leg, mode, basis, translate)
+    floor = floor or ("float" if mode == "F" else FLOOR)
+    origin = GRID[floor][0]
+    build(ops, leg, mode, basis, translate, floor_top, floor)
     x0 = _as_list(ops.mpm("particleData", "x"))
-    N = len(x0) // 2
+    body = _as_list(ops.mpm("particleData", "body"))
+    N = sum(1 for b in body if b == 1.0)          # the soil (body 1, seeded first)
+    assert all(b == 1.0 for b in body[:N])
     Y = [x0[2 * k + 1] for k in range(N)]
-    cell = [math.floor((Y[k] - ORIGIN[1]) / H) for k in range(N)]
+    cell = [math.floor((Y[k] - origin[1]) / H) for k in range(N)]
     crossings = [0] * N
     floor_hits = 0
+    floor_stage0 = [0]
     pfloor = P_FLOOR.get(leg)
-    W_col = RHO * G * L0 * W
+    W_all = float(_as_list(ops.mpm("info", "summary"))[0]) * G     # every particle's weight
     inertia, inertia_max, mom_prev, t_prev = None, 0.0, None, None
+    hist = []
     chunk = chunk or (1 if mode == "A" else 100)
 
     def sample(phase):
         nonlocal floor_hits, mom_prev, t_prev, inertia, inertia_max
         x = _as_list(ops.mpm("particleData", "x"))
         for k in range(N):
-            c = math.floor((x[2 * k + 1] - ORIGIN[1]) / H)
+            c = math.floor((x[2 * k + 1] - origin[1]) / H)
             if c != cell[k]:
                 crossings[k] += abs(c - cell[k])
                 cell[k] = c
+        # the floors act only after the flip: stage 0 of both soil models is pressure
+        # independent (ManzariDafalias.h:546-550; LadrunoHS.cpp stage-0 branch); counted from
+        # the flip on, and the gravity stage's count is reported separately
         if pfloor is not None:
-            floor_hits += _floor_hits(_as_list(ops.mpm("particleData", "sig")),
-                                      _as_list(ops.mpm("particleData", "sigZZ")), pfloor)
+            nh = _floor_hits(_as_list(ops.mpm("particleData", "sig"))[:3 * N],
+                             _as_list(ops.mpm("particleData", "sigZZ"))[:N], pfloor)
+            if phase == "gravity":
+                floor_stage0[0] += nh
+            else:
+                floor_hits += nh
         if mode == "F":
             s = _as_list(ops.mpm("info", "summary"))
             t = float(ops.mpm("info", "time"))
             if mom_prev is not None and t > t_prev:
-                inertia = abs((s[2] - mom_prev) / (t - t_prev)) / W_col
+                inertia = abs((s[2] - mom_prev) / (t - t_prev)) / W_all
                 if phase in ("translate", "hold2"):
                     inertia_max = max(inertia_max, inertia)
             mom_prev, t_prev = s[2], t
+            if history:
+                hist.append((t, inertia, s[-1], phase))
+
+    # "float": per-particle body force (per unit mass, not scaled by the series): gravity on
+    # every particle, the block's upward support (the whole weight over the block's mass), and
+    # the translation's uniform acceleration acc. Gravity is applied at once (stage 0 is elastic
+    # in every leg) and settles under the damping.
+    m_all = _as_list(ops.mpm("particleData", "m"))
+    M_tot = sum(m_all)
+    M_blk = sum(mm for mm, b in zip(m_all, body) if b == 2.0)
+
+    def set_body_force(acc):
+        if floor != "float":
+            return
+        up = G * M_tot / M_blk if M_blk > 0 else 0.0
+        bf = []
+        for b in body:
+            bf += [0.0, -G + acc + (up if b == 2.0 else 0.0)]
+        ops.mpm("particleBodyForce", *bf)
+
+    v_tr = -tl["v"] if translate else 0.0
+    Tr = tl["Tr"]
 
     def advance(n, dt, phase):
+        done = 0
+        if floor == "float" and phase == "translate":
+            # the trapezoid's acceleration: -v/Tr over [t0, t0+Tr], 0, +v/Tr over [t1-Tr, t1]
+            nr = int(round(Tr / dt)) if Tr > 0 else 0
+            pieces = [(nr, v_tr / Tr if Tr > 0 else 0.0), (n - 2 * nr, 0.0),
+                      (nr, -v_tr / Tr if Tr > 0 else 0.0)]
+            if Tr == 0.0:
+                raise ValueError("float needs Tr > 0 (a velocity jump has no finite acceleration)")
+            # local damping is not Galilean invariant (interface §6.5): it would brake the
+            # rigid acceleration itself, so the translation runs undamped (FLOAT_DAMP_TRANSLATE)
+            ops.mpm("damping", "local", FLOAT_DAMP_TRANSLATE)
+            for m_, acc in pieces:
+                set_body_force(acc)
+                adv(m_, dt, phase)
+            set_body_force(0.0)
+            ops.mpm("damping", "local", 0.8)
+            return
+        set_body_force(0.0)
+        adv(n, dt, phase)
+
+    def adv(n, dt, phase):
         done = 0
         while done < n:
             k = min(chunk, n - done)
@@ -247,13 +351,17 @@ def run(ops, leg, mode, basis, translate=True, chunk=None):
         sq += sum(e * e for e in d)
     meter = math.sqrt(sq / N) / RHO_G_L0
     drop = sum(x[2 * k + 1] - Y[k] for k in range(N)) / N
-    rec = dict(leg=leg, mode=mode, basis=basis, translate=translate, particles=N,
+    rec = dict(leg=leg, mode=mode, basis=basis, translate=translate, particles=N, floor=floor,
                meter=meter, mean_displacement_y=drop,
                crossings=dict(min=min(crossings), max=max(crossings),
                               mean=sum(crossings) / N, per_particle=crossings),
-               floor_hits=floor_hits, p_floor=pfloor,
+               floor_hits=floor_hits, floor_hits_stage0=floor_stage0[0], p_floor=pfloor,
                state_before=state_before, state_after=_state(ops, leg),
                ref_build=ref_build, wall_s=time.time() - wall0)
+    rec["y_error"] = [(Y[k], (sig[3 * k + 1] - _ref_at(rows, Y[k])["syy"]) / RHO_G_L0,
+                       (sig[3 * k] - _ref_at(rows, Y[k])["sxx"]) / RHO_G_L0) for k in range(N)]
+    if history:
+        rec["history"] = hist
     if mode == "F":
         rec["inertia_ratio"] = inertia
         rec["inertia_ratio_max"] = inertia_max
@@ -312,7 +420,8 @@ def main(argv=None):
     print(json.dumps({k: v for k, v in res.items() if k != "legs"}, indent=1))
     for leg, r in res["legs"].items():
         print(leg, "meter", r["translated"]["meter"], "twin", r["twin"]["meter"],
-              "crossings", r["translated"]["crossings"], "floor_hits",
+              "crossings", {k: v for k, v in r["translated"]["crossings"].items() if k != "per_particle"},
+              "drop", r["translated"]["mean_displacement_y"], "floor_hits",
               r["translated"]["floor_hits"])
     return 0
 
