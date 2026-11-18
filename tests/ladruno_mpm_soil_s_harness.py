@@ -298,6 +298,49 @@ def s4_flip_map(ops, mode, basis="gimp", g=0.5, l0=2.0):
 
 
 # --------------------------------------------------------------------------- #
+#  S4, the same-state half (orchestrator's ruling at the S4 freeze)            #
+# --------------------------------------------------------------------------- #
+def s4_affine(ops, mode, row, n=10):
+    """The S1 block (SANISAND, plane strain), an affine oedometric stage-0 path to the strain of
+    the S4 record's row `row` (its pre-flip elastic strain eps_yy, state[1], compression
+    positive), then `mpm stage 1 1`. Returns the particles' pre- and post-flip sigma (3D Voigt,
+    sigma_zz from sigZZ) and SANISAND `state`, and the record row. Each of the n steps takes the
+    same strain increment d = eps / n through the Hughes-Winget stretch lam = (2 - d)/(2 + d)
+    (2 (lam - 1)/(lam + 1) = -d), so the hypo total strain is eps up to round-off."""
+    rec = load("s4_lowg.json")
+    r = rec["rows"][row]
+    s1 = load("s1_onepoint.json")
+    dt = 1.0 if mode == "A" else 1e-4
+    cmds, nd = s1_commands(s1, "sanisand_ps_oedo", mode, dt)
+    for name, args in cmds:
+        getattr(ops, name)(*args)
+    eps = r["pre_flip"]["state"][1]
+    d = eps / n
+    lam = (2.0 - d) / (2.0 + d)
+    for _ in range(n):
+        ops.mpm("gridvel", "all", "setAffine", 0.0, 0.0, 0.0, (lam - 1.0) / dt)
+        ops.mpm("analyze", 1, dt)
+
+    def snap():
+        sig = _l(ops.mpm("particleData", "sig"))
+        szz = _l(ops.mpm("particleData", "sigZZ"))
+        N = len(szz)
+        return {"sig": [_sig6(sig, szz, 2, p) for p in range(N)],
+                "state": _l(ops.mpm("particleResponse", "state"))}
+
+    pre = snap()
+    ops.mpm("stage", 1, 1)
+    post = snap()
+    return {"mode": mode, "row": row, "below_Pmin": r["below_Pmin"], "pre": pre, "post": post,
+            "ref_pre": r["pre_flip"], "ref_post": r["after_flip"]}
+
+
+def rel_diff(a, b):
+    sc = max(max(abs(v) for v in b), 1e-300)
+    return max(abs(x - y) for x, y in zip(a, b)) / sc
+
+
+# --------------------------------------------------------------------------- #
 #  S3 -- the strip footing (232j L4 domain), mode A QS, K9's ladder            #
 # --------------------------------------------------------------------------- #
 LADDER = [("KrylovNewton", 1e-6, 40), ("NewtonLineSearch", 1e-6, 60), ("KrylovNewton", 1e-5, 80)]
