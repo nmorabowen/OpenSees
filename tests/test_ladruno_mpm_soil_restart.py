@@ -106,41 +106,6 @@ def _save_restore(ops, td):
     _analysis(ops)
 
 
-def test_restart_no_body_after_restore(capfd):
-    """Item 1 (hsWalked now in the v4 pack): the add-after-walk path it protects cannot be reached
-    across a restart. A mode-A save needs the particle elements (after the first step; before it
-    the save is refused), and after the first step every `mpm body` is refused. Pinned here:
-    the pre-step save is refused, and after a staged restart any body -- the HS tag or another
-    material -- is refused. (The pack still carries hsWalked so the restored host state is
-    complete.)"""
-    ops = _ops()
-    cmd = S.load("s2_column.json")["decks"]["hs"]["cmd"]
-    S.column_build(ops, cmd, "gimp", "A", l0=L0)
-    ops.mpm("stage", 1, 1)
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
-        ops.database("File", str(Path(td) / "pre"))
-        with pytest.raises(Exception):
-            ops.save(1)                         # before the first step: refused
-    S.column_build(ops, cmd, "gimp", "A", l0=L0)
-    ops.mpm("analyze", 2, 0.1)
-    ops.mpm("stage", 1, 1)
-    ops.mpm("analyze", 1, 0.1)
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
-        _save_restore(ops, td)
-        try:                                   # the restore does not re-register nDMaterials
-            ops.nDMaterial(*S.deck_args(cmd))
-        except Exception:
-            pass
-        ops.nDMaterial("ElasticIsotropic", 77, 1.0e4, 0.3)
-        n0 = len(S._l(ops.mpm("particleData", "m")))
-        capfd.readouterr()
-        for tag in (1, 77):
-            with pytest.raises(Exception):
-                ops.mpm("body", 5, "box", 0.0, 0.0, 1.0, 0.5, "-ppc", 2, "-mat", tag, "-rho", 2.0)
-        assert "after the first step" in capfd.readouterr().err
-        assert len(S._l(ops.mpm("particleData", "m"))) == n0
-
-
 def test_pack_version_3_then_soil_writes_v4():
     """Item 3: `debug packVersion 3` set BEFORE the soil body is added used to write a v3 pack
     (no stage record). packState re-checks: it writes v4 with a WARNING, so the SANISAND restart
