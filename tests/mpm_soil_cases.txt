@@ -185,8 +185,15 @@ end
 #   r3 (n16) 244.43 / 426.39 /  958.66   91 failed, 17 halvings esmeralda, build b94c9d75d, 2133 s
 #   (b94c9d75d -> 7c932089c changes no HS, ladrunoBrick or interpreter source; SANISAND gains
 #   only getClassType and a static stage-restore accessor.) r1 and r2 gated, r3 reported.
-# SANISAND -- PENDING v0. The freeze's v1-v4 are FAILED PROBES (esmeralda, b94c9d75d, cap 2 h,
-# launched from 42c11333a, before sas_counts existed); none reaches s = 0.1 m at r1:
+# SANISAND -- REPORTED ONLY (freeze rule: no variant v0-v4 reaches s = 0.05 B at r1 and r2).
+#   v0_tims_r1sep      n4 wall cap at s = 0.0215 (6714 failed, 1344 halvings, 1341 of 1342
+#                      accepted steps on the relaxed 1e-5 rung; 20 SAS-ME refusals, 0 separation
+#                      events; q(0.01 B) = 594.8); n8 wall cap at 0.0037 (11 refusals, 0 separations)
+# Diagnosis (tests/mpm_soil_reference.py docstring): K9's absolute 1e-6 / 1e-5 kN residual sits
+# below the scheme's integration noise at these load levels; TIMs' strip scales its test with
+# the load (1e-5 x tol_ref x 25 / 50) and works at an order lower stress, with other constants.
+# The freeze's v1-v4 (esmeralda, b94c9d75d, cap 2 h, launched from 42c11333a, before sas_counts
+# existed) are failed probes too; none reaches s = 0.1 m at r1:
 #   v1_me_cap1000      n4 wall cap at s = 0.0081 (4451 failed, 1362 halvings); n8 wall cap at 0.0035
 #   v2_sasme           n4 halving floor at s = 0.0398 (890 failed; q(0.01 B) = 595.5); n8 wall cap at 0.0129
 #   v3_cppm_refuse     n4 halving floor at s = 0.0159 (3953 failed); n8 floor at 0.0037
@@ -204,6 +211,8 @@ end
 case s3_ref_footing_sanisand_probes
 kind reference
 status report
+data tests/data/mpm/soil/s3_fe_sanisand_v0_tims_r1sep_n4.json
+data tests/data/mpm/soil/s3_fe_sanisand_v0_tims_r1sep_n8.json
 data tests/data/mpm/soil/s3_fe_sanisand_v1_me_cap1000_n4.json
 data tests/data/mpm/soil/s3_fe_sanisand_v1_me_cap1000_n8.json
 data tests/data/mpm/soil/s3_fe_sanisand_v2_sasme_n4.json
@@ -213,7 +222,7 @@ data tests/data/mpm/soil/s3_fe_sanisand_v3_cppm_refuse_n8.json
 data tests/data/mpm/soil/s3_fe_sanisand_v4_implex_cap1000_n4.json
 data tests/data/mpm/soil/s3_fe_sanisand_v4_implex_cap1000_n8.json
 field reached (false in all), s_end, stopped, failed_attempts, halvings, wall_s, curve
-ref fork FE, LadrunoBrick B-bar, the K9 ladder; the winner rule waits for v0_tims_r1sep
+ref fork FE, LadrunoBrick B-bar, the K9 ladder; no winner: S3 SANISAND is reported only
 end
 
 # ============================================================================

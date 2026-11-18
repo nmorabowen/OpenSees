@@ -306,7 +306,7 @@ def test_k0p_implex_record():
     assert 0.0 < d["vs_plain"]["max_abs_dsxx_over_rho_g_l0"] < 0.01
 
 
-@pytest.mark.parametrize("variant", ["v1_me_cap1000", "v2_sasme", "v3_cppm_refuse",
+@pytest.mark.parametrize("variant", ["v0_tims_r1sep", "v1_me_cap1000", "v2_sasme", "v3_cppm_refuse",
                                      "v4_implex_cap1000"])
 def test_s3_sanisand_failed_probes(variant):
     for n in (4, 8):
