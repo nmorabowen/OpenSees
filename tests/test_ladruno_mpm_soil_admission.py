@@ -166,7 +166,17 @@ def test_s7_q2_offset_refused_on_soil():
 
 
 def _column_a(ops, threads):
-    _column(ops, HS, 4, mode="quasiStatic", kind="LadrunoHS")
+    # the column stands on the grid's bottom face (fix ymin y at y = 0)
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 0.5, "-cells", 2, 5)
+    ops.mpm("mode", "quasiStatic")
+    ops.nDMaterial("LadrunoHS", 4, *HS)
+    ops.mpm("body", 1, "box", 0.0, 0.0, 1.0, 2.0, "-ppc", 2, "-mat", 4, "-rho", 2.0)
+    ops.mpm("fix", "xmin", "x")
+    ops.mpm("fix", "xmax", "x")
+    ops.mpm("fix", "ymin", "y")
+    ops.mpm("gravity", 0.0, -9.81)
     ops.constraints("Plain")
     ops.numberer("RCM")
     ops.system("UmfPack")
