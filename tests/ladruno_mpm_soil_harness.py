@@ -114,7 +114,7 @@ TIMELINE = {
 K0P_NU = 0.05
 K0P_GFAC = 1.3
 K0P_VALID_FRACTION = 0.5
-REF_JSON_K0P = REPO / "tests" / "data" / "mpm" / "soil" / "k0p_column.json"
+REF_JSON_K0P = REPO / "tests" / "data" / "mpm" / "soil" / "k0p_column_capped.json"   # 232k-V, fa68005ac
 
 
 # --------------------------------------------------------------------------- #
@@ -174,9 +174,9 @@ def cap_spec():
     return kind, toks, y0, y1, rho
 
 
-def reference_rows(leg, path=REF_JSON):
+def reference_rows(leg, path=REF_JSON, checkpoint="after_hold"):
     rec = json.loads(Path(path).read_text(encoding="utf-8"))
-    return rec["legs"][leg]["after_hold"]["particles"], rec.get("build")
+    return rec["legs"][leg][checkpoint]["particles"], rec.get("build")
 
 
 def _ref_at(rows, Y):
@@ -406,7 +406,7 @@ def run(ops, leg, mode, basis, translate=True, chunk=None, floor_top=None, histo
                             else "the K0p FE reference does not exist yet"),
                     floor_hits=floor_hits, floor_hits_stage0=floor_stage0[0],
                     wall_s=time.time() - wall0)
-    rows, ref_build = reference_rows(leg, ref_path)
+    rows, ref_build = reference_rows(leg, ref_path, "after_hold2" if k0p else "after_hold")
     sq = 0.0
     for k in range(N):
         r = _ref_at(rows, Y[k])
