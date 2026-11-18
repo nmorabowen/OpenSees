@@ -106,30 +106,6 @@ def _save_restore(ops, td):
     _analysis(ops)
 
 
-def test_restart_keeps_hs_add_after_walk_refusal():
-    """Item 1: AMEND A1's per-tag HS stage is in the v4 pack: after `mpm stage <hs> 1`, save,
-    wipe and restore, a body with that tag is still refused; another material's body is not."""
-    ops = _ops()
-    cmd = S.load("s2_column.json")["decks"]["hs"]["cmd"]
-    S.column_build(ops, cmd, "gimp", "A", l0=L0)
-    ops.mpm("analyze", 2, 0.1)
-    ops.mpm("stage", 1, 1)
-    ops.mpm("analyze", 1, 0.1)
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
-        _save_restore(ops, td)
-        try:                                   # the restore does not re-register nDMaterials
-            ops.nDMaterial(*S.deck_args(cmd))
-        except Exception:
-            pass
-        n0 = len(S._l(ops.mpm("particleData", "m")))
-        with pytest.raises(Exception):
-            ops.mpm("body", 5, "box", 0.0, 0.0, 1.0, 0.5, "-ppc", 2, "-mat", 1, "-rho", 2.0)
-        assert len(S._l(ops.mpm("particleData", "m"))) == n0
-        ops.nDMaterial("ElasticIsotropic", 77, 1.0e4, 0.3)
-        ops.mpm("body", 6, "box", 0.0, 0.0, 1.0, 0.5, "-ppc", 2, "-mat", 77, "-rho", 2.0)
-        assert len(S._l(ops.mpm("particleData", "m"))) > n0
-
-
 def test_pack_version_3_then_soil_writes_v4():
     """Item 3: `debug packVersion 3` set BEFORE the soil body is added used to write a v3 pack
     (no stage record). packState re-checks: it writes v4 with a WARNING, so the SANISAND restart

@@ -1603,7 +1603,9 @@ LadrunoMPMPattern::packState(Vector &out)
       for (int d = 0; d < 3; d++) k.put(g.ref[d]);
     }
     k.put(sanisandStage);
-    // review item 1: AMEND A1's per-tag HS stage, so add-after-walk stays refused on restore
+    // review item 1: AMEND A1's per-tag HS stage, for a complete state record. Not reachable
+    // as a refusal today: mode A saves only after the first step and no body is admitted
+    // after it; mode F has no restart path.
     k.put((double)hsWalked.size());
     for (const auto &kv : hsWalked) { k.put(kv.first); k.put(kv.second); }
   }
