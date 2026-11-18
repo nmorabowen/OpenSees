@@ -77,6 +77,7 @@
 
 class NDMaterial;
 class Node;
+class Parameter;
 class Channel;
 class FEM_ObjectBroker;
 
@@ -102,6 +103,10 @@ class LadrunoMPMPointHost
   virtual void   mpmElementGone(int p) = 0;
   // ghost regularization spring of particle p (interface D2.3); 0 = none
   virtual double mpmGhostSpring(int p) = 0;
+  // WP-232k (tests/mpm_soil_interface.md D9 (c)): `updateMaterialStage` reached this
+  // particle element through MaterialStageParameter. The host registers ITSELF and walks
+  // every particle (0), or answers -2: not a soil stage request, the element forwards as before.
+  virtual int    mpmStageParameter(const char **, int, Parameter &) { return -2; }
 };
 
 // Shared liveness token: the host nulls `host` in its destructor.

@@ -353,6 +353,13 @@ class LadrunoSANISAND : public ManzariDafalias
                                  bool verbose = true);               // Ladruno (ADR-92 P1)
     const LadrunoImplexOptions &getLadrunoImplexOptions(void) const { return mImplexOpt; }
 
+    // Ladruno WP-232k (MPM soil particles, tests/mpm_soil_interface.md D4): read-only
+    // accessors the MPM host needs. The integration scheme (admission, D2), and the
+    // class-wide elastic/plastic stage flag (`mElastFlag`, a STATIC shared by every
+    // ManzariDafalias instance of every tag in the process) for the D10 stage guard.
+    int ladrunoIntegrationScheme(void) const { return (int)mScheme; }
+    static int ladrunoStageFlag(void) { return (int)mElastFlag; }
+
     // Ladruno WP-130 (TIMs F18(c)/(d)): the BackwardEuler_CPPM options, set
     // after construction on the IMPL-EX rule (not constructor arguments, so the
     // wrappers' signatures do not move). The PARSER validates them against

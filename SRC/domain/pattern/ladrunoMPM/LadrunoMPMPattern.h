@@ -192,9 +192,12 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   Mode   mode(void) const { return theMode; }
   // `mpm analyze` in mode A (interface §3): nSteps of dt through the user's analysis
   int    analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalysisRefs &A);
-  // `mpm gridvel <name> box <lo> <hi> v <value|free ..> [start t0] [track axis]`
+  // `mpm gridvel <name> box <lo> <hi> v <value|free ..> [start t0] [track axis]
+  //  [translate axis] [profile t0 Tr t1]` (WP-232k D17: `translate` moves both bounds,
+  //  `profile` is a trapezoidal velocity factor, present from t = 0)
   int    addGridVel(const std::string &name, const double *lo, const double *hi,
-                    const double *v, unsigned freeMask, double start, int track, std::string &err);
+                    const double *v, unsigned freeMask, double start, int track, std::string &err,
+                    int translate = -1, const double *profile = 0);
   // `mpm condForce <name>`: ndm doubles at the last accepted step
   int    condForce(const std::string &name, std::vector<double> &out, std::string &err);
   // `mpm pforce <body> box <lo> <hi> <f>`: returns the count of particles
@@ -230,7 +233,30 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   const std::vector<double> &dtHistory(void) const { return dtLog; }
   void   gridNodeTags(std::vector<double> &out) const;
 
+  // ---- WP-232k: soil particles (tests/mpm_soil_interface.md) ----------------------
+  // D7: the one stage walk, both modes. Every particle material with the tag (and every
+  // LadrunoSANISAND particle, whose stage flag is class-wide) registers through its own
+  // setParameter(`materialState`, tag) on a host-local Parameter, then update(stage).
+  // Returns the number of particle materials that answered, or -1 with err.
+  int    stageWalk(int matTag, int stage, std::string &err);
+  // D10: "" or why `mpm analyze` is refused (SANISAND's class-wide stage moved by a
+  // route that did not reach the particles)
+  std::string stageGuard(void) const;
+  // D15: "" or the first particle material whose tangent may be unsymmetric
+  // (LadrunoSANISAND or LadrunoHS without -implex)
+  std::string unsymmetricSoil(void) const;
+  // D16 queries: sigma_zz per particle (plane strain: the material's; 3D: sig[2]);
+  // a material response per particle, flat (sizeOnly: its length per particle);
+  // `mpm info materials`: [tag, classTag, scheme, implex, stage, count] per tag
+  int    particleSigZZ(std::vector<double> &out, std::string &err);
+  int    particleResponse(const std::vector<std::string> &args, bool sizeOnly,
+                          std::vector<double> &out, std::string &err);
+  void   materialsInfo(std::vector<double> &out);
+  // D13: "particle id <id>, nDMaterial <class> tag <t>" of the first refusing particle
+  std::string refuserText(int p) const;
+
   // ---- LadrunoMPMPointHost --------------------------------------------------------
+  int    mpmStageParameter(const char **argv, int argc, Parameter &param);   // D9 (c)
   ladruno_mpm::Particles &mpmParticles(void) { return eng.P; }
   const double *mpmBodyForce(int p);
   bool   mpmTrialAdmissible(int p, const double *x);
@@ -280,6 +306,14 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
     unsigned freeMask;          // bit d: component d free
     double start;               // absent before start
     int    track;               // -1, or the axis whose lower bound moves with v
+    int    translate = -1;      // WP-232k D17: -1, or the axis along which BOTH bounds move
+    bool   profiled = false;    // WP-232k D17: present from t = 0, velocity v * phi(t)
+    double pT0 = 0.0, pTr = 0.0, pT1 = 0.0;   // the trapezoid: ramp up from pT0 over pTr,
+                                               // ramp down ending at pT1
+    bool   presentAt(double t) const;
+    double displacementFactor(double t) const;      // Phi(t) (profile) or max(t - start, 0)
+    double stepFactor(double t, double h) const;    // (Phi(t+h) - Phi(t)) / h, or 1
+    void   boxAt(double t, double lo_[3], double hi_[3]) const;
     std::vector<int> nodes;     // the node set of the current / last accepted step
     std::vector<double> force;  // cond_force at the last accepted step
   };
@@ -340,6 +374,16 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   std::vector<ParamRef>   paramRefs;       // Parameters that hold our materials (F2)
 
   void detachParameters(void);
+  // WP-232k (D9, D10, D13)
+  struct StageReg { int matTag; bool intPath; };
+  std::vector<StageReg>   stageRegs;       // Parameter ids STAGE_PARAM_BASE + index
+  static constexpr int    STAGE_PARAM_BASE = 1000000;
+  int                     sanisandStage = 0;   // the stage the last walk gave SANISAND particles
+  int                     refusalBase = 0;     // mode A: the WP-99 count at the attempt start
+  int                     firstRefuserA = -1;  // mode A: the first particle whose commit refused
+  bool soilStageRequest(const char **argv, int argc, int &matTag) const;
+  // WP-232k (D18, #1109): mode F's prescribed grid velocities for the step [t, t + h]
+  int  buildPrescribed(double t, double h, std::string &err);
   int  admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic, std::string &err);
   bool domainHasFreeDOF(std::string &which);
   bool isGridNode(int tag) const;

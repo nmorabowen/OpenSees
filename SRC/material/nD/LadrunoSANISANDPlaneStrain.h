@@ -92,6 +92,7 @@ class LadrunoSANISANDPlaneStrain : public LadrunoSANISAND // Ladruno
   //send back the stress
   const Vector& getStress();
   const Vector& getStressToRecord();
+  double getStressZZ(void);   // Ladruno WP-232k (D4): plane-strain sigma_zz, for `mpm particleData sigZZ`
 
   //send back the tangent
   const Matrix& getTangent();

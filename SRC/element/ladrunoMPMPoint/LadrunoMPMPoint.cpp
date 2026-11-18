@@ -1108,6 +1108,18 @@ int
 LadrunoMPMPoint::setParameter(const char **argv, int argc, Parameter &param)
 {
   if (argc < 1 || mat == 0) return -1;
+  // WP-232k (tests/mpm_soil_interface.md D9 (c)): MaterialStageParameter stops at the first
+  // element that answers (MaterialStageParameter.cpp:79), so a particle that answered alone
+  // would leave every sibling to SANISAND's lazy flip, which skips Elastic2Plastic. A soil
+  // stage request is handed to the host, which registers itself and walks every particle.
+  if (argc >= 2 && strcmp(argv[0], "updateMaterialStage") == 0 &&
+      param.getClassTag() == PARAMETER_TAG_MaterialStageParameter) {
+    LadrunoMPMPointHost *h = host();
+    if (h != 0) {
+      const int r = h->mpmStageParameter(argv, argc, param);
+      if (r != -2) return r;
+    }
+  }
   // `parameter ... element <tag> material 1 <args>` or a forall broadcast
   if (LadrunoShell::isMaterialPointToken(argv[0]))
     return LadrunoShell::forwardToMaterialPoint(&mat, 1, true, argv, argc, param);

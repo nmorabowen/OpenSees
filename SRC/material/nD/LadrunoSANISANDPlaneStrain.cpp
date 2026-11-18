@@ -170,6 +170,14 @@ LadrunoSANISANDPlaneStrain::getStress()
 }
 
 
+// Ladruno WP-232k (tests/mpm_soil_interface.md D4): the out-of-plane normal stress
+// (geotechnical sign flipped back, as getStress / getStressToRecord do).
+double
+LadrunoSANISANDPlaneStrain::getStressZZ()
+{
+	return -1.0 * mSigma(2);
+}
+
 const Vector&
 LadrunoSANISANDPlaneStrain::getStressToRecord()
 {

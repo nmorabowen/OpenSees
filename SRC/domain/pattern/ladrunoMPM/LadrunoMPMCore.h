@@ -52,6 +52,7 @@
 #include <cstdio>
 #include <limits>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -565,6 +566,13 @@ class Engine {
   // particle-step counts over accepted steps (both modes; `mpm reset` zeroes them).
   std::vector<unsigned char> alFlag;
   long alAveraged = 0, alFallback = 0;
+  // WP-232k (tests/mpm_soil_interface.md D18, #1109): this step's prescribed grid
+  // velocities (the host's `mpm gridvel`), keyed by engine node: bit a of mask = component
+  // a set to val[a]. Applied in both projections' grid conditions after the face
+  // conditions, so the FLIP increment a = (v1 - vn)/dt sees them. Empty = bit for bit
+  // the engine without them.
+  struct Presc { unsigned mask; double val[3]; };
+  std::unordered_map<long, Presc> presc;
   void countAntiLocking(const std::vector<unsigned char> &f)
   {
     alFlag = f;
@@ -1301,6 +1309,12 @@ class Engine {
       if (!on[f] || fc.fixMask[f] == 0u) continue;
       for (int a = 0; a < nd; a++)
         if (fc.fixMask[f] & (1u << a)) v[a] = 0.0;
+    }
+    if (!presc.empty()) {                    // WP-232k (D18): `mpm gridvel` in mode F
+      const auto it = presc.find(i);
+      if (it != presc.end())
+        for (int a = 0; a < nd; a++)
+          if (it->second.mask & (1u << a)) v[a] = it->second.val[a];
     }
   }
 };
