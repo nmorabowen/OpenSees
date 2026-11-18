@@ -31,8 +31,17 @@ def _ops():
     return ops
 
 
+S2_HS_MISS = pytest.mark.xfail(strict=True, reason=(
+    "pre-registered miss (ruling at e8e3fcb2a): the registered surcharge mechanism, a body force on"
+    " the soil's top particle row, leaves the loaded row carrying about half the load in its own"
+    " stress, so syy_max after the surcharge is 0.274 (gimp) / 0.576 (bspline2) against 0.03,"
+    " at the top cell (gimp: rows below it <= 0.015; bspline2: 0.072 at Y 9.125, 0.027 at 8.625,"
+    " the B-spline support spreading it); end of stage 0 and after the flip pass. Cap variants reported beside it in tests/data/mpm/soil/s2_mpm_hs_diagnosis.json:"
+    " elastic cap 0.021 / 0.300, soil cap 0.058 / 0.069. Gate unchanged."))
+
+
 @pytest.mark.parametrize("basis", ["gimp", "bspline2"])
-@pytest.mark.parametrize("mat", ["hs", "sanisand"])
+@pytest.mark.parametrize("mat", [pytest.param("hs", marks=S2_HS_MISS), "sanisand"])
 def test_s2_column_with_surcharge(mat, basis):
     out = S.s2_run(_ops(), mat, basis)
     assert out["passed"], out["checkpoints"]

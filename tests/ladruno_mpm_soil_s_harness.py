@@ -238,12 +238,13 @@ def _column_errors(st, Y, rows, rho_g_l0):
     return e_yy / rho_g_l0, math.sqrt(sq / N) / rho_g_l0
 
 
-def s2_run(ops, mat, basis, nsur=10, cap=True):
-    """cap=True (amendment S2a): the surcharge rides on a nearly weightless bonded elastic cap
-    above the column. cap=False: the 232f footing mechanism, a body force on the soil's top
-    particle row -- the loaded row then carries about half the load in its own stress (the load
-    acts at its centre, not at the surface), which the max-over-particles syy gate reads as an
-    error of ~q/2 (diagnosis record)."""
+def s2_run(ops, mat, basis, nsur=10, cap=False):
+    """cap=False (the GATED mechanism, the registered one; ruling at e8e3fcb2a): the 232f footing
+    mechanism, a body force on the soil's top particle row -- the loaded row then carries about
+    half the load in its own stress (the load acts at its centre, not at the surface), which the
+    max-over-particles syy gate reads as an error of ~q/2 (HS: a pre-registered miss).
+    cap=True: the REPORTED variants (S2a, declined as a gate change): the surcharge rides on a
+    bonded elastic cap above the column (CAP_SOIL: the cap is the soil material)."""
     rec = load("s2_column.json")
     leg = rec["legs"][f"{mat}_nsur{nsur}"]
     column_build(ops, rec["decks"][mat]["cmd"], basis, "A", cap=cap)
