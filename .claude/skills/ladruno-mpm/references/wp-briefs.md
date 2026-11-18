@@ -1121,6 +1121,22 @@ Capped elastic 0.0335 / 0.0285, HS 0.0182 / 0.0206 (A_HS 0.78 / 0.85), dp_mildco
 owner decides, the K0 row is diagnosed (re-runs of this one case only; no other SANISAND MPM
 case runs). HS continues.
 
+**K0 miss — diagnosis (2026-11-18, 232k-C, build `7b00fcf13`, harness `dfb117de5`; reproduces
+0.18557 exactly).** Conclusion (ii), a numerical interaction, not a code defect.
+- The column is clean at the end of the post-flip hold. The undamped translation (D21a) injects
+  ±5–15 kPa of explicit-GIMP crossing noise. From t ≈ 9 s, the two particle rows that share a
+  cell split: p 66 / 66 → 27 / 104 kPa (Y 5.625 / 5.875), 47 / 47 → 2 / 96 (Y 7.125 / 7.375).
+  This is GIMP's alternating, grid-invisible two-row stress mode at ppc 2. SANISAND's
+  p-dependent stiffness and plastic flow lock it in; the settle does not undo it. Floor events
+  (p clamped at 0.101 kPa) occur in the translation, at initial Y 9.12, 7.62, 9.87, 8.62.
+- Probes (this case only): dt halved 0.1117 (not a time-step effect); SANISAND kept in stage 0
+  0.0335, equal to elastic (the plastic stage is the amplifier); bspline2 0.0162 (noise ±3–5 kPa,
+  no split); damping kept on during the translation is invalid as a probe (it stops the column).
+  Engine paths checked: the particle stress equals the material stress exactly; the stage walk's
+  refresh runs once, before the translation.
+- Open point for the owner: whether D21a's undamped translation is itself a measurement choice
+  here. No valid damped-translation probe exists, because FLAC damping brakes rigid motion.
+
 ### 232k-V — FE references (opus · high; never reads the MPM soil C++)
 
 ```text
