@@ -167,7 +167,7 @@ S1 SANISAND 3D mode A ×2, IntScheme 2 shear ×3).
 | S1 one-point identity (`s1_mpm.json`) | HS: 12 legs × 2 modes, max rel 1.2e-11. SANISAND: 22 of 24 pass (mode F on bspline2). SANISAND 3D mode A misses at step 12, the second plastic step, one step before the FE's own Gauss-point spread passes 1e-8: triax 3.2e-6, oedo 1.06e-8, with the FE's substep counts (5, 4). Option legs (`s1_onepoint_options.json`, rulings at f6ae63d79; build `f235a001f`): see "S1 option legs" below. | 22 pass; **2 recorded misses, owner-accepted 2026-11-18** (strict xfail, ruling at 926d27153); option legs: pass, except **IntScheme 2 shear, a recorded miss, owner-accepted 2026-11-18** (strict xfail, ruling d683e0db8) |
 | S2 column + surcharge (`s2_mpm_hs_diagnosis.json`, `s2_mpm_sanisand.json`) | End of stage 0 and after the flip pass: HS 0.0128 / 0.0069, SANISAND 0.0127 / 0.0069. After the surcharge (registered top-row body force), max syy is HS 0.274 / 0.576 and SANISAND 0.265 / 0.776, at the top cell. | **recorded miss** (#1110; strict xfail) |
 | S3 footing, HS (`s3_mpm_hs_r<r>_<fbar\|off>.json`) | q / q_FE at s/B 0.01 / 0.02 / 0.05. Gated: r1 fbar 0.977 / 0.973 / 0.960 (0 failed attempts, 3 s); r2 fbar 0.969 / 0.968 / 0.907 (11 failed, 36 s, esmeralda), thin at s/B 0.05. Reported: r1 off 1.005 / 1.013 / 1.020; r2 off 0.987 / 0.992 / 0.982 (80 failed, 7 relaxed, 18 halvings); **r3 fbar 0.961 / 0.931 / 0.162** (56 failed, 10 relaxed, 5 halvings, 744 s), an artifact of the deck's footing condition (#1112), see below. | r1, r2 pass; r3 and off reported |
-| S3 footing, SANISAND | No FE variant reached s = 0.1 m: v1–v4 (a15fdeb60) and v0 `tims_r1sep` (n4 stopped at the 2 h wall cap at s = 0.0215, q_max 636 kPa, 1341 relaxed steps; n8 at s = 0.0037). Per the freeze, reported only. Owner (2026-11-18): ONE MPM r1 leg with the v0 deck, fbar, gimp, mode A, K9 ladder, 2 h wall cap, reported beside the stalled FE (`s3_mpm_sanisand_r1_fbar_v0_tims_r1sep.json`, esmeralda): **pending**. | reported, no reference |
+| S3 footing, SANISAND | No FE variant reached s = 0.1 m: v1–v4 (a15fdeb60) and v0 `tims_r1sep` (n4 stopped at the 2 h wall cap at s = 0.0215, q_max 636 kPa, 1341 relaxed steps; n8 at s = 0.0037). Per the freeze, reported only. Owner (2026-11-18): ONE MPM r1 leg with the v0 deck, fbar, gimp, mode A, K9 ladder, 2 h wall cap, reported beside the stalled FE (`s3_mpm_sanisand_r1_fbar_v0_tims_r1sep.json`, esmeralda, `f235a001f`): stopped at the halving floor at s = 0.0220 m (FE v0 n4: 0.0215 m); q(0.01 B) 586.3 kPa (FE 594.8, 0.986); 220 failed attempts, 41 relaxed, 46 halvings, 399 s; 31 SAS-ME refusals, all at the 2000-substep cap. See "S3 SANISAND" below. | reported, no reference |
 | S4 stage parity (`s4_mpm_same_state.json`) | (i) The low-g column's flip map matches the rule exactly in both modes, with ≥ 1 reset particle each (g 0.25). (ii) Same-state leg: the **fallback branch** ran; see below. | pass |
 | S5 refusal | SANISAND `-implex -maxSubsteps 1` aborts in both modes and in classic Tcl. Particles are unmoved bit for bit, the message names the material and tag, and later steps are refused until `mpm reset`. HS at γ = 10 fails loudly with no abort. | pass |
 | S6 restart, mode A | SANISAND and HS mid-stage-1: the continued run is bit for bit. The restored host re-asserts SANISAND's stage flag (restart pack v4). | pass |
@@ -245,16 +245,67 @@ So s/B = 0.05 at r3 (s = 0.8h) is past the range in which this footing condition
 the tracked box before the top row leaves, or s_end/h ≤ 0.5 at every rung) is filed as #1112;
 r3 stays a reported row.
 
+**S3 SANISAND, the v0 deck (reported).** MPM r1 (fbar, gimp, mode A, K9 ladder) against the FE
+v0 n4 record (`s3_fe_sanisand_v0_tims_r1sep_n4.json`, linearly interpolated at the MPM's s) over
+the common range:
+
+| s (m) | 0.002 | 0.004 | 0.006 | 0.008 | 0.010 | 0.012 | 0.014 | 0.016 | 0.018 | 0.020 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| q MPM (kPa) | 96.8 | 155.2 | 210.8 | 265.2 | 319.1 | 372.5 | 426.0 | 479.4 | 532.9 | 586.3 |
+| q FE (kPa) | 98.0 | 157.3 | 213.5 | 268.9 | 323.5 | 377.9 | 432.1 | 486.4 | 540.6 | 594.8 |
+| MPM / FE | 0.988 | 0.987 | 0.987 | 0.986 | 0.986 | 0.986 | 0.986 | 0.986 | 0.986 | 0.986 |
+
+The MPM accepted one more push (s = 0.022, q 639.9) before its halving floor; the FE stopped at
+its 2 h wall cap at 0.0215 m. Both stop at the same depth on the same deck: the MPM shares the
+FE's integrator stall (SAS-ME at its 2000-substep cap: 31 refusals, all `refCap`; 3.2e7 of 4.1e8
+substeps rejected on error; 41 steps accepted on the relaxed rung, against the FE's 1341 of 1342),
+so neither reaches s/B = 0.02.
+
 **Granular-column collapse (R row, reported, not gated).** `tests/mpm_soil_collapse.py`: Lube's
 column (aspect ratio 2, half width 1 m, symmetry on xmin, no-slip base), mode F on bspline2,
-h 0.25 m, ppc 2 (128 particles), the k0_ref_column decks; stage 0 under gravity with local damping
-0.8 for 1 s, the flip, then 4 s undamped; dt 0.25 dt_c re-read every 0.05 s. Recorded: runout
-(L∞ − a)/a, H∞/2a, floor hits from the flip on, flip resets, sasStats when the scheme is 129,
-and a refusal abort with its time. DP on Windows (`f235a001f`): runout 3.41 (gated DP) and 3.44
-(dp_mildcone), H∞/2a 0.49, 9–12 s. SANISAND and HS: esmeralda, **pending**. Two findings while
-building it: with M0b's Coulomb wall (μ 0.4) a base particle's centre reaches y = 0 and the next
-step is refused as leaving the grid (A7; DP at t = 2.08 s), so the base is no-slip; and a fixed
-dt set from the post-settle dt_c is refused by the CFL check during the flow.
+h 0.25 m, ppc 2 (128 particles), the k0_ref_column decks; dt 0.25 dt_c re-read every 0.05 s.
+Recorded: runout (L∞ − L₀)/a from the front particle edge, H∞/2a, a history with max |v|, volume
+checks (Σ V_p, det F) at the flip, the release and the end, floor hits after the release, flip
+resets, the face q/p at the flip, SANISAND's Δα, and a refusal abort with its time.
+
+*The first staging stood the soil columns up, for a reason in the materials.* Stage 0 elastic,
+damped, on the unconfined column, then the flip and 4 s undamped (esmeralda, `f235a001f`): DP
+fell (runout 3.41, H∞/2a 0.49) but SANISAND and HS ended where they started. The "runout −0.062,
+height 0.969" in those records is the old metric (front particle CENTRE against a; 0.9375 and
+1.9375 are the initial outer centres), not lost area: Σ V_p was 1.99990 (SANISAND) and 1.99978
+(HS) of 2.0 at the flip and at the end, det F in [0.9997, 1.0013], and max |v| stayed below 0.016
+m/s (SANISAND, front +0.0005 m in 4.5 s) and 0.0013 m/s (HS). Identical geometry because neither
+moved, not shared state (each leg is a fresh process with its own material). The causes:
+- SANISAND: the elastic column's free face carries q/p up to 2.8 against M_c 1.33, and vanilla
+  ManzariDafalias's stage switch then RAISES M_c at every such point to contain the state ("stage-
+  switch stress ratio exceeded the bounding surface; raising M_c", up to M_c 4.09 on a Windows
+  rerun). A
+  rate model with no driving strain keeps the stress; the column creeps.
+- HS: it seeds its hardening from the committed stress at 0→1 and the deck carries c = 10 kPa: a
+  vertical cut stands to 4c/γ · tan(45° + φ/2) = 4.2 m > 2 m. Standing is the right answer.
+- DP: stage 2 returns the trial stress to its yield surface at the first plastic call, which
+  unbalances the column.
+
+*The gate staging (the harness default now).* Gravity and a smooth gate on the free face, both as
+per-particle body forces (lateral pressure 0.5 ρg(2a − y) on the outer particle column); stage 0,
+damped, 1 s; the flip under the gate (face q/p 1.83, no M_c raise); 0.5 s damped; release; 4 s
+undamped. Windows, `f235a001f` (records `collapse/collapse_dp*.json` replace the first staging's):
+
+| leg | runout | H∞/2a | Σ V_p at the end (of 2.0) | det F range at the end | floor hits | wall |
+|---|---|---|---|---|---|---|
+| DP (gated) | 3.49 | 0.52 | 2.454 | 1.000–4.77 | — | 13 s |
+| dp_mildcone | 3.54 | 0.52 | 2.460 | 1.000–4.85 | — | 10 s |
+| HS | 0.0008 (stands) | 0.999 | 1.9999 | 0.9994–1.0005 | 14 | 3 s |
+| SANISAND | 0.81 at the 2 h cap (t = 3.25 s, 1.7 s after the release, still accelerating: max |v| 2.0 m/s) | 0.85 | 2.657 | 1.022–2.28 | 215 | 9011 s |
+
+SANISAND now flows, slower to start than DP (front +0.08 / +0.20 m at 0.5 / 1.0 s after the
+release, against DP's +0.61 / +2.11 m), then accelerating; Δα 0.010 under the gate and 8.3 after the release, the
+large values at particles held at the p floor. Its cost in the flow is about 5 ms per particle-step
+(128 particles, about 0.6 s per step), three orders above the K0p probe's: the flow's increments
+are large. Two findings while building it: with M0b's Coulomb wall (μ 0.4) a base particle's centre
+reaches y = 0 and the next step is refused as leaving the grid (A7; DP at t = 2.08 s), so the
+base is no-slip; and a fixed dt set from the post-settle dt_c is refused by the CFL check during
+the flow.
 
 **S1, rotation.** The FE record stores GP 1's material-frame stress, so S1 compares the particle's
 unrotated σ̂ (`sigHat`). This is a reading of the record's convention, not a band change (ruling).
