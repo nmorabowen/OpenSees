@@ -328,3 +328,41 @@ def _num(a):
             return float(a)
         except ValueError:
             return a
+
+
+def test_drained_face_p_weights_reproduce_linear_after_u_drop(tmp_path):
+    """Ruling bb1421559 (unit level): the row beyond a drained (pfix) B-spline face is dropped on
+    the u side (mass below `mpm massCutoff`); the u weights renormalise, but the p weights keep
+    fix 3's rule on the raw weights (the folded-away ghost counts as retained), so at the top
+    particle they still reproduce p = (H - y), the linear field odd about the face, to 1e-14."""
+    import json
+    ops = _ops()
+    H, h = 10.0, 0.5
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e4, 0.2, 2.0)
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", h, "-cells", 2, 20, "-basis", "bspline2")
+    ops.mpm("mode", "implicit")
+    ops.mpm("body", 1, "box", 0.0, 0.0, 1.0, H, "-ppc", 2, "-mat", 1, "-rho", 2.0)
+    ops.mpm("twoPhase", 1, "-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-perm", 1.0, 1.0, "-stab", "off")
+    for face, c in (("xmin", "x"), ("xmax", "x"), ("ymin", "y")):
+        ops.mpm("fix", face, c)
+    ops.mpm("pfix", "ymax", 0.0)
+    ops.mpm("massCutoff", 0.2)              # drops the y = H + h row (its mass ~0.05 m_max)
+    _analysis(ops)
+    xy = _as_list(ops.mpm("particleData", "x"))
+    top = max(range(len(xy) // 2), key=lambda k: (xy[2 * k + 1], -xy[2 * k]))
+    y = xy[2 * top + 1]
+    xi = (H + h - y) / h
+    assert 0.0 < 0.5 * (1.5 - xi) ** 2       # the raw weight of the dropped row is not zero
+    path = str(tmp_path / "top.json")
+    ops.mpm("debug", "particleBlocks", top, path, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    d = json.loads(open(path).read())
+    Y = [c[1] for c in d["coords"]]
+    assert max(Y) <= H + 1e-9, "the row beyond the drained face was not u-dropped"
+    assert abs(sum(d["S"]) - 1.0) <= 1e-14  # the u weights renormalised
+    lin = [H - v for v in Y]
+    f = sum(s * v for s, v in zip(d["Sp"], lin))
+    gy = sum(g[1] * v for g, v in zip(d["dSp"], lin))
+    assert abs(f - (H - y)) <= 1e-14
+    assert abs(gy + 1.0) <= 1e-13

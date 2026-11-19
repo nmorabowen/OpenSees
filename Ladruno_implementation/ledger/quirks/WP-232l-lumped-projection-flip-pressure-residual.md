@@ -32,6 +32,14 @@ date: 2026-11-18
 - **Fix (interface 7b, ruling on `89718fdad`):** the particle carries q = p - pi_c; the
   projection fits q, G2P is FLIP on q, and after every accepted step the host sets
   p <- p + pi(x_new, drive) - pi_c, pi_c <- pi. A' is the invariant's Init.
+- **Third bite:** the u side's mass-cutoff renormalisation rescaled every component of the kept
+  entries, the odd-folded p weights and pi's coefficients included. When the soil settles away
+  from a drained B-spline face, the row beyond it falls below the u cutoff and is dropped, and the
+  extra division breaks linear reproduction there. The steady field was offset by a uniform
+  1.24e-3 gamma_w H (build `0fc5a3f13`, E 1e4 column).
+- **Fix (ruling `bb1421559`):** the u pass rescales the u components only; the p weights and the
+  affine coefficients follow fix 3 on the raw weights, a folded-away entry retained even when
+  u-dropped. Unit test: `test_drained_face_p_weights_reproduce_linear_after_u_drop`.
 
 #### A GIMP tail of ~1e-8 makes a near-singular pore-pressure row
 

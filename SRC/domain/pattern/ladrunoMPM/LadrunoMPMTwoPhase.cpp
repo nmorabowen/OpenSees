@@ -431,6 +431,11 @@ LadrunoMPMPattern::buildPSup(PSup &s, std::string &err)
   };
   const double mcut = modeAMassCutoff() * mmax;
   const bool ghost = ghostGamma >= 0.0;
+  // ruling bb1421559: the u-side renormalisation rescales the u components only; the p weights
+  // and fix 2's coefficients follow fix 3's p rule alone, on the raw weights (W and its gradient
+  // kept here before the u pass rescales them)
+  const std::vector<double> SvRaw = up ? Sv : std::vector<double>(),
+                            dSvRaw = up ? dSv : std::vector<double>();
   std::vector<char> &keep = s.keep, &inact = s.inact;
   keep.assign(node.size(), 0);
   inact.assign(node.size(), 0);
@@ -453,8 +458,9 @@ LadrunoMPMPattern::buildPSup(PSup &s, std::string &err)
             " mass is below the cutoff everywhere); refused (W15: a zero-DOF element)";
       return -1;
     }
-    // renormalize (§7a Q3): sums over the kept lattice nodes' W; every weight of every kept
-    // entry -- W, each component, the plate's -- is rescaled by them (B9's rule)
+    // renormalize (§7a Q3): sums over the kept lattice nodes' W; every u weight of every kept
+    // entry -- W, each u component, the plate's -- is rescaled by them (B9's rule). The p
+    // component and fix 2's coefficients are not: fix 3 renormalises them (ruling bb1421559)
     if (ghostGamma == EMPTY_RENORMALIZE) {
       double sum = 0.0, gsum[3] = {0.0, 0.0, 0.0};
       for (long k = supStart[p]; k < supStart[p + 1]; k++)
@@ -462,13 +468,12 @@ LadrunoMPMPattern::buildPSup(PSup &s, std::string &err)
           sum += Sv[k];
           for (int a = 0; a < nd; a++) gsum[a] += dSv[nd * k + a];
         }
-      if (sum > 0.0 && bspl) rescale(&aff[(size_t)NA * p], sum, gsum);
       if (sum > 0.0)
         for (long k = supStart[p]; k < supStart[p + 1]; k++) {
           if (!keep[k]) continue;
           Sv[k] /= sum;
           for (int a = 0; a < nd; a++) dSv[nd * k + a] = (dSv[nd * k + a] - Sv[k] * gsum[a]) / sum;
-          for (int c = 0; c < nc; c++) {
+          for (int c = 0; c < nd; c++) {               // u components only (c = nd is p)
             double &sc = ScG[nc * k + c];
             sc /= sum;
             for (int a = 0; a < nd; a++)
@@ -504,14 +509,15 @@ LadrunoMPMPattern::buildPSup(PSup &s, std::string &err)
       bool allAct = true, anyAct = false;
       double sum = 0.0, gsum[3] = {0.0, 0.0, 0.0};
       for (long k = supStart[p]; k < supStart[p + 1]; k++) {
-        if (!keep[k] || node[k] < 0) continue;
+        if (node[k] < 0) continue;
         // a node whose p weight is folded away (S^p = 0: a ghost behind a drained-only face) is
-        // not a dropped p node -- its W counts as kept, so it never triggers a renormalisation
-        const bool pa = pAct.count(node[k]) != 0;
+        // not a dropped p node -- its raw W counts as kept, so it never triggers a renormalisation,
+        // even when the u side dropped it (ruling bb1421559)
+        const bool pa = keep[k] && pAct.count(node[k]) != 0;
         if (pa) anyAct = true;
         if (pa || !(ScG[nc * k + nd] > 0.0)) {
-          sum += Sv[k];
-          for (int a = 0; a < nd; a++) gsum[a] += dSv[nd * k + a];
+          sum += SvRaw[k];
+          for (int a = 0; a < nd; a++) gsum[a] += dSvRaw[nd * k + a];
         } else {
           allAct = false;
         }
