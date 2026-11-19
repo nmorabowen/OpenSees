@@ -1,0 +1,1439 @@
+{
+ "format": "ladruno-limit-solver-study-diagnostics",
+ "rows": [
+  {
+   "bound": "lower",
+   "case": "dp_prandtl_cohesion_thin_slab",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 279220,
+   "n_tets": 6144,
+   "n_vars": 147457,
+   "n_zero": 131764,
+   "nnz": 704737,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.219,
+    "build": 0.086,
+    "final": 0.708,
+    "solve": 0.708
+   },
+   "phases": {
+    "assemble": 0.359,
+    "build": 0.814,
+    "solve": 150.507
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 27,
+    "obj_dual": -13.642442596078574,
+    "obj_primal": -13.639653046359095,
+    "r_dual": 4.104966505629015e-09,
+    "r_prim": 1.2111878997550752e-08,
+    "rel_gap": 0.00020447582607242148,
+    "solve_time_s": 150.3793872,
+    "status_raw": "NumericalError"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "NumericalError",
+     "time_limit": 600.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "numerical_error",
+   "solver_wall_s": 149.548,
+   "supervisor_peak_rss_gb": 0.701,
+   "supervisor_wall_s": 152.92,
+   "tag": "base",
+   "value_estimate": null
+  },
+  {
+   "bound": "lower",
+   "case": "dp_prandtl_cohesion_thin_slab",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 279220,
+   "n_tets": 6144,
+   "n_vars": 147457,
+   "n_zero": 131764,
+   "nnz": 704737,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.219,
+    "build": 0.086,
+    "final": 0.789,
+    "solve": 0.789
+   },
+   "phases": {
+    "assemble": 0.258,
+    "build": 0.527,
+    "solve": 687.056
+   },
+   "solver": "clarabel-qdldl",
+   "solver_info": {
+    "iterations": 25,
+    "obj_dual": -13.642292355739594,
+    "obj_primal": -13.639726909272625,
+    "r_dual": 3.458896009403902e-09,
+    "r_prim": 1.1138566457877485e-08,
+    "rel_gap": 0.0001880509814679014,
+    "solve_time_s": 686.863829,
+    "status_raw": "MaxTime"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "qdldl",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "MaxTime",
+     "time_limit": 600.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "time_limit",
+   "solver_wall_s": 685.956,
+   "supervisor_peak_rss_gb": 0.794,
+   "supervisor_wall_s": 688.99,
+   "tag": "base",
+   "value_estimate": null
+  },
+  {
+   "bound": "upper",
+   "case": "dp_prandtl_cohesion_thin_slab",
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "upper.p2c-vertex.v0",
+   "mesh": 1,
+   "n_rows": 300761,
+   "n_tets": 6144,
+   "n_vars": 179637,
+   "n_zero": 153305,
+   "nnz": 1198072,
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.404,
+    "build": 0.086
+   },
+   "phases": {
+    "assemble": 0.303,
+    "build": 0.751
+   },
+   "solver": "clarabel-faer",
+   "tag": "base"
+  },
+  {
+   "bound": "upper",
+   "case": "dp_prandtl_cohesion_thin_slab",
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "upper.p2c-vertex.v0",
+   "mesh": 1,
+   "n_rows": 300761,
+   "n_tets": 6144,
+   "n_vars": 179637,
+   "n_zero": 153305,
+   "nnz": 1198072,
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.403,
+    "build": 0.086
+   },
+   "phases": {
+    "assemble": 0.203,
+    "build": 0.505
+   },
+   "solver": "clarabel-qdldl",
+   "tag": "base"
+  },
+  {
+   "bound": "upper",
+   "case": "dp_prandtl_cohesion_thin_slab",
+   "certificate": {
+    "classification": "no_value",
+    "note": "memory_guard"
+   },
+   "exit_code": 1,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "upper.p2d-jump-bernstein.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 709761,
+   "n_tets": 6144,
+   "n_vars": 531078,
+   "n_zero": 363009,
+   "nnz": 2699473,
+   "outcome": "memory_guard",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.819,
+    "build": 0.086
+   },
+   "phases": {
+    "assemble": 0.4,
+    "build": 0.521
+   },
+   "solver": "clarabel-faer",
+   "supervisor_peak_rss_gb": 2.764,
+   "supervisor_wall_s": 3.79,
+   "tag": "base"
+  },
+  {
+   "bound": "upper",
+   "case": "dp_prandtl_cohesion_thin_slab",
+   "certificate": {
+    "classification": "no_value",
+    "note": "memory_guard"
+   },
+   "exit_code": 1,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "upper.p2d-jump-bernstein.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 709761,
+   "n_tets": 6144,
+   "n_vars": 531078,
+   "n_zero": 363009,
+   "nnz": 2699473,
+   "outcome": "memory_guard",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.819,
+    "build": 0.085
+   },
+   "phases": {
+    "assemble": 0.409,
+    "build": 0.494
+   },
+   "solver": "clarabel-qdldl",
+   "supervisor_peak_rss_gb": 2.713,
+   "supervisor_wall_s": 3.82,
+   "tag": "base"
+  },
+  {
+   "bound": "lower",
+   "case": "tresca_strip_vm_thin_slab",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 3,
+   "n_rows": 141076,
+   "n_tets": 3072,
+   "n_vars": 73729,
+   "n_zero": 67348,
+   "nnz": 312449,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.144,
+    "build": 0.077,
+    "final": 0.281,
+    "solve": 0.281
+   },
+   "phases": {
+    "assemble": 0.198,
+    "build": 0.278,
+    "solve": 32.916
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 23,
+    "obj_dual": -5.005478727948363,
+    "obj_primal": -5.005208767777461,
+    "r_dual": 6.306694287603038e-11,
+    "r_prim": 1.4971041736663091e-13,
+    "rel_gap": 5.393293740214248e-05,
+    "solve_time_s": 32.8577156,
+    "status_raw": "NumericalError"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "NumericalError",
+     "time_limit": 500.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "numerical_error",
+   "solver_wall_s": 32.585,
+   "supervisor_peak_rss_gb": 0.28,
+   "supervisor_wall_s": 34.24,
+   "tag": "base",
+   "value_estimate": null
+  },
+  {
+   "bound": "lower",
+   "case": "tresca_strip_vm_thin_slab",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 3,
+   "n_rows": 141076,
+   "n_tets": 3072,
+   "n_vars": 73729,
+   "n_zero": 67348,
+   "nnz": 312449,
+   "outcome": "completed",
+   "overrides": {
+    "dynamic_regularization_enable": false
+   },
+   "peak_gb": {
+    "assemble": 0.144,
+    "build": 0.077,
+    "final": 0.282,
+    "solve": 0.282
+   },
+   "phases": {
+    "assemble": 0.216,
+    "build": 0.294,
+    "solve": 53.519
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 36,
+    "obj_dual": -5.00527319349518,
+    "obj_primal": -5.005250393715161,
+    "r_dual": 4.836196291912359e-10,
+    "r_prim": 6.874362152897147e-07,
+    "rel_gap": 4.555151964183191e-06,
+    "solve_time_s": 53.4561783,
+    "status_raw": "AlmostSolved"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {
+      "dynamic_regularization_enable": false
+     },
+     "status_raw": "AlmostSolved",
+     "time_limit": 500.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "almost_solved",
+   "solver_wall_s": 53.156,
+   "supervisor_peak_rss_gb": 0.281,
+   "supervisor_wall_s": 54.9,
+   "tag": "nodyn",
+   "value_estimate": 5.005250393715161,
+   "zero_residual_inf": 1.932343174360085e-11
+  },
+  {
+   "bound": "lower",
+   "case": "tresca_strip_vm_thin_slab",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 3,
+   "n_rows": 141076,
+   "n_tets": 3072,
+   "n_vars": 73729,
+   "n_zero": 67348,
+   "nnz": 312449,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.144,
+    "build": 0.077,
+    "final": 0.267,
+    "solve": 0.267
+   },
+   "phases": {
+    "assemble": 0.199,
+    "build": 0.283,
+    "solve": 16.349
+   },
+   "solver": "clarabel-qdldl",
+   "solver_info": {
+    "iterations": 25,
+    "obj_dual": -5.005327925465517,
+    "obj_primal": -5.005239401755007,
+    "r_dual": 2.1777609928802747e-10,
+    "r_prim": 2.803801550424879e-13,
+    "rel_gap": 1.7685896274647518e-05,
+    "solve_time_s": 16.2939838,
+    "status_raw": "AlmostSolved"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "qdldl",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "AlmostSolved",
+     "time_limit": 500.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "almost_solved",
+   "solver_wall_s": 16.01,
+   "supervisor_peak_rss_gb": 0.267,
+   "supervisor_wall_s": 17.74,
+   "tag": "base",
+   "value_estimate": 5.005239401755007,
+   "zero_residual_inf": 1.829666637706041e-13
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_fixed_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 20184,
+   "n_tets": 463,
+   "n_vars": 11113,
+   "n_zero": 9072,
+   "nnz": 71814,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.078,
+    "build": 0.077,
+    "final": 0.144,
+    "solve": 0.144
+   },
+   "phases": {
+    "assemble": 0.013,
+    "build": 0.036,
+    "solve": 6.071
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 17,
+    "obj_dual": -3.952709693418854,
+    "obj_primal": -3.9521489575243405,
+    "r_dual": 2.7777761472746617e-12,
+    "r_prim": 8.43808095431503e-15,
+    "rel_gap": 0.00014186113780302435,
+    "solve_time_s": 6.0563071,
+    "status_raw": "NumericalError"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "NumericalError",
+     "time_limit": 300.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "numerical_error",
+   "solver_wall_s": 6.027,
+   "supervisor_peak_rss_gb": 0.149,
+   "supervisor_wall_s": 7.06,
+   "tag": "base",
+   "value_estimate": null
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_fixed_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 20184,
+   "n_tets": 463,
+   "n_vars": 11113,
+   "n_zero": 9072,
+   "nnz": 71814,
+   "outcome": "completed",
+   "overrides": {
+    "dynamic_regularization_enable": false
+   },
+   "peak_gb": {
+    "assemble": 0.078,
+    "build": 0.077,
+    "final": 0.144,
+    "solve": 0.144
+   },
+   "phases": {
+    "assemble": 0.014,
+    "build": 0.036,
+    "solve": 12.247
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 34,
+    "obj_dual": -3.952320004600474,
+    "obj_primal": -3.9521872091673256,
+    "r_dual": 1.3013952510725764e-08,
+    "r_prim": 1.6450702076959456e-05,
+    "rel_gap": 3.3599362651280114e-05,
+    "solve_time_s": 12.2333361,
+    "status_raw": "AlmostSolved"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {
+      "dynamic_regularization_enable": false
+     },
+     "status_raw": "AlmostSolved",
+     "time_limit": 300.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "almost_solved",
+   "solver_wall_s": 12.207,
+   "supervisor_peak_rss_gb": 0.148,
+   "supervisor_wall_s": 13.23,
+   "tag": "nodyn",
+   "value_estimate": 3.9521872091673256,
+   "zero_residual_inf": 1.9563059505678382e-11
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_fixed_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 20184,
+   "n_tets": 463,
+   "n_vars": 11113,
+   "n_zero": 9072,
+   "nnz": 71814,
+   "outcome": "completed",
+   "overrides": {
+    "equilibrate_enable": false
+   },
+   "peak_gb": {
+    "assemble": 0.078,
+    "build": 0.077,
+    "final": 0.143,
+    "solve": 0.143
+   },
+   "phases": {
+    "assemble": 0.014,
+    "build": 0.036,
+    "solve": 6.5
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 18,
+    "obj_dual": -3.9524219476109517,
+    "obj_primal": -3.9521767223017354,
+    "r_dual": 7.78719190751475e-10,
+    "r_prim": 8.39457010652244e-13,
+    "rel_gap": 6.204431421206196e-05,
+    "solve_time_s": 6.4853686,
+    "status_raw": "NumericalError"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {
+      "equilibrate_enable": false
+     },
+     "status_raw": "NumericalError",
+     "time_limit": 300.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "numerical_error",
+   "solver_wall_s": 6.46,
+   "supervisor_peak_rss_gb": 0.147,
+   "supervisor_wall_s": 7.5,
+   "tag": "noequil",
+   "value_estimate": null
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_fixed_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 20184,
+   "n_tets": 463,
+   "n_vars": 11113,
+   "n_zero": 9072,
+   "nnz": 71814,
+   "outcome": "completed",
+   "overrides": {
+    "iterative_refinement_enable": false
+   },
+   "peak_gb": {
+    "assemble": 0.078,
+    "build": 0.077,
+    "final": 0.142,
+    "solve": 0.142
+   },
+   "phases": {
+    "assemble": 0.013,
+    "build": 0.035,
+    "solve": 5.515
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 18,
+    "obj_dual": -3.9523859682621465,
+    "obj_primal": -3.952180140608379,
+    "r_dual": 3.161652694596921e-09,
+    "r_prim": 1.1312789694807994e-05,
+    "rel_gap": 5.207681016488218e-05,
+    "solve_time_s": 5.5016296,
+    "status_raw": "NumericalError"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {
+      "iterative_refinement_enable": false
+     },
+     "status_raw": "NumericalError",
+     "time_limit": 300.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "numerical_error",
+   "solver_wall_s": 5.472,
+   "supervisor_peak_rss_gb": 0.147,
+   "supervisor_wall_s": 6.32,
+   "tag": "noref",
+   "value_estimate": null
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_fixed_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 20184,
+   "n_tets": 463,
+   "n_vars": 11113,
+   "n_zero": 9072,
+   "nnz": 71814,
+   "outcome": "completed",
+   "overrides": {
+    "static_regularization_enable": false
+   },
+   "peak_gb": {
+    "assemble": 0.078,
+    "build": 0.077,
+    "final": 0.137,
+    "solve": 0.137
+   },
+   "phases": {
+    "assemble": 0.014,
+    "build": 0.037,
+    "solve": 0.945
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 2,
+    "obj_dual": -102.16015026050954,
+    "obj_primal": -0.09933109520120754,
+    "r_dual": 5.7270885866227e-15,
+    "r_prim": 3.279309170608249e-16,
+    "rel_gap": 0.999027692354133,
+    "solve_time_s": 0.9328314,
+    "status_raw": "InsufficientProgress"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {
+      "static_regularization_enable": false
+     },
+     "status_raw": "InsufficientProgress",
+     "time_limit": 300.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "numerical_error",
+   "solver_wall_s": 0.904,
+   "supervisor_peak_rss_gb": 0.141,
+   "supervisor_wall_s": 1.79,
+   "tag": "noreg",
+   "value_estimate": null
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_fixed_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 20184,
+   "n_tets": 463,
+   "n_vars": 11113,
+   "n_zero": 9072,
+   "nnz": 71814,
+   "outcome": "completed",
+   "overrides": {
+    "presolve_enable": false
+   },
+   "peak_gb": {
+    "assemble": 0.078,
+    "build": 0.077,
+    "final": 0.143,
+    "solve": 0.143
+   },
+   "phases": {
+    "assemble": 0.013,
+    "build": 0.037,
+    "solve": 6.418
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 17,
+    "obj_dual": -3.952709693418854,
+    "obj_primal": -3.9521489575243405,
+    "r_dual": 2.7777761472746617e-12,
+    "r_prim": 8.43808095431503e-15,
+    "rel_gap": 0.00014186113780302435,
+    "solve_time_s": 6.4035888,
+    "status_raw": "NumericalError"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {
+      "presolve_enable": false
+     },
+     "status_raw": "NumericalError",
+     "time_limit": 300.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "numerical_error",
+   "solver_wall_s": 6.376,
+   "supervisor_peak_rss_gb": 0.148,
+   "supervisor_wall_s": 7.29,
+   "tag": "presolveoff",
+   "value_estimate": null
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_fixed_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 20184,
+   "n_tets": 463,
+   "n_vars": 11113,
+   "n_zero": 9072,
+   "nnz": 71814,
+   "outcome": "completed",
+   "overrides": {
+    "static_regularization_constant": 1e-06
+   },
+   "peak_gb": {
+    "assemble": 0.078,
+    "build": 0.078,
+    "final": 0.145,
+    "solve": 0.145
+   },
+   "phases": {
+    "assemble": 0.014,
+    "build": 0.04,
+    "solve": 46.336
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 125,
+    "obj_dual": -3.952199659140437,
+    "obj_primal": -3.9521996591404456,
+    "r_dual": 6.153544432802178e-10,
+    "r_prim": 0.00015628429900868592,
+    "rel_gap": 2.134936418922288e-15,
+    "solve_time_s": 46.3217762,
+    "status_raw": "InsufficientProgress"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {
+      "static_regularization_constant": 1e-06
+     },
+     "status_raw": "InsufficientProgress",
+     "time_limit": 300.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "numerical_error",
+   "solver_wall_s": 46.291,
+   "supervisor_peak_rss_gb": 0.15,
+   "supervisor_wall_s": 47.25,
+   "tag": "sreg1e-6",
+   "value_estimate": null
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_fixed_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 20184,
+   "n_tets": 463,
+   "n_vars": 11113,
+   "n_zero": 9072,
+   "nnz": 71814,
+   "outcome": "completed",
+   "overrides": {
+    "max_step_fraction": 0.95
+   },
+   "peak_gb": {
+    "assemble": 0.078,
+    "build": 0.077,
+    "final": 0.143,
+    "solve": 0.143
+   },
+   "phases": {
+    "assemble": 0.014,
+    "build": 0.036,
+    "solve": 6.535
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 18,
+    "obj_dual": -3.9525796078729734,
+    "obj_primal": -3.9521603904707674,
+    "r_dual": 1.9399761917892205e-11,
+    "r_prim": 3.780273053777479e-14,
+    "rel_gap": 0.00010606172267117438,
+    "solve_time_s": 6.520232,
+    "status_raw": "NumericalError"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {
+      "max_step_fraction": 0.95
+     },
+     "status_raw": "NumericalError",
+     "time_limit": 300.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "numerical_error",
+   "solver_wall_s": 6.493,
+   "supervisor_peak_rss_gb": 0.148,
+   "supervisor_wall_s": 7.45,
+   "tag": "step95",
+   "value_estimate": null
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_roller_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 0,
+   "n_rows": 11310,
+   "n_tets": 243,
+   "n_vars": 5833,
+   "n_zero": 5478,
+   "nnz": 38117,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.078,
+    "build": 0.078,
+    "final": 0.107,
+    "solve": 0.107
+   },
+   "phases": {
+    "assemble": 0.017,
+    "build": 0.024,
+    "solve": 3.051
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 19,
+    "obj_dual": -2.6207324883747405,
+    "obj_primal": -2.6205558913431486,
+    "r_dual": 1.890248485107347e-11,
+    "r_prim": 2.230525925355582e-14,
+    "rel_gap": 6.73846080724606e-05,
+    "solve_time_s": 3.041957,
+    "status_raw": "NumericalError"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "NumericalError",
+     "time_limit": 400.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "numerical_error",
+   "solver_wall_s": 3.027,
+   "supervisor_peak_rss_gb": 0.111,
+   "supervisor_wall_s": 3.9,
+   "tag": "base",
+   "value_estimate": null
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_roller_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 0,
+   "n_rows": 11310,
+   "n_tets": 243,
+   "n_vars": 5833,
+   "n_zero": 5478,
+   "nnz": 38117,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.077,
+    "build": 0.077,
+    "final": 0.092,
+    "solve": 0.092
+   },
+   "phases": {
+    "assemble": 0.017,
+    "build": 0.026,
+    "solve": 1.742
+   },
+   "solver": "clarabel-qdldl",
+   "solver_info": {
+    "iterations": 20,
+    "obj_dual": -2.620613633918373,
+    "obj_primal": -2.6205614604735255,
+    "r_dual": 7.087005214337409e-10,
+    "r_prim": 4.6714463972051334e-12,
+    "rel_gap": 1.9908865684074927e-05,
+    "solve_time_s": 1.7343891999999999,
+    "status_raw": "AlmostSolved"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "qdldl",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "AlmostSolved",
+     "time_limit": 400.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "almost_solved",
+   "solver_wall_s": 1.716,
+   "supervisor_peak_rss_gb": 0.097,
+   "supervisor_wall_s": 2.68,
+   "tag": "base",
+   "value_estimate": 2.6205614604735255,
+   "zero_residual_inf": 4.628537289944035e-13
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_roller_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 21492,
+   "n_tets": 463,
+   "n_vars": 11113,
+   "n_zero": 10380,
+   "nnz": 73122,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.079,
+    "build": 0.078,
+    "final": 0.145,
+    "solve": 0.145
+   },
+   "phases": {
+    "assemble": 0.03,
+    "build": 0.043,
+    "solve": 9.137
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 24,
+    "obj_dual": -3.952152934607966,
+    "obj_primal": -3.952124784983769,
+    "r_dual": 4.147838948914558e-09,
+    "r_prim": 8.984276609388632e-10,
+    "rel_gap": 7.122604985867411e-06,
+    "solve_time_s": 9.1227775,
+    "status_raw": "AlmostSolved"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "AlmostSolved",
+     "time_limit": 400.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "almost_solved",
+   "solver_wall_s": 9.093,
+   "supervisor_peak_rss_gb": 0.149,
+   "supervisor_wall_s": 10.03,
+   "tag": "base",
+   "value_estimate": 3.952124784983769,
+   "zero_residual_inf": 5.934480011393224e-13
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_roller_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 1,
+   "n_rows": 21492,
+   "n_tets": 463,
+   "n_vars": 11113,
+   "n_zero": 10380,
+   "nnz": 73122,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.079,
+    "build": 0.077,
+    "final": 0.125,
+    "solve": 0.125
+   },
+   "phases": {
+    "assemble": 0.03,
+    "build": 0.045,
+    "solve": 12.072
+   },
+   "solver": "clarabel-qdldl",
+   "solver_info": {
+    "iterations": 21,
+    "obj_dual": -3.952158767777939,
+    "obj_primal": -3.952123291983283,
+    "r_dual": 1.849523856389287e-09,
+    "r_prim": 1.531461765172701e-10,
+    "rel_gap": 8.976308073682862e-06,
+    "solve_time_s": 12.0578195,
+    "status_raw": "AlmostSolved"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "qdldl",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "AlmostSolved",
+     "time_limit": 400.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "almost_solved",
+   "solver_wall_s": 12.014,
+   "supervisor_peak_rss_gb": 0.13,
+   "supervisor_wall_s": 12.98,
+   "tag": "base",
+   "value_estimate": 3.952123291983283,
+   "zero_residual_inf": 1.9157798785344095e-12
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_roller_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 2,
+   "n_rows": 43722,
+   "n_tets": 949,
+   "n_vars": 22777,
+   "n_zero": 20946,
+   "nnz": 154125,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.091,
+    "build": 0.077,
+    "final": 0.251,
+    "solve": 0.251
+   },
+   "phases": {
+    "assemble": 0.05,
+    "build": 0.097,
+    "solve": 19.649
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 20,
+    "obj_dual": -3.112987199221299,
+    "obj_primal": -3.112718815844166,
+    "r_dual": 9.185219223016657e-11,
+    "r_prim": 1.5519952092531579e-12,
+    "rel_gap": 8.621409596544395e-05,
+    "solve_time_s": 19.6195105,
+    "status_raw": "InsufficientProgress"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "InsufficientProgress",
+     "time_limit": 400.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "numerical_error",
+   "solver_wall_s": 19.534,
+   "supervisor_peak_rss_gb": 0.256,
+   "supervisor_wall_s": 20.62,
+   "tag": "base",
+   "value_estimate": null
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_roller_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 2,
+   "n_rows": 43722,
+   "n_tets": 949,
+   "n_vars": 22777,
+   "n_zero": 20946,
+   "nnz": 154125,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.091,
+    "build": 0.078,
+    "final": 0.246,
+    "solve": 0.246
+   },
+   "phases": {
+    "assemble": 0.051,
+    "build": 0.098,
+    "solve": 119.208
+   },
+   "solver": "clarabel-qdldl",
+   "solver_info": {
+    "iterations": 19,
+    "obj_dual": -3.1131457706659873,
+    "obj_primal": -3.112707739714789,
+    "r_dual": 1.6361360605830862e-09,
+    "r_prim": 6.252357556651722e-12,
+    "rel_gap": 0.00014070364302431129,
+    "solve_time_s": 119.1744761,
+    "status_raw": "NumericalError"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "qdldl",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "NumericalError",
+     "time_limit": 400.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "numerical_error",
+   "solver_wall_s": 119.015,
+   "supervisor_peak_rss_gb": 0.249,
+   "supervisor_wall_s": 120.17,
+   "tag": "base",
+   "value_estimate": null
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_roller_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 3,
+   "n_rows": 129189,
+   "n_tets": 2840,
+   "n_vars": 68161,
+   "n_zero": 61029,
+   "nnz": 478769,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.14,
+    "build": 0.078,
+    "final": 0.918,
+    "solve": 0.918
+   },
+   "phases": {
+    "assemble": 0.108,
+    "build": 0.227,
+    "solve": 100.827
+   },
+   "solver": "clarabel-faer",
+   "solver_info": {
+    "iterations": 19,
+    "obj_dual": -4.5480127557265835,
+    "obj_primal": -4.548010871972098,
+    "r_dual": 8.439013911864676e-12,
+    "r_prim": 9.079724190169016e-11,
+    "rel_gap": 4.1419287651734484e-07,
+    "solve_time_s": 100.6822715,
+    "status_raw": "AlmostSolved"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "faer",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "AlmostSolved",
+     "time_limit": 400.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "almost_solved",
+   "solver_wall_s": 100.257,
+   "supervisor_peak_rss_gb": 0.922,
+   "supervisor_wall_s": 102.13,
+   "tag": "base",
+   "value_estimate": 4.548010871972098,
+   "zero_residual_inf": 8.748557434046234e-14
+  },
+  {
+   "bound": "lower",
+   "case": "upper3d_roller_phi00",
+   "exit_code": 0,
+   "format": "ladruno-limit-solver-study-row",
+   "format_version": 0,
+   "formulation": "lower.p1d-vertex.v0",
+   "memory_guard_gb": 2.6,
+   "mesh": 3,
+   "n_rows": 129189,
+   "n_tets": 2840,
+   "n_vars": 68161,
+   "n_zero": 61029,
+   "nnz": 478769,
+   "outcome": "completed",
+   "overrides": {},
+   "peak_gb": {
+    "assemble": 0.141,
+    "build": 0.078,
+    "final": 1.079,
+    "solve": 1.079
+   },
+   "phases": {
+    "assemble": 0.132,
+    "build": 0.244,
+    "solve": 633.258
+   },
+   "solver": "clarabel-qdldl",
+   "solver_info": {
+    "iterations": 5,
+    "obj_dual": -6.8114040470314166,
+    "obj_primal": -3.8560268600267267,
+    "r_dual": 1.5846734766442795e-14,
+    "r_prim": 5.001804397246584e-16,
+    "rel_gap": 0.4338866357946742,
+    "solve_time_s": 633.0932946,
+    "status_raw": "MaxTime"
+   },
+   "solver_record": {
+    "name": "clarabel",
+    "settings": {
+     "defaults": true,
+     "direct_solve_method": "qdldl",
+     "max_iter": 200,
+     "overrides": {},
+     "status_raw": "MaxTime",
+     "time_limit": 400.0,
+     "tol_feas": 1e-08,
+     "tol_gap_abs": 1e-08,
+     "tol_gap_rel": 1e-08,
+     "verbose": false
+    },
+    "version": "0.11.1"
+   },
+   "solver_status": "time_limit",
+   "solver_wall_s": 631.873,
+   "supervisor_peak_rss_gb": 1.083,
+   "supervisor_wall_s": 635.05,
+   "tag": "base",
+   "value_estimate": null
+  }
+ ]
+}
