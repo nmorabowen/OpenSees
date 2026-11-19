@@ -1662,6 +1662,30 @@ number.**
   regenerates `t1_fe.json`, whose FE nodal state is the projection, now consistent. T0 (i) is
   unchanged. The T1 bands are unchanged.
 
+**P5a on build `7b7cdc9cf` (records `9a6315ee0`), and two rulings (2026-11-18, before any T2p/T4p
+number).**
+- **Pass:**
+  - T0 (i, ii): 4.6e-14 / 7.4e-13.
+  - T1: 12/12, A ≤ 5.0e-16, p ≤ 1.2e-13.
+  - The sealed column, bit for bit.
+  - T9, T12, T8 stray-p and the other T8 refusals.
+  - T3 gimp: ≤ 0.0118; peaks 1.086 and 1.083.
+  - T10: 24 single-phase legs bit for bit. The baseline is `cfe478254`, the WP's base, because the
+    `fd81cbdd3` binary was replaced. Accepted: it is the stricter baseline.
+- **T3 bspline2 refused at step 1: an implementation bug, fixed.** The code tested mass only, but
+  ruling `3d3699a50` also requires S^p > 0. A ghost column on a drained-only face kept its u mass,
+  became p-active with an empty row, and the zero-diagonal guard refused it, correctly. Every
+  bspline2 case with a drained face hit the same bug.
+- **T8 rank-deficient case solved, not refused: the frozen guard (a) had a gap, now amended.** With
+  M singular and Pᵀ V x always in M's range, CG stays in the range: it converges with positive
+  curvature to a non-unique answer. **Amendment:** each projection also runs one probe PCG on a fixed
+  deterministic right-hand side, b_k = sin(1.7 k + 0.3) over the p-active rows in storage order,
+  with the same tolerance (1e-14), the same iteration cap and the same curvature test. A probe that
+  fails refuses the step loudly, naming the rule, with nothing changed. A nonsingular M passes the
+  probe, so no answer changes. The probe's cost is reported in the cost row.
+- **Re-run order after the build:** T3 bspline2, the fix-2 patch check, T8 rank-deficient, T5, a
+  re-check of T0/T1/sealed/T10 (cheap), then T2p and T4p.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
