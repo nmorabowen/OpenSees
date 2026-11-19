@@ -435,10 +435,13 @@ rulings R3 and R11.
 Feasibility alone does not pass. A tolerance may not be relaxed to turn `formulation_infeasible` into a pass, and
 `AlmostSolved` is not success. Only records from a real checker count.
 
-**Verdicts, per angle and wall type.** By owner decision of 2026-11-19:
+**Verdicts, per angle and wall type.** By owner decision OD2 of 2026-11-19, with the scope of contract §11.3:
 
-- after the box correction, a Drucker-Prager miss at `phi = 30` degrees **withholds the 3D Drucker-Prager claim at 30
-  degrees**. It is recorded by angle and wall type and does not trigger K2;
+- after the box correction, at `phi = 30` degrees **only two failures withhold the 3D Drucker-Prager claim at 30 degrees**: the
+  gate `gap_le MAX_GAP_3D_DP`, and a missing certificate, meaning an item that fails because no gate-admissible certificate exists
+  on its mesh. The case is recorded with the claim withheld, by angle and wall type, and does not trigger K2;
+- at **any** angle, a failed monotonicity check between two certified values, a failed or missing kinematic record, or an invalid
+  record keeps P0 open, and a contradiction (certified Lower above certified Upper beyond the floors) stops the program;
 - a miss at `phi = 0, 10` or `20` degrees is a P0 failure that keeps P0 open. If no Upper formulation passes them, K2 applies;
 - a failure of an exact-formulation case, or of the thin-slab strip, still stops P0.
 
@@ -540,6 +543,14 @@ says nothing about whether the idealisation represents a real material.
   system, from a dense decomposition or a reported iterative estimate. Acceptance needs `kappa_eq <= TOL_KAPPA_CAP` and
   `kappa_eq omega <= TOL_FLOOR_MAX`. Above the cap the result is an estimate (`equality_ill_conditioned`), and the cap is not raised.
   Conditioning enters the floor, not the threshold.
+- **Iterative conditioning estimate.** Where a dense decomposition does not fit, shift-invert Lanczos on `A_hat A_hat^T` finds the
+  smallest non-zero eigenvalue. That matrix is singular when rows are dependent, so the shift must be **positive** and below the
+  eigenvalue sought. The eigenvalues at rounding level are the dependent rows; they are skipped, and their count must equal
+  `n_rows - rank`.
+- **Literal zeros in the recheck.** Every literal-zero unknown must be exactly `0.0` in the final field, or the result is an estimate
+  with `literal_zero_violated`.
+- **Upper interior field.** Its scale `D_scale_int` must be positive. A field with no strain rate cannot clear any condition, and is
+  `interior_field_invalid`.
 - The contract's draft values are `TOL_EQ_ROUNDING_FACTOR = 64`, `TOL_KAPPA_CAP = 1e8` and `TOL_FLOOR_MAX = 1e-6`. They are
   provisional until 237c and 237d calibrate them on exact cases, change only by amendment with evidence, and never to rescue a run.
   237c reports `kappa_eq` on every gate mesh before any gate is read.
@@ -969,9 +980,12 @@ A failed gap gate keeps P0 open but is not a kill rule by itself. Thresholds are
 
 **Closed by the owner, 2026-11-18.** Former O16: amendments A1 to A4 accepted. Former O11: the FEniCSx lane lives in a separate private repository.
 
-**Closed by the owner, 2026-11-19.** The gap limits and gate meshes are kept as disclosed and closed (§18.2 item 4). A 30-degree 3D
-Drucker-Prager miss after the box correction withholds that claim, recorded by angle and wall type; exact-formulation failures still
-stop P0 (§10.1). The contract labels these O1 and O2 in its §18.1. They are not this ADR's working defaults O1 and O2 below.
+**OD1 and OD2, closed by the owner, 2026-11-19.** These are the contract's decision labels (its §18.1). The `OD` prefix keeps them apart
+from this ADR's working defaults O1 and O2 below.
+
+- **OD1.** The gap limits and gate meshes are kept as disclosed and closed (§18.2 item 4). A miss is a real P0 failure.
+- **OD2.** After the box correction, a 30-degree 3D Drucker-Prager miss of the kinds listed in §10.1 withholds that claim, recorded by
+  angle and wall type. Exact-formulation failures still stop P0.
 
 **Working defaults, proposed, not decided.**
 
