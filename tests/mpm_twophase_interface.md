@@ -622,6 +622,71 @@ projection.
   (T0 iii, T5, T6, T7) has one. Carrying π and the q + π invariant into mode F is offered as a
   follow-up.
 
+## 7c. Route S after the T6 Mandel diagnosis (232l-C, 2026-11-19; owner's decisions, wp-briefs "232l", "T6 Mandel diagnosis")
+
+This amends §1 "Route S (mode F) step", §5 P11 and §7a Q4 for **route S only**. Route E, the
+single-phase mode-F path (`advance`, T10) and every frozen text not named here are unchanged. Three
+changes: the skeleton strain's velocity, the u-activity rule, and the run-time limit.
+
+**Which steps.** A mode-F step is a route-S step when the model has a two-phase body, a plate, a
+`pfix` or a traction. A route-S step is a *two-phase step* when the model has at least one two-phase
+body. The two changes below marked "two-phase step" apply only then; a route-S step without a
+two-phase body (a plate or a traction on single-phase particles) keeps the u cutoff `massCutoff`
+and MUSL's v** for every particle.
+
+**1. The u-activity rule (two-phase step; replaces §7a Q4 "inactive node" and the 3d3699a50 rule
+"keep the correction on light u components").**
+- Let m_a be the folded lattice-node mass (Σ_p W_pa m_p over every particle, single- and two-phase,
+  with the B-spline face-layer factor 2^k of `imageCutoffMass`), and m_max = max_p m_p.
+- A lattice node is **u-active** iff m_a > c_u · m_max, with c_u = max(`massCutoff`,
+  `pressureCutoff`). At the defaults (mode F 1e-10, 5e-2) c_u = 5e-2, pressureCutoff's c_m.
+- A node that is not u-active is **dropped whole**: v̂ = v* = v₁ = 0 and a = 0 on every component;
+  M⁻¹ = 0; no momentum, no force and no correction; its Q rows meet v* = 0 and receive nothing.
+  Particles interpolate 0 from it (mode F does not renormalise the u weights).
+- The plate unknown U stays active whenever M_U > 0.
+- p-activity is unchanged (two-phase nodal mass > pressureCutoff · m_max, and S^p > 0). Since the
+  two-phase nodal mass never exceeds m_a, a p-active node is always u-active.
+
+**2. The skeleton strain (two-phase step; replaces §1 step 5's "Δε from it" for two-phase
+particles; ruling 9064acca3 (2) is amended accordingly).**
+- Steps 1 to 4 are unchanged: P2G, the predictor and the velocity conditions, the pressure, and the
+  correction v₁ = v* + Δt M⁻¹ Q p on free components. v₁ is the conditioned grid velocity after the
+  correction: 0 on fixed, prescribed-to-zero, stray and dropped components, the prescribed value on
+  a `gridvel` component, and v₁_U on the plate unknown.
+- Particle v and x are updated from v₁ as before (FLIP blend, x += Δt Σ_a S′_{i,pa} v₁_{a,i}).
+- **A two-phase particle's velocity gradient is L_ij = Σ_a v₁_{a,i} ∂_j S′_{i,pa}**: the same grid
+  velocity the fluid balance's Qᵀv₁ sees (USL for the skeleton), the plate entry taking v₁_U. The
+  supports and weights are the step-start ones (§1). Then dF = I + Δt L; under `small`,
+  Δε = sym(Δt L) (V = V₀); under `hypo`, the hypo kernel on F_{n+1} = dF F_n; σ′ from the material
+  at ε_n + Δε, as before.
+- A single-phase particle in a two-phase step keeps MUSL: L from the conditioned second projection
+  v** of the updated particle momentum, with the same u-activity rule (a dropped node gives 0).
+- G2P of p (P5a) is unchanged.
+
+**3. The run-time limit (every route-S step; owner's decision, T7 "allow measuring it").**
+- Route S's run-time refusal is **Δt ≤ s · Δt_d**, where Δt_d is the drained pencil
+  (`mpm criticalTimeStep drainedPencil`) at the step-start state and s is `mpm safety` (default
+  0.5, at most 1). It replaces the h/(c_d + |v|) estimator in route S; the single-phase path keeps
+  the estimator.
+- Δt_d = 2/√λ, with λ the Rayleigh quotient after 200 power iterations on M_L⁻¹K_d: lumped W mass on
+  the u-active free components and the plate unknown, K_d = Σ_p V_p Bᵀ D_p B from the particles'
+  current tangents on the per-component folded supports. Fixed, stray and dropped components are
+  removed, under the u-activity rule of the step.
+- Refusal text: `ERROR mpm analyze -- dt = <dt> exceeds s * dt_pencil = <s> * <dt_d> = <limit>
+  (route S: the drained pencil, interface §7c); step refused, nothing changed`.
+- Warning, once per epoch, at the first route-S step: `WARNING mpm analyze -- route S's run-time
+  limit is s x the drained pencil (dt_d = <dt_d>; undrained pencil <dt_u>; h/c_d <dt_est>): the
+  pressure is implicit, the skeleton explicit (interface §7c)`.
+- `mpm criticalTimeStep` without an argument still returns the estimator h/(c_d + |v|).
+
+**Re-deriving T0 (iii).** T0 (iii) is a two-phase step on gimp, so 1 and 2 apply and 3 does not bind
+(Δt 1e-3 is far below Δt_d).
+- The u cutoff is 5e-2 · m_max: a ghost row with m_a ≈ 1e-8 m_p is dropped whole. Before §7c it was
+  u-active.
+- Every particle is two-phase, so σ′ comes from L = Σ_a v₁_a ⊗ ∇S_a, the grid velocity after the
+  correction and the conditions.
+- The rest of §1 and §7a Q4 stands.
+
 ## 8. Proposed amendments and objections (none applied)
 
 - **A1** (U4): particles carry p̈ as well as p, ṗ (§1, P2).
