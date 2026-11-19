@@ -1,8 +1,8 @@
-# Limit analysis: the frozen interface for P0 (WP-237a)
+# Limit analysis: the P0 interface (WP-237a)
 
-**Status:** proposed for freeze. The orchestrator freezes this file. After the freeze a change is an
-amendment logged in section 19, never a silent edit. Items in section 18 are **proposed, pending the
-owner's decision**; they are written here so that P0 can test them, and they do not record a decision.
+**Status:** proposed for freeze; **not frozen**. The orchestrator freezes this file. After the freeze a
+change is an amendment logged in section 19, never a silent edit. Section 18 separates accepted owner
+amendments from orchestrator P0 rulings.
 
 **Who reads it.** The Python reference author, the independent checker author, the external reference
 author and later the C++ author. Each implements from this file and `tests/limit_cases.txt`, without
@@ -10,8 +10,8 @@ reading the other side's code. `tests/test_limit_contract.py` holds the schema v
 convention checks. It contains no assembler and no checker.
 
 **Scope of version 0.** Associated perfect plasticity on straight tetrahedra; von Mises and
-Drucker-Prager; second-order cones only; bonded rigid footings; one-shot solves on one mesh. The file
-format does not presuppose the C++ engine or the final `.la.h5` layout.
+Drucker-Prager; second-order cones only; bonded rigid footings; one-shot solves on one mesh. Footing cases
+use `z` upward. The file format does not presuppose the C++ engine or the final `.la.h5` layout.
 
 ---
 
@@ -140,6 +140,20 @@ Cases use this generator so all implementations build identical meshes.
 - Doubling every count refines every tetrahedron, because the planes `x_i = c` and `x_i - x_j = c` of
   the coarse mesh remain planes of the fine mesh. Doubling only some counts is **not** nested.
 
+### 3.6 Uniform refinement of a tet4 mesh
+
+`refine r` applies this rule `r` times. Edge midpoints are new vertices, numbered after the old ones in
+lexicographic order of the sorted vertex pair. With `mab` the midpoint of local edge `(a, b)`, tetrahedron `e`
+yields children `8 e + 0..7`:
+
+```text
+(v0, m01, m02, m03)   (m01, v1, m12, m13)   (m02, m12, v2, m23)   (m03, m13, m23, v3)
+(m01, m02, m03, m13)  (m01, m02, m12, m13)  (m02, m03, m13, m23)  (m02, m12, m13, m23)
+```
+
+If a child's determinant is negative, swap its local vertices 2 and 3. Each child has volume `V/8`. Every facet
+splits into four, so conformity is kept, and the fine mesh is nested in the coarse one.
+
 ## 4. Strength
 
 ### 4.1 Data
@@ -219,7 +233,7 @@ its three vertices. Body force is constant in a region. A region's strength is c
 
 **Gravity** is `b0 = gamma g_hat`, per unit volume. A gravity multiplier uses `b1` instead.
 
-| Kind | Lower, at each facet vertex | Upper, at all six facet nodes |
+| Kind | Lower, at each facet vertex | Upper, at all six facet nodes of the element |
 |---|---|---|
 | `free` | `N(n) sigma = 0` | none |
 | `traction` | `N(n) sigma = t0 + lambda t1` | none; adds work |
@@ -239,7 +253,7 @@ and `T2 = n x T1`.
 ## 6. Rigid footings
 
 A footing has a reference point `x_ref`, one or more `footing` boundary sets, and an `interface_law`.
-Version 0 admits `bonded`. `no_tension` and `coulomb` are reserved and refused (section 18, P-3).
+Version 0 admits `bonded`. `no_tension` and `coulomb` are reserved and refused.
 
 - **Lower.** No extra traction variable. With facet vertices `a` and area `A`,
 
@@ -252,9 +266,9 @@ Version 0 admits `bonded`. `no_tension` and `coulomb` are reserved and refused (
 - **Upper.** Every node of a footing facet follows `v_a = u + w x (x_a - x_ref)` exactly. P2 contains the
   linear rigid field, so the whole facet moves rigidly.
 - **Power.** `int t . v dA = F . u + M . w = R^T V`.
-- **Restrained components** (section 18, P-6). A query may list components as restrained. Then
-  `V_c = 0`, and `R_c` is an unconstrained reaction. A symmetric half model needs this: the half footing
-  of a strip restrains `ux` and `rz`.
+- **Restrained components.** A query may list components as restrained. Then `V_c = 0`, and `R_c` is an
+  unconstrained reaction. A symmetric half model needs this: the half footing of a strip with `z` upward and
+  thickness along `y` restrains `ux` and `ry`.
 
 ## 7. Queries
 
@@ -293,8 +307,11 @@ a case, and old ids keep their meaning.
 | Id | Bound | Version 0 status |
 |---|---|---|
 | `lower.p1d-vertex.v0` | Lower | admitted; section 9 |
-| `upper.p2c-vertex.v0` | Upper | admitted **as the baseline under test**; section 10. It is not proven for 3D isochoric flow |
-| `upper.p2d-jump-bernstein.v0` | Upper | **proposed, refused** by version 0 validators; section 12 |
+| `upper.p2d-jump-bernstein.v0` | Upper | admitted; **the P0 Upper formulation**; section 12 |
+| `upper.p2c-vertex.v0` | Upper | admitted as the **control**; section 10. It is not proven for 3D isochoric flow |
+
+A case's `formulation` lines say which formulations its assertions and gates bind. A `control` line records
+a formulation for comparison and binds nothing. Any other id is refused with `formulation_not_admitted`.
 
 ## 9. Lower problem, `lower.p1d-vertex.v0`
 
@@ -311,9 +328,11 @@ subject to
   ( sqrt2 (k_e - alpha_e one^T sigma_ei), Q sigma_ei ) in SOC6       each element, 4 vertices
 ```
 
-## 10. Upper problem, `upper.p2c-vertex.v0`
+## 10. Upper control, `upper.p2c-vertex.v0`
 
-Unknowns: continuous P2 `v_a`; `V_f`; `(r_ei, z_ei)`.
+This continuous P2 problem is kept as a control. On the committed unstructured meshes with fixed walls its
+isochoric space does not let the footing move (section 11). Unknowns: continuous P2 `v_a`; `V_f`;
+`(r_ei, z_ei)`.
 
 ```text
 minimise   D - W0
@@ -347,91 +366,167 @@ Exact integrals on straight elements:
 | edge touching vertex `i` | `2A/15` |
 | the opposite edge | `A/15` |
 
-## 11. True-3D Upper feasibility gate (proposed)
+## 11. True-3D Upper gate
 
-Thin-slab success does not show that an Upper formulation works in 3D. Each `upper_feasibility_3d` case
-runs on the committed unstructured meshes for `phi = 0` and for the planned Drucker-Prager angles. Those
-angles are provisional (section 18, P-1).
+Thin-slab success does not show that an Upper formulation works in 3D, and **feasibility alone never passes
+this gate.** Each `upper_gate_3d` case runs one of `phi = 0, 10, 20, 30` degrees with one wall type. That is
+eight cases.
 
-Let `A` be the set of `(v, V)` that satisfies every linear boundary and footing condition, and the query
-normalisation. At vertex `(e, i)` let
+**Frozen set.** The box is `[-2, 2] x [-2, 2] x [-2, 0]`, with a bonded unit-square footing conforming on
+`z = 0`. Walls and base are all `fixed` or all `symmetry` (rollers). The meshes, in case order, are
+`upper3d_a` (243 tets), `upper3d_b` (463), `upper3d_c` (949), `upper3d_d` (2,840, graded toward the footing edge),
+then `upper3d_a` refined once (1,944) and `upper3d_d` refined once (22,720). The first four are independent
+non-structured sizes. The refined meshes form the nested pairs `(0, 4)` and `(3, 5)`.
+
+### 11.1 Kinematic test: rank and residual
+
+Let `E` be the equality rows of the formulation: supports, rollers, rigid footing, isochory at `alpha = 0`
+vertices, and zero normal jump on every Bernstein coefficient where `tau = 0`. Let `A` be the set of `(v, V)`
+satisfying the boundary and footing rows and the query normalisation.
+
+- **Rank.** `rank` counts singular values of `E` above `TOL_RANK * sigma_max`. `nullity = n_unknowns - rank`.
+  `footing_modes` is the rank of the kernel restricted to `V`. A dense factorisation may be skipped when too
+  large; then `rank`, `nullity` and `footing_modes` are `null`, and the residual test still applies.
+- **Residual.** With `c_ei` the flow violation at element vertices, `c_FB` the jump violation on Bernstein
+  coefficients, `w_ei = V_e / 4` and `w_FB = A_F / (6 h_F)`, `h_F` the longest edge of the facet:
 
 ```text
-c_ei(v) = |theta|                                alpha_e = 0
-c_ei(v) = max(0, 3 sqrt2 alpha_e |e| - theta)    alpha_e > 0
+c_ei = |theta|                                  alpha = 0
+c_ei = max(0, 3 sqrt2 alpha |e| - theta)        alpha > 0
+c_FB = max(0, tau |c_t| - n . c_B)              tau > 0;   |n . c_B| when tau = 0
+
+rho_feas = min_A sqrt( sum w_ei c_ei^2 + sum w_FB c_FB^2 )
+         / min_A sqrt( sum w_ei |D_ei|_F^2 + sum w_FB |c_B|^2 )
 ```
 
-With `w_ei = V_e / 4`, `|c|_w^2 = sum w_ei c_ei^2` and `|D|_w^2 = sum w_ei |D_ei|_F^2`,
-
-```text
-rho_feas = min_A |c(v)|_w / min_A |D(v)|_w .
-```
-
-It is dimensionless. With every `alpha = 0`, both minima are sparse linear least-squares problems, so the
-result does not depend on a conic solver.
+For the control the facet sums are absent. With every `alpha = 0` both minima are sparse linear least-squares
+problems, so the result does not depend on a conic solver.
 
 | `status` | Condition |
 |---|---|
-| `formulation_feasible` | `rho_feas <= TOL_FEAS_OK`, **and** a witness `(v, V)` in `A` passed `c_ei` recomputed independently of the producer |
+| `formulation_feasible` | `rho_feas <= TOL_FEAS_OK`; a witness in `A` passed `c` recomputed independently of the producer; `nullity` and `footing_modes`, where computed, are at least 1 |
 | `formulation_infeasible` | `rho_feas >= TOL_FEAS_LOCKED` |
 | `inconclusive` | anything else |
 
-- A failure is a **formulation result**. It is recorded with its `rho_feas`, per mesh and per angle.
-- It may not be hidden by relaxing a tolerance, reading `AlmostSolved` as success, or quoting a value from
-  a conic run whose flow rule is violated.
-- `formulation_infeasible` says no Upper bound comes from this formulation on that mesh. It does not say
-  the mechanics has no collapse load.
-- Under P0, a failure means selecting and testing another Upper formulation before C++.
+A failure is a **formulation result**, recorded with its numbers per mesh, wall and angle. It may not be hidden
+by relaxing a tolerance, by reading `AlmostSolved` as success, or by quoting a conic value whose flow rule is
+violated. `formulation_infeasible` says this space yields no Upper bound on that mesh. It says nothing against
+the mechanics.
 
-## 12. Velocity jumps (proposed, not admitted in version 0)
+### 11.2 Quality test
 
-P2 velocity jumps are **quadratic** on a facet, so conditions at the three facet vertices do not cover the
-facet. This section defines the whole-facet condition for `upper.p2d-jump-bernstein.v0`.
+For each case and the binding Upper formulation, all of these must hold, using **certified** values only:
 
-Let `j = v+ - v-`, with `n` the outward normal of `e-`, so `j` is the velocity of the `e+` side relative
-to the `e-` side along `n`. Its six nodal values are `j_a` at vertices and `j_ab` at edge midpoints.
+1. `kinematic_status` is `formulation_feasible` on every listed mesh;
+2. a certified bracket exists on mesh 5;
+3. its gap is at most `MAX_GAP_3D_VM` for `phi = 0`, or `MAX_GAP_3D_DP` otherwise;
+4. `U_fine <= U_coarse + TOL_MONOTONE |U_coarse|` along each nested pair;
+5. `L_fine >= L_coarse - TOL_MONOTONE |L_coarse|` along each nested pair.
 
-**Bernstein coefficients.** `c_a = j_a` and `c_ab = 2 j_ab - (j_a + j_b)/2`. Then
-`j(x) = sum_B B_B(x) c_B`, with `B_B >= 0`, `sum_B B_B = 1` and `int B_B dA = A/6` for each of the six.
+Section 13 proves the monotonicity for these formulations. A violation therefore signals a defect or an
+unconverged candidate, and is never averaged away. The limits are requirements set in advance. If a formulation
+misses them, the gate fails and the failure is recorded; the limit does not move.
 
-**Jump dissipation.** `t . j = sigma : sym(j (x) n)`, so the jump uses the same support function with
-`d = N(n)^T j`:
+## 12. P0 Upper formulation, `upper.p2d-jump-bernstein.v0`
+
+Unknowns: an independent P2 velocity `v_(e,a)` on each element (10 nodes, 30 values); `V_f`; `(r_ei, z_ei)` as in
+section 10; `(rho_FB, y_FB)` on every interior facet `F` and Bernstein coefficient `B`.
+
+### 12.1 The jump
+
+On an interior facet use the order of `e-` (section 3.4). `n` is the outward normal of `e-`, so it points into
+`e+`. The jump is `j = v+ - v-`; `j . n > 0` is opening. Its six nodal values, in facet-node order, are `j_a` at
+vertices and `j_ab` at edge midpoints. **A P2 jump is quadratic**, so conditions at facet vertices or nodes do not
+cover the facet. Its Bernstein coefficients are
 
 ```text
-N(n)^T c_B = sqrt2 alpha r_B one + Q^T z_B,   (r_B, z_B) in SOC6,   each of the 6 coefficients
-D_facet    = sum_B (A/6) sqrt2 k r_B
+c_a = j_a,      c_ab = 2 j_ab - (j_a + j_b) / 2.
 ```
 
-**Proof.** The admissible set is a convex cone and `j(x)` is a convex combination of the `c_B`, so the
-flow condition holds at every point. `pi` is convex and positively homogeneous, so
-`int pi(N^T j) dA <= sum_B (A/6) pi(N^T c_B)`. The result is conservative, as an Upper bound must be.
+Then `j(x) = sum_B B_B(x) c_B` with `B_B >= 0`, `sum_B B_B = 1`, `int_F B_B dA = A/6` for each of the six.
 
-For a slip `s` and opening `o` this gives `o = 3 alpha s / sqrt(1 - 12 alpha^2)` on the cone boundary. With
-the plane-strain match of section 4.4 that is `o = s tan(phi)`, the associated dilation of a Coulomb surface.
+### 12.2 Jump cone and dissipation, derived
 
-On a facet between two regions, use the strength of `e-`. Every admissible stress field meets the yield
-condition on both sides, so either side is valid.
+`t . j = sigma : sym(j (x) n)`, so the jump uses the same support function with `d = N(n)^T j`. For opening
+`o = j . n` and slip `s = |j_t|`: `theta = o` and `|e|^2 = s^2/2 + 2 o^2/3`. Section 4.3 then gives:
+
+```text
+root = sqrt(1 - 12 alpha^2),   tau = 3 alpha / root,   k_J = k / root,   requires alpha < 1/sqrt(12)
+
+domain:        o >= tau s
+pi_J(j, n) =   k s                  when alpha = 0 and o = 0
+               k o / (3 alpha)      when alpha > 0
+```
+
+For `alpha >= 1/sqrt(12)`, the only admissible jump is zero. This formulation refuses such a problem with
+`formulation_not_applicable`. With the plane-strain match of section 4.4, `tau = tan(phi)` and slip with `o = s tan(phi)`
+dissipates `c s`, the associated Coulomb surface. **In 3D this remains the Drucker-Prager jump condition**; it
+needs no separate formulation.
+
+### 12.3 Discrete problem
+
+```text
+minimise   D_vol + D_jump - W0
+D_vol  = sum_e sum_i (V_e / 4) sqrt2 k_e r_ei
+D_jump = sum_F sum_B (A_F / 6) k_J rho_FB
+subject to
+  B_ei v_e = sqrt2 alpha_e r_ei one + Q^T z_ei,   (r_ei, z_ei) in SOC6      each element, 4 vertices
+  n . c_FB = tau rho_FB                                                     each facet, 6 coefficients
+  T1 . c_FB = y1_FB,  T2 . c_FB = y2_FB,   (rho_FB, y1_FB, y2_FB) in SOC3   each facet, 6 coefficients
+  boundary and footing rows, per element node                               section 15.4
+  V_fc = 0 (restrained);  W1 = 1 (ray);  V_fc = d_fc (support)
+```
+
+`k_J`, `tau` come from the region of `e-`. Every admissible stress meets yield on both sides, so either side is
+valid.
+
+- **von Mises** has `tau = 0`. The normal jump is **exactly zero** on all six coefficients, which is zero across
+  the facet. The tangential jump dissipates at most `sum_B (A/6) k |c_B|`, which bounds `int k |j| dA` by Jensen.
+- **Boundary conditions are strong.** On `fixed`, `symmetry` and `footing` facets the element's own six facet
+  nodes satisfy the section 5 and 6 rows. There are no jumps against walls or footings in version 0, which only
+  shrinks the admissible set.
+- Work rates are those of section 10, integrated per element and per boundary facet.
+
+### 12.4 Why the bound holds
+
+Summing integration by parts over elements, with `n` from `e-` to `e+` and continuous traction `t = sigma n`:
+
+```text
+sum_e int_e sigma : D dV + sum_F int_F t . j dA = W0 + lambda W1 .
+```
+
+`sigma : D <= pi(D)` and `t . j <= pi_J(j, n)`. On each element Jensen gives section 13's vertex sum. On each facet
+`j(x)` is a convex combination of the `c_B`, the cone is convex, so `j(x)` lies in it everywhere, and
+`int_F pi_J(j) dA <= sum_B (A/6) pi_J(c_B)` because `pi_J` is convex and positively homogeneous. The check is
+conservative: it can refuse a jump that is admissible, and never accepts one that is not.
 
 ## 13. Conditions for each bound claim
 
-**Definitions.** `sigma` is statically admissible if it satisfies equilibrium, traction continuity, the
-traction and footing conditions, and yield everywhere. `(v, V)` is kinematically admissible if it is
-continuous, or has jumps charged by section 12; it satisfies the velocity conditions, and its strain rate
-lies in `dom pi` almost everywhere.
+**Definitions.** `sigma` is statically admissible if it satisfies equilibrium, traction continuity, the traction and
+footing conditions, and yield everywhere. `(v, V)` is kinematically admissible if it satisfies the velocity
+conditions, its strain rate lies in `dom pi` almost everywhere, and any jump lies in `dom pi_J` on the whole facet.
 
-**Lower claim, `lambda_L <= lambda_max`, holds when:** elements are straight; `k`, `alpha`, `b` are
-constant per element; tractions are linear per facet; resultants are integrated exactly; equalities hold;
-yield holds at four vertices. Then equilibrium and continuity hold everywhere because all residuals are
-polynomials determined by the rows imposed, and yield holds everywhere by convexity.
+**Lower claim, `lambda_L <= lambda_max`, holds when:** elements are straight; `k`, `alpha`, `b` are constant per
+element; tractions are linear per facet; resultants are integrated exactly; equalities hold; yield holds at four
+vertices. Equilibrium and continuity then hold everywhere because every residual is a polynomial fixed by the rows
+imposed, and yield holds everywhere by convexity.
 
-**Upper claim, `lambda_max <= lambda_U`, holds when:** elements are straight; `k`, `alpha`, `b` are
-constant per element; velocity conditions hold exactly; `W1 > 0`; every vertex strain rate lies in
-`dom pi`. Virtual work gives `W0 + lambda W1 = int sigma : D dV` for any admissible pair, so
-`lambda W1 <= int pi(D) dV - W0`. `D(x)` is linear, so the cone holds throughout, and Jensen's inequality
-with `int L_i dV = V/4` gives `int pi(D) dV <= sum_i (V/4) pi(d_i)`.
+**Upper claim, `lambda_max <= lambda_U`, holds when:** elements are straight; `k`, `alpha`, `b` are constant per
+element; velocity conditions hold exactly; `W1 > 0`; every vertex strain rate lies in `dom pi`; every Bernstein
+coefficient of every jump lies in `dom pi_J`. Virtual work gives `W0 + lambda W1 = int sigma : D dV` plus the jump
+term of section 12.4. `D(x)` is linear, so the cone holds throughout, and Jensen with `int L_i dV = V/4` gives
+`int pi(D) dV <= sum_i (V/4) pi(d_i)`.
 
-**Both are claims about the stated idealisation:** associated flow, perfect plasticity, the stated
-strength and interface law. For non-associated real soil they are not bounds on the physical problem.
+**Monotonicity under nested refinement** (section 3.6). Take a parent field on the fine mesh.
+
+- **Lower.** A parent field is admissible on the children, so the fine maximum is not smaller.
+- **Upper.** A parent field is admissible on the children. At child vertices `pi(d(x)) <= sum_i L_i(x) pi(d_i)`.
+  Summing `V_c / 4` over child vertices reproduces `int L_i dV = V/4`, so the fine volume sum does not exceed the
+  parent's. On a child facet the new Bernstein coefficients are convex combinations of the parent's, with total
+  weight `A/6` per parent coefficient, so the jump sum does not grow. New interior facets carry no jump.
+
+**Both are claims about the stated idealisation:** associated flow, perfect plasticity, the stated strength and
+interface law. For non-associated real soil they are not bounds on the physical problem.
 
 ## 14. Domain claims
 
@@ -509,10 +604,11 @@ becomes a problem as follows: all elements take region 0; `target` is `box`; `le
 box side; exterior facets take the first matching `boundary` line; tractions are evaluated at facet vertices;
 `F0` and `F1` default to zero. `build_case_problem` in `tests/test_limit_contract.py` is the executable form.
 A `mesh_file` is an NPZ with `nodes (n, 3)` of `<f8` and `tets (E, 4)` of `<i8`, positively oriented, and
-section 3.5 adds the mid-edge nodes. The three committed files are unstructured tetrahedral meshes of the box
-`[-2, 2] x [-2, 2] x [-2, 0]`, with the square `[-0.5, 0.5]^2` conforming on `z = 0`, made with gmsh 4.15
-(Delaunay 3D, one thread, seed 1, target sizes 1.0, 0.8, 0.58). Their 243, 463 and 949 tetrahedra are data.
-No test or implementation depends on gmsh.
+sections 3.5 and 3.6 add refinement and mid-edge nodes. The four committed files are unstructured tetrahedral meshes
+of the box `[-2, 2] x [-2, 2] x [-2, 0]`, with the square `[-0.5, 0.5]^2` conforming on `z = 0`, made with gmsh 4.15
+(Delaunay 3D, one thread, seed 1). `a`, `b` and `c` use uniform target sizes 1.0, 0.8 and 0.58. `d` grades from 0.08
+within 0.1 of the footing edge to 1.0 beyond 1.6. Their 243, 463, 949 and 2,840 tetrahedra are data. No test or
+implementation depends on gmsh.
 
 ### 15.3 Result: `<stem>.<query>.<bound>.result.json`, `.npz`
 
@@ -523,7 +619,8 @@ Keys: `format` = `ladruno-limit-result`, `format_version`, `arrays`, `problem_sh
 | `bound` | Required arrays | Optional, never trusted |
 |---|---|---|
 | `lower` | `sigma (E,4,6)`, `resultant (n_f,6)` | `interior_sigma (E,4,6)` with number `interior_value`; `equilibrium_multiplier (E,3)` |
-| `upper` | `velocity (N,3)`, `footing_velocity (n_f,6)` | `interior_velocity (N,3)` and `interior_footing_velocity (n_f,6)`; `strain_rate (E,4,6)`; `dissipation (E,4)` |
+| `upper`, `upper.p2c-vertex.v0` | `velocity (N,3)`, `footing_velocity (n_f,6)` | `interior_velocity (N,3)` and `interior_footing_velocity (n_f,6)`; `strain_rate (E,4,6)`; `dissipation (E,4)` |
+| `upper`, `upper.p2d-jump-bernstein.v0` | `element_velocity (E,10,3)`, `footing_velocity (n_f,6)` | `interior_element_velocity (E,10,3)` and `interior_footing_velocity (n_f,6)`; `strain_rate (E,4,6)`; `dissipation (E,4)` |
 
 `interior_value` is a top-level key, present exactly when `interior_sigma` is. With `solver_status` of
 `solved` or `almost_solved`, `value` and the arrays are required. Otherwise `value` and `objective` are
@@ -532,11 +629,11 @@ arrays, or the reverse, is refused.
 
 ### 15.4 Program: `<stem>.<query>.<bound>.program.json`, `.npz`
 
-Canonical form: minimise `c^T x` subject to `A x + s = b`, `s` in `K`, with `K` = zero cone, then `n_soc`
-copies of `SOC6`. `value = objective_sign * c^T x`.
+Canonical form: minimise `c^T x` subject to `A x + s = b`, `s` in `K`. `K` is the zero cone, then the listed
+second-order cones in order. `value = objective_sign * c^T x`.
 
 Keys: `format` = `ladruno-limit-program`, `format_version`, `arrays`, `problem_sha256`, `query_id`, `bound`,
-`formulation`, `objective_sign`, `n_variables`, `n_rows`, `n_zero`, `n_soc`, `soc_dim` (= 6). Arrays: CSC
+`formulation`, `objective_sign`, `n_variables`, `n_rows`, `n_zero`, and `cones`, a list of `{dim, count}`. Arrays: CSC
 `A_indptr`, `A_indices`, `A_data`; `b`; `c`. There is **no scaling and no presolve** in the program. A solver
 adapter may scale or presolve its own copy. Rows may be linearly dependent.
 
@@ -551,7 +648,7 @@ Rows, in order:
 4. ray forms: for each footing and unrestrained component, `R - lambda F1 = F0`;
 5. cones, per `(e, i)`: rows `[sqrt2 alpha one^T ; -Q]` on `sigma_ei`, right side `(sqrt2 k, 0)`.
 
-**Upper.** `x = [v (3N), V (6 n_f), (r, z)_(0,0)...]`. `objective_sign = +1`.
+**Upper control.** `x = [v (3N), V (6 n_f), (r, z)_(0,0)...]`. `objective_sign = +1`.
 `c = (V_e/4) sqrt2 k_e` on each `r`, minus the `W0` coefficients. Rows, in order:
 
 1. flow, per `(e, i)`, 6 rows: `B_ei v - sqrt2 alpha r one - Q^T z = 0`;
@@ -560,13 +657,27 @@ Rows, in order:
 4. `footing`: per footing, nodes ascending, 3 rows `v - u - w x (x_a - x_ref) = 0`;
 5. restrained components, in list order: `V = 0`;
 6. ray forms: `W1 = 1`; `support`: `V_fc = d_fc` over unrestrained `(f, c)`;
-7. cones, per `(e, i)`: `-(r, z) + s = 0`.
+7. cones, per `(e, i)`: `-(r, z) + s = 0`. `cones = [{dim: 6, count: 4 E}]`.
+
+**Upper jump.** `x = [v_(e,a,c) (30 E), V (6 n_f), (r, z)_(e,i) (24 E), (rho, y1, y2)_(F,B) (18 F)]`, with `F` the
+interior facets of section 3.4 and `B` in facet-node order. `objective_sign = +1`. `c` has `(V_e/4) sqrt2 k_e` on `r`,
+`(A_F/6) k_J` on `rho`, minus the `W0` coefficients. Rows, in order:
+
+1. flow, per `(e, i)`, 6 rows, as above with `v_e`;
+2. jumps, per `(F, B)`, 3 rows: `n . c_B - tau rho = 0`, `T1 . c_B - y1 = 0`, `T2 . c_B - y2 = 0`. `c_B` uses `e+` values
+   minus `e-` values, matched by global node id, and the tangent basis of section 5 for `n`;
+3. `fixed`: per `(e, a)` ascending, 3 rows;
+4. `symmetry`: per set, per `(e, a)` ascending, those in `fixed` omitted, one row;
+5. `footing`: per footing, per `(e, a)` ascending, 3 rows;
+6. restrained components, then `W1 = 1` or `V_fc = d_fc`;
+7. cones: `SOC6` per `(e, i)`, then `SOC3` per `(F, B)`. `cones = [{dim: 6, count: 4 E}, {dim: 3, count: 6 F}]`.
 
 ### 15.5 Feasibility record: `<stem>.<query>.feasibility.json`
 
 Keys: `format` = `ladruno-limit-feasibility`, `format_version`, `problem_sha256`, `query_id`, `formulation`,
-`status`, `rho_feas`, `numerator`, `denominator`, `method`, `witness_checked`, `producer`, `tolerances`.
-`rho_feas = numerator / denominator` and `status` follows section 11.
+`status`, `rho_feas`, `numerator`, `denominator`, `n_unknowns`, `n_rows`, `rank`, `nullity`, `footing_modes`,
+`method`, `witness_checked`, `producer`, `tolerances`. `rho_feas = numerator / denominator` and `status` follows
+section 11.1.
 
 ### 15.6 Certificate and bracket
 
@@ -577,12 +688,12 @@ Keys: `format` = `ladruno-limit-feasibility`, `format_version`, `problem_sha256`
 | `format`, `format_version` | `ladruno-limit-certificate`, `0` |
 | `problem_sha256`, `result_sha256`, `query_id`, `bound`, `formulation` | identity |
 | `classification` | `certified_bound` or `estimate` |
-| `reasons` | codes of section 17.3; empty exactly when certified |
+| `reasons` | codes of section 17.6; empty exactly when certified |
 | `value_candidate`, `value_certified`, `floor` | numbers; the last two are `null` for an estimate |
 | `domain_claim`, `criteria`, `flow_rule`, `interface_laws` | section 14; sorted lists; the literal `associated` |
-| `checks` | metrics of section 17.4 |
+| `checks` | metrics of section 17.7 |
 | `checker` | `{name, version}` |
-| `tolerances` | the table of section 17.5 |
+| `tolerances` | the table of section 17.8 |
 
 `<stem>.<query>.bracket.json`: `format` = `ladruno-limit-bracket`, `format_version`, `problem_sha256`,
 `query_id`, `lower_result_sha256`, `upper_result_sha256`, `lower`, `upper`, `floor_lower`, `floor_upper`,
@@ -602,139 +713,239 @@ The checker name `schema-fixture` is reserved for hand-made fixtures. No gate ma
 
 ### 16.1 Uniform cube
 
-Uniform stress lies in the Lower space and linear velocity in the Upper space, so both are exact on every
-mesh. With `sigma = s e_x e_x`: `sqrt(J2) = |s|/sqrt3`, `I1 = s`, so tension fails at
-`k / (1/sqrt3 + alpha)` and compression at `k / (1/sqrt3 - alpha)`. At the apex, `sigma = p I` and
-`p = k / (3 alpha)`, with Upper field `v = x`. For von Mises, `v = (x, -y/2, -z/2)` gives
-`pi = sqrt3 k`, and `W1 = 1`. A dead traction `f sqrt3 k` leaves `lambda = (1 - f) sqrt3 k`.
+Uniform stress lies in the Lower space and linear velocity in every Upper space, so both are exact on every mesh.
+With `sigma = s e_x e_x`: `sqrt(J2) = |s|/sqrt3`, `I1 = s`, so tension fails at `k / (1/sqrt3 + alpha)` and
+compression at `k / (1/sqrt3 - alpha)`. At the apex, `sigma = p I` and `p = k / (3 alpha)`, with Upper field
+`v = x`. For von Mises, `v = (x, -y/2, -z/2)` gives `pi = sqrt3 k`, and `W1 = 1`. A dead traction `f sqrt3 k` leaves
+`lambda = (1 - f) sqrt3 k`.
 
 ### 16.2 Rigid plate in shear
 
-`sigma_xy = lambda` only, with `t1 = (0, +-1, 0)` on the `x` faces. Upper field `v = (y, 0, 0)` with plate
-velocity `(1, 0, 0)`: the side traction does no work, `pi = k`, `lambda = k`. With `x_ref` raised by `h`
-above the plate centre, `M = (0, 0, h) lambda A`, which is the offset case.
+`sigma_xy = lambda` only, with `t1 = (0, +-1, 0)` on the `x` faces. Upper field `v = (y, 0, 0)` with plate velocity
+`(1, 0, 0)`: the side traction does no work, `pi = k`, `lambda = k`. With `x_ref` raised by `h` above the plate
+centre, `M = (0, 0, h) lambda A`, which is the offset case.
 
-### 16.3 Body-force shear block
+### 16.3 Reference body force on a shear block
 
-`sigma_xy = lambda gamma (H - y)` is linear, so the Lower field is exact on every mesh. Yield at the base
-gives `lambda = k / (gamma H)`. The Upper field `v_x = min(y/h, 1)`, with `h` the first layer, gives
+`sigma_xy = lambda gamma (H - y)` is linear, so the Lower field is exact on every mesh. Yield at the base gives
+`lambda = k / (gamma H)`. The Upper field `v_x = min(y/h, 1)`, with `h` the first layer, gives
 `lambda <= k / (gamma (H - h/2))`, the `shear_band` formula.
 
 ### 16.4 Strip on a thin slab
 
-**Slab equals plane strain.** With `symmetry` on both `z` faces, a plane-strain velocity is admissible in
-the slab, and a plane-strain stress field extended with the optimal `szz` of section 4.4 is admissible too.
-So the slab and the plane-strain collapse loads coincide.
+The slab uses `x` across the footing, `y` through the thickness and `z` upward. `symmetry` on both `y` faces gives
+plane strain: a plane-strain velocity is admissible in the slab, and a plane-strain stress field extended with the
+optimal `syy` of section 4.4 is admissible too, so the two collapse loads coincide.
 
-**The stated box.** The reference is valid for the box because: (a) the walls are **fixed**; (b) the Prandtl
-mechanism has compact support and fits inside. Then the mechanism gives `lambda_box <= target`. A
-half-space admissible stress field restricted to the box is admissible for it, so `lambda_box >= target`.
-With roller walls, (b) still gives the first inequality, but the second is not automatic. **Only the Lower
-assertion relies on the mechanism, and only the Upper assertion relies on the stress extension.**
+**Lemma (box and half-plane).** Let a bonded strip of width `B` act on a weightless half-plane with collapse load
+`lambda_inf`. Let the box have **fixed** walls at `x = +-W` and `z = -D`, with the same ground conditions inside
+it. Suppose (a) a statically admissible field exists for the half-plane at `lambda_inf`, and (b) a collapse mechanism
+at `lambda_inf` has support in the closed box. Then `lambda_box = lambda_inf`.
 
-**Mechanism extent,** footing half-width `b`, `beta = pi/4 + phi/2`: `r0 = b / cos(beta)`,
-`r1 = r0 exp((pi/2) tan(phi))`. It reaches `x = b + 2 r1 cos(pi/4 - phi/2)` and depth at most `r1`. For
-`phi = 0`: `x = 3b`, depth `sqrt2 b`. For `phi = 20 deg`, `b = 1`: `x = 6.06`, depth at most `3.09`.
+*Proof.* The mechanism vanishes on and beyond the walls, so it is admissible for the box and `lambda_box <= lambda_inf`.
+A fixed wall imposes no stress condition, so the half-plane field restricted to the box is admissible and
+`lambda_box >= lambda_inf`. A symmetric half model follows by averaging a field with its mirror image, which is
+admissible by convexity. *End.*
 
-**Values.** The slip-line invariant along the fan gives `Nq = exp(pi tan(phi)) tan^2(beta)`, and
-`Nc = (Nq - 1) cot(phi)`, tending to `2 + pi`. A bonded footing gives the same value as a smooth one here:
-the wedge moves with the footing, and a smooth-footing stress field is admissible for a bonded footing.
+The gate compares box bounds with the half-plane value only under this lemma. Rollers lose the second inequality.
+The Lower assertion uses (b) only, and the Upper assertion uses (a) only.
+
+**Extents,** footing half-width `b = B/2`, `beta = pi/4 + phi/2`, measured from the **centreline**:
+`r0 = b / cos(beta)`, `r1 = r0 exp((pi/2) tan(phi))`. The Prandtl mechanism reaches `x = b + 2 r1 cos(pi/4 - phi/2)` and
+depth at most `r1`. For `phi = 0` this is `x = 1.5 B` and depth `B / sqrt2`, the frozen minimum. For `phi = 20 deg`,
+`b = 1`: `x = 6.06`, depth at most `3.09`. The gate boxes have `W = 4`, `D = 2` for `phi = 0` and `W = 8`, `D = 4` for
+`phi = 20 deg`, with `B = 2`.
+
+**Values.** The slip-line invariant along the fan gives `Nq = exp(pi tan(phi)) tan^2(beta)` and
+`Nc = (Nq - 1) cot(phi)`, tending to `2 + pi`. A bonded footing gives the same value as a smooth one: the wedge
+moves with the footing, and a smooth-footing stress field is admissible for a bonded footing.
+
+**Gate.** On the listed finest mesh, the certified bracket has gap at most `MAX_GAP_STRIP` for the Tresca strip and
+`MAX_GAP_PRANDTL` for the Prandtl cases, and refines monotonically along the nested pair.
+
+### 16.5 Gravity
+
+**Rigid-motion work (L0).** For `v = u + w x (x - x_p)`, `int b . v dV = b . (u V + w x S)`, with `S` the first moment
+about `x_p`. Case `gravity_work_rigid_motion` checks the volume weights. Every symmetric rule integrates a rigid motion,
+so wrong quadrature is caught by the quadratic field of the negative fixture instead.
+
+**Dead-load shear layer, exact.** Layer `0 <= z <= H`, fixed base, dead body force `(gamma, 0, 0)`, top traction
+`(lambda, 0, 0)`, roller `y` faces, side tractions `+-(0, 0, lambda + gamma (H - z))`. The field
+`sigma_zx = lambda + gamma (H - z)` is in equilibrium and is linear. It first yields at the base, so
+`lambda* >= k - gamma H`. The Upper field `v_x = min(z/h, 1)` has no lateral strain, so it joins the rigid layer above
+it without a jump. It gives `lambda <= k - gamma (H - h/2)`. Letting `h -> 0`, **`lambda* = k - gamma H`**.
+
+**Weighted Drucker-Prager column, exact.** Fixed top, roller sides, body force `(0, 0, -gamma)`, base traction
+`(0, 0, -lambda)`. The hydrostatic field `sigma = (lambda + gamma z) I` is admissible up to the apex at the top. The Upper
+band `v_z = -min((H - z)/h, 1)` is one-dimensional, and for `2 sqrt3 alpha <= 1` its strain lies in the flow cone. It gives
+`lambda <= k/(3 alpha) - gamma (H - h/2)`. Hence **`lambda* = k/(3 alpha) - gamma H`**.
+
+**Von Mises column: a sandwich, not an exact value.** Free sides, smooth base, top pressure `lambda`, unit weight `gamma`.
+
+```text
+sqrt3 k - gamma H   <=   lambda*   <=   sqrt3 k - gamma H / 2
+```
+
+- Lower field: `sigma_zz = -lambda - gamma (H - z)` alone. It reaches yield only at the base.
+- Upper field: uniform compression, `v = (x/(2H), y/(2H), -z/H)`.
+
+**`sqrt3 k - gamma H` is not the collapse load of a finite column.** The material above the base has spare strength, so
+self-equilibrated lateral stress can confine the base: horizontal equilibrium needs only `int sigma_xx dz = 0` on each
+vertical section. A rigid block above a thin plastic layer is not available either, because the layer's lateral flow
+would need a velocity jump that grows as the layer thins. Uncommitted check, 2026-11-18, Clarabel 0.11.1, 768 tets,
+`k = 1, gamma = 0.25, H = 2`: `estimate: L=1.360, U=1.3835`, against the static value `1.232`.
+
+**Which case kills the zero-gravity mutant.** `vm_dead_gravity_shear_layer` is the designated killer. With gravity zeroed
+its Upper value rises to `k`, above `upper_le_formula`, and its Lower value falls below the target. Uncommitted check on
+24 tets: `estimate: L=0.247, U=0.992` against `L=0.700, U=0.725` with gravity. `dp_weighted_apex_column` and
+`vm_weighted_column_sandwich` also fail their Upper limits.
+
+**Level-ground von Mises footings are insensitive to gravity.** On a level ground `z = 0` with fixed or roller walls,
+add `gamma z I` to any admissible stress: it balances the weight, leaves `J2` unchanged, adds no shear on rollers, and
+vanishes on the ground and footing. For an isochoric field, `int v_z dV = sum of boundary terms of z v . n`, which vanish on
+the ground (`z = 0`), fixed walls (`v = 0`) and rollers (`v . n = 0`), and across facets with zero normal jump. So weight
+changes **neither bound**. `tresca_strip_weighted_insensitive` records this. **No level-ground von Mises footing case can
+detect a gravity defect.**
 
 ## 17. Certificate
 
-The checker works from the problem and result only, rebuilds every operator, and never reads solver cones.
+The checker works from the problem and result only, rebuilds every operator, and never reads solver cones or solver
+tolerances. It always runs **affine projection, then inequality repair, then a full recheck of the final field.**
 
-### 17.1 Lower procedure
+### 17.1 Terms
 
-1. Check hashes, query, formulation, straightness and volumes.
-2. Compute scaled residuals (section 17.4). If `rho_eq > TOL_EQ_ACCEPT`, the result is an estimate.
-3. Correct equalities with a minimum-norm `delta sigma`. Require `rho_eq_final <= TOL_EQ_FINAL`.
-4. Evaluate `g_ei = sqrt(J2) + alpha I1 - k` from **principal stresses**. If
-   `max g / S_ref > TOL_CONE_ACCEPT`, the result is an estimate.
-5. If any `g_ei > -TOL_CONE_MARGIN S_ref`, **repair with a strictly admissible field**
-   `(sigma_int, value_int)`, which must satisfy the same equalities and `g_int <= -TOL_INTERIOR_MIN S_ref`. Use
-   `mu = max (g + m) / (g - g_int)`, `m = TOL_CONE_MARGIN S_ref`, over the offending vertices, and
-   `sigma_new = (1 - mu) sigma + mu sigma_int`. Convexity gives admissibility.
-   `value_new = (1 - mu) value + mu value_int`.
-6. `sigma_int = 0`, `value_int = 0` is available only when `b0`, `t0` and `F0` are all zero and every `k > 0`.
-   Otherwise the field must be supplied as `interior_sigma` and is checked like the candidate. If none
-   exists, the result stays an estimate with `no_interior_field`. Require `mu <= TOL_REPAIR_MAX`.
+`A x = g` is the affine system of the bound, with the rows of sections 17.3 and 17.4. `A_hat` is `A` with each row divided
+by its largest absolute entry.
 
-### 17.2 Upper procedure
+- **Backward error.** `r = A x - g` and `omega = max_i |r_i| / (|A| |x| + |g|)_i`, evaluated in double precision.
+  A row with zero denominator must have `r_i = 0`. By Oettli and Prager, `x` exactly satisfies a system whose entries of
+  `A` and `g` differ relatively by at most `omega`.
+- **Conditioning.** `kappa_eq = sigma_max(A_hat) / sigma_min+(A_hat)`, the smallest singular value above
+  `TOL_RANK sigma_max`, known within a factor 2. Rows may be dependent.
+- **Move.** `projection_move = |x_P - x|_inf / max(|x|_inf, S_ref)`, with `S_ref` replaced by the largest velocity for
+  Upper fields.
 
-1. Check identity and geometry as above.
-2. Overwrite velocity conditions exactly: fixed nodes to zero, footing nodes from `V`, symmetry nodes by
-   removing the normal part. Before overwriting, the change must be within `TOL_EQ_ACCEPT` of the largest
-   velocity.
-3. Compute `d_ei` by the checker's own operator, and `rho_flow = max c_ei / max |D_ei|_F`. If it exceeds
-   `TOL_FLOW_ACCEPT`, the result is an estimate.
-4. **Correct to an admissible field.** A finite dissipation charge is not a repair: `pi` is `+infinity`
-   outside its domain.
-   - `alpha = 0` vertices: the domain is a subspace with empty interior. Apply a minimum-norm correction
-     `delta v`, homogeneous in the velocity conditions, with `theta(v + delta v) = 0`. Require
-     `rho_iso_final <= TOL_FLOW_FINAL`.
-   - `alpha > 0` vertices: blend with a supplied strictly admissible field,
-     `v_new = (1 - mu) v + mu v_int`, where `v_int` satisfies the same linear conditions, and the same footing
-     velocity for `support`, and has `c < 0` at these vertices and `theta` at the floor at `alpha = 0`
-     vertices. `c_ei` is convex and positively homogeneous, so `c(v_new) <= 0` for
-     `mu = max c / (c - c_int)`.
+### 17.2 Equality acceptance
+
+```text
+tau_eq = TOL_EQ_ROUNDING_FACTOR * u * max(1, kappa_eq),     u = 2^-53
+
+accept only if   omega <= tau_eq   and   kappa_eq * omega <= TOL_FLOOR_MAX
+```
+
+The threshold is a rounding level scaled by the conditioning of this system. It is not a solver tolerance and no solver
+setting enters it. If `kappa_eq * tau_eq > TOL_FLOOR_MAX`, the system cannot support a claim at this precision and the
+result is an estimate with `equality_ill_conditioned`.
+
+### 17.3 Lower procedure
+
+1. Check hashes, query, formulation, straightness and volumes. Recompute the value from the candidate and compare it with
+   the result, within `TOL_VALUE_MATCH`.
+2. **Project.** `x = (lambda, sigma)`, or `sigma` for `support`. Rows: equilibrium, facet continuity, free and traction
+   boundaries, symmetry rows, and unrestrained footing resultants. Use the minimum-norm correction in `A_hat`, with
+   iterative refinement. Require `projection_move <= TOL_PROJECTION_MOVE`.
+3. Evaluate `g_ei = sqrt(J2) + alpha I1 - k` from **principal stresses**. If `max g / S_ref > TOL_CONE_ACCEPT`, stop.
+4. **Repair inequalities**, if any `g_ei > -TOL_CONE_MARGIN S_ref`, with a strictly admissible field `(sigma_int, value_int)`
+   satisfying the same equalities and `g_int <= -TOL_INTERIOR_MIN S_ref`:
+   `mu = max (g + m) / (g - g_int)`, `m = TOL_CONE_MARGIN S_ref`, `sigma_new = (1 - mu) sigma + mu sigma_int`,
+   `value_new = (1 - mu) value + mu value_int`. Require `mu <= TOL_REPAIR_MAX`.
+5. `sigma_int = 0`, `value_int = 0` is available only when `b0`, `t0` and `F0` are all zero and every `k > 0`. Otherwise it
+   must be supplied as `interior_sigma` and is itself projected and checked. If none exists, the result stays an estimate
+   with `no_interior_field`.
+6. **Recheck the final field from scratch:** `omega`, every traction and resultant row, and `g_ei <= 0` from principal
+   stresses.
+
+### 17.4 Upper procedure
+
+1. As Lower step 1, with the value recomputed from the candidate velocity.
+2. **Project.** `x = (v, V)`. Rows: fixed nodes, roller nodes, rigid footprint, restrained components, `V = d` for `support`,
+   `theta = 0` at every `alpha = 0` element vertex, and `n . c_B = 0` on every coefficient where `tau = 0`. Work normalisation
+   is **not** a row. Require `projection_move <= TOL_PROJECTION_MOVE`.
+3. Compute `d_ei` and `c_B` with the checker's own operators. `rho_flow = max c_ei / max |D_ei|_F` and
+   `rho_jump_cone = max c_FB / max |c_B|`, over the remaining inequality conditions. If either exceeds `TOL_FLOW_ACCEPT`,
+   stop with `flow_violation_too_large`.
+4. **Repair inequalities** only by an admissible construction. `pi` and `pi_J` are `+infinity` outside their domains, so a
+   finite dissipation charge is not a repair.
+   - von Mises: after projection no inequality remains. **No repair is needed.**
+   - Drucker-Prager: blend with a supplied field `(v_int, V_int)` satisfying the same equalities, the same `V = d` for
+     `support`, and `c < 0` strictly: `v_new = (1 - mu) v + mu v_int`, `mu = max c / (c - c_int)`, `mu <= TOL_REPAIR_MAX`.
+     `c_ei` and `c_FB` are convex and positively homogeneous, so the blend is admissible.
    - If no construction exists, the result stays an estimate with `no_admissible_correction`.
 5. Require `W1 >= TOL_WORK_MIN * W_scale` for ray forms, with `W_scale` the sum of absolute work terms.
-6. `D = sum (V_e/4) pi(d_ei)`, with `pi` from section 4.3. Ray forms: `U = (D - W0) / W1`, so no exact
-   normalisation is needed. `support`: `U = D - W0`.
+6. `D = sum (V_e/4) pi(d_ei) + sum (A_F/6) pi_J(c_B)`. Ray forms: `U = (D - W0) / W1`, so no exact normalisation is needed.
+   `support`: `U = D - W0`.
+7. **Recheck the final field from scratch:** `omega`, all conditions of step 2, `c <= 0` at `alpha > 0` conditions, and `U`.
 
-### 17.3 Outcome
+### 17.5 What "certified" means
 
-Compare the recomputed value before repair with the result's `value`. A difference above
-`TOL_EQ_ACCEPT * max(|value|, |recomputed|)` gives `value_mismatch`. That catches a wrong normalisation or
-swapped labels.
+A **certified bound** means all of the following held for the final field `x_c`, as evaluated in double precision by the
+independent checker:
 
-`floor = max(FLOOR_MIN_REL, final residual) * |value_certified|`. It is a floating-point statement, not a
-theorem. "Rigorous" means rigorous for the stated idealisation, up to this floor.
+1. `x_c` satisfies every affine condition exactly for a problem whose operator and load entries differ relatively from the
+   stated ones by at most `omega <= tau_eq`;
+2. every inequality passes on the final field, with the margins above: no flow or jump condition is merely charged for;
+3. the value is the theorem's value for `x_c`, recomputed by the checker;
+4. the reported `floor = max(FLOOR_MIN_REL, kappa_eq * omega) * |value_certified|` estimates, to first order, the effect of
+   that perturbation and of rounding on the value.
 
-Reason codes: `no_candidate`, `hash_mismatch`, `query_mismatch`, `formulation_not_admitted`,
-`curved_element`, `degenerate_element`, `boundary_violation`, `equality_residual_too_large`,
-`equality_correction_failed`, `cone_violation_too_large`, `no_interior_field`, `interior_field_invalid`,
-`repair_too_large`, `flow_violation_too_large`, `no_admissible_correction`, `work_nonpositive`,
-`value_mismatch`, `unsupported_domain_claim`.
+It is **not** an interval-arithmetic proof. "Rigorous" means rigorous for the stated idealisation, up to this floor.
 
-### 17.4 Scaled metrics
+### 17.6 Outcome codes and negative fixtures
+
+Reason codes: `no_candidate`, `hash_mismatch`, `query_mismatch`, `formulation_not_admitted`, `formulation_not_applicable`,
+`curved_element`, `degenerate_element`, `boundary_violation`, `projection_move_too_large`, `equality_residual_above_floor`,
+`equality_ill_conditioned`, `cone_violation_too_large`, `no_interior_field`, `interior_field_invalid`, `repair_too_large`,
+`flow_violation_too_large`, `no_admissible_correction`, `work_nonpositive`, `value_mismatch`, `unsupported_domain_claim`.
+
+`tests/data/limit/negative_fixtures.json` lists one fixture per false-green item of the harness. `stage` is `schema` (the
+format validators refuse it), `checker` (the full procedure must end as an estimate with one of the `expect` codes) or
+`final_check`. A `final_check` fixture goes straight to the recheck, **without projection**, and must be refused with
+`equality_residual_above_floor`. It sits at three times `tau_eq`, using the recorded `kappa_reference`.
+
+### 17.7 Scaled metrics
 
 `L_ref` is the bounding-box diagonal.
-`S_ref = max(max k, max |sigma|, max |t0|, |value| max |t1|, L_ref max(|b0| + |value| |b1|), max_f |F_f| / A_f)`,
-using the components of `sigma` in the Lower case and omitting that term in the Upper case. For `support`,
-the `|value|` terms are absent.
+`S_ref = max(max k, max |sigma|, max |t0|, |value| max |t1|, L_ref max(|b0| + |value| |b1|), max_f |F_f| / A_f)`, using the
+components of `sigma` for Lower and omitting that term for Upper. For `support`, the `|value|` terms are absent.
 
-`checks` holds these keys, `null` where not applicable: `rho_div` (`|div sigma + b|_inf h_e / S_ref`),
-`rho_jump`, `rho_bc`, `rho_resultant` (force over `S_ref A_f`, moment over `S_ref A_f ell`), `rho_eq_final`,
-`rho_cone`, `repair_mu`, `straightness_max`, `rho_flow`, `rho_iso_final`, `work_reference`.
+`checks` holds these keys, `null` where not applicable. Diagnostics of the candidate before projection: `rho_div`
+(`|div sigma + b|_inf h_e / S_ref`), `rho_jump`, `rho_bc`, `rho_resultant` (force over `S_ref A_f`, moment over
+`S_ref A_f ell`). Final-field values: `projection_move`, `omega_eq`, `kappa_eq`, `tau_eq`, `rho_cone`, `repair_mu`,
+`straightness_max`, `rho_flow`, `rho_jump_cone`, `work_reference`.
 
-### 17.5 Named tolerances
+### 17.8 Named tolerances
 
-Values are provisional until 237c and 237d calibrate them on the exact cases. A value changes only by
-amendment, with evidence, and **never to rescue a run**.
+Values are provisional until 237c and 237d calibrate them on the exact cases. A value changes only by amendment, with
+evidence, and **never to rescue a run**.
 
 | Name | Value | Rationale |
 |---|---|---|
 | `TOL_GEOM_STRAIGHT` | 1e-9 | Relative to `h_e`. Admits meshes written with 12 significant digits at `L/h` up to 1e3 |
 | `TOL_GEOM_VOLUME` | 1e-10 | `V_e >= tol h_e^3`. A regular tetrahedron has 0.118; below this, gradients amplify rounding by 1e10 |
 | `TOL_GEOM_PLANE` | 1e-9 | Normal deviation and offset, relative to `L_ref` |
-| `TOL_EQ_ACCEPT` | 1e-6 | Largest scaled equality residual worth correcting; about 10 to 100 times interior-point feasibility tolerance |
-| `TOL_EQ_FINAL` | 1e-11 | After correction; about 5e4 unit roundoffs, allowing for operator conditioning |
-| `TOL_CONE_ACCEPT` | 1e-6 | Same scale as `TOL_EQ_ACCEPT` |
-| `TOL_CONE_MARGIN` | 1e-12 | Clearance over eigenvalue rounding, a few thousand unit roundoffs of `S_ref` |
+| `TOL_RANK` | 1e-10 | Separates numerical zero singular values of row-scaled operators from the smallest real ones |
+| `TOL_EQ_ROUNDING_FACTOR` | 64 | Multiple of `u` in `tau_eq`. A row has at most about 60 entries, so its evaluation error is about that many `u` |
+| `TOL_FLOOR_MAX` | 1e-6 | Largest first-order value effect `kappa_eq * omega` a certificate may carry |
+| `TOL_PROJECTION_MOVE` | 1e-6 | A certificate speaks about this candidate. A larger move means a different field |
+| `TOL_VALUE_MATCH` | 1e-6 | The result's value must be the value of its own field. Catches normalisation and quadrature faults |
+| `TOL_CONE_ACCEPT` | 1e-6 | Largest scaled yield violation worth repairing |
+| `TOL_CONE_MARGIN` | 1e-12 | Clearance over eigenvalue rounding, a few thousand `u` of `S_ref` |
 | `TOL_INTERIOR_MIN` | 1e-6 | A strictly admissible field must clear yield by this, so `mu` stays small |
 | `TOL_REPAIR_MAX` | 1e-3 | A repair may not move the value by more than about 0.1% |
-| `TOL_FLOW_ACCEPT` | 1e-6 | Flow-rule analogue of `TOL_CONE_ACCEPT` |
-| `TOL_FLOW_FINAL` | 1e-11 | Flow-rule analogue of `TOL_EQ_FINAL` |
+| `TOL_FLOW_ACCEPT` | 1e-6 | Flow-rule and jump-cone analogue of `TOL_CONE_ACCEPT`, for inequality conditions only |
 | `TOL_WORK_MIN` | 1e-12 | `W1` must be meaningfully positive against its own terms |
 | `TOL_FEAS_OK` | 1e-9 | Least-squares residual indistinguishable from zero at this scale |
 | `TOL_FEAS_LOCKED` | 1e-6 | Three decades above `TOL_FEAS_OK`, so solver accuracy cannot move a verdict across the band |
+| `TOL_MONOTONE` | 1e-6 | Allowance for certified floors in the refinement checks of section 13 |
 | `FLOOR_MIN_REL` | 1e-12 | Smallest floating-point floor ever reported |
 | `TOL_CASE_ONE_SIDED` | 1e-6 | Allowance in one-sided case assertions, for floors only |
 | `TOL_CASE_EXACT_GAP` | 1e-6 | Certified gap allowed where both exact fields lie in the discrete spaces |
+| `MAX_GAP_STRIP` | 0.05 | Requirement: resolves `(2 + pi) cu` to about 2.5% either side on the listed finest mesh |
+| `MAX_GAP_PRANDTL` | 0.10 | Requirement for the frictional strips, whose fans are wider and less resolved |
+| `MAX_GAP_3D_VM` | 0.30 | Requirement for true-3D von Mises on the 22,720-tet mesh; useful to judge a 3D result |
+| `MAX_GAP_3D_DP` | 0.50 | Requirement for true-3D Drucker-Prager on the 22,720-tet mesh |
 
-### 17.6 Status terms
+### 17.9 Status terms
 
 | Term | Values and meaning |
 |---|---|
@@ -743,32 +954,58 @@ amendment, with evidence, and **never to rescue a run**.
 | Inadmissible | Any estimate. It cannot satisfy a gate |
 | Bracket `status` | `bracket`: `L <= U`. `order_within_floor`: `U < L <= U + floors`. `contradiction`: `L > U + floors`, which **stops the program** |
 | Gap | `(U - L) / ((U + L) / 2)`, `null` unless `L > 0` and the status is `bracket` |
-| Feasibility `status` | section 11 |
+| Feasibility `status` | section 11.1 |
 
-`primal_infeasible` for Lower or Upper, and `dual_infeasible`, are recorded as results. Write `[L, U]` only
-for a certified bracket. Otherwise write `estimate: L=..., U=...`. Report `domain_claim`, criterion,
-`flow_rule` and interface law with every result.
+`primal_infeasible` for Lower or Upper, and `dual_infeasible`, are recorded as results. Write `[L, U]` only for a certified
+bracket. Otherwise write `estimate: L=..., U=...`. Report `domain_claim`, criterion, `flow_rule` and interface law with
+every result.
 
-## 18. Proposed design changes, pending the owner's decision
+## 18. Decision record
 
-None of these is an owner decision. Each states what this contract does meanwhile.
+### 18.1 Accepted owner amendments
 
-| Id | Proposal | Reason | In this contract |
-|---|---|---|---|
-| P-1 | Treat continuous P2 as a baseline under test, with a true-3D feasibility gate. Confirm the planned Drucker-Prager angles | Exact isochory at tet vertices over-constrains P2 on unstructured tetrahedra. See the note below | Sections 8, 11. Angles 10, 20 and 30 degrees are placeholders |
-| P-2 | Name and version formulations | A new Upper element must not change the meaning of existing cases | Section 8 |
-| P-3 | Enforce jump cones on Bernstein coefficients | P2 jumps are quadratic, so facet-vertex checks do not cover the facet. The same applies to `no_tension` and `coulomb` on the Upper side | Section 12; refused in version 0 |
-| P-4 | `domain_claim` per bound; a bracket claims what both support; the Lower bound can also extend by zero when weightless with free walls | One bracket can mix claims | Section 14 |
-| P-5 | Repair only by an admissible construction | `pi` is infinite off the cone, so a charge pays for nothing. A Lower interior field must itself satisfy equilibrium, so zero works only with no fixed load | Sections 17.1, 17.2 |
-| P-6 | Add restrained footing components | A fixed force component is not a restrained velocity. Without it a half-model strip is wrongly constrained | Sections 6, 7 |
-| P-7 | State that the `(2 + pi) cu` gate needs fixed walls and a box containing the mechanism | With rollers, the box load need not equal the half-space load | Section 16.4; case geometry |
+The owner accepted these for ADR 237 on 2026-11-18.
 
-**Measured context, all estimates, none certified.** Uncommitted checks of 2026-11-18, Clarabel 0.11.1,
-gmsh 4.15, `upper.p2c-vertex.v0`, square bonded footing with fixed walls: `rho_feas` at `phi = 0` was
-`1.0e-1`, `4.1e-2`, `2.1e-2` on the committed meshes of 243, 463 and 949 tetrahedra, and the conic Upper
-problem reported `PrimalInfeasible` on the two coarser meshes. The half-model strip without restrained
-components gave `estimate: L=1.18, U=2.15` on 192 tetrahedra against a target of 5.14. With them it gave
-`estimate: L=4.68, U=6.17`.
+| Id | Amendment | In this contract |
+|---|---|---|
+| A1 | True-3D locking gate. Continuous P2 is a tested control, not an assumed element | Sections 8, 10, 11 |
+| A2 | Whole-facet jump checks. P2 jumps are quadratic | Section 12 |
+| A3 | `domain_claim` per bound. A bracket claims only what both bounds support | Section 14 |
+| A4 | Certificate repair only by an admissible construction | Sections 17.3, 17.4 |
+
+### 18.2 Orchestrator P0 rulings
+
+These are orchestrator rulings for P0, recorded on 2026-11-18. **They are not owner decisions.**
+
+| Id | Ruling | In this contract |
+|---|---|---|
+| R1 | Versioned formulation ids, with cases that do not change meaning | Section 8 |
+| R2 | `upper.p2d-jump-bernstein.v0` is the P0 Upper formulation; `upper.p2c-vertex.v0` stays a control | Sections 8, 12 |
+| R3 | The frozen true-3D set: `phi = 0, 10, 20, 30`, fixed and roller walls, non-structured meshes at three or more sizes, rank, residual and certified quality | Section 11; `upper_gate_3d` cases |
+| R4 | Restrained footing components | Sections 6, 7 |
+| R5 | Strip gate: maximum gap, fixed `x` and `z` walls, extents of at least `1.5 B` and depth `B / sqrt2`, and the box lemma. Here `z` is the depth axis and `1.5 B` is measured from the centreline | Section 16.4 |
+| R6 | Zero extension may also serve a Lower bound when weightless with free walls; zero is an interior Lower field only without fixed loads | Sections 14, 17.3 |
+| R7 | Certificate order: affine projection, inequality repair, full recheck; equality acceptance is rounding-level and scaled by conditioning | Section 17 |
+| R8 | Gravity set: exact shear layer as the zero-gravity killer, exact weighted Drucker-Prager column, von Mises column as a two-sided sandwich only | Section 16.5 |
+
+### 18.3 Evidence notes
+
+All values here are **estimates**, from uncommitted checks of 2026-11-18 with Clarabel 0.11.1, unless marked as a probe.
+None is a certified bound.
+
+- `Ladruno_files/testbed/limit_analysis/p2_isochory_probe.py` is a tracked **linear-algebra probe, not a bound**. Its output
+  file is the record for the control's locking and for the jump space's mobility.
+- That probe finds the control locked with **fixed** walls (`rho_feas` 1.0e-1, 4.1e-2, 2.1e-2 on 243, 463, 949 tets) but
+  mobile with **roller** walls (`rho_feas` near 1e-11). Roller cases therefore do not discriminate locking. The jump
+  space is mobile for both wall types (`rho_feas` near 1e-11).
+- Half-model strip without restrained components: `estimate: L=1.18, U=2.15` on 192 tets, against 5.14.
+- Tresca strip, 3,072 tets, jump formulation: `estimate: L=5.005, U=5.186`.
+- Prandtl strips, `phi = 20 deg`, 3,072 tets, jump formulation: cohesion `estimate: L=13.39, U=15.40` against 14.83;
+  surcharge `estimate: L=5.873, U=6.604` against 6.399.
+- True 3D, `phi = 0`, fixed walls, jump formulation: `estimate: L=3.348, U=9.244` on 1,944 uniform-refined tets;
+  `estimate: L=4.548, U=6.419` on the 2,840-tet graded mesh. No value on the 22,720-tet gate mesh exists yet.
+- True 3D, `phi = 30 deg`, fixed walls, 1,944 tets: `estimate: L=9.65, U=168.9`. Whether `MAX_GAP_3D_DP` is reachable is
+  **not established**.
 
 ## 19. Amendment log
 

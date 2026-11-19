@@ -1,22 +1,26 @@
-# limit_cases.txt -- analytic and formulation cases for limit analysis (WP-237a).
+# limit_cases.txt -- analytic and gate cases for limit analysis (WP-237a).
 # Interface: tests/limit_interface.md. Format version: limit-cases 0.
+# STATUS: proposed for freeze; the orchestrator has not frozen this file.
 #
 # FORMAT (line based, ASCII)
 #   '#' starts a comment line; blank lines are ignored. Tokens are separated by whitespace.
 #   'case <name>' opens a block, 'end' closes it. Inside, each line is '<key> <tokens...>'.
 #
 #   status      active | todo
-#   class       exact_on_mesh | exact_lower_on_mesh | one_sided_reference | upper_feasibility_3d
+#   class       operator_work | exact_on_mesh | exact_lower_on_mesh | sandwich
+#               | one_sided_reference | upper_gate_3d
 #   desc        free text
 #   source      free text; repeatable
-#   checked     <date> free text saying how the value was checked; repeatable
-#   units       free text
+#   checked     <date> how the value was checked; repeatable
+#   units       free text; the first two parts name length and force
 #   box         x0 y0 z0 x1 y1 z1
-#   mesh        nx ny nz                 structured Kuhn mesh (interface section 3.5); repeatable
-#   mesh_file   <file>                   tet4 mesh under tests/data/limit/; repeatable
+#   mesh        nx ny nz                 structured Kuhn mesh (interface 3.5); repeatable
+#   mesh_file   <file> [refine r]        tet4 mesh under tests/data/limit/, refined r times (3.6)
 #   nested      i j                      mesh j is the uniform refinement of mesh i
-#   formulation <id>                     formulation the assertions were written for; repeatable
+#   formulation <id>                     every assertion and gate applies to this formulation
+#   control     <id>                     recorded for comparison; nothing is asserted on it
 #   phi_deg     <deg>                    friction angle behind a plane-strain matched alpha, k
+#   gravity_sensitive yes | no           does zeroing gravity change a checked quantity
 #   region      <name> von_mises k <k> [b0 x y z] [b1 x y z]
 #   region      <name> drucker_prager k <k> alpha <a> [b0 x y z] [b1 x y z]
 #   footing     <name> xref x y z law bonded
@@ -28,29 +32,51 @@
 #   query       <id> ray
 #   F0, F1      <footing> Fx Fy Fz Mx My Mz      default zero
 #   restrained  <footing> <ux|uy|uz|rx|ry|rz>...
+#   probe       rigid_motion u x y z w x y z about x y z      (class operator_work)
 #   target      <value> formula <name> [key=value ...]   |   target none
 #   assert      lower_le_target <tol> | upper_ge_target <tol> | lower_ge_target <tol>
-#               | gap_le <value> | upper_le_formula <name> [key=value ...]
-#               | feasibility_status formulation_feasible
-#   on_failure  formulation_result           required by class upper_feasibility_3d
+#               | gap_le <value> | gravity_work_eq <tol>
+#               | lower_ge_formula <name> [key=value ...] | upper_le_formula <name> [key=value ...]
+#   gate        kinematic_status formulation_feasible
+#               | certified_bracket mesh <i>
+#               | gap_le <NAMED_LIMIT> mesh <i>
+#               | upper_nonincrease <i> <j> | lower_nondecrease <i> <j>
 #
 # One-sided meaning, with T the target and L, U CERTIFIED values:
 #   lower_le_target tol   L <= T + tol*|T|
 #   upper_ge_target tol   U >= T - tol*|T|
 #   lower_ge_target tol   L >= T - tol*|T|   only where the exact field lies in the Lower space
+#   lower_ge_formula      L >= formula - TOL_CASE_ONE_SIDED*|formula|   an explicit Lower field exists
+#   upper_le_formula      U <= formula + TOL_CASE_ONE_SIDED*|formula|   an explicit Upper field exists
 #   gap_le g              (U - L) / ((U + L) / 2) <= g
-# An estimate never satisfies an assertion.
+# An estimate never satisfies an assertion or a gate.
 #
-# Every target is valid for the stated box, with its exact wall conditions. See interface
-# section 16 for each derivation. 'checked' says what was actually done; no primary text was
-# read unless a line says so.
+# Every target is valid for the stated box with its exact wall conditions. Interface section 16 holds
+# each derivation. 'checked' says what was actually done; no primary text was read unless stated.
+
+case gravity_work_rigid_motion
+status      active
+class       operator_work
+desc        L0: body-force work of a rigid motion equals b.(u V + w x S), with S the first moment about the point.
+source      derived: interface section 16.5
+checked     2026-11-18 closed form derived; evaluated with the P2 volume weights in the contract test
+units       length m; force kN; stress kPa
+box         0 0 0 1 2 3
+mesh        1 1 1
+mesh        2 1 1
+region      soil von_mises k 1.0 b0 1 -2 0.5
+gravity_sensitive yes
+probe       rigid_motion u 0.3 -0.1 0.2 w 0.05 0.1 -0.2 about 0 0 0
+target      7.8 formula gravity_work
+assert      gravity_work_eq 1e-12
+end
 
 case vm_uniaxial_tension
 status      active
 class       exact_on_mesh
 desc        Unit cube in uniaxial tension, von Mises. Uniform stress and linear velocity are exact.
 source      derived: interface section 16.1
-checked     2026-11-18 closed form derived; both programs solved on 6 tets in an uncommitted check
+checked     2026-11-18 closed form derived; Lower, control and jump Upper solved in an uncommitted check
 units       length m; force kN; stress kPa
 box         0 0 0 1 1 1
 mesh        1 1 1
@@ -58,6 +84,7 @@ mesh        2 2 2
 nested      0 1
 formulation lower.p1d-vertex.v0
 formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
 region      soil von_mises k 1.0
 boundary    x0 symmetry plane x 0
 boundary    y0 symmetry plane y 0
@@ -77,7 +104,7 @@ status      active
 class       exact_on_mesh
 desc        Unit cube in uniaxial tension, Drucker-Prager. lambda = k / (1/sqrt(3) + alpha).
 source      derived: interface section 16.1
-checked     2026-11-18 closed form derived; both programs solved on 6 tets in an uncommitted check
+checked     2026-11-18 closed form derived; Lower, control and jump Upper solved in an uncommitted check
 units       length m; force kN; stress kPa
 box         0 0 0 1 1 1
 mesh        1 1 1
@@ -85,6 +112,7 @@ mesh        2 2 2
 nested      0 1
 formulation lower.p1d-vertex.v0
 formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
 region      soil drucker_prager k 1.0 alpha 0.2
 boundary    x0 symmetry plane x 0
 boundary    y0 symmetry plane y 0
@@ -104,7 +132,7 @@ status      active
 class       exact_on_mesh
 desc        Unit cube in uniaxial compression, Drucker-Prager. lambda = k / (1/sqrt(3) - alpha).
 source      derived: interface section 16.1
-checked     2026-11-18 closed form derived; both programs solved on 6 tets in an uncommitted check
+checked     2026-11-18 closed form derived; Lower, control and jump Upper solved in an uncommitted check
 units       length m; force kN; stress kPa
 box         0 0 0 1 1 1
 mesh        1 1 1
@@ -112,6 +140,7 @@ mesh        2 2 2
 nested      0 1
 formulation lower.p1d-vertex.v0
 formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
 region      soil drucker_prager k 1.0 alpha 0.2
 boundary    x0 symmetry plane x 0
 boundary    y0 symmetry plane y 0
@@ -131,7 +160,7 @@ status      active
 class       exact_on_mesh
 desc        Unit cube at the Drucker-Prager apex. lambda = k / (3 alpha).
 source      derived: interface section 16.1
-checked     2026-11-18 closed form derived; both programs solved on 6 tets in an uncommitted check
+checked     2026-11-18 closed form derived; Lower, control and jump Upper solved in an uncommitted check
 units       length m; force kN; stress kPa
 box         0 0 0 1 1 1
 mesh        1 1 1
@@ -139,6 +168,7 @@ mesh        2 2 2
 nested      0 1
 formulation lower.p1d-vertex.v0
 formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
 region      soil drucker_prager k 1.0 alpha 0.2
 boundary    x0 symmetry plane x 0
 boundary    y0 symmetry plane y 0
@@ -158,7 +188,7 @@ status      active
 class       exact_on_mesh
 desc        Uniaxial tension with a fixed traction of 0.4 sqrt(3) k. Tests the sign of W0.
 source      derived: interface section 16.1
-checked     2026-11-18 closed form derived; both programs solved on 6 tets in an uncommitted check
+checked     2026-11-18 closed form derived; Lower, control and jump Upper solved in an uncommitted check
 units       length m; force kN; stress kPa
 box         0 0 0 1 1 1
 mesh        1 1 1
@@ -166,6 +196,7 @@ mesh        2 2 2
 nested      0 1
 formulation lower.p1d-vertex.v0
 formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
 region      soil von_mises k 1.0
 boundary    x0 symmetry plane x 0
 boundary    y0 symmetry plane y 0
@@ -185,7 +216,7 @@ status      active
 class       exact_on_mesh
 desc        Bonded rigid plate shears a von Mises block; balancing traction on the x faces. lambda = k.
 source      derived: interface section 16.2
-checked     2026-11-18 closed form derived; both programs solved on 48 tets in an uncommitted check
+checked     2026-11-18 closed form derived; Lower, control and jump Upper solved in an uncommitted check
 units       length m; force kN; stress kPa
 box         0 0 0 1 1 1
 mesh        1 1 1
@@ -193,6 +224,7 @@ mesh        2 2 2
 nested      0 1
 formulation lower.p1d-vertex.v0
 formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
 region      soil von_mises k 1.0
 footing     plate xref 0.5 1 0.5 law bonded
 boundary    base fixed plane y 0
@@ -214,7 +246,7 @@ status      active
 class       exact_on_mesh
 desc        Same as vm_plate_shear with x_ref 0.3 above the plate, so Mz = 0.3 Fx. Tests the moment sign.
 source      derived: interface section 16.2
-checked     2026-11-18 closed form derived; both programs solved on 48 tets in an uncommitted check
+checked     2026-11-18 closed form derived; Lower, control and jump Upper solved in an uncommitted check
 units       length m; force kN; stress kPa
 box         0 0 0 1 1 1
 mesh        1 1 1
@@ -222,6 +254,7 @@ mesh        2 2 2
 nested      0 1
 formulation lower.p1d-vertex.v0
 formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
 region      soil von_mises k 1.0
 footing     plate xref 0.5 1.3 0.5 law bonded
 boundary    base fixed plane y 0
@@ -241,15 +274,17 @@ end
 case vm_body_force_shear_block
 status      active
 class       exact_lower_on_mesh
-desc        Body force lambda*(1,0,0) shears a block on a fixed base. lambda = k/(gamma H). Tests gravity.
+desc        Reference body force lambda*(1,0,0) shears a block on a fixed base. lambda = k/(gamma H).
 source      derived: interface section 16.3
-checked     2026-11-18 closed form derived; both programs solved on 12 and 24 tets in an uncommitted check
+checked     2026-11-18 closed form derived; Lower, control and jump Upper solved in an uncommitted check
 units       length m; force kN; stress kPa
 box         0 0 0 1 1 1
 mesh        1 2 1
 mesh        1 4 1
 formulation lower.p1d-vertex.v0
 formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+gravity_sensitive yes
 region      soil von_mises k 1.0 b1 1 0 0
 boundary    base fixed plane y 0
 boundary    top free plane y 1
@@ -260,43 +295,173 @@ boundary    x1 traction plane x 1 t1_affine 0 1 0 0 0 0 0 -1 0 0 0 0
 query       q ray
 target      1.0 formula shear_block k=1 gamma=1 H=1
 assert      lower_le_target 1e-6
-assert      lower_ge_target 1e-6
 assert      upper_ge_target 1e-6
-assert      upper_le_formula shear_band k=1 gamma=1 H=1
+assert      lower_ge_target 1e-6
+assert      upper_le_formula shear_band k=1 gamma=1 H=1 axis=1
+end
+
+case vm_dead_gravity_shear_layer
+status      active
+class       exact_lower_on_mesh
+desc        Dead body force gamma along x on a sheared layer, top traction lambda. lambda* = k - gamma H. KILLS the zero-gravity mutant.
+source      derived: interface section 16.5
+checked     2026-11-18 Lower field and Upper band field derived; uncommitted solve gave L=0.7000 and U=0.725 on 24 tets; with gravity zeroed, L=0.247 and U=0.992
+units       length m; force kN; stress kPa
+box         0 0 0 1 1 1
+mesh        1 1 2
+mesh        1 1 4
+formulation lower.p1d-vertex.v0
+formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+gravity_sensitive yes
+region      soil von_mises k 1.0 b0 0.3 0 0
+boundary    base fixed plane z 0
+boundary    top traction plane z 1 t1 1 0 0
+boundary    y0 symmetry plane y 0
+boundary    y1 symmetry plane y 1
+boundary    x0 traction plane x 0 t0_affine 0 0 -0.3 0 0 0 0 0 0 0 0 0.3 t1 0 0 -1
+boundary    x1 traction plane x 1 t0_affine 0 0 0.3 0 0 0 0 0 0 0 0 -0.3 t1 0 0 1
+query       q ray
+target      0.7 formula dead_shear k=1 gamma=0.3 H=1
+assert      lower_le_target 1e-6
+assert      upper_ge_target 1e-6
+assert      lower_ge_target 1e-6
+assert      upper_le_formula dead_shear_band k=1 gamma=0.3 H=1 axis=2
+end
+
+case dp_weighted_apex_column
+status      active
+class       exact_lower_on_mesh
+desc        Weighted Drucker-Prager column hanging from a fixed top, roller sides, pulled at the base. lambda* = k/(3 alpha) - gamma H.
+source      derived: interface section 16.5
+checked     2026-11-18 Lower field and Upper band field derived; uncommitted solve gave L=1.46667 and jump U=1.47667 on 24 tets
+units       length m; force kN; stress kPa
+box         0 0 0 1 1 1
+mesh        1 1 2
+mesh        1 1 4
+formulation lower.p1d-vertex.v0
+formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+gravity_sensitive yes
+region      soil drucker_prager k 1.0 alpha 0.2 b0 0 0 -0.2
+boundary    top fixed plane z 1
+boundary    bottom traction plane z 0 t1 0 0 -1
+boundary    x0 symmetry plane x 0
+boundary    x1 symmetry plane x 1
+boundary    y0 symmetry plane y 0
+boundary    y1 symmetry plane y 1
+query       q ray
+target      1.4666666666666666 formula dp_apex_column k=1 alpha=0.2 gamma=0.2 H=1
+assert      lower_le_target 1e-6
+assert      upper_ge_target 1e-6
+assert      lower_ge_target 1e-6
+assert      upper_le_formula apex_band k=1 alpha=0.2 gamma=0.2 H=1 axis=2
+end
+
+case vm_weighted_column_sandwich
+status      active
+class       sandwich
+desc        Von Mises column, free sides, smooth base, top pressure lambda. NOT exact: sqrt(3)k - gamma H <= lambda* <= sqrt(3)k - gamma H/2.
+source      derived: interface section 16.5, explicit Lower and Upper fields
+checked     2026-11-18 both fields checked in the contract test; uncommitted estimates L=1.360, jump U=1.3835 on 768 tets show the static value 1.232 is not the collapse load
+units       length m; force kN; stress kPa
+box         0 0 0 1 1 2
+mesh        1 1 2
+mesh        2 2 4
+nested      0 1
+formulation lower.p1d-vertex.v0
+formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+gravity_sensitive yes
+region      soil von_mises k 1.0 b0 0 0 -0.25
+boundary    x0 symmetry plane x 0
+boundary    y0 symmetry plane y 0
+boundary    z0 symmetry plane z 0
+boundary    x1 free plane x 1
+boundary    y1 free plane y 1
+boundary    z1 traction plane z 2 t1 0 0 -1
+query       q ray
+target      none
+assert      lower_ge_formula column_static k=1 gamma=0.25 H=2
+assert      upper_le_formula column_uniform k=1 gamma=0.25 H=2
 end
 
 case tresca_strip_vm_thin_slab
 status      active
 class       one_sided_reference
-desc        Rigid bonded strip on matched von Mises, plane strain by z rollers, half model. q = (2+pi) cu.
+desc        Rigid bonded strip on matched von Mises, plane strain by y rollers, half model, fixed x and z walls. q = (2+pi) cu.
 source      Prandtl (1920), Nachr. Ges. Wiss. Goettingen, Math.-Phys. Kl., 74-85 (mechanism and value)
 source      Bishop (1953), J. Mech. Phys. Solids 2, 43-53, doi:10.1016/0022-5096(53)90026-X (extension of incomplete fields)
-checked     2026-11-18 mechanism work rate derived in interface section 16.4; Bishop bibliographic data checked online, text not read; Prandtl citation recalled, not checked, text not read
-checked     2026-11-18 uncommitted estimate on 192, 768, 3072 tets contained the target; estimates only
+checked     2026-11-18 mechanism work rate derived in interface section 16.4; Bishop bibliographic data checked online, text not read; Prandtl citation recalled, text not read
+checked     2026-11-18 uncommitted estimates contained the target; no certified value exists
 units       length m; force kN per slab; stress kPa; lambda is mean footing pressure
-box         0 -2 0 4 0 0.25
-mesh        8 4 1
-mesh        16 8 2
-mesh        16 8 1
-mesh        32 16 1
+box         0 0 -2 4 0.25 0
+mesh        8 1 4
+mesh        16 2 8
+mesh        16 1 8
+mesh        32 1 16
 nested      0 1
 formulation lower.p1d-vertex.v0
 formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
 region      soil von_mises k 1.0
-footing     strip xref 0 0 0.125 law bonded
-boundary    z0 symmetry plane z 0
-boundary    z1 symmetry plane z 0.25
+footing     strip xref 0 0.125 0 law bonded
+boundary    y0 symmetry plane y 0
+boundary    y1 symmetry plane y 0.25
 boundary    axis symmetry plane x 0
 boundary    far fixed plane x 4
-boundary    base fixed plane y -2
-boundary    contact footing plane y 0 range x 0 1 footing strip
-boundary    surface free plane y 0
+boundary    base fixed plane z -2
+boundary    contact footing plane z 0 range x 0 1 footing strip
+boundary    surface free plane z 0
 query       q ray
-F1          strip 0 -0.25 0 0 0 0
-restrained  strip ux rz
+F1          strip 0 0 -0.25 0 0 0
+restrained  strip ux ry
 target      5.141592653589793 formula prandtl_tresca cu=1
 assert      lower_le_target 1e-6
 assert      upper_ge_target 1e-6
+gate        certified_bracket mesh 3
+gate        gap_le MAX_GAP_STRIP mesh 3
+gate        upper_nonincrease 0 1
+gate        lower_nondecrease 0 1
+end
+
+case tresca_strip_weighted_insensitive
+status      active
+class       one_sided_reference
+desc        As tresca_strip_vm_thin_slab with unit weight 1.5. Same target: level-ground von Mises footings are blind to gravity.
+source      Prandtl (1920), Nachr. Ges. Wiss. Goettingen, Math.-Phys. Kl., 74-85 (mechanism and value)
+source      derived: interface section 16.5 (hydrostatic superposition, isochoric work)
+checked     2026-11-18 insensitivity proved in interface section 16.5; no certified value exists
+units       length m; force kN per slab; stress kPa; lambda is mean footing pressure
+box         0 0 -2 4 0.25 0
+mesh        8 1 4
+mesh        16 2 8
+mesh        16 1 8
+mesh        32 1 16
+nested      0 1
+formulation lower.p1d-vertex.v0
+formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+gravity_sensitive no
+region      soil von_mises k 1.0 b0 0 0 -1.5
+footing     strip xref 0 0.125 0 law bonded
+boundary    y0 symmetry plane y 0
+boundary    y1 symmetry plane y 0.25
+boundary    axis symmetry plane x 0
+boundary    far fixed plane x 4
+boundary    base fixed plane z -2
+boundary    contact footing plane z 0 range x 0 1 footing strip
+boundary    surface free plane z 0
+query       q ray
+F1          strip 0 0 -0.25 0 0 0
+restrained  strip ux ry
+target      5.141592653589793 formula prandtl_tresca cu=1
+assert      lower_le_target 1e-6
+assert      upper_ge_target 1e-6
+gate        certified_bracket mesh 3
+gate        gap_le MAX_GAP_STRIP mesh 3
+gate        upper_nonincrease 0 1
+gate        lower_nondecrease 0 1
 end
 
 case dp_prandtl_cohesion_thin_slab
@@ -306,32 +471,38 @@ desc        Weightless strip, Drucker-Prager matched to c=1, phi=20 deg in plane
 source      Prandtl (1921), Z. angew. Math. Mech. 1, 15-20 (Nc)
 source      Reissner (1924), Proc. 1st Int. Congr. Appl. Mech., Delft, 295-311 (Nq)
 source      Drucker and Prager (1952), Q. Appl. Math. 10, 157-165 (plane-strain matching)
-checked     2026-11-18 Nq from the slip-line invariant and the matching from the projection, both derived in interface sections 4.4 and 16.4; citations recalled, not checked; primary texts not read
-checked     2026-11-18 uncommitted estimate on 768 and 3072 tets contained the target; estimates only
+checked     2026-11-18 Nq from the slip-line invariant and the matching from the projection, derived in interface sections 4.4 and 16.4; citations recalled; primary texts not read
+checked     2026-11-18 uncommitted estimates contained the target; no certified value exists
 units       length m; force kN per slab; stress kPa; lambda is mean footing pressure
-box         0 -4 0 8 0 0.5
-mesh        16 8 1
-mesh        32 16 2
-mesh        32 16 1
+box         0 0 -4 8 0.5 0
+mesh        16 1 8
+mesh        32 2 16
+mesh        32 1 16
+mesh        64 1 32
 nested      0 1
 formulation lower.p1d-vertex.v0
 formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
 phi_deg     20
 region      soil drucker_prager k 0.9218910330437573 alpha 0.11184696508828254
-footing     strip xref 0 0 0.25 law bonded
-boundary    z0 symmetry plane z 0
-boundary    z1 symmetry plane z 0.5
+footing     strip xref 0 0.25 0 law bonded
+boundary    y0 symmetry plane y 0
+boundary    y1 symmetry plane y 0.5
 boundary    axis symmetry plane x 0
 boundary    far fixed plane x 8
-boundary    base fixed plane y -4
-boundary    contact footing plane y 0 range x 0 1 footing strip
-boundary    surface free plane y 0
+boundary    base fixed plane z -4
+boundary    contact footing plane z 0 range x 0 1 footing strip
+boundary    surface free plane z 0
 query       q ray
-F1          strip 0 -0.5 0 0 0 0
-restrained  strip ux rz
+F1          strip 0 0 -0.5 0 0 0
+restrained  strip ux ry
 target      14.834711777931204 formula prandtl_nc c=1 phi_deg=20
 assert      lower_le_target 1e-6
 assert      upper_ge_target 1e-6
+gate        certified_bracket mesh 3
+gate        gap_le MAX_GAP_PRANDTL mesh 3
+gate        upper_nonincrease 0 1
+gate        lower_nondecrease 0 1
 end
 
 case dp_prandtl_surcharge_thin_slab
@@ -340,52 +511,64 @@ class       one_sided_reference
 desc        Weightless cohesionless strip, surcharge q0=1 as a dead traction, phi=20 deg. q = q0 Nq.
 source      Reissner (1924), Proc. 1st Int. Congr. Appl. Mech., Delft, 295-311 (Nq)
 source      Drucker and Prager (1952), Q. Appl. Math. 10, 157-165 (plane-strain matching)
-checked     2026-11-18 Nq derived from the slip-line invariant in interface section 16.4; citations recalled, not checked; primary texts not read
-checked     2026-11-18 uncommitted estimate on 768 tets contained the target; estimate only
-units       length m; force kN per slab; stress kPa; lambda is total mean footing pressure
-box         0 -4 0 8 0 0.5
-mesh        16 8 1
-mesh        32 16 2
-mesh        32 16 1
+checked     2026-11-18 Nq derived from the slip-line invariant in interface section 16.4; citations recalled; primary texts not read
+checked     2026-11-18 uncommitted estimates contained the target; no certified value exists
+units       length m; force kN per slab; stress kPa; lambda is mean footing pressure
+box         0 0 -4 8 0.5 0
+mesh        16 1 8
+mesh        32 2 16
+mesh        32 1 16
+mesh        64 1 32
 nested      0 1
 formulation lower.p1d-vertex.v0
 formulation upper.p2c-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
 phi_deg     20
 region      soil drucker_prager k 0 alpha 0.11184696508828254
-footing     strip xref 0 0 0.25 law bonded
-boundary    z0 symmetry plane z 0
-boundary    z1 symmetry plane z 0.5
+footing     strip xref 0 0.25 0 law bonded
+boundary    y0 symmetry plane y 0
+boundary    y1 symmetry plane y 0.5
 boundary    axis symmetry plane x 0
 boundary    far fixed plane x 8
-boundary    base fixed plane y -4
-boundary    contact footing plane y 0 range x 0 1 footing strip
-boundary    surface traction plane y 0 t0 0 -1 0
+boundary    base fixed plane z -4
+boundary    contact footing plane z 0 range x 0 1 footing strip
+boundary    surface traction plane z 0 t0 0 0 -1
 query       q ray
-F1          strip 0 -0.5 0 0 0 0
-restrained  strip ux rz
+F1          strip 0 0 -0.5 0 0 0
+restrained  strip ux ry
 target      6.399393521085211 formula prandtl_nq q0=1 phi_deg=20
 assert      lower_le_target 1e-6
 assert      upper_ge_target 1e-6
+gate        certified_bracket mesh 3
+gate        gap_le MAX_GAP_PRANDTL mesh 3
+gate        upper_nonincrease 0 1
+gate        lower_nondecrease 0 1
 end
 
-# True-3D Upper feasibility gate (PROPOSED, interface section 11). There is no reference value.
-# The meshes are unstructured tetrahedra with a conforming footing; thin slabs do not count.
-# The friction angles other than 0 are PROVISIONAL: the program has not recorded its planned
-# Drucker-Prager angles. alpha and k use the plane-strain match with c = 1 only to fix a family.
-# In 3D this Drucker-Prager is not Mohr-Coulomb.
+# True-3D Upper gate (orchestrator P0 ruling, interface section 11). There is no reference value.
+# Unstructured tetrahedra with a conforming footprint; thin slabs do not count; feasibility alone never passes.
+# Frozen friction angles: 0, 10, 20 and 30 degrees. alpha and k use the plane-strain match with c = 1 only to
+# fix a family. In 3D this Drucker-Prager is not Mohr-Coulomb.
 
-case upper3d_feasibility_phi00
+case upper3d_fixed_phi00
 status      active
-class       upper_feasibility_3d
-desc        Square bonded footing on an unstructured 3D box, phi = 0 (von Mises).
+class       upper_gate_3d
+desc        Square bonded footing, unstructured 3D box, fixed walls, phi = 0 deg.
 source      formulation gate: interface section 11; no reference value
-checked     2026-11-18 uncommitted least-squares check gave rho_feas 1.0e-1, 4.1e-2, 2.1e-2 on these three meshes
+checked     2026-11-18 uncommitted linear-algebra probe and solves only; no certified value exists
 units       length m; force kN; stress kPa
 box         -2 -2 -2 2 2 0
 mesh_file   upper3d_a.mesh.npz
 mesh_file   upper3d_b.mesh.npz
 mesh_file   upper3d_c.mesh.npz
-formulation upper.p2c-vertex.v0
+mesh_file   upper3d_d.mesh.npz
+mesh_file   upper3d_a.mesh.npz refine 1
+mesh_file   upper3d_d.mesh.npz refine 1
+nested      0 4
+nested      3 5
+formulation lower.p1d-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+control     upper.p2c-vertex.v0
 phi_deg     0
 region      soil von_mises k 1.0
 footing     pad xref 0 0 0 law bonded
@@ -399,22 +582,34 @@ boundary    base fixed plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-assert      feasibility_status formulation_feasible
-on_failure  formulation_result
+gate        kinematic_status formulation_feasible
+gate        certified_bracket mesh 5
+gate        gap_le MAX_GAP_3D_VM mesh 5
+gate        upper_nonincrease 0 4
+gate        upper_nonincrease 3 5
+gate        lower_nondecrease 0 4
+gate        lower_nondecrease 3 5
 end
 
-case upper3d_feasibility_phi10
+case upper3d_fixed_phi10
 status      active
-class       upper_feasibility_3d
-desc        Square bonded footing on an unstructured 3D box, Drucker-Prager, phi = 10 deg (provisional).
+class       upper_gate_3d
+desc        Square bonded footing, unstructured 3D box, fixed walls, phi = 10 deg.
 source      formulation gate: interface section 11; no reference value
-checked     2026-11-18 not assessed beyond an uncommitted conic trial; no feasibility status is claimed
+checked     2026-11-18 uncommitted linear-algebra probe and solves only; no certified value exists
 units       length m; force kN; stress kPa
 box         -2 -2 -2 2 2 0
 mesh_file   upper3d_a.mesh.npz
 mesh_file   upper3d_b.mesh.npz
 mesh_file   upper3d_c.mesh.npz
-formulation upper.p2c-vertex.v0
+mesh_file   upper3d_d.mesh.npz
+mesh_file   upper3d_a.mesh.npz refine 1
+mesh_file   upper3d_d.mesh.npz refine 1
+nested      0 4
+nested      3 5
+formulation lower.p1d-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+control     upper.p2c-vertex.v0
 phi_deg     10
 region      soil drucker_prager k 0.9798954883250905 alpha 0.0575940042887367
 footing     pad xref 0 0 0 law bonded
@@ -428,22 +623,34 @@ boundary    base fixed plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-assert      feasibility_status formulation_feasible
-on_failure  formulation_result
+gate        kinematic_status formulation_feasible
+gate        certified_bracket mesh 5
+gate        gap_le MAX_GAP_3D_DP mesh 5
+gate        upper_nonincrease 0 4
+gate        upper_nonincrease 3 5
+gate        lower_nondecrease 0 4
+gate        lower_nondecrease 3 5
 end
 
-case upper3d_feasibility_phi20
+case upper3d_fixed_phi20
 status      active
-class       upper_feasibility_3d
-desc        Square bonded footing on an unstructured 3D box, Drucker-Prager, phi = 20 deg (provisional).
+class       upper_gate_3d
+desc        Square bonded footing, unstructured 3D box, fixed walls, phi = 20 deg.
 source      formulation gate: interface section 11; no reference value
-checked     2026-11-18 not assessed beyond an uncommitted conic trial; no feasibility status is claimed
+checked     2026-11-18 uncommitted linear-algebra probe and solves only; no certified value exists
 units       length m; force kN; stress kPa
 box         -2 -2 -2 2 2 0
 mesh_file   upper3d_a.mesh.npz
 mesh_file   upper3d_b.mesh.npz
 mesh_file   upper3d_c.mesh.npz
-formulation upper.p2c-vertex.v0
+mesh_file   upper3d_d.mesh.npz
+mesh_file   upper3d_a.mesh.npz refine 1
+mesh_file   upper3d_d.mesh.npz refine 1
+nested      0 4
+nested      3 5
+formulation lower.p1d-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+control     upper.p2c-vertex.v0
 phi_deg     20
 region      soil drucker_prager k 0.9218910330437573 alpha 0.11184696508828254
 footing     pad xref 0 0 0 law bonded
@@ -457,22 +664,34 @@ boundary    base fixed plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-assert      feasibility_status formulation_feasible
-on_failure  formulation_result
+gate        kinematic_status formulation_feasible
+gate        certified_bracket mesh 5
+gate        gap_le MAX_GAP_3D_DP mesh 5
+gate        upper_nonincrease 0 4
+gate        upper_nonincrease 3 5
+gate        lower_nondecrease 0 4
+gate        lower_nondecrease 3 5
 end
 
-case upper3d_feasibility_phi30
+case upper3d_fixed_phi30
 status      active
-class       upper_feasibility_3d
-desc        Square bonded footing on an unstructured 3D box, Drucker-Prager, phi = 30 deg (provisional).
+class       upper_gate_3d
+desc        Square bonded footing, unstructured 3D box, fixed walls, phi = 30 deg.
 source      formulation gate: interface section 11; no reference value
-checked     2026-11-18 not assessed beyond an uncommitted conic trial; no feasibility status is claimed
+checked     2026-11-18 uncommitted linear-algebra probe and solves only; no certified value exists
 units       length m; force kN; stress kPa
 box         -2 -2 -2 2 2 0
 mesh_file   upper3d_a.mesh.npz
 mesh_file   upper3d_b.mesh.npz
 mesh_file   upper3d_c.mesh.npz
-formulation upper.p2c-vertex.v0
+mesh_file   upper3d_d.mesh.npz
+mesh_file   upper3d_a.mesh.npz refine 1
+mesh_file   upper3d_d.mesh.npz refine 1
+nested      0 4
+nested      3 5
+formulation lower.p1d-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+control     upper.p2c-vertex.v0
 phi_deg     30
 region      soil drucker_prager k 0.8320502943378437 alpha 0.16012815380508713
 footing     pad xref 0 0 0 law bonded
@@ -486,8 +705,177 @@ boundary    base fixed plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-assert      feasibility_status formulation_feasible
-on_failure  formulation_result
+gate        kinematic_status formulation_feasible
+gate        certified_bracket mesh 5
+gate        gap_le MAX_GAP_3D_DP mesh 5
+gate        upper_nonincrease 0 4
+gate        upper_nonincrease 3 5
+gate        lower_nondecrease 0 4
+gate        lower_nondecrease 3 5
+end
+
+case upper3d_roller_phi00
+status      active
+class       upper_gate_3d
+desc        Square bonded footing, unstructured 3D box, roller walls, phi = 0 deg.
+source      formulation gate: interface section 11; no reference value
+checked     2026-11-18 uncommitted linear-algebra probe and solves only; no certified value exists
+units       length m; force kN; stress kPa
+box         -2 -2 -2 2 2 0
+mesh_file   upper3d_a.mesh.npz
+mesh_file   upper3d_b.mesh.npz
+mesh_file   upper3d_c.mesh.npz
+mesh_file   upper3d_d.mesh.npz
+mesh_file   upper3d_a.mesh.npz refine 1
+mesh_file   upper3d_d.mesh.npz refine 1
+nested      0 4
+nested      3 5
+formulation lower.p1d-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+control     upper.p2c-vertex.v0
+phi_deg     0
+region      soil von_mises k 1.0
+footing     pad xref 0 0 0 law bonded
+boundary    contact footing plane z 0 range x -0.5 0.5 range y -0.5 0.5 footing pad
+boundary    surface free plane z 0
+boundary    xmin symmetry plane x -2
+boundary    xmax symmetry plane x 2
+boundary    ymin symmetry plane y -2
+boundary    ymax symmetry plane y 2
+boundary    base symmetry plane z -2
+query       q ray
+F1          pad 0 0 -1 0 0 0
+target      none
+gate        kinematic_status formulation_feasible
+gate        certified_bracket mesh 5
+gate        gap_le MAX_GAP_3D_VM mesh 5
+gate        upper_nonincrease 0 4
+gate        upper_nonincrease 3 5
+gate        lower_nondecrease 0 4
+gate        lower_nondecrease 3 5
+end
+
+case upper3d_roller_phi10
+status      active
+class       upper_gate_3d
+desc        Square bonded footing, unstructured 3D box, roller walls, phi = 10 deg.
+source      formulation gate: interface section 11; no reference value
+checked     2026-11-18 uncommitted linear-algebra probe and solves only; no certified value exists
+units       length m; force kN; stress kPa
+box         -2 -2 -2 2 2 0
+mesh_file   upper3d_a.mesh.npz
+mesh_file   upper3d_b.mesh.npz
+mesh_file   upper3d_c.mesh.npz
+mesh_file   upper3d_d.mesh.npz
+mesh_file   upper3d_a.mesh.npz refine 1
+mesh_file   upper3d_d.mesh.npz refine 1
+nested      0 4
+nested      3 5
+formulation lower.p1d-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+control     upper.p2c-vertex.v0
+phi_deg     10
+region      soil drucker_prager k 0.9798954883250905 alpha 0.0575940042887367
+footing     pad xref 0 0 0 law bonded
+boundary    contact footing plane z 0 range x -0.5 0.5 range y -0.5 0.5 footing pad
+boundary    surface free plane z 0
+boundary    xmin symmetry plane x -2
+boundary    xmax symmetry plane x 2
+boundary    ymin symmetry plane y -2
+boundary    ymax symmetry plane y 2
+boundary    base symmetry plane z -2
+query       q ray
+F1          pad 0 0 -1 0 0 0
+target      none
+gate        kinematic_status formulation_feasible
+gate        certified_bracket mesh 5
+gate        gap_le MAX_GAP_3D_DP mesh 5
+gate        upper_nonincrease 0 4
+gate        upper_nonincrease 3 5
+gate        lower_nondecrease 0 4
+gate        lower_nondecrease 3 5
+end
+
+case upper3d_roller_phi20
+status      active
+class       upper_gate_3d
+desc        Square bonded footing, unstructured 3D box, roller walls, phi = 20 deg.
+source      formulation gate: interface section 11; no reference value
+checked     2026-11-18 uncommitted linear-algebra probe and solves only; no certified value exists
+units       length m; force kN; stress kPa
+box         -2 -2 -2 2 2 0
+mesh_file   upper3d_a.mesh.npz
+mesh_file   upper3d_b.mesh.npz
+mesh_file   upper3d_c.mesh.npz
+mesh_file   upper3d_d.mesh.npz
+mesh_file   upper3d_a.mesh.npz refine 1
+mesh_file   upper3d_d.mesh.npz refine 1
+nested      0 4
+nested      3 5
+formulation lower.p1d-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+control     upper.p2c-vertex.v0
+phi_deg     20
+region      soil drucker_prager k 0.9218910330437573 alpha 0.11184696508828254
+footing     pad xref 0 0 0 law bonded
+boundary    contact footing plane z 0 range x -0.5 0.5 range y -0.5 0.5 footing pad
+boundary    surface free plane z 0
+boundary    xmin symmetry plane x -2
+boundary    xmax symmetry plane x 2
+boundary    ymin symmetry plane y -2
+boundary    ymax symmetry plane y 2
+boundary    base symmetry plane z -2
+query       q ray
+F1          pad 0 0 -1 0 0 0
+target      none
+gate        kinematic_status formulation_feasible
+gate        certified_bracket mesh 5
+gate        gap_le MAX_GAP_3D_DP mesh 5
+gate        upper_nonincrease 0 4
+gate        upper_nonincrease 3 5
+gate        lower_nondecrease 0 4
+gate        lower_nondecrease 3 5
+end
+
+case upper3d_roller_phi30
+status      active
+class       upper_gate_3d
+desc        Square bonded footing, unstructured 3D box, roller walls, phi = 30 deg.
+source      formulation gate: interface section 11; no reference value
+checked     2026-11-18 uncommitted linear-algebra probe and solves only; no certified value exists
+units       length m; force kN; stress kPa
+box         -2 -2 -2 2 2 0
+mesh_file   upper3d_a.mesh.npz
+mesh_file   upper3d_b.mesh.npz
+mesh_file   upper3d_c.mesh.npz
+mesh_file   upper3d_d.mesh.npz
+mesh_file   upper3d_a.mesh.npz refine 1
+mesh_file   upper3d_d.mesh.npz refine 1
+nested      0 4
+nested      3 5
+formulation lower.p1d-vertex.v0
+formulation upper.p2d-jump-bernstein.v0
+control     upper.p2c-vertex.v0
+phi_deg     30
+region      soil drucker_prager k 0.8320502943378437 alpha 0.16012815380508713
+footing     pad xref 0 0 0 law bonded
+boundary    contact footing plane z 0 range x -0.5 0.5 range y -0.5 0.5 footing pad
+boundary    surface free plane z 0
+boundary    xmin symmetry plane x -2
+boundary    xmax symmetry plane x 2
+boundary    ymin symmetry plane y -2
+boundary    ymax symmetry plane y 2
+boundary    base symmetry plane z -2
+query       q ray
+F1          pad 0 0 -1 0 0 0
+target      none
+gate        kinematic_status formulation_feasible
+gate        certified_bracket mesh 5
+gate        gap_le MAX_GAP_3D_DP mesh 5
+gate        upper_nonincrease 0 4
+gate        upper_nonincrease 3 5
+gate        lower_nondecrease 0 4
+gate        lower_nondecrease 3 5
 end
 
 # Not entered: the value has not been checked against its primary source.

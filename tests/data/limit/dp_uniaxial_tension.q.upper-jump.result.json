@@ -1,0 +1,23 @@
+{
+ "arrays": "dp_uniaxial_tension.q.upper-jump.result.npz",
+ "bound": "upper",
+ "format": "ladruno-limit-result",
+ "format_version": 0,
+ "formulation": "upper.p2d-jump-bernstein.v0",
+ "objective": 1.2864213722373603,
+ "problem_sha256": "3f2eaaddc8aab77fa05ad989ce049658438cb46ddc1e9e35ad4eca30c366e169",
+ "producer": {
+  "name": "analytic-fixture",
+  "version": "0"
+ },
+ "query_id": "q",
+ "result_sha256": "b277f458b6aebe0467457e05f527b7bb3c885a68d761b436ceb0a5b3330deebf",
+ "solver": {
+  "name": "none",
+  "settings": {},
+  "version": "0"
+ },
+ "solver_status": "solved",
+ "value": 1.2864213722373603,
+ "wall_time_s": null
+}
