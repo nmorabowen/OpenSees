@@ -1929,6 +1929,42 @@ renormalisation's form changed, by ≤ 9.7e-16.
   - Each route-S records file carries `ladrunoBuild`; the Mandel amplification record lacked it and
     is restamped.
 
+**Ready-flip review of record on `d77caf8fd` (2026-11-19): Fable critic BLOCK + `/code-review high`,
+8 findings.** The warrant run had passed (509 passed, 0 failed; T10 24/24; IDENT 14/14 red).
+- **Blocker, verified by the orchestrator: route S cannot translate a two-phase body.** §7c (1),
+  the orchestrator's ruling, drops u nodes below c_u whole without renormalising the kept weights.
+  Particles still interpolate v, a and L over every entry, so the partition of unity breaks.
+  - A free gimp block at v = (1, 0) gives mean v_x 0.29 and σ′ 172 kPa after 200 steps.
+  - bspline2 reverses to −0.42.
+  - pressureCutoff 1e-10, and route E, are exact.
+  - Every route-S gate deck was confined and stationary, so none could see it.
+  - **Ruling (the orchestrator corrects §7c (1)):** route S renormalises S and ∇S (each component,
+    B9's unsigned sums) over the u-active nodes of each particle, with mode A's `renormalize`
+    formula. A dropped node is absent, never held at zero. c_u stays max(massCutoff,
+    pressureCutoff). The owner's consistency fix (strain from v₁) is unchanged.
+  - New gate **T13, translation patch** (pre-registered here): a free two-phase block in rigid
+    translation keeps v, σ′ and p to rel 1e-10 for 200 steps. Both routes, gimp and bspline2,
+    with and without a `plate` face.
+  - T0 (iii), T6 (all eight legs), T5 and T7 re-run; 232l-V re-derives T0 (iii).
+- **Major (critic, to verify first): the B-spline plate image is not translation-consistent**
+  (`LadrunoMPMCore.h:645`) in either mode; T13's plate legs cover it.
+- **Major: the gates are not asserted.** Pytest files are required for T0 (iii), T2p, T3, T4p, T5,
+  T6, T13, the fix-2 patch check and T10: zone_a short forms, zone_b full forms reading the bands
+  from the cases file. `mutation_gate.py`'s MPM paths are to include the two-phase oracle and
+  identity files and a route-S zone_a test.
+- **Minor, all fixed in the same round:**
+  - MAX_DOF 256 → room for 65 entries × 4.
+  - The cached Δt_d also refreshes on any stage walk or parameter update, and at least every 100
+    steps; the guide states this.
+  - T7's reproducibility: a repo-relative scan script, with a debug-only `mpm debug routeSLimit
+    off` so the scan can measure above the cap; the T7 xfail runs through it.
+  - Every route-S record stamped.
+  - The contracts doc §2.6 edit.
+  - The guide's undrained-limit sentence corrected: at the default cap, route S admits 0.707 × the
+    undrained pencil on the gated soil.
+- **Docs:** the orchestrator writes the ADR amendment "232l" and the §6 two-phase column; the
+  results document gets the route-S R rows.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
