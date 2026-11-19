@@ -1581,6 +1581,12 @@ quoted from them.
   correction then scales as the existing σ′ force does. This is mode A's P4 rule (S^p rescaled by
   the same sums) carried to mode F. Not a band change: T0 (iii) is gated at rel 1e-9 under it, and
   the oracle runs with `pcut` = c_m.
+- **The pressure cutoff is its own knob (2026-11-18, 232l-V's flag on §7a Q4 @ `5307d4757`).**
+  `mpm massCutoff` sets the u-side cutoffs (1e-10 in mode F, 5e-2 in mode A) and no longer
+  touches route S's p cutoff. A mode-F deck that passed `massCutoff` would otherwise drag the p
+  cutoff to 1e-10 and readmit the ill-conditioned rows. The p cutoff is `mpm pressureCutoff <c>`,
+  default 5e-2, reported by `mpm info twoPhase`; T8 tests that `massCutoff` leaves it unchanged.
+  In mode A the p rows already follow `renormalize` (P4), so there is no separate knob there.
 
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
