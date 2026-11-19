@@ -102,7 +102,7 @@ if not twin and A["g"]:
     ext = 10 + 3
     gd = sorted(((abs(ga[k] - gb.get(k, 0.0)) / 2.0, k) for k in ga), reverse=True)[:5]
     gdiff = [{"node_ij": [k % ext - 1, k // ext - 1], "dp": v} for v, k in gd]
-out = {"basis": basis, "dt": dt, "t_end": tend, "twin_single_phase": twin, "masscut": mcut,
+out = {"build": ops.ladrunoBuild(), "basis": basis, "dt": dt, "t_end": tend, "twin_single_phase": twin, "masscut": mcut,
        "failed_at": sp.get("failed_at") or sm.get("failed_at"),
        "growth_per_step": math.exp(rate) if rate == rate else None,
        "doubling_time_s": (math.log(2.0) / rate * dt) if rate and rate > 0 else None,

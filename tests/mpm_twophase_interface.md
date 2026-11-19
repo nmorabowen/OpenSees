@@ -687,6 +687,27 @@ particles; ruling 9064acca3 (2) is amended accordingly).**
   correction and the conditions.
 - The rest of §1 and §7a Q4 stands.
 
+### 7c, amended after T7 on `5d64922a4` (owner's decision, wp-briefs "232l", "Route S after the consistency fix")
+
+- **T7 is a recorded miss.** Its gate text is unchanged; `tests/test_ladruno_mpm_twophase_routeS.py`
+  carries it as a strict xfail. The diagnosis comes from `tests/mpm_twophase_routeS_t7scan.py` (records
+  `route_s_results.json`, "t7_5d64922a4"): 2000 steps on T6's column with the USL skeleton strain.
+  - gimp is stable up to 0.7 × the drained pencil and blows up at 0.8 ×.
+  - bspline2 is stable up to 0.8 × and blows up at 0.9 ×.
+  - K_f = 1 gives the same thresholds, so the u-p coupling is not the cause.
+- **The run-time limit (replaces 7c (3)'s s).** dt ≤ s · Δt_d, where s is `mpm safety`.
+  - In route S, s defaults to 0.5.
+  - 0.5 < s ≤ 0.7 runs, with a warning once per epoch: `WARNING mpm analyze -- route S with
+    `mpm safety` <s> > 0.5: T7's scan found gimp stable only to 0.7 x the drained pencil and bspline2
+    to 0.8 x (USL skeleton); the default and recommended s is 0.5 (interface §7c amendment)`.
+  - s > 0.7 is refused, with nothing changed: `ERROR mpm analyze -- route S caps `mpm safety` at 0.7
+    (s = <s>): T7's scan found the USL skeleton stable only to 0.7 x the drained pencil on gimp
+    (0.8 x on bspline2); interface §7c amendment. Step refused, nothing changed`.
+  - Mode A and the single-phase mode-F path keep `mpm safety` as before (T10).
+- **Δt_d is computed once per epoch** (the first route-S step after `mpm reset`, or the first ever).
+  It is recomputed only when the particle-to-cell map changes. That map gives, for every particle,
+  the grid cell that holds its centre: floor((x − x₀)/h) per axis. The refusal text of 7c (3) stands.
+
 ## 8. Proposed amendments and objections (none applied)
 
 - **A1** (U4): particles carry p̈ as well as p, ṗ (§1, P2).

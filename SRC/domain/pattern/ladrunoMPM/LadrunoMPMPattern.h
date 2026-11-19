@@ -423,6 +423,9 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   // WP-232l route S (mode F, interface §1 "Route S", §5 P11, §7a Q4)
   std::vector<double>     lastGridP;               // the last route-S step: [id, p, p^] per p-active node
   bool                    routeSWarned = false;    // 7c (3): the run-time limit's warning, once per epoch
+  bool                    routeSCapWarned = false; // 7c amendment: s in (0.5, 0.7], warned once per epoch
+  double                  pencilDt = -1.0;         // 7c amendment: the epoch's drained pencil (< 0: none)
+  std::vector<long>       pencilCell;              // ... and the particle-to-cell map it was computed on
   bool        routeSOn(void) const;                // a two-phase body, a plate, pfix or a traction
   std::string routeSAdmission(void) const;
   int         routeSConstants(ladruno_mpm::UPStep &u, std::string &err);

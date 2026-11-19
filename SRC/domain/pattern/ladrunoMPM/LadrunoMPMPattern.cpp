@@ -881,14 +881,49 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       break;
     }
     if (routeS) {                // WP-232l interface 7c (3): s x the drained pencil
-      std::string perr;
-      const double dtd = pencilTimeStep(false, perr);
-      if (!perr.empty()) {
-        opserr << "ERROR mpm analyze -- route S's drained pencil: " << perr.c_str()
-               << "; step refused, nothing changed\n";
+      // 7c amendment (owner, wp-briefs "Route S after the consistency fix"): s <= 0.5 by default,
+      // up to 0.7 with a warning (T7's scan), refused above
+      const double sS = eng.par.safety;
+      if (sS > 0.7) {
+        opserr << "ERROR mpm analyze -- route S caps `mpm safety` at 0.7 (s = " << sS << "): T7's scan"
+                  " found the USL skeleton stable only to 0.7 x the drained pencil on gimp (0.8 x on"
+                  " bspline2); interface §7c amendment. Step refused, nothing changed\n";
         rc = -1;
         break;
       }
+      if (sS > 0.5 && !routeSCapWarned) {
+        opserr << "WARNING mpm analyze -- route S with `mpm safety` " << sS << " > 0.5: T7's scan found"
+                  " gimp stable only to 0.7 x the drained pencil and bspline2 to 0.8 x (USL skeleton);"
+                  " the default and recommended s is 0.5 (interface §7c amendment)\n";
+        routeSCapWarned = true;
+      }
+      // the drained pencil once per epoch, refreshed when the particle-to-cell map changes
+      {
+        const int nd = eng.ndm(), Np = eng.P.size();
+        std::vector<long> cells((size_t)Np, 0);
+        for (int p = 0; p < Np; p++) {
+          long c = 0, mult = 1;
+          for (int d = 0; d < nd; d++) {
+            const long i = (long)std::floor((eng.P.x[nd * p + d] - eng.grid.x0[d]) / eng.grid.h);
+            c += mult * (i + 2);
+            mult *= (long)eng.grid.n[d] + 5;
+          }
+          cells[p] = c;
+        }
+        if (pencilDt < 0.0 || cells != pencilCell) {
+          std::string perr;
+          pencilDt = pencilTimeStep(false, perr);
+          if (!perr.empty()) {
+            pencilDt = -1.0;
+            opserr << "ERROR mpm analyze -- route S's drained pencil: " << perr.c_str()
+                   << "; step refused, nothing changed\n";
+            rc = -1;
+            break;
+          }
+          pencilCell.swap(cells);
+        }
+      }
+      const double dtd = pencilDt;
       if (!routeSWarned) {
         std::string e2;
         const double dtu = pencilTimeStep(true, e2);
@@ -1072,6 +1107,9 @@ LadrunoMPMPattern::reset(void)
   piPerpMax = 0.0;
   piC.clear();                      // the q + pi invariant: q is p again until the first projection
   routeSWarned = false;             // WP-232l 7c (3): warn again in the next epoch
+  routeSCapWarned = false;
+  pencilDt = -1.0;                  // 7c amendment: the pencil is recomputed in the next epoch
+  pencilCell.clear();
   pendValid = pendFirst = false;    // Fable audit finding 2: nothing pending
   pendPiPerp.clear();
   pendPiC.clear();
