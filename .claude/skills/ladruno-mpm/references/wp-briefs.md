@@ -1965,6 +1965,17 @@ renormalisation's form changed, by ≤ 9.7e-16.
 - **Docs:** the orchestrator writes the ADR amendment "232l" and the §6 two-phase column; the
   results document gets the route-S R rows.
 
+**T11 on the final head (CI run 44555570302, `fa4087122`, per-mode selection), and the owner's
+decision (2026-11-19).**
+- **Combined suite:** ZERO 51/103 = 0.495, SCALE 36/103 = 0.350. The CI floors pass.
+- **The four established files reproduce 232k exactly:** ZERO 44/88 = 0.500, SCALE 35/88 = 0.398.
+- **The two-phase gates file kills ZERO 7/15 and SCALE 1/15.** T13 checked v, σ′ and p but not x, so
+  a sabotaged position update survived.
+- **Owner decision: strengthen and judge.** T11 is judged on the established suite (pass; 232k's
+  numbers reproduced). T13 is strengthened to also check positions against X + v₀ t at rel 1e-10.
+  That is a stricter test, not a band change. The CI lane is re-run, and the gates file's kill rates
+  are reported beside T11.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
