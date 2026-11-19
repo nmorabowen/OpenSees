@@ -1526,6 +1526,41 @@ Qᵀv₁ + S*(p − p̂)/Δt + H p = f_seep): it is exact and the operator is SP
   times, and any FE-unreachable row) are ruled here when they arrive, before any MPM number on those
   rows. T0 and T1 do not depend on them.
 
+**Rulings on 232l-V's Round 1 (2026-11-18, records @ `3a39b08f9`, build `b751dcbfe`), before any
+two-phase MPM number.** The orchestrator read the T3, T4 and T6 records; each number below is
+quoted from them.
+- **T2 bands: every band is the 0.02 floor.** The FE errors at the GIMP points are at most 0.0102
+  (p, Tv 0.1, `-stab auto`) and 0.0055 (U), so max(2 × FE, 0.02) = 0.02 throughout. The plate
+  (equalDOF) gives the same FE answer as nodal forces to the last digit, and 1×10 equals 2×10. Tv 0.05
+  (FE 0.11) is reported.
+- **T3: the step load is replaced by a 5 s linear ramp, for T3 and T6 alike (case amendment; the
+  band rule is unchanged).** Under a step the strip rings and the FE itself misses p(0, t) by
+  0.05–1.13 p₀ up to the peak, so the row was unreachable by its own reference. The ramp is 52
+  lateral undrained transits. Case: Terzaghi's soil with ν 0.1 (ν 0.2 peaks at only 1.059), half
+  strip a = 10, b = 4, 10 × 4 cells. Closed-form peak under the ramp: **1.0781 p₀ at tv 0.078**.
+  Times: tv 0.04, 0.078, 0.12, 0.2, 0.4. FE error ≤ 0.008, so the bands are 0.02, and the peak gate
+  is MPM peak ≥ 1 + ½ (1.0781 − 1) = **1.039 p₀**. The step-load Mandel is reported.
+- **Mandel's closed form:** the Cheng–Detournay / Abousleiman series, with tan αₙ = (1 − ν)/(ν_u − ν)
+  αₙ, checked against an independent Laplace-domain solution inverted numerically (agreement 2.4e-11
+  p₀). The papers' equation numbers are unverified (not opened), and the record says so. The Laplace
+  check is the warrant.
+- **T4: h = H/20, band unchanged at 0.03 (case amendment).** At h = H/10 the FE's σ′ is constant
+  per element, and its error at the GIMP points is ρ′g h/4 = 0.025 ρ′gH, against a bar of 0.03.
+  That bar would then test the FE's discretization, not the MPM. The 2 × FE rule would have widened
+  it to 0.05, so the case is refined instead: at H/20 the FE gives 0.0125 (GIMP points) and 0.0144
+  (Gauss points). h = H/10 is reported. p is exact in the FE at both (≤ 1.5e-8).
+- **T5:** the FE gives CB_lap 0.603 (off) and 0.126 (auto 0.25), equal to the shipped B4 test. The
+  gate is unchanged.
+- **T6: the FE reference runs at route S's own Δt; ramp 5 s for Terzaghi too.** γ = 0.6 damps the
+  slow modes per step, so the FE error depends on Δt: Terzaghi 0.003 → 0.011, Mandel peak 0.003 →
+  0.019 as Δt goes 0.05 → 0.001. The band is max(2 × FE error at the MPM run's Δt, 0.02), named per
+  leg. The interface's 2 s ramp leaves 0.0175 at Tv 0.1 (dt 0.002), too close to the floor, so the
+  ramp is 5 s (amends P10's 20-transit note; still ≥ 20 transits).
+- **The oracle's five questions go to 232l-C** as an addendum §7a to the interface, which it answers
+  before T0 runs: the (i) dump's format and its DOF and support-node order; whether K is from the
+  trial state; the GIMP weights after `renormalize`; M⁻¹'s fixed-component rule in route S; the
+  first-step re-seed values. The oracle is written from §1 and §7a, never from the C++.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
