@@ -1640,6 +1640,28 @@ carrier design or number:
   3. 232l-V updates the oracle from the text.
   4. 232l-C implements P5a with fixes 2 and 3, for one build.
 
+**Freeze of P5a (2026-11-18, interface §7b @ `cc60193c9`), before any carrier code or T2p/T4p
+number.**
+- **P5a is frozen:** FLIP increments on a consistent L2 projection, M_ab = Σ V_p S^p_pa S^p_pb,
+  solved for p, ṗ and p̈. The orchestrator checked the argument. With M nonsingular,
+  M⁻¹ Pᵀ V P = I, so the particle field projects exactly onto the new grid field after each
+  increment, at pinned nodes included. P5's lumped projection could not do that, and that is the
+  measured cause.
+- **Fixes 2 and 3** (P9 and P4 amendments in §7b) are frozen as ruled.
+- **Added, a singularity guard (binding):** §7b's SPD condition ("particles span each p-active
+  node's shape functions, ppc ≥ 2") is a claim that particle motion can break, for example a thinned
+  cell or a folded B-spline face. A singular M under Jacobi-PCG returns a non-unique answer without
+  failing, which no oracle can match. So:
+  - The solve refuses the step loudly (rule named, nothing changed) when PCG does not reach 1e-14,
+    or when any PCG curvature dᵀMd falls to 1e-14 · (the largest diagonal entry) · dᵀd or below.
+  - T8 gains a deliberately rank-deficient case: bspline2 with one particle per cell in a p-active
+    region. It must be refused, not solved.
+  - The oracle solves M densely (`numpy.linalg.solve`, and it checks M's smallest eigenvalue), so
+    T0's rel 1e-9 also checks that PCG converged to the unique answer.
+- **Oracle and references:** 232l-V re-derives T0 (ii) and (iii) from §1, §7a and §7b, and
+  regenerates `t1_fe.json`, whose FE nodal state is the projection, now consistent. T0 (i) is
+  unchanged. The T1 bands are unchanged.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
