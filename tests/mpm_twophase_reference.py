@@ -1729,6 +1729,9 @@ def main(argv):
         rec = _provenance(f"t6_fe_dt{dt:g}", "fe_terzaghi+fe_mandel")
         rec["dt"] = dt
         rec["t_ramp"] = dict(terzaghi=TERZ_T6_RAMP, mandel=MANDEL["t_ramp"])
+        rec["newmark"] = dict(terzaghi=[TERZ["gamma"], TERZ["beta"]],
+                              mandel=[MANDEL["gamma"], MANDEL["beta"]])
+        rec["rule"] = "cases t6_ref_ramp: band per leg = max(2 x FE error at the run's dt, 0.02)"
         rec["closed_form_note"] = MANDEL_NOTE
         rec["terzaghi"] = [fe_terzaghi(1, st, t_ramp=TERZ_T6_RAMP, first_small=False, dt=dt,
                                        tvs=TV_T2) for st in ("off", ("auto", 0.25))]
