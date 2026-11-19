@@ -48,3 +48,15 @@ date: 2026-11-18
   p = -6.7e3 after two steps.
 - **Fix (P4 amended, fix 3):** p-active iff the two-phase nodal mass > `pressureCutoff` x m_max,
   and S^p is renormalised over the p-active nodes (route S's rule, `3d3699a50`).
+
+#### MUSL's re-projected velocity breaks the IMEX u-p elimination (route S)
+
+- **Bites:** a semi-implicit u-p MPM step (explicit skeleton, implicit p, v1 eliminated) whose
+  skeleton strain comes from MUSL's second projection v** while the fluid balance uses the grid
+  v1. The difference is O(dt) FLIP null-space content, so part of the undrained coupling acts
+  explicitly. Seen on Mandel (bspline2, build `4b74bd335`): rho = 1.00093 per step at 0.30 x the
+  drained pencil, in the particle column beside the drained free face; the single-phase twin is
+  stable.
+- **Fix (interface 7c, owner's decision):** two-phase particles take L from v1 (USL for the
+  skeleton). Light u nodes (m_a <= max(massCutoff, pressureCutoff) m_max) are dropped whole in a
+  two-phase step; their correction dt M^-1 Q p grows like 1/delta on a GIMP tail (gimp Mandel).

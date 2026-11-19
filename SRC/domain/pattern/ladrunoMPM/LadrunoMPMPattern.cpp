@@ -880,7 +880,32 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       rc = -1;
       break;
     }
-    const double dtc = eng.criticalTimeStep(*adapter);
+    if (routeS) {                // WP-232l interface 7c (3): s x the drained pencil
+      std::string perr;
+      const double dtd = pencilTimeStep(false, perr);
+      if (!perr.empty()) {
+        opserr << "ERROR mpm analyze -- route S's drained pencil: " << perr.c_str()
+               << "; step refused, nothing changed\n";
+        rc = -1;
+        break;
+      }
+      if (!routeSWarned) {
+        std::string e2;
+        const double dtu = pencilTimeStep(true, e2);
+        opserr << "WARNING mpm analyze -- route S's run-time limit is s x the drained pencil (dt_d = "
+               << dtd << "; undrained pencil " << dtu << "; h/c_d " << eng.criticalTimeStep(*adapter)
+               << "): the pressure is implicit, the skeleton explicit (interface §7c)\n";
+        routeSWarned = true;
+      }
+      if (dt > eng.par.safety * dtd) {
+        opserr << "ERROR mpm analyze -- dt = " << dt << " exceeds s * dt_pencil = " << eng.par.safety
+               << " * " << dtd << " = " << eng.par.safety * dtd
+               << " (route S: the drained pencil, interface §7c); step refused, nothing changed\n";
+        rc = -1;
+        break;
+      }
+    }
+    const double dtc = routeS ? std::numeric_limits<double>::infinity() : eng.criticalTimeStep(*adapter);
     if (dt > eng.par.safety * dtc) {
       opserr << "ERROR mpm analyze -- dt = " << dt << " exceeds s * dt_crit = "
              << eng.par.safety << " * " << dtc << " = " << eng.par.safety * dtc
@@ -1046,6 +1071,7 @@ LadrunoMPMPattern::reset(void)
   piInitApplied = false;            // WP-232l A': the particles go back to their initial p
   piPerpMax = 0.0;
   piC.clear();                      // the q + pi invariant: q is p again until the first projection
+  routeSWarned = false;             // WP-232l 7c (3): warn again in the next epoch
   pendValid = pendFirst = false;    // Fable audit finding 2: nothing pending
   pendPiPerp.clear();
   pendPiC.clear();

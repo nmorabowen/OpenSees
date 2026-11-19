@@ -160,7 +160,9 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
 
   // ---- 2. predictor and the velocity conditions; M^-1 (§7a Q4) -----------------------------
   const double mmax = massRef();
-  const double mcut = par.masscut * mmax;
+  // interface 7c (1): in a two-phase step a lattice node is u-active iff m_a > c_u m_max,
+  // c_u = max(massCutoff, pressureCutoff); a node below it is dropped whole
+  const double mcut = (up ? std::max(par.masscut, u.pCut) : par.masscut) * mmax;
   std::vector<char> act(nl, 0);
   std::vector<double> vhat(nd * nl, 0.0), vst(nd * nl, 0.0), minv(nd * nl, 0.0);
   const double SENT = 1.2345678e300;
@@ -480,7 +482,11 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
     for (long k = sS[p]; k < sS[p + 1]; k++) {
       const int i = eIdx[k];
       for (int c = 0; c < nd; c++) {
-        const double vv = (i >= 0) ? gvs[nd * i + c] : ((c == (-i - 1) / 2) ? gvsU[-i - 1] : 0.0);
+        // interface 7c (2): a two-phase particle's skeleton strain from v1, the velocity the
+        // fluid balance's Q^T v1 sees (USL); a single-phase particle keeps MUSL's v**
+        const bool usl = u.tp[p] != 0;
+        const double vv = (i >= 0) ? (usl ? v1[nd * i + c] : gvs[nd * i + c])
+                                   : ((c == (-i - 1) / 2) ? (usl ? v1U[-i - 1] : gvsU[-i - 1]) : 0.0);
         if (vv == 0.0) continue;
         const double *g = &sdSc[(nc * k + c) * nd];
         for (int j = 0; j < nd; j++) L[nd * c + j] += vv * g[j];

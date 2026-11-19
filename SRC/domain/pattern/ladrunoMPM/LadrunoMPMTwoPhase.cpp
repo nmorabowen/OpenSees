@@ -1273,7 +1273,8 @@ LadrunoMPMPattern::pencilTimeStep(bool undrained, std::string &err)
   for (const auto &kv : loc) {
     const int i = kv.second;
     if (!(mnode[i] > 0.0 && ladruno_mpm::imageCutoffMass(G, eng.par.basis, eng.fc, kv.first, mnode[i]) >
-                                eng.par.masscut * mmax)) continue;
+                                (anyTwoPhase() ? std::max(eng.par.masscut, eng.par.pCut)
+                                                               : eng.par.masscut) * mmax)) continue;   // 7c (1)
     int ijk[3];
     G.extIJK(kv.first, ijk);
     for (int c = 0; c < nd; c++) {
