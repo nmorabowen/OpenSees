@@ -131,3 +131,64 @@ def test_records_t4_t5():
     _provenance_ok(b)
     cb = {json.dumps(r["stab"]): r["CB_lap"] for r in b["runs"]}
     assert cb['"off"'] >= 0.5 and cb['["auto", 0.25]'] <= 0.3
+
+
+# ----------------------------------------------------------------------------------------------
+# T0 oracle and T1 records
+# ----------------------------------------------------------------------------------------------
+def test_t1_records_and_oracle_reproduce_ladrunoup():
+    """The oracle's particle element (interface §1), summed over the Gauss-point particles under
+    Newmark's predictor from the P5 state, reproduces LadrunoUP's A and b on every T1 leg."""
+    d = _json("t1_fe")
+    _provenance_ok(d)
+    assert len(d["legs"]) == 12
+    for name, leg in d["legs"].items():
+        ea, eb = R.oracle_vs_fe_t1(leg)
+        assert ea < 1e-13 and eb < 1e-13, f"{name}: A {ea:.2e}, b {eb:.2e}"
+
+
+def test_t1_dp_leg_stays_elastic():
+    d = _json("t1_fe")
+    for m in R.T1_MESHES:
+        for st in ("off", "auto"):
+            a = np.array(d["legs"][f"{m}_elastic_{st}"]["dU"])
+            b = np.array(d["legs"][f"{m}_dp_{st}"]["dU"])
+            assert np.max(np.abs(a - b)) <= 1e-12 * np.max(np.abs(a))
+
+
+def test_t0_blocks_have_the_route_e_pattern():
+    """[K, -Q; 0, H], [C_Ray, 0; Q^T, S*], [M, 0; 0, 0]; the Q in K is the Q^T in C."""
+    for b in R.t0_particle_dump():
+        K, C, M = (np.array(b[k]) for k in ("K", "C", "M"))
+        nen = len(b["nodes"])
+        pI = [3 * k + 2 for k in range(nen)]
+        uI = [3 * k + i for k in range(nen) for i in range(2)]
+        assert np.all(K[np.ix_(pI, uI)] == 0.0)
+        assert np.all(C[np.ix_(uI, pI)] == 0.0)
+        assert np.all(M[pI, :] == 0.0) and np.all(M[:, pI] == 0.0)
+        assert np.max(np.abs(-K[np.ix_(uI, pI)] - C[np.ix_(pI, uI)].T)) < 1e-15
+        assert np.max(np.abs(np.sum(np.array(b["dS"]), axis=0))) < 1e-14     # partition of unity
+        assert abs(sum(b["S"]) - 1.0) < 1e-14
+
+
+def test_t0_record_is_the_oracle():
+    d = _json("t0_oracle")
+    assert d["source"].startswith("tests/mpm_twophase_interface.md")
+    fresh = {"t0_i": R.t0_particle_dump(R.T0A), "t0_ii": R.t0_modeA(R.T0A),
+             "t0_iii": R.t0_routeS(R.T0S)}
+    assert json.loads(json.dumps(fresh)) == {k: d[k] for k in fresh}
+
+
+def test_t0_drained_nodes_and_p_activity():
+    """Mode A: the pfix nodes hold p = 0 after each step. Route S: under ruling 3d3699a50 the
+    p-active set is the 25 real nodes at every step (the light ghost row is dropped)."""
+    out = R.t0_modeA(R.T0A)
+    for h in out["history"][1:]:
+        g = h["grid"]
+        for k, idx in enumerate(g["node_idx"]):
+            if idx[1] == 2:
+                assert g["U"][3 * k + 2] == 0.0
+    s = R.t0_routeS(R.T0S)
+    for h in s["history"][1:]:
+        assert len(h["grid"]["nodes"]) == 25
+        assert min(i[1] for i in h["grid"]["node_idx"]) == 0

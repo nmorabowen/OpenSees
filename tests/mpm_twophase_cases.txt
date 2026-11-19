@@ -200,3 +200,135 @@ band p_center_peak >= 1 + (closed-form ramp peak - 1)/2 (1.0390679304096313 for 
 ref closed forms with the ramp; FE LadrunoUP under Newmark at the MPM dt
 gap route S has no algorithmic damping; the FE has gamma 0.6
 end
+
+# ============================================================================
+# T0 -- the numpy oracle (runs FIRST). tests/mpm_twophase_reference.py `t0` leg, written from
+# tests/mpm_twophase_interface.md §1 and §7a and the rulings of 9064acca3 alone (never the MPM
+# C++). Record tests/data/mpm/twophase/t0_oracle.json (numpy only: no build hash; the oracle is
+# self-checked against LadrunoUP, see t1_ref_fe_identity). Gate: the C++ matches every listed
+# number at rel 1e-9.
+# Initial particle fields (both cases; x, y the particle's initial position, H = 2):
+#   p   = 5 + 2 x + 3 (H - y)                           (every case)
+#   v   = (0.05 sin(pi y/2), 0.03 sin(pi x/2))          (t0_ii only; t0_iii starts at rest)
+#   a   = (0.1 cos x, -0.05 sin y)                      (t0_ii only)
+#   pd  = 0.5 sin(x + y),  pdd = 0.1 cos y              (t0_ii only)
+# The record's history[0].particles carries these values at 17 digits; the harness sets them with
+# `mpm particleVelocity`, `mpm particleAcceleration` and `mpm particlePressure` (§7a Q5).
+# ============================================================================
+# T0 (i) + (ii): mode A, route E. Grid origin 0 0, h 1, cells 2 2, gimp; body box 0 0 2 2 ppc 2
+# (16 particles, V0 0.25, m 0.5, lp 0.25), flush with every face. alpha_st = 0.25 h^2/(K + 4G/3) =
+# 2.25e-5 (K = lam + 2G/3 = 5555.6, G = 4166.7 from the plane-strain D0).
+# (i) `mpm debug particleBlocks <p> <path> 1e-3 2.0 0.05 0.3 0.4 0.1` for p = 0, 5, 15 at the
+#     initial committed state (before step 1; lambda = 1), with `mpm rayleigh 0.2 0.001`. Compare
+#     K, C, M, R, R_static (node-major [ux, uy, p]; map nodes by coordinates or by the record's
+#     nodes, the mpm_interface.md §2 ids), S, dS.
+# (ii) three steps `mpm analyze 3 0.01`; after each step, every particle's x, v, a, sig (sigma'),
+#     p, pd, pdd. Grid nodal solutions in history[k].grid (diagnosis only, not gated).
+case t0_modeA
+kind reference
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 1.0
+cells 2 2
+material 1 elastic 1.0e4 0.2 2.0
+body 1 box 0.0 0.0 2.0 2.0 ppc 2 mat 1 rho 2.0
+twophase 1 4444.0 0.4 1.0 1.0e-2 1.0e-2 stab auto 0.25
+gravity 0.0 -9.81
+series none
+fix ymin y
+pfix ymax 0.0
+mode transient
+integrator newmark 0.6 0.3025
+rayleigh 0.2 0.001
+kinematics small
+flip 1.0
+pblend 1.0
+dt 0.01
+steps 3
+note analysis: system UmfPack, constraints Transformation, algorithm Linear (one exact solve per step); renormalize cut 5e-2 (the mode-A default)
+data tests/data/mpm/twophase/t0_oracle.json
+field t0_i[k].{particle, nodes, node_idx, coords, S, dS, trial, K, C, M, R, R_static, alpha_st}
+field t0_ii.history[k].particles.{x, v, a, sig, p, pd, pdd}   k = 0 (initial) .. 3
+band all 1e-9 (relative, per field: max |C++ - oracle| / max |oracle|)
+ref numpy oracle from interface §1 + §7a; self-check: the same particle blocks reproduce LadrunoUP's A and b on t1_ref_fe_identity to <= 8e-16
+end
+
+# T0 (iii): mode F, route S. Grid origin 0 0, h 0.5, cells 4 4, gimp; body box 0 0 2 2 ppc 2
+# (64 particles, V0 0.0625, m 0.125, lp 0.125). alpha_st = 0.25 h^2/(K + 4G/3) = 5.625e-6.
+# Ten steps of dt 1e-3, no damping, flip 1, pblend 1, mass cutoff 1e-10. After each step: every
+# particle's x, v, sig, p; and the grid p on the p-active nodes (mpm_interface.md §2 ids and
+# index tuples), with the projected p^ beside it.
+# p-activity (ruling 3d3699a50): a node is p-active iff m_a > c_m m_max (c_m = mode A's cutoff,
+# 5e-2; m_max = max_p m_p, interface §7a Q3 step 3) and a two-phase particle has S^p > 0 there.
+# Each particle's S^p, grad S^p are renormalised over its p-active nodes (S' = S/sum S, grad S' =
+# (grad S - S' sum grad S)/sum S); dropped nodes are absent from the pressure system, the
+# projection and G2P (never drained). Q_(a,i),b = alpha V (unrenormalised mode-F d_i S_a) S'^p_b;
+# the u side keeps mode F's 1e-10 cutoff and the correction on every free u component. Under it
+# the ghost row j = -1 (m_a 1.3e-8 to 2.6e-8 m_p from step 3) is dropped: 25 p-active nodes at
+# every step. Under the earlier literal rule it was p-active with p up to 4.4e4 kPa, moving the
+# particles by 1.2e-3 (p), 3.6e-3 (v), 5.2e-3 (sigma').
+case t0_routeS
+kind reference
+ndm 2
+basis gimp
+origin 0.0 0.0
+h 0.5
+cells 4 4
+material 1 elastic 1.0e4 0.2 2.0
+body 1 box 0.0 0.0 2.0 2.0 ppc 2 mat 1 rho 2.0
+twophase 1 4444.0 0.4 1.0 1.0e-2 1.0e-2 stab auto 0.25
+gravity 0.0 -9.81
+series none
+fix xmin x
+fix xmax x
+fix ymin y
+pfix ymax 0.0
+mode explicit
+route S
+kinematics small
+flip 1.0
+pblend 1.0
+masscut 1.0e-10
+pcut 0.05
+dt 1.0e-3
+steps 10
+data tests/data/mpm/twophase/t0_oracle.json
+field t0_iii.history[k].particles.{x, v, sig, p}   k = 0 .. 10
+field t0_iii.history[k].grid.{nodes, node_idx, p, phat}
+band all 1e-9 (relative, per field)
+ref numpy oracle from interface §1 route S + §7a Q4 + rulings 9064acca3, 3d3699a50
+end
+
+# ============================================================================
+# T1 -- FE identity (route E, mode A): LadrunoUP references. Record t1_fe.json (build b751dcbfe).
+# ============================================================================
+# Linear basis; particles at the 2x2 (2D) / 2x2x2 (3D) Gauss points of every cell, x = (i + 1/2
+# +- 1/(2 sqrt 3)) h, V_p = (h/2)^ndm (Gauss weight x detJ), m_p = rho V_p; order: cells x fastest,
+# then the Gauss points x fastest. h 1; meshes q4_1 (1 cell), q4_2x2 (2 x 2 cells), h8_1 (1 cell).
+# E 1e4, nu 0.2, rho 2.0; Kf 4444, n 0.4, rhoF 1, kbar 1e-2 (each axis); gravity (0, -9.81[, 0]) on
+# the mixture and as the fluid drive; no boundary conditions; no Rayleigh. Newmark 0.6 / 0.3025,
+# dt 0.01. Materials: ElasticIsotropic, and DruckerPrager (UW) K 5555.56 G 4166.67 sigma_y 100
+# rho 0.2 rho_bar 0.1, rest 0, density 2 (elastic in the step: its answers equal the elastic leg's
+# to 1e-15). Stab off and auto 0.25 (alpha_st 2.25e-5). LadrunoUP: -lumped -geom linear
+# -dynSeepage off, system FullGeneral, numberer Plain, constraints Plain, algorithm Linear.
+# Particle values (sigma' = 0, F = I; z = 0 in 2D; i the 0-based component):
+#   v_i = 0.10 sin(1.1 x + 0.7 y + 0.5 z + 0.3 i + 0.2)    a_i = 0.50 cos(0.9 x - 0.6 y + 0.4 z + 0.5 i + 0.1)
+#   p = 5 + 2 sin(0.8 x + 1.2 y + 0.3 z)    pd = 0.5 cos(1.3 x - 0.4 y + 0.2 z)
+#   pdd = 0.2 sin(0.6 x + 0.9 y - 0.7 z + 0.4)
+# The FE nodal state is their P5 projection (§7a Q5: u 0, v^, a^ mass-weighted, p^, pd^, pdd^
+# volume-weighted; renormalize is the identity here). A = the Newmark first-iteration tangent
+# (printA); b = A dU (the step is one exact LU solve; printB after a Linear step is the post-solve
+# right side, ~1e-14, recorded as printB_after_step_norm). dofs[e] = [tag, x, y(, z), dof] labels
+# equation e; map the MPM's `mpm debug assemble` rows by coordinates and dof.
+# Self-check (tests/test_mpm_twophase_reference.py): the oracle's particle blocks at these
+# particles, assembled under Newmark's predictor, reproduce A and b to <= 8e-16 (all 12 legs).
+case t1_ref_fe_identity
+kind reference
+data tests/data/mpm/twophase/t1_fe.json
+field legs.<q4_1|q4_2x2|h8_1>_<elastic|dp>_<off|auto>.{A, b, dofs, dU, nodes[k].{x, v0, a0, p0, pd0, pdd0, u1, p1, v1, pd1, a1, pdd1}, particles, alpha_st}
+band A 1e-12 (relative, Frobenius)
+band b 1e-12 (relative, 2-norm)
+band first step u, p 1e-10 (relative)
+ref fork FE, LadrunoUP Q4 / H8, build in the record
+end

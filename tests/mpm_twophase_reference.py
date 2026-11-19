@@ -5,9 +5,10 @@ number comes from a closed form or from the fork's own LadrunoUP (ELE 33017) on 
 step and Newmark pair the gate names (wp-briefs.md "232l", rows T2-T6). Units kN, t, m, s, kPa.
 Sign: tension-positive total stress; p compression-positive (LadrunoUP.cpp:2235-2236).
 
-ROUND 1 (this file as committed in Round 1) holds the closed forms and the FE legs that fix the
-max(2 x FE, 0.02) bands before any two-phase MPM number. The numpy oracle (T0 i-iii) arrives in
-Round 2, written from tests/mpm_twophase_interface.md alone.
+Holds the closed forms, the FE legs that fix the T2-T6 bands (rulings 5820012e5), T1's LadrunoUP
+references, and the numpy oracle for T0 i-iii, written from tests/mpm_twophase_interface.md §1,
+§7a and the rulings 9064acca3 / 3d3699a50 alone. The oracle's particle element is self-checked
+against LadrunoUP's own A and b (oracle_vs_fe_t1, <= 8e-16 on all 12 T1 legs).
 
     python3.12 tests/mpm_twophase_reference.py closed      # closed-form self-checks (no binary)
     python3.12 tests/mpm_twophase_reference.py terzaghi    # T2 FE: 1x10 and 2x10 Q4, step load
@@ -15,6 +16,11 @@ Round 2, written from tests/mpm_twophase_interface.md alone.
     python3.12 tests/mpm_twophase_reference.py hydro       # T4 FE: self-weight column, steady
     python3.12 tests/mpm_twophase_reference.py b4          # T5 FE: McGann B4 CB indices
     python3.12 tests/mpm_twophase_reference.py ramp        # T6 FE: T2/T3 cases with the T6 ramp
+    python3.12 tests/mpm_twophase_reference.py t6fe <dt>   # T6 FE at the MPM run's own dt (bands)
+    python3.12 tests/mpm_twophase_reference.py dtsweep     # T6 FE error against dt
+    python3.12 tests/mpm_twophase_reference.py plate       # T2 plate (equalDOF) vs nodal loads
+    python3.12 tests/mpm_twophase_reference.py t1          # T1 LadrunoUP A, b, first step
+    python3.12 tests/mpm_twophase_reference.py t0          # T0 i-iii oracle (numpy only)
 
 FE legs need a built fork binary: LADRUNO_BIN=<dir with opensees.pyd>, else this worktree's
 dist/bin. Each leg writes tests/data/mpm/twophase/<leg>.json with ops.ladrunoBuild().
@@ -626,6 +632,849 @@ def fe_b4(stab):
                 pmax=float(np.max(np.abs(p))))
 
 
+# ---------------------------------------------------------------------------------------- T1
+# FE identity (route E): linear basis, particles at the 2x2 (2x2x2) Gauss points, V_p = Gauss
+# weight x detJ = (h/2)^ndm, small strain. The common state is interface §7a Q5's re-seed: the
+# particles carry sigma' = 0, F = I and the values of t1_particle_values; the FE nodal state is
+# their P5 projection (u = 0, v = v^, a = a^, p = p^, pd = pd^, pdd = pdd^).
+T1 = {"E": 1.0e4, "nu": 0.2, "rho": 2.0, "Kf": 4444.0, "poro": 0.4, "rhoF": 1.0, "kbar": 1.0e-2,
+      "g": 9.81, "dt": 0.01, "gamma": 0.6, "beta": 0.3025, "h": 1.0, "renorm_cut": 0.05}
+T1_MESHES = {"q4_1": (2, 1), "q4_2x2": (2, 2), "h8_1": (3, 1)}     # name -> (ndm, cells per axis)
+
+
+def t1_dp_args():
+    """DruckerPrager (UW) with the elastic leg's K, G; a high cone (sigma_y 100 kPa) so the
+    first step stays elastic; non-associated (rho 0.2, rho_bar 0.1); hardening off."""
+    c = T1
+    K = c["E"] / (3 * (1 - 2 * c["nu"]))
+    G = c["E"] / (2 * (1 + c["nu"]))
+    return [K, G, 100.0, 0.2, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, c["rho"]]
+
+
+def t1_particle_values(x):
+    """The particles' prescribed state (z = 0 in 2D):
+        v_i   = 0.10 sin(1.1 x + 0.7 y + 0.5 z + 0.3 i + 0.2)
+        a_i   = 0.50 cos(0.9 x - 0.6 y + 0.4 z + 0.5 i + 0.1)
+        p     = 5.0 + 2.0 sin(0.8 x + 1.2 y + 0.3 z)
+        pd    = 0.5 cos(1.3 x - 0.4 y + 0.2 z)
+        pdd   = 0.2 sin(0.6 x + 0.9 y - 0.7 z + 0.4)          (i = 0-based component)"""
+    X = list(x) + [0.0] * (3 - len(x))
+    xx, yy, zz = X
+    nd = len(x)
+    v = [0.10 * math.sin(1.1 * xx + 0.7 * yy + 0.5 * zz + 0.3 * i + 0.2) for i in range(nd)]
+    a = [0.50 * math.cos(0.9 * xx - 0.6 * yy + 0.4 * zz + 0.5 * i + 0.1) for i in range(nd)]
+    p = 5.0 + 2.0 * math.sin(0.8 * xx + 1.2 * yy + 0.3 * zz)
+    pd = 0.5 * math.cos(1.3 * xx - 0.4 * yy + 0.2 * zz)
+    pdd = 0.2 * math.sin(0.6 * xx + 0.9 * yy - 0.7 * zz + 0.4)
+    return {"v": v, "a": a, "p": p, "pd": pd, "pdd": pdd}
+
+
+def t1_particles(ndm, n, h=1.0, rho=2.0):
+    """Particles at the 2^ndm Gauss points of each cell of an n^ndm grid on [0, n h]^ndm; order:
+    cells x fastest, then y, z; inside a cell the Gauss points x fastest (-, +)."""
+    g = 0.5 / math.sqrt(3.0)
+    V = (h / 2.0) ** ndm
+    out = []
+    for cell in np.ndindex(*([n] * ndm)):
+        cell = cell[::-1]                       # x fastest
+        for gp in np.ndindex(*([2] * ndm)):
+            gp = gp[::-1]
+            x = [(cell[d] + 0.5 + (g if gp[d] else -g)) * h for d in range(ndm)]
+            out.append(dict(x=x, V=V, m=rho * V, **t1_particle_values(x)))
+    return out
+
+
+def linear_support(x, n, h=1.0):
+    """Linear hat (mpm_interface.md §4.2) on the real grid [0, n h]^ndm: per axis the clamped
+    cell's two nodes; tensor product, x fastest. Returns [(idx tuple, S, dS)]."""
+    ndm = len(x)
+    ax = []
+    for d in range(ndm):
+        c = min(int(math.floor(x[d] / h)), n - 1)
+        xi = (x[d] - c * h) / h
+        ax.append([(c, 1.0 - xi, -1.0 / h), (c + 1, xi, 1.0 / h)])
+    out = []
+    for combo in np.ndindex(*([2] * ndm)):
+        combo = combo[::-1]
+        idx = tuple(ax[d][combo[d]][0] for d in range(ndm))
+        S = 1.0
+        for d in range(ndm):
+            S *= ax[d][combo[d]][1]
+        dS = []
+        for d in range(ndm):
+            v = ax[d][combo[d]][2]
+            for e in range(ndm):
+                if e != d:
+                    v *= ax[e][combo[e]][1]
+            dS.append(v)
+        out.append((idx, S, np.array(dS)))
+    return out
+
+
+def renormalize(supports, masses, cut):
+    """Interface §7a Q3 steps 2-4: nodal mass over every support node, keep m_a > cut max m_p,
+    rescale S' = S/sigma, dS' = (dS - S' gamma)/sigma per particle over its kept nodes."""
+    mnode = {}
+    for sup, m in zip(supports, masses):
+        for idx, S, _ in sup:
+            mnode[idx] = mnode.get(idx, 0.0) + S * m
+    thr = cut * max(masses)
+    out = []
+    for sup in supports:
+        kept = [(i, S, dS) for (i, S, dS) in sup if mnode[i] > thr]
+        sig = sum(S for _, S, _ in kept)
+        gam = sum(dS for _, _, dS in kept)
+        out.append([(i, S / sig, (dS - (S / sig) * gam) / sig) for (i, S, dS) in kept])
+    return out, mnode
+
+
+def p5_projection(parts, supports, two_phase=None):
+    """Interface §7a Q5: m_a = sum S m; v^, a^ mass-weighted; p^, pd^, pdd^ volume-weighted over
+    the two-phase particles (two_phase: per-particle flags, default all)."""
+    acc = {}
+    for k, (P, sup) in enumerate(zip(parts, supports)):
+        tp = True if two_phase is None else two_phase[k]
+        for idx, S, _ in sup:
+            r = acc.setdefault(idx, {"m": 0.0, "mv": 0.0, "ma": 0.0, "V": 0.0, "Vp": 0.0,
+                                     "Vpd": 0.0, "Vpdd": 0.0})
+            r["m"] += S * P["m"]
+            r["mv"] = r["mv"] + S * P["m"] * np.array(P["v"])
+            r["ma"] = r["ma"] + S * P["m"] * np.array(P["a"])
+            if tp:
+                r["V"] += S * P["V"]
+                r["Vp"] += S * P["V"] * P["p"]
+                r["Vpd"] += S * P["V"] * P["pd"]
+                r["Vpdd"] += S * P["V"] * P["pdd"]
+    out = {}
+    for idx, r in acc.items():
+        V = r["V"]
+        out[idx] = {"m": r["m"], "v": (r["mv"] / r["m"]).tolist(),
+                    "a": (r["ma"] / r["m"]).tolist(),
+                    "p": r["Vp"] / V if V > 0 else 0.0, "pd": r["Vpd"] / V if V > 0 else 0.0,
+                    "pdd": r["Vpdd"] / V if V > 0 else 0.0}
+    return out
+
+
+def stab_alpha(h, K, G, a0):
+    """LadrunoUPKernel.h stabAlphaAuto: a0 h^2/(K + 4G/3)."""
+    return a0 * h * h / (K + 4.0 * G / 3.0)
+
+
+def fe_t1(mesh, mat, stab):
+    """LadrunoUP on the T1 mesh at the common state: the Newmark first-iteration tangent A
+    (printA), right side b (printB) and the first step (Linear algorithm: one exact solve).
+    No boundary conditions (the effective tangent is regular: c3 M on u rows, H + c2 S* on p).
+    Gravity g on the mixture (-body) and as the fluid drive (the -fluidBody default)."""
+    ops = fe_engine()
+    c = T1
+    ndm, n = T1_MESHES[mesh]
+    h = c["h"]
+    ndf = ndm + 1
+    parts = t1_particles(ndm, n, h, c["rho"])
+    sups = [linear_support(P["x"], n, h) for P in parts]
+    sups, _ = renormalize(sups, [P["m"] for P in parts], c["renorm_cut"])
+    proj = p5_projection(parts, sups)
+    ops.wipe()
+    ops.model("basic", "-ndm", ndm, "-ndf", ndf)
+    tag = {}
+    for k, idx in enumerate(sorted(proj, key=lambda t: t[::-1]), start=1):
+        ops.node(k, *[float(i * h) for i in idx])
+        tag[idx] = k
+    if mat == "elastic":
+        ops.nDMaterial("ElasticIsotropic", 1, c["E"], c["nu"], c["rho"])
+    else:
+        ops.nDMaterial("DruckerPrager", 1, *t1_dp_args())
+    grav = [0.0] * ndm
+    grav[1] = -c["g"]
+    if ndm == 2:
+        corners = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    else:
+        corners = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                   (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+    e = 1
+    for cell in np.ndindex(*([n] * ndm)):
+        cell = cell[::-1]
+        conn = [tag[tuple(cell[d] + cc[d] for d in range(ndm))] for cc in corners]
+        ops.element("LadrunoUP", e, *conn, 1, "-Kf", c["Kf"], "-poro", c["poro"],
+                    "-rhoF", c["rhoF"], "-perm", *([c["kbar"]] * ndm), "-body", *grav,
+                    "-lumped", "-geom", "linear", "-dynSeepage", "off", *_stab_args(stab))
+        e += 1
+    for idx, k in tag.items():
+        st = proj[idx]
+        for d in range(ndm):
+            ops.setNodeDisp(k, d + 1, 0.0, "-commit")
+            ops.setNodeVel(k, d + 1, st["v"][d], "-commit")
+            ops.setNodeAccel(k, d + 1, st["a"][d], "-commit")
+        ops.setNodeDisp(k, ndf, st["p"], "-commit")
+        ops.setNodeVel(k, ndf, st["pd"], "-commit")
+        ops.setNodeAccel(k, ndf, st["pdd"], "-commit")
+    ops.system("FullGeneral")
+    ops.numberer("Plain")
+    ops.constraints("Plain")
+    ops.algorithm("Linear")
+    ops.integrator("Newmark", c["gamma"], c["beta"])
+    ops.analysis("Transient")
+    U0 = {k: [ops.nodeDisp(k, d + 1) for d in range(ndf)] for k in tag.values()}
+    assert ops.analyze(1, c["dt"]) == 0
+    A = np.array(ops.printA("-ret"))
+    N = int(round(len(A) ** 0.5))
+    A = A.reshape(N, N).T                           # column-major -> row-major
+    # printB after a Linear step returns the post-solve SOE right side (~1e-14), not b. The step
+    # IS one exact LU solve of A dU = b (FullGeneral), so b = A dU, dU = U1 - U0 (Newmark's
+    # displacement predictor leaves U at U0 on every DOF, p included).
+    b_after = np.array(ops.printB("-ret"))
+    labels = [None] * N
+    dU = np.zeros(N)
+    nodes_out = []
+    for idx, k in sorted(tag.items(), key=lambda kv: kv[1]):
+        eqs = ops.nodeDOFs(k)
+        for d in range(ndf):
+            labels[eqs[d]] = [k] + [float(i * h) for i in idx] + [d]
+            dU[eqs[d]] = ops.nodeDisp(k, d + 1) - U0[k][d]
+        st = proj[idx]
+        nodes_out.append({"tag": k, "x": [float(i * h) for i in idx], "m": st["m"],
+                          "v0": st["v"], "a0": st["a"], "p0": st["p"], "pd0": st["pd"],
+                          "pdd0": st["pdd"],
+                          "u1": [ops.nodeDisp(k, d + 1) for d in range(ndm)],
+                          "p1": ops.nodeDisp(k, ndf),
+                          "v1": [ops.nodeVel(k, d + 1) for d in range(ndm)],
+                          "pd1": ops.nodeVel(k, ndf),
+                          "a1": [ops.nodeAccel(k, d + 1) for d in range(ndm)],
+                          "pdd1": ops.nodeAccel(k, ndf)})
+    b = A @ dU
+    K0 = c["E"] / (3 * (1 - 2 * c["nu"]))
+    G0 = c["E"] / (2 * (1 + c["nu"]))
+    if stab == "off":
+        alpha_st = 0.0
+    elif isinstance(stab, tuple):
+        alpha_st = stab_alpha(h, K0, G0, stab[1])
+    else:
+        alpha_st = float(stab)
+    return {"mesh": mesh, "ndm": ndm, "cells": n, "material": mat,
+            "stab": stab if isinstance(stab, str) else list(stab), "alpha_st": alpha_st,
+            "particles": parts, "nodes": nodes_out, "dofs": labels,
+            "A": A.tolist(), "b": b.tolist(), "dU": dU.tolist(),
+            "printB_after_step_norm": float(np.linalg.norm(b_after)),
+            "A_fro": float(np.linalg.norm(A)), "b_norm": float(np.linalg.norm(b))}
+
+
+# ==============================================================================================
+# THE NUMPY ORACLE (T0 i-iii), written from tests/mpm_twophase_interface.md §1 and §7a, and the
+# frozen interfaces it cites (mpm_interface.md §2, §4, §5, §6, §7; mpm_implicit_interface.md
+# D1.5-D1.9, §3). Never from the MPM C++. Units and signs as above; Voigt plane strain
+# [xx, yy, xy], 3D [xx, yy, zz, xy, yz, zx], engineering shear.
+# ==============================================================================================
+def gimp1(r, h, lp):
+    """uGIMP 1D factor (mpm_interface.md §4.1; interface §7a Q3 step 1)."""
+    a = abs(r)
+    s = 1.0 if r > 0 else (-1.0 if r < 0 else 0.0)
+    if a < lp:
+        return 1.0 - (r * r + lp * lp) / (2.0 * h * lp), -r / (h * lp)
+    if a < h - lp:
+        return 1.0 - a / h, -s / h
+    if a < h + lp:
+        return (h + lp - a) ** 2 / (4.0 * h * lp), -s * (h + lp - a) / (2.0 * h * lp)
+    return 0.0, 0.0
+
+
+class OGrid:
+    """Uniform grid with one ghost layer (mpm_interface.md §2). Node index tuples (i, j[, k]),
+    -1 <= i <= n_x + 1; the C++ node id is reported for convenience."""
+
+    def __init__(self, x0, h, n):
+        self.x0 = [float(v) for v in x0]
+        self.h = float(h)
+        self.n = list(n)
+        self.ndm = len(n)
+
+    def node_id(self, idx):
+        if self.ndm == 2:
+            return (idx[0] + 1) + (self.n[0] + 3) * (idx[1] + 1)
+        return (idx[0] + 1) + (self.n[0] + 3) * ((idx[1] + 1) + (self.n[1] + 3) * (idx[2] + 1))
+
+    def coord(self, idx):
+        return [self.x0[d] + idx[d] * self.h for d in range(self.ndm)]
+
+    def face_nodes(self, face):
+        """A face's node set: its face layer and its ghost layer (mpm_interface.md §2)."""
+        ax = "xyz".index(face[0])
+        lay = (-1, 0) if face[1:] == "min" else (self.n[ax], self.n[ax] + 1)
+        return ax, lay
+
+    def on_face(self, idx, face):
+        ax, lay = self.face_nodes(face)
+        return idx[ax] in lay
+
+    def support(self, x, lp, basis="gimp"):
+        """[(idx, S, dS)] in the C++ order: per-axis scan c-1..c+2 ascending, entries with
+        S = dS = 0 dropped, tensor product x fastest (interface §7a Q1)."""
+        h = self.h
+        ax = []
+        for d in range(self.ndm):
+            c = int(math.floor((x[d] - self.x0[d]) / h))
+            c = min(max(c, 0), self.n[d] - 1)
+            lst = []
+            if basis == "gimp":
+                for i in range(c - 1, c + 3):
+                    if i < -1 or i > self.n[d] + 1:
+                        continue
+                    S, dS = gimp1(x[d] - (self.x0[d] + i * h), h, lp[d])
+                    if S == 0.0 and dS == 0.0:
+                        continue
+                    lst.append((i, S, dS))
+            else:
+                xi = (x[d] - (self.x0[d] + c * h)) / h
+                lst = [(c, 1.0 - xi, -1.0 / h), (c + 1, xi, 1.0 / h)]
+            ax.append(lst)
+        out = []
+        for combo in np.ndindex(*[len(a) for a in ax][::-1]):
+            combo = combo[::-1]
+            idx = tuple(ax[d][combo[d]][0] for d in range(self.ndm))
+            S = 1.0
+            for d in range(self.ndm):
+                S *= ax[d][combo[d]][1]
+            dS = np.empty(self.ndm)
+            for d in range(self.ndm):
+                v = ax[d][combo[d]][2]
+                for e in range(self.ndm):
+                    if e != d:
+                        v *= ax[e][combo[e]][1]
+                dS[d] = v
+            out.append((idx, S, dS))
+        return out
+
+
+def elastic_D(E, nu, ndm):
+    lam = E * nu / ((1 + nu) * (1 - 2 * nu))
+    G = E / (2 * (1 + nu))
+    if ndm == 2:
+        return np.array([[lam + 2 * G, lam, 0.0], [lam, lam + 2 * G, 0.0], [0.0, 0.0, G]])
+    D = np.zeros((6, 6))
+    D[:3, :3] = lam
+    for i in range(3):
+        D[i, i] = lam + 2 * G
+        D[3 + i, 3 + i] = G
+    return D
+
+
+def bmat(dS, ndm):
+    """Strain-displacement rows of one node (Voigt, engineering shear)."""
+    if ndm == 2:
+        x, y = dS
+        return np.array([[x, 0.0], [0.0, y], [y, x]])
+    x, y, z = dS
+    return np.array([[x, 0, 0], [0, y, 0], [0, 0, z], [y, x, 0], [0, z, y], [z, 0, x]], float)
+
+
+def voigt_tensor(s, ndm):
+    if ndm == 2:
+        return np.array([[s[0], s[2]], [s[2], s[1]]])
+    return np.array([[s[0], s[3], s[5]], [s[3], s[1], s[4]], [s[5], s[4], s[2]]])
+
+
+def stab_value(fl, D0, h, ndm):
+    """alpha_st (interface §1): off 0, a raw value, or a0 h^2/(K + 4G/3) with G = D0(2,2)
+    [3D: D0(3,3)], lam = D0(0,1), K = lam + 2G/3."""
+    st = fl.get("stab", ("auto", 0.25))
+    if st == "off":
+        return 0.0
+    if isinstance(st, (tuple, list)) and st[0] == "auto":
+        G = D0[2, 2] if ndm == 2 else D0[3, 3]
+        lam = D0[0, 1]
+        return stab_alpha(h, lam + 2.0 * G / 3.0, G, float(st[1]))
+    return float(st)
+
+
+def particle_blocks(sup, V, m, D, sig_n, fl, alpha_st, grav, lam, tr, rayleigh=(0.0, 0.0)):
+    """One two-phase particle element (interface §1, §7a Q2) at the trial nodal values
+    tr = {u: [nen][ndm], p: [nen], v, pd, a, pdd}. sup = [(idx, S, dS)] (S^p = S on GIMP and
+    linear). Returns dict K, C, M, R, R_static (node-major [u..., p]), sig (trial sigma')."""
+    nen = len(sup)
+    ndm = len(sup[0][2])
+    ndf = ndm + 1
+    nd = nen * ndf
+    S = np.array([s for _, s, _ in sup])
+    dS = np.array([d for _, _, d in sup])
+    al = fl.get("alpha", 1.0)
+    Ks = fl.get("Ks", -1.0)
+    ooQ = fl["poro"] / fl["Kf"] + ((al - fl["poro"]) / Ks if Ks > 0 else 0.0)
+    kb = np.array(fl["perm"], float)
+    u = np.array(tr["u"], float)
+    deps = sum(bmat(dS[k], ndm) @ u[k] for k in range(nen))
+    sig = np.array(sig_n, float) + D @ deps
+    st = voigt_tensor(sig, ndm)
+    Ku = np.zeros((nen * ndm, nen * ndm))
+    for a in range(nen):
+        Ba = bmat(dS[a], ndm)
+        for b in range(nen):
+            Ku[a * ndm:(a + 1) * ndm, b * ndm:(b + 1) * ndm] = V * Ba.T @ D @ bmat(dS[b], ndm)
+    Q = np.zeros((nen * ndm, nen))
+    for a in range(nen):
+        for i in range(ndm):
+            Q[a * ndm + i, :] = al * V * dS[a, i] * S
+    H = V * (dS * kb) @ dS.T
+    Sm = V * ooQ * np.outer(S, S)
+    Ht = V * dS @ dS.T
+    Sst = Sm + alpha_st * Ht
+    Mu = np.diag(np.repeat(S * m, ndm))
+    Cu = rayleigh[0] * Mu + rayleigh[1] * Ku
+    uI = [k * ndf + i for k in range(nen) for i in range(ndm)]
+    pI = [k * ndf + ndm for k in range(nen)]
+    K = np.zeros((nd, nd))
+    C = np.zeros((nd, nd))
+    M = np.zeros((nd, nd))
+    K[np.ix_(uI, uI)] = Ku
+    K[np.ix_(uI, pI)] = -Q
+    K[np.ix_(pI, pI)] = H
+    C[np.ix_(uI, uI)] = Cu
+    C[np.ix_(pI, uI)] = Q.T
+    C[np.ix_(pI, pI)] = Sst
+    M[np.ix_(uI, uI)] = Mu
+    p = np.array(tr["p"], float)
+    g = np.array(grav, float) * lam
+    fprime = np.array([V * st @ dS[k] for k in range(nen)]).ravel()
+    fbody = np.array([S[k] * m * g for k in range(nen)]).ravel()
+    fseep = V * fl["rhoF"] * dS @ (kb * g)
+    Rs = np.zeros(nd)
+    Rs[uI] = fprime - Q @ p - fbody
+    Rs[pI] = H @ p - fseep
+    xv = np.zeros(nd)
+    xa = np.zeros(nd)
+    xv[uI] = np.array(tr["v"], float).ravel()
+    xv[pI] = tr["pd"]
+    xa[uI] = np.array(tr["a"], float).ravel()
+    xa[pI] = tr["pdd"]
+    R = Rs + M @ xa + C @ xv
+    return {"K": K, "C": C, "M": M, "R": R, "R_static": Rs, "sig": sig, "deps": deps,
+            "nodes": [i for i, _, _ in sup], "S": S, "dS": dS, "alpha_st": alpha_st}
+
+
+def pattern_values(nen, ndm, s):
+    """Interface §7a Q1: value_j = s_kind sin(1.7 j + 0.3), j the element DOF index."""
+    ndf = ndm + 1
+    out = {k: [] for k in ("u", "p", "v", "pd", "a", "pdd")}
+    for k in range(nen):
+        u, v, a = [], [], []
+        for c in range(ndf):
+            w = math.sin(1.7 * (ndf * k + c) + 0.3)
+            if c < ndm:
+                u.append(s["u"] * w)
+                v.append(s["v"] * w)
+                a.append(s["a"] * w)
+            else:
+                out["p"].append(s["p"] * w)
+                out["pd"].append(s["pd"] * w)
+                out["pdd"].append(s["pdd"] * w)
+        out["u"].append(u)
+        out["v"].append(v)
+        out["a"].append(a)
+    return out
+
+
+# ---------------------------------------------------------------- particle sets and state
+def lattice(grid, lo, hi, ppc, rho):
+    """mpm_interface.md §5: sub-lattice x0 + ((a + 0.5) h)/n, a_x fastest; box closed."""
+    ndm = grid.ndm
+    axes = []
+    for d in range(ndm):
+        pts = [grid.x0[d] + ((a + 0.5) * grid.h) / ppc for a in range(ppc * grid.n[d])]
+        axes.append([x for x in pts if lo[d] <= x <= hi[d]])
+    X = []
+    for combo in np.ndindex(*[len(a) for a in axes][::-1]):
+        combo = combo[::-1]
+        X.append([axes[d][combo[d]] for d in range(ndm)])
+    V0 = (grid.h / ppc) ** ndm
+    return np.array(X), V0, rho * V0, grid.h / (2.0 * ppc)
+
+
+def t0_initial(X, case):
+    """The T0 initial particle fields (formulas quoted in the cases file)."""
+    N, ndm = X.shape
+    st = {"x": X.copy(), "v": np.zeros((N, ndm)), "a": np.zeros((N, ndm)),
+          "p": np.zeros(N), "pd": np.zeros(N), "pdd": np.zeros(N),
+          "sig": np.zeros((N, 3 if ndm == 2 else 6))}
+    for k, (x, y) in enumerate(X):
+        st["p"][k] = 5.0 + 2.0 * x + 3.0 * (case["H"] - y)
+        if case.get("modeA", False):
+            st["v"][k] = [0.05 * math.sin(math.pi * y / 2), 0.03 * math.sin(math.pi * x / 2)]
+            st["a"][k] = [0.1 * math.cos(x), -0.05 * math.sin(y)]
+            st["pd"][k] = 0.5 * math.sin(x + y)
+            st["pdd"][k] = 0.1 * math.cos(y)
+    return st
+
+
+T0A = {"x0": (0.0, 0.0), "h": 1.0, "cells": (2, 2), "box": ((0.0, 0.0), (2.0, 2.0)), "ppc": 2,
+       "H": 2.0, "rho": 2.0, "E": 1.0e4, "nu": 0.2,
+       "fluid": {"Kf": 4444.0, "poro": 0.4, "rhoF": 1.0, "perm": (1.0e-2, 1.0e-2),
+                 "stab": ("auto", 0.25)},
+       "gravity": (0.0, -9.81), "fix": [("ymin", (1,))], "pfix": [("ymax", 0.0)],
+       "rayleigh": (0.2, 0.001), "newmark": (0.6, 0.3025), "dt": 0.01, "steps": 3,
+       "flip": 1.0, "pblend": 1.0, "renorm_cut": 0.05, "modeA": True,
+       "dump": {"particles": (0, 5, 15),
+                "s": {"u": 1.0e-3, "p": 2.0, "v": 0.05, "pd": 0.3, "a": 0.4, "pdd": 0.1}}}
+
+T0S = {"x0": (0.0, 0.0), "h": 0.5, "cells": (4, 4), "box": ((0.0, 0.0), (2.0, 2.0)), "ppc": 2,
+       "H": 2.0, "rho": 2.0, "E": 1.0e4, "nu": 0.2,
+       "fluid": {"Kf": 4444.0, "poro": 0.4, "rhoF": 1.0, "perm": (1.0e-2, 1.0e-2),
+                 "stab": ("auto", 0.25)},
+       "gravity": (0.0, -9.81), "fix": [("xmin", (0,)), ("xmax", (0,)), ("ymin", (1,))],
+       "pfix": [("ymax", 0.0)], "dt": 1.0e-3, "steps": 10, "flip": 1.0, "pblend": 1.0,
+       "masscut": 1.0e-10, "pcut": 0.05, "modeA": False}
+
+
+def _fixed_comps(grid, idx, case):
+    out = set()
+    for face, comps in case["fix"]:
+        if grid.on_face(idx, face):
+            out.update(comps)
+    return out
+
+
+def _pfix(grid, idx, case):
+    for face, p0 in case["pfix"]:
+        if grid.on_face(idx, face):
+            return p0
+    return None
+
+
+# --------------------------------------------------------------------------- T0 (i)
+def t0_particle_dump(case=T0A):
+    """T0 (i): `mpm debug particleBlocks` at the initial committed state (before step 1),
+    for each listed particle, with the case's pattern scales. λ = 1 (series none)."""
+    grid = OGrid(case["x0"], case["h"], case["cells"])
+    X, V0, m, lpv = lattice(grid, *case["box"], case["ppc"], case["rho"])
+    ndm = grid.ndm
+    lp = [lpv] * ndm
+    D = elastic_D(case["E"], case["nu"], ndm)
+    a_st = stab_value(case["fluid"], D, grid.h, ndm)
+    sups = [grid.support(x, lp) for x in X]
+    sups, _ = renormalize(sups, [m] * len(X), case["renorm_cut"])
+    sig0 = np.zeros(3 if ndm == 2 else 6)
+    out = []
+    for pid in case["dump"]["particles"]:
+        sup = sups[pid]
+        tr = pattern_values(len(sup), ndm, case["dump"]["s"])
+        blk = particle_blocks(sup, V0, m, D, sig0, case["fluid"], a_st, case["gravity"], 1.0,
+                              tr, case["rayleigh"])
+        out.append({"particle": pid, "x": X[pid].tolist(), "V": V0, "m": m, "alpha_st": a_st,
+                    "nodes": [grid.node_id(i) for i in blk["nodes"]],
+                    "node_idx": [list(i) for i in blk["nodes"]],
+                    "coords": [grid.coord(i) for i in blk["nodes"]],
+                    "S": blk["S"].tolist(), "dS": blk["dS"].tolist(), "trial": tr,
+                    "K": blk["K"].tolist(), "C": blk["C"].tolist(), "M": blk["M"].tolist(),
+                    "R": blk["R"].tolist(), "R_static": blk["R_static"].tolist()})
+    return out
+
+
+# --------------------------------------------------------------------------- T0 (ii)
+def modeA_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
+    """One mode-A Newmark step, algorithm Linear (one exact solve), `kinematics small`
+    (interface §1 route E, §7a Q3/Q5; mpm_implicit_interface.md §3, D1.9). Returns the new
+    particle state and the grid solution."""
+    ndm = grid.ndm
+    ndf = ndm + 1
+    gam, bet = case["newmark"]
+    dt = case["dt"]
+    N = len(st["x"])
+    sups = [grid.support(x, lp) for x in st["x"]]
+    sups, _ = renormalize(sups, [m] * N, case["renorm_cut"])
+    parts = [{"m": m, "V": V0, "v": st["v"][k], "a": st["a"][k], "p": st["p"][k],
+              "pd": st["pd"][k], "pdd": st["pdd"][k]} for k in range(N)]
+    proj = p5_projection(parts, sups)
+    nodes = sorted(proj, key=lambda t: t[::-1])
+    eq = {idx: k * ndf for k, idx in enumerate(nodes)}
+    neq = len(nodes) * ndf
+    U0, V0n, A0 = np.zeros(neq), np.zeros(neq), np.zeros(neq)
+    fixed = np.zeros(neq, bool)
+    for idx in nodes:
+        e0 = eq[idx]
+        fc = _fixed_comps(grid, idx, case)
+        for d in range(ndm):
+            if d in fc:
+                fixed[e0 + d] = True
+            else:
+                V0n[e0 + d] = proj[idx]["v"][d]
+                A0[e0 + d] = proj[idx]["a"][d]
+        p0 = _pfix(grid, idx, case)
+        if p0 is not None:
+            fixed[e0 + ndm] = True
+            U0[e0 + ndm] = p0
+        else:
+            U0[e0 + ndm] = proj[idx]["p"]
+            V0n[e0 + ndm] = proj[idx]["pd"]
+            A0[e0 + ndm] = proj[idx]["pdd"]
+    c2 = gam / (bet * dt)
+    c3 = 1.0 / (bet * dt * dt)
+    Up = U0.copy()
+    Vp = (1 - gam / bet) * V0n + dt * (1 - gam / (2 * bet)) * A0
+    Ap = -V0n / (bet * dt) + (1 - 1 / (2 * bet)) * A0
+    Vp[fixed] = 0.0
+    Ap[fixed] = 0.0
+    Amat = np.zeros((neq, neq))
+    b = np.zeros(neq)
+    for k in range(N):
+        sup = sups[k]
+        dofs = [eq[i] + c for i, _, _ in sup for c in range(ndf)]
+        tr = {"u": [[Up[eq[i] + d] for d in range(ndm)] for i, _, _ in sup],
+              "p": [Up[eq[i] + ndm] for i, _, _ in sup],
+              "v": [[Vp[eq[i] + d] for d in range(ndm)] for i, _, _ in sup],
+              "pd": [Vp[eq[i] + ndm] for i, _, _ in sup],
+              "a": [[Ap[eq[i] + d] for d in range(ndm)] for i, _, _ in sup],
+              "pdd": [Ap[eq[i] + ndm] for i, _, _ in sup]}
+        blk = particle_blocks(sup, V0, m, D, st["sig"][k], case["fluid"], a_st,
+                              case["gravity"], lam, tr, case.get("rayleigh", (0.0, 0.0)))
+        Amat[np.ix_(dofs, dofs)] += blk["K"] + c2 * blk["C"] + c3 * blk["M"]
+        b[dofs] -= blk["R"]
+    free = ~fixed
+    dU = np.zeros(neq)
+    dU[free] = np.linalg.solve(Amat[np.ix_(free, free)], b[free])
+    U1 = Up + dU
+    V1 = Vp + c2 * dU
+    A1 = Ap + c3 * dU
+    V1[fixed] = 0.0
+    A1[fixed] = 0.0
+    new = {k: (v.copy() if hasattr(v, "copy") else v) for k, v in st.items()}
+    aF, aP = case["flip"], case["pblend"]
+    for k in range(N):
+        sup = sups[k]
+        S = np.array([s for _, s, _ in sup])
+        rows = [eq[i] for i, _, _ in sup]
+        u = np.array([U1[r:r + ndm] for r in rows])
+        vg = np.array([V1[r:r + ndm] for r in rows])
+        ag = np.array([A1[r:r + ndm] for r in rows])
+        vh = np.array([proj[i]["v"] for i, _, _ in sup])
+        ah = np.array([proj[i]["a"] for i, _, _ in sup])
+        pg, pdg, pddg = (np.array([U1[r + ndm] for r in rows]), np.array([V1[r + ndm] for r in rows]),
+                         np.array([A1[r + ndm] for r in rows]))
+        ph = np.array([proj[i]["p"] for i, _, _ in sup])
+        pdh = np.array([proj[i]["pd"] for i, _, _ in sup])
+        pddh = np.array([proj[i]["pdd"] for i, _, _ in sup])
+        new["x"][k] = st["x"][k] + S @ u
+        new["v"][k] = aF * (st["v"][k] + S @ (vg - vh)) + (1 - aF) * (S @ vg)
+        new["a"][k] = aF * (st["a"][k] + S @ (ag - ah)) + (1 - aF) * (S @ ag)
+        new["p"][k] = aP * (st["p"][k] + S @ (pg - ph)) + (1 - aP) * (S @ pg)
+        new["pd"][k] = aP * (st["pd"][k] + S @ (pdg - pdh)) + (1 - aP) * (S @ pdg)
+        new["pdd"][k] = aP * (st["pdd"][k] + S @ (pddg - pddh)) + (1 - aP) * (S @ pddg)
+        deps = sum(bmat(sup[j][2], ndm) @ u[j] for j in range(len(sup)))
+        new["sig"][k] = st["sig"][k] + D @ deps
+    grid_out = {"nodes": [grid.node_id(i) for i in nodes], "node_idx": [list(i) for i in nodes],
+                "U": U1.tolist(), "V": V1.tolist(), "A": A1.tolist()}
+    return new, grid_out
+
+
+def _state_out(st):
+    return {k: np.asarray(v).tolist() for k, v in st.items()}
+
+
+def t0_modeA(case=T0A):
+    """T0 (ii): three mode-A Newmark steps from the T0 initial state; the particle fields after
+    each step (and the grid solution, for diagnosis)."""
+    grid = OGrid(case["x0"], case["h"], case["cells"])
+    X, V0, m, lpv = lattice(grid, *case["box"], case["ppc"], case["rho"])
+    lp = [lpv] * grid.ndm
+    D = elastic_D(case["E"], case["nu"], grid.ndm)
+    a_st = stab_value(case["fluid"], D, grid.h, grid.ndm)
+    st = t0_initial(X, case)
+    hist = [{"step": 0, "particles": _state_out(st)}]
+    for n in range(case["steps"]):
+        st, g = modeA_step(st, grid, case, V0, m, lp, D, a_st)
+        hist.append({"step": n + 1, "t": (n + 1) * case["dt"], "particles": _state_out(st),
+                     "grid": g})
+    return {"V0": V0, "m": m, "lp": lpv, "alpha_st": a_st, "history": hist}
+
+
+# --------------------------------------------------------------------------- T0 (iii)
+def routeS_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
+    """One route-S step (interface §1 'Route S step', §7a Q4; mpm_interface.md §6 MUSL),
+    `kinematics small`: Δε = sym(Δt Σ v** ⊗ ∇S) from the conditioned second projection, V = V0.
+    p-active and the S^p renormalisation: ruling 3d3699a50 (see the pressure block)."""
+    ndm = grid.ndm
+    dt = case["dt"]
+    fl = case["fluid"]
+    N = len(st["x"])
+    sups = [grid.support(x, lp) for x in st["x"]]
+    al = fl.get("alpha", 1.0)
+    ooQ = fl["poro"] / fl["Kf"]
+    kb = np.array(fl["perm"], float)
+    g = np.array(case["gravity"], float) * lam
+    nodes = sorted({i for sup in sups for i, _, _ in sup}, key=lambda t: t[::-1])
+    nid = {idx: k for k, idx in enumerate(nodes)}
+    nn = len(nodes)
+    mass = np.zeros(nn)
+    mom = np.zeros((nn, ndm))
+    f = np.zeros((nn, ndm))
+    Vw = np.zeros(nn)
+    for k in range(N):
+        st_k = voigt_tensor(st["sig"][k], ndm)
+        for idx, S, dS in sups[k]:
+            a = nid[idx]
+            mass[a] += S * m
+            mom[a] += S * m * st["v"][k]
+            f[a] += S * m * g - V0 * st_k @ dS
+            Vw[a] += S * V0
+    active = mass > case["masscut"] * m
+    vhat = np.zeros((nn, ndm))
+    vhat[active] = mom[active] / mass[active, None]
+    vstar = np.zeros((nn, ndm))
+    vstar[active] = vhat[active] + dt * f[active] / mass[active, None]
+    Minv = np.zeros((nn, ndm))
+    Minv[active] = 1.0 / mass[active, None]
+    for idx in nodes:
+        for c in _fixed_comps(grid, idx, case):
+            vstar[nid[idx], c] = 0.0
+            Minv[nid[idx], c] = 0.0
+    # p-activity (ruling 3d3699a50): m_a > c_m m_max (mode A's cutoff, default 5e-2; m_max =
+    # max_p m_p, interface §7a Q3 step 3) AND S^p > 0 from a two-phase particle. Each particle's
+    # S^p, grad S^p are renormalised over its p-active nodes (renormalize's formula); dropped
+    # nodes are absent from the pressure system, the projection and G2P. Q keeps the
+    # unrenormalised mode-F grad S on the u side.
+    m_max = m
+    pact = [a for a in range(nn) if Vw[a] > 0 and mass[a] > case["pcut"] * m_max]
+    pidx = {a: k for k, a in enumerate(pact)}
+    npn = len(pact)
+    spr = []
+    for k in range(N):
+        kept = [(nid[i], S, dS) for i, S, dS in sups[k] if nid[i] in pidx]
+        sg = sum(S for _, S, _ in kept)
+        gm = sum(dS for _, _, dS in kept)
+        spr.append([(a, S / sg, (dS - (S / sg) * gm) / sg) for a, S, dS in kept])
+    Vw2 = np.zeros(nn)
+    Vp2 = np.zeros(nn)
+    for k in range(N):
+        for a, S, _ in spr[k]:
+            Vw2[a] += S * V0
+            Vp2[a] += S * V0 * st["p"][k]
+    phat = np.zeros(nn)
+    for a in pact:
+        phat[a] = Vp2[a] / Vw2[a]
+    Sst = np.zeros((npn, npn))
+    Hm = np.zeros((npn, npn))
+    Qm = np.zeros((nn * ndm, npn))
+    fse = np.zeros(npn)
+    for k in range(N):
+        sup = [(nid[i], S, dS) for i, S, dS in sups[k]]
+        ps = [(pidx[a], S, dS) for a, S, dS in spr[k]]
+        for b, Sb, dSb in ps:
+            fse[b] += V0 * fl["rhoF"] * dSb @ (kb * g)
+            for c_, Sc, dSc in ps:
+                Sst[b, c_] += V0 * (ooQ * Sb * Sc + a_st * dSb @ dSc)
+                Hm[b, c_] += V0 * dSb @ (kb * dSc)
+            for a, Sa, dSa in sup:
+                for i in range(ndm):
+                    Qm[a * ndm + i, b] += al * V0 * dSa[i] * Sb
+    Mi = Minv.ravel()
+    Amat = Sst + dt * Hm + dt * dt * Qm.T @ (Mi[:, None] * Qm)
+    ph = np.array([phat[a] for a in pact])
+    rhs = Sst @ ph - dt * Qm.T @ vstar.ravel() + dt * fse
+    drained = np.zeros(npn, bool)
+    pval = np.zeros(npn)
+    for k, a in enumerate(pact):
+        p0 = _pfix(grid, nodes[a], case)
+        if p0 is not None:
+            drained[k] = True
+            pval[k] = p0
+    fr = ~drained
+    rhs = rhs - Amat[:, drained] @ pval[drained]
+    pval[fr] = np.linalg.solve(Amat[np.ix_(fr, fr)], rhs[fr])
+    v1 = vstar + dt * (Mi * (Qm @ pval)).reshape(nn, ndm)
+    acc = np.zeros((nn, ndm))
+    acc[active] = (v1[active] - vhat[active]) / dt
+    pg = np.zeros(nn)
+    for k, a in enumerate(pact):
+        pg[a] = pval[k]
+    new = {k: (v.copy() if hasattr(v, "copy") else v) for k, v in st.items()}
+    aF, aP = case["flip"], case["pblend"]
+    for k in range(N):
+        S = np.array([s for _, s, _ in sups[k]])
+        rows = [nid[i] for i, _, _ in sups[k]]
+        new["v"][k] = aF * (st["v"][k] + dt * S @ acc[rows]) + (1 - aF) * (S @ v1[rows])
+        new["x"][k] = st["x"][k] + dt * S @ v1[rows]
+        prow = [a for a, _, _ in spr[k]]
+        Sp = np.array([s for _, s, _ in spr[k]])
+        new["p"][k] = aP * (st["p"][k] + Sp @ (pg[prow] - phat[prow])) + (1 - aP) * (Sp @ pg[prow])
+    mom2 = np.zeros((nn, ndm))
+    for k in range(N):
+        for idx, S, _ in sups[k]:
+            mom2[nid[idx]] += S * m * new["v"][k]
+    v2 = np.zeros((nn, ndm))
+    v2[active] = mom2[active] / mass[active, None]
+    for idx in nodes:
+        for c in _fixed_comps(grid, idx, case):
+            v2[nid[idx], c] = 0.0
+    for k in range(N):
+        L = sum(np.outer(v2[nid[i]], dS) for i, _, dS in sups[k])
+        E = 0.5 * dt * (L + L.T)
+        deps = np.array([E[0, 0], E[1, 1], 2 * E[0, 1]])
+        new["sig"][k] = st["sig"][k] + D @ deps
+    return new, {"nodes": [grid.node_id(nodes[a]) for a in pact],
+                 "node_idx": [list(nodes[a]) for a in pact], "p": pval.tolist(),
+                 "phat": ph.tolist()}
+
+
+def t0_routeS(case=T0S):
+    grid = OGrid(case["x0"], case["h"], case["cells"])
+    X, V0, m, lpv = lattice(grid, *case["box"], case["ppc"], case["rho"])
+    lp = [lpv] * grid.ndm
+    D = elastic_D(case["E"], case["nu"], grid.ndm)
+    a_st = stab_value(case["fluid"], D, grid.h, grid.ndm)
+    st = t0_initial(X, case)
+    keep = ("x", "v", "p", "sig")
+    hist = [{"step": 0, "particles": {k: np.asarray(st[k]).tolist() for k in keep}}]
+    for n in range(case["steps"]):
+        st, g = routeS_step(st, grid, case, V0, m, lp, D, a_st)
+        hist.append({"step": n + 1, "t": (n + 1) * case["dt"],
+                     "particles": {k: np.asarray(st[k]).tolist() for k in keep}, "grid": g})
+    return {"V0": V0, "m": m, "lp": lpv, "alpha_st": a_st, "history": hist}
+
+
+# --------------------------------------------------------------------------- self-checks
+def oracle_vs_fe_t1(leg):
+    """Self-check: the oracle's particle blocks at the T1 Gauss-point particles, assembled
+    under Newmark's predictor from the P5 state, against LadrunoUP's A and b (t1_fe.json)."""
+    c = T1
+    ndm, n = leg["ndm"], leg["cells"]
+    ndf = ndm + 1
+    parts = leg["particles"]
+    sups = [linear_support(P["x"], n, c["h"]) for P in parts]
+    sups, _ = renormalize(sups, [P["m"] for P in parts], c["renorm_cut"])
+    proj = p5_projection(parts, sups)
+    lab = {(tuple(int(round(v / c["h"])) for v in L[1:1 + ndm]), L[-1]): e
+           for e, L in enumerate(leg["dofs"])}
+    neq = len(leg["dofs"])
+    U0, V0n, A0 = np.zeros(neq), np.zeros(neq), np.zeros(neq)
+    for idx, s in proj.items():
+        for d in range(ndm):
+            V0n[lab[(idx, d)]] = s["v"][d]
+            A0[lab[(idx, d)]] = s["a"][d]
+        U0[lab[(idx, ndm)]] = s["p"]
+        V0n[lab[(idx, ndm)]] = s["pd"]
+        A0[lab[(idx, ndm)]] = s["pdd"]
+    gam, bet, dt = c["gamma"], c["beta"], c["dt"]
+    c2, c3 = gam / (bet * dt), 1.0 / (bet * dt * dt)
+    Vp = (1 - gam / bet) * V0n + dt * (1 - gam / (2 * bet)) * A0
+    Ap = -V0n / (bet * dt) + (1 - 1 / (2 * bet)) * A0
+    D = elastic_D(c["E"], c["nu"], ndm)
+    fl = {"Kf": c["Kf"], "poro": c["poro"], "rhoF": c["rhoF"], "perm": [c["kbar"]] * ndm}
+    grav = [0.0] * ndm
+    grav[1] = -c["g"]
+    A = np.zeros((neq, neq))
+    b = np.zeros(neq)
+    for P, sup in zip(parts, sups):
+        dofs = [lab[(i, cc)] for i, _, _ in sup for cc in range(ndf)]
+        tr = {"u": [[0.0] * ndm for _ in sup], "p": [U0[lab[(i, ndm)]] for i, _, _ in sup],
+              "v": [[Vp[lab[(i, d)]] for d in range(ndm)] for i, _, _ in sup],
+              "pd": [Vp[lab[(i, ndm)]] for i, _, _ in sup],
+              "a": [[Ap[lab[(i, d)]] for d in range(ndm)] for i, _, _ in sup],
+              "pdd": [Ap[lab[(i, ndm)]] for i, _, _ in sup]}
+        blk = particle_blocks(sup, P["V"], P["m"], D, np.zeros(3 if ndm == 2 else 6), fl,
+                              leg["alpha_st"], grav, 1.0, tr)
+        A[np.ix_(dofs, dofs)] += blk["K"] + c2 * blk["C"] + c3 * blk["M"]
+        b[dofs] -= blk["R"]
+    Afe, bfe = np.array(leg["A"]), np.array(leg["b"])
+    return (float(np.linalg.norm(A - Afe) / np.linalg.norm(Afe)),
+            float(np.linalg.norm(b - bfe) / np.linalg.norm(bfe)))
+
+
 # ==============================================================================================
 def main(argv):
     leg = argv[1] if len(argv) > 1 else "closed"
@@ -730,6 +1579,27 @@ def main(argv):
         rec["runs"] = [fe_terzaghi(nx, "off", plate=True) for nx in (1, 2)]
         rec["runs_nodal"] = [fe_terzaghi(nx, "off", plate=False) for nx in (1, 2)]
         print(_save("t2_terzaghi_plate_fe", rec))
+        return
+    if leg == "t1":
+        rec = _provenance("t1_fe", "fe_t1")
+        rec["case"] = dict(T1, dp_args=t1_dp_args(), meshes=T1_MESHES,
+                           particle_values=t1_particle_values.__doc__)
+        rec["legs"] = {f"{m}_{mat}_{'off' if st == 'off' else 'auto'}": fe_t1(m, mat, st)
+                       for m in T1_MESHES for mat in ("elastic", "dp")
+                       for st in ("off", ("auto", 0.25))}
+        print(_save("t1_fe", rec))
+        return
+    if leg == "t0":
+        # the oracle: numpy only, no binary (provenance: the git head, not ladrunoBuild)
+        rec = {"leg": "t0_oracle", "deck": "tests/mpm_twophase_reference.py::t0_*",
+               "date": _dt.date.today().isoformat(),
+               "units": "kN, t, m, s, kPa; sigma tension-positive, p compression-positive",
+               "source": "tests/mpm_twophase_interface.md §1, §7a (+ rulings 9064acca3)",
+               "case_modeA": T0A, "case_routeS": T0S}
+        rec["t0_i"] = t0_particle_dump(T0A)
+        rec["t0_ii"] = t0_modeA(T0A)
+        rec["t0_iii"] = t0_routeS(T0S)
+        print(_save("t0_oracle", rec))
         return
     if leg == "b4":
         rec = _provenance("b4_fe", "fe_b4")
