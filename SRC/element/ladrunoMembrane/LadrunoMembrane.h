@@ -130,7 +130,12 @@ private:
 
   struct CachedFrameInfo {
     int frameTag = 0;
-    Element *framePtr = nullptr;
+    // Ladruno WP-239: no cached Element*; addLoad looks the frame up by tag
+    // (remove/re-add of a frame left a dangling pointer). The end nodes and
+    // coordinates seen at resolve time are kept for the diagnostics.
+    int endNodeTag[2] = {0, 0};
+    std::array<double, 3> endCrd[2] = {{0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}};
+    bool missingWarned = false;
     double length = 0.0;
     double aL = 0.0;
     double bL = 1.0;

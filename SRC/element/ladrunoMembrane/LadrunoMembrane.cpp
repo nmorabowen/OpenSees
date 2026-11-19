@@ -699,16 +699,42 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
 
     CachedFrameInfo info{};
     info.frameTag = fTag;
-    info.framePtr = fEle;
     info.length = L_k;
     info.vx = {dx / L_k, dy / L_k, dz / L_k};
 
     // Match frame end nodes against connectedExternalNodes if present
     int tagI = ndI->getTag();
     int tagJ = ndJ->getTag();
+    info.endNodeTag[0] = tagI;
+    info.endNodeTag[1] = tagJ;
+    info.endCrd[0] = pI;
+    info.endCrd[1] = pJ;
     for (int idx = 0; idx < m_connectedExternalNodes.Size(); ++idx) {
       if (m_connectedExternalNodes(idx) == tagI) info.extNodeI = idx;
       if (m_connectedExternalNodes(idx) == tagJ) info.extNodeJ = idx;
+    }
+    // Ladruno WP-239: a frame end on a node that is not an external node but
+    // coincides with one (a hinge twin: equalDOF / zeroLength at the same
+    // point) ties to that external node, the ORIGINAL one. Without this, a
+    // frame re-created on its twins loses its link line and its end loads,
+    // and a restored model resolves differently from the live one.
+    {
+      const double tolC = 1e-6 * L_k;
+      int nExtC = static_cast<int>(m_theNodes.size());
+      for (int e = 0; e < 2; ++e) {
+        int &ext = (e == 0) ? info.extNodeI : info.extNodeJ;
+        if (ext >= 0) continue;
+        const auto &pe = (e == 0) ? pI : pJ;
+        double best = tolC;
+        for (int a = 0; a < nExtC; ++a) {
+          if (m_theNodes[a] == nullptr) continue;
+          auto pa = getNode3(m_theNodes[a]);
+          double d = std::sqrt((pa[0] - pe[0]) * (pa[0] - pe[0]) +
+                               (pa[1] - pe[1]) * (pa[1] - pe[1]) +
+                               (pa[2] - pe[2]) * (pa[2] - pe[2]));
+          if (d <= best) { best = d; ext = a; }
+        }
+      }
     }
 
     if (m_ndm == 2) {
@@ -1165,20 +1191,19 @@ LadrunoMembrane::resolveAndBuildTransfer(void)
       }
       // a frame node lying on the panel that is not an external node gets no
       // in-plane stiffness: say so (the bridge adds it with -diaphragmNodes)
+      // (a frame end coincident with an external node was mapped to it above)
       for (const auto &fi : m_frameInfos) {
-        if (fi.framePtr == nullptr) continue;
-        Node **fN = fi.framePtr->getNodePtrs();
         for (int e = 0; e < 2; ++e) {
           int ext = (e == 0) ? fi.extNodeI : fi.extNodeJ;
-          if (ext >= 0 || fN == nullptr || fN[e] == nullptr) continue;
-          auto p3 = getNode3(fN[e]);
+          if (ext >= 0) continue;
+          const auto &p3 = fi.endCrd[e];
           auto p2 = project3to2(p3[0], p3[1], p3[2]);
           double dz = (p3[0] - m_origin[0]) * m_normal[0] + (p3[1] - m_origin[1]) * m_normal[1] +
                       (p3[2] - m_origin[2]) * m_normal[2];
           if (std::abs(dz) <= 1e-6 * m_charLen &&
               LadrunoMembraneKernel::point_in_polygon(p2, outer2d)) {
             opserr << "WARNING LadrunoMembrane " << this->getTag() << ": node "
-                   << fN[e]->getTag() << " of supporting frame " << fi.frameTag
+                   << fi.endNodeTag[e] << " of supporting frame " << fi.frameTag
                    << " lies on the panel but is not one of its nodes; it receives no"
                    << " diaphragm stiffness (add it with -diaphragmNodes)\n";
           }
@@ -1540,10 +1565,21 @@ LadrunoMembrane::addLoad(ElementalLoad *theLoad, double loadFactor)
     if (seg.frameIdx < 0 || seg.frameIdx >= static_cast<int>(m_frameInfos.size())) {
       continue;
     }
-    const auto &fInfo = m_frameInfos[seg.frameIdx];
-    if (fInfo.framePtr == nullptr) {
+    auto &fInfo = m_frameInfos[seg.frameIdx];
+    // Ladruno WP-239: look the frame up by tag on every call; a frame removed
+    // and re-created with the same tag receives its share, a removed one is
+    // reported (once) instead of being written through a freed pointer
+    Domain *theDomain = this->getDomain();
+    Element *framePtr = (theDomain != nullptr) ? theDomain->getElement(fInfo.frameTag) : nullptr;
+    if (framePtr == nullptr) {
+      if (!fInfo.missingWarned) {
+        opserr << "WARNING LadrunoMembrane " << this->getTag() << ": supporting frame "
+               << fInfo.frameTag << " is no longer in the domain; its slab share is not applied\n";
+        fInfo.missingWarned = true;
+      }
       continue;
     }
+    fInfo.missingWarned = false;
 
     double wxa_g = seg.waUnit * qx;
     double wya_g = seg.waUnit * qy;
@@ -1565,13 +1601,13 @@ LadrunoMembrane::addLoad(ElementalLoad *theLoad, double loadFactor)
           0, wya, wza, wxa, seg.aOverL, seg.bOverL, wyb, wzb, wxb, fInfo.frameTag);
       ElementalLoad *rawPtr = ptr.get();
       m_activeBeamLoads.push_back(std::move(ptr));
-      fInfo.framePtr->addLoad(rawPtr, 1.0);
+      framePtr->addLoad(rawPtr, 1.0);
     } else {
       auto ptr = std::make_unique<Beam2dPartialUniformLoad>(
           0, wya, wyb, wxa, wxb, seg.aOverL, seg.bOverL, fInfo.frameTag);
       ElementalLoad *rawPtr = ptr.get();
       m_activeBeamLoads.push_back(std::move(ptr));
-      fInfo.framePtr->addLoad(rawPtr, 1.0);
+      framePtr->addLoad(rawPtr, 1.0);
     }
 
     double areaSeg = 0.5 * (seg.waUnit + seg.wbUnit) * seg.length;
