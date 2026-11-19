@@ -152,7 +152,7 @@
      "problem_sha256": "9b57c9711bfb7f9dca333e9d1cded21bb4efd07b6f522954ef615efb0c432399",
      "query_id": "q",
      "reasons": [],
-     "result_sha256": "40f9589be5357fdf6583cad876ce4ba2a01f0900c1c31f57a20aafc60415b7eb",
+     "result_sha256": "49a2eff245f7ca483420a0c5fc15047c8e208a556a3e8954e659171401546824",
      "tolerances": {
       "FLOOR_MIN_REL": 1e-12,
       "MAX_GAP_3D_DP": 0.5,
@@ -185,6 +185,8 @@
     },
     "diagnostics": {
      "cols": 4418,
+     "d_scale_jump": 3.5448738513572358,
+     "d_scale_vol": 12.129283858007584,
      "interior_margin": null,
      "literal_zero": 1348,
      "rank": 2422,
@@ -200,14 +202,14 @@
      "format": "ladruno-limit-result",
      "format_version": 0,
      "formulation": "upper.p2d-jump-bernstein.v0",
-     "objective": 5.328413849172236,
+     "objective": 5.3284148426271845,
      "problem_sha256": "9b57c9711bfb7f9dca333e9d1cded21bb4efd07b6f522954ef615efb0c432399",
      "producer": {
       "name": "certificate_demo",
       "version": "0"
      },
      "query_id": "q",
-     "result_sha256": "40f9589be5357fdf6583cad876ce4ba2a01f0900c1c31f57a20aafc60415b7eb",
+     "result_sha256": "49a2eff245f7ca483420a0c5fc15047c8e208a556a3e8954e659171401546824",
      "solver": {
       "name": "clarabel",
       "settings": {
@@ -370,7 +372,7 @@
      "problem_sha256": "38cc220caeae021575cd17162a19cf9bc1ee86cd8c2bf127c7c1be9745641309",
      "query_id": "q",
      "reasons": [],
-     "result_sha256": "dfc31c919214b22c3c857a27f881c25fb9d1f9861f4f074155460aead1b55bb2",
+     "result_sha256": "ffb5c60723710781752171e93d0a718a48707dea6b6bbd7c4fb1db7795038675",
      "tolerances": {
       "FLOOR_MIN_REL": 1e-12,
       "MAX_GAP_3D_DP": 0.5,
@@ -403,6 +405,8 @@
     },
     "diagnostics": {
      "cols": 5094,
+     "d_scale_jump": 2.085915310310814,
+     "d_scale_vol": 4.1585763287310336,
      "interior_margin": null,
      "literal_zero": 2202,
      "rank": 3146,
@@ -418,14 +422,14 @@
      "format": "ladruno-limit-result",
      "format_version": 0,
      "formulation": "upper.p2d-jump-bernstein.v0",
-     "objective": 12.3108342860844,
+     "objective": 12.31083415461055,
      "problem_sha256": "38cc220caeae021575cd17162a19cf9bc1ee86cd8c2bf127c7c1be9745641309",
      "producer": {
       "name": "certificate_demo",
       "version": "0"
      },
      "query_id": "q",
-     "result_sha256": "dfc31c919214b22c3c857a27f881c25fb9d1f9861f4f074155460aead1b55bb2",
+     "result_sha256": "ffb5c60723710781752171e93d0a718a48707dea6b6bbd7c4fb1db7795038675",
      "solver": {
       "name": "clarabel",
       "settings": {
@@ -592,7 +596,7 @@
      "problem_sha256": "e83189ff4278b8f5963dd386c27b2b2fc259ba1c18841aeaa950ed794785d93c",
      "query_id": "q",
      "reasons": [],
-     "result_sha256": "f671ef6b2dde6158f98e42428f3ea9c3507baa8105f58b320a0c2c449c319845",
+     "result_sha256": "c5a596ae76871ae694efd9a3afc69deee7badb14b0e6a35c4c8073defb8bad80",
      "tolerances": {
       "FLOOR_MIN_REL": 1e-12,
       "MAX_GAP_3D_DP": 0.5,
@@ -625,11 +629,13 @@
     },
     "diagnostics": {
      "cols": 4541,
+     "d_scale_jump": 2.931920671041724,
+     "d_scale_vol": 4.3289567042878305,
      "interior_margin": -0.00038775115449141265,
      "literal_zero": 1225,
      "rank": 12,
-     "repaired_conditions": 478,
-     "rho_before_repair": 1.1791621158598856e-09,
+     "repaired_conditions": 480,
+     "rho_before_repair": 1.8895441225353448e-09,
      "rows": 12,
      "value_candidate_recomputed": 16.751816487810146
     },
@@ -640,14 +646,14 @@
      "format": "ladruno-limit-result",
      "format_version": 0,
      "formulation": "upper.p2d-jump-bernstein.v0",
-     "objective": 16.751816487810146,
+     "objective": 16.751816487810206,
      "problem_sha256": "e83189ff4278b8f5963dd386c27b2b2fc259ba1c18841aeaa950ed794785d93c",
      "producer": {
       "name": "certificate_demo",
       "version": "0"
      },
      "query_id": "q",
-     "result_sha256": "f671ef6b2dde6158f98e42428f3ea9c3507baa8105f58b320a0c2c449c319845",
+     "result_sha256": "c5a596ae76871ae694efd9a3afc69deee7badb14b0e6a35c4c8073defb8bad80",
      "solver": {
       "name": "clarabel",
       "settings": {
