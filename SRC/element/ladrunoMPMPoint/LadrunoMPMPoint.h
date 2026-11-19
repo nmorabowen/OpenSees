@@ -194,9 +194,11 @@ class LadrunoMPMPoint : public Element
   // length); Sp, dSp = the p weights (nen, nen x ndm); pRef = the unconditioned projected
   // p, pd, pdd per support node (3 x nen), the G2P references. The u-p blocks are built here
   // from the step-start weights and volume.
+  // WP-232l fix 2 (interface 7b): aff = the affine-image coefficients a_d, grad a_d per axis
+  // (ndm x (ndm + 1), 0 = none); piStart = the known pressure term pi at the projection
   int  setTwoPhase(int ndfNode, const ladruno_mpm::TwoPhaseProps *tp, double h,
                    const std::vector<double> &Sp, const std::vector<double> &dSp,
-                   const std::vector<double> &pRef);
+                   const std::vector<double> &pRef, const double *aff = 0, double piStart = 0.0);
   bool twoPhase(void) const { return tpOn; }
   // `mpm debug particleBlocks` (§7a Q1/Q2): set the pattern trial state, form K, C, M, R and
   // R_static, write the JSON object, restore. 0, or -1 (message printed).
@@ -281,6 +283,11 @@ class LadrunoMPMPoint : public Element
   std::vector<double> Sp, dSp, pRef;      // p weights, gradients; p, pd, pdd references
   std::vector<double> Qb, Hb, Sb, Htb, Gs; // Q[(ndm k + i) nen + b], H, S, H~ [b nen + c], G[b ndm + i]
   std::vector<double> pT;                  // trial nodal p of the last assembly
+  double tpAlpha, tpRhoF, tpK[3];          // the body's alpha, rhoF, kbar (fix 2's known term)
+  double affC[12];                         // fix 2: a_d and grad a_d, ndm x (ndm + 1)
+  bool   affOn;
+  double piStart_;
+  double piNow(double *grad) const;        // fix 2: pi and grad pi at the current drive
   int  dofU(int k, int a) const { return ndfN * k + a; }
   int  dofP(int k) const { return ndfN * k + ndm; }
   void compactTangent(Matrix &Kc, bool initial);

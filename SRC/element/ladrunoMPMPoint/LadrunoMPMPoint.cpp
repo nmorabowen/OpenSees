@@ -115,8 +115,11 @@ LadrunoMPMPoint::LadrunoMPMPoint(int tag, int particle, int hostTag, int nd, NDM
     nv(nd == 3 ? 6 : 3), nen(0), mat(ownedMat), st(ARMED), needUpdate(true), trialValid(false),
     alMode(0), nCorner(0), alSuppressed(false), cellH(0.0), Jc(1.0), alRel(0.0),
     connect(0), J1(1.0), vol(0.0), mp(0.0), payloadDbTag(0), P(0), Pinc(0), Ki(0),
-    ndfN(nd), tpOn(false), smallK(false), stabA(0.0)
+    ndfN(nd), tpOn(false), smallK(false), stabA(0.0), tpAlpha(1.0), tpRhoF(0.0), affOn(false),
+    piStart_(0.0)
 {
+  for (int k = 0; k < 12; k++) affC[k] = 0.0;
+  tpK[0] = tpK[1] = tpK[2] = 0.0;
   for (int k = 0; k < 8; k++) corner[k] = -1;
   for (int k = 0; k < 9; k++) Fci[k] = (k % 4 == 0) ? 1.0 : 0.0;
   for (int k = 0; k < 6; k++) depsT[k] = 0.0;
@@ -131,8 +134,11 @@ LadrunoMPMPoint::LadrunoMPMPoint()
   : Element(0, ELE_TAG_LadrunoMPMPoint), p(-1), hostPatternTag(0), ndm(2), nv(3), nen(0),
     mat(0), st(RESTORED), needUpdate(true), trialValid(false), alMode(0), nCorner(0),
     alSuppressed(false), cellH(0.0), Jc(1.0), alRel(0.0), connect(0), J1(1.0), vol(0.0),
-    mp(0.0), payloadDbTag(0), P(0), Pinc(0), Ki(0), ndfN(2), tpOn(false), smallK(false), stabA(0.0)
+    mp(0.0), payloadDbTag(0), P(0), Pinc(0), Ki(0), ndfN(2), tpOn(false), smallK(false), stabA(0.0),
+    tpAlpha(1.0), tpRhoF(0.0), affOn(false), piStart_(0.0)
 {
+  for (int k = 0; k < 12; k++) affC[k] = 0.0;
+  tpK[0] = tpK[1] = tpK[2] = 0.0;
   for (int k = 0; k < 8; k++) corner[k] = -1;
   for (int k = 0; k < 9; k++) Fci[k] = (k % 4 == 0) ? 1.0 : 0.0;
   for (int k = 0; k < 6; k++) depsT[k] = 0.0;
@@ -261,6 +267,8 @@ LadrunoMPMPoint::repoint(const ID &tags, const std::vector<double> &Sk,
   ndfN = ndm;
   tpOn = false;
   stabA = 0.0;
+  affOn = false;
+  piStart_ = 0.0;
   std::vector<double>().swap(Sp); std::vector<double>().swap(dSp); std::vector<double>().swap(pRef);
   std::vector<double>().swap(Qb); std::vector<double>().swap(Hb); std::vector<double>().swap(Sb);
   std::vector<double>().swap(Htb); std::vector<double>().swap(Gs);
@@ -610,6 +618,14 @@ LadrunoMPMPoint::g2p(ladruno_mpm::Particles &PP, double flip, bool quasiStatic)
         inc[q] += Sp[k] * (val[q] - pRef[3 * k + q]);
         pic[q] += Sp[k] * val[q];
       }
+    }
+    // WP-232l fix 2: the interpolated pressure carries the known affine term pi; the FLIP
+    // increment adds pi_end - pi_start, the PIC part pi_end (pi-dot neglected: interface 7b)
+    if (affOn) {
+      double g3[3];
+      const double piEnd = piNow(g3);
+      inc[0] += piEnd - piStart_;
+      pic[0] += piEnd;
     }
     double *tgt[3] = {&PP.pw[p], &PP.pwd[p], &PP.pwdd[p]};
     for (int q = 0; q < 3; q++) {
@@ -1173,6 +1189,39 @@ LadrunoMPMPoint::assembleForceUP(void)
       for (int i = 0; i < ndm; i++) s -= Gs[b * ndm + i] * drv[i];
     (*P)(dofP(b)) += s;
   }
+  // WP-232l fix 2 (interface 7b): the affine image's known pressure pi in the coupling force
+  // (-alpha V dS'_{a,i} pi) and in the Darcy flux (V dS^p_b . kbar grad pi)
+  if (affOn && h != 0) {
+    double gpi[3] = {0, 0, 0};
+    const double pi = piNow(gpi);
+    const double Vp = h->mpmParticles().V[p];
+    for (int k = 0; k < nen; k++)
+      for (int i = 0; i < ndm; i++) {
+        const double dn = Sc.empty() ? dS[ndm * k + i] : dSc[(ndm * k + i) * ndm + i];
+        (*P)(dofU(k, i)) -= tpAlpha * Vp * dn * pi;
+      }
+    for (int b = 0; b < nen; b++) {
+      double s = 0.0;
+      for (int i = 0; i < ndm; i++) s += dSp[ndm * b + i] * tpK[i] * gpi[i];
+      (*P)(dofP(b)) += Vp * s;
+    }
+  }
+}
+
+// WP-232l fix 2: pi = rhoF sum_d drive_d a_d (drive = lambda b_f, the host's), its gradient
+double
+LadrunoMPMPoint::piNow(double *grad) const
+{
+  for (int i = 0; i < ndm; i++) grad[i] = 0.0;
+  LadrunoMPMPointHost *h = host();
+  const double *drv = (h != 0) ? h->mpmFluidDrive(p) : 0;
+  if (!affOn || drv == 0) return 0.0;
+  double pi = 0.0;
+  for (int d = 0; d < ndm; d++) {
+    pi += tpRhoF * drv[d] * affC[d * (ndm + 1)];
+    for (int i = 0; i < ndm; i++) grad[i] += tpRhoF * drv[d] * affC[d * (ndm + 1) + 1 + i];
+  }
+  return pi;
 }
 
 // `mpm debug particleBlocks` (tests/mpm_twophase_interface.md §7a Q1, Q2)
@@ -1292,7 +1341,7 @@ LadrunoMPMPoint::writeBlocks(const double sc[6], std::ostream &os, double lambda
 int
 LadrunoMPMPoint::setTwoPhase(int ndfNode, const ladruno_mpm::TwoPhaseProps *tp, double h,
                              const std::vector<double> &Spk, const std::vector<double> &dSpk,
-                             const std::vector<double> &pRefk)
+                             const std::vector<double> &pRefk, const double *aff, double piStart)
 {
   if (ndfNode != ndm && ndfNode != ndm + 1) return -1;
   ndfN = ndfNode;
@@ -1315,6 +1364,16 @@ LadrunoMPMPoint::setTwoPhase(int ndfNode, const ladruno_mpm::TwoPhaseProps *tp, 
   Sp = Spk;
   dSp = dSpk;
   pRef = pRefk;
+  tpAlpha = tp->alpha;
+  tpRhoF = tp->rhoF;
+  for (int i = 0; i < 3; i++) tpK[i] = tp->kbar[i];
+  affOn = false;
+  piStart_ = piStart;
+  if (aff != 0)
+    for (int k = 0; k < ndm * (ndm + 1); k++) {
+      affC[k] = aff[k];
+      if (aff[k] != 0.0) affOn = true;
+    }
   LadrunoMPMPointHost *hh = host();
   // V_p: the step-start volume (V0 under `small`, J_n V0 under hypo; interface §1)
   const double Vp = (hh != 0) ? hh->mpmParticles().V[p] : 0.0;

@@ -587,9 +587,14 @@ inline bool foldedSupport(const Grid &g, Basis b, const FaceConditions &fc, cons
 // --------------------------------------------------------------------------- //
 inline void upSupport(const Grid &g, Basis b, const FaceConditions &fc, const double *x,
                       const double *lp, std::vector<long> &oNode, std::vector<double> &oW,
-                      std::vector<double> &odW, std::vector<double> &oSc, std::vector<double> &odSc)
+                      std::vector<double> &odW, std::vector<double> &oSc, std::vector<double> &odSc,
+                      double *affOut = 0)
 {
   const int nd = g.ndm, nc = nd + 1;
+  // WP-232l fix 2 (interface 7b, P9 amended): per axis d, the ghost entries folded EVEN for p
+  // (an impervious face) carry the affine image's known term; aff1[d] = sum_g S_g (X_g - X_m),
+  // daff1[d] its derivative along d
+  double aff1[3] = {0, 0, 0}, daff1[3] = {0, 0, 0};
   const int PLATE = -1000000;            // a 1D target meaning "the plate unknown of this axis"
   struct E1 { int t; double s, ds; };
   std::vector<E1> wE[3], cE[3][4];
@@ -613,6 +618,10 @@ inline void upSupport(const Grid &g, Basis b, const FaceConditions &fc, const do
       }
       const int rowFace = (i == 0) ? 2 * d : ((i == g.n[d]) ? 2 * d + 1 : -1);
       if (f >= 0 && foldsU(fc, f)) add(wE[d], mir, S, dS);
+      if (f >= 0 && (foldsU(fc, f) || fc.pfixOn[f]) && !fc.pfixOn[f]) {
+        aff1[d] += S * (i - mir) * g.h;
+        daff1[d] += dS * (i - mir) * g.h;
+      }
       else add(wE[d], i, S, dS);
       if (rowFace >= 0 && fc.plateOn[rowFace]) {
         plateFace[d] = rowFace;
@@ -698,6 +707,25 @@ inline void upSupport(const Grid &g, Basis b, const FaceConditions &fc, const do
             A.dSc[c][q] += gq;
           }
         }
+  }
+  // WP-232l fix 2: a_d = aff1[d] prod_{e != d} (sum of axis e's p weights), its gradient by the
+  // product rule; affOut[d (nd + 1)] = a_d, affOut[d (nd + 1) + 1 + q] = d a_d / d x_q
+  if (affOut != 0) {
+    double sp[3] = {1, 1, 1}, dsp[3] = {0, 0, 0};
+    for (int e = 0; e < nd; e++) {
+      sp[e] = 0.0;
+      for (const E1 &q : cE[e][nd]) { sp[e] += q.s; dsp[e] += q.ds; }
+    }
+    for (int d = 0; d < nd; d++) {
+      double v = aff1[d];
+      for (int e = 0; e < nd; e++) if (e != d) v *= sp[e];
+      affOut[d * (nd + 1)] = v;
+      for (int q = 0; q < nd; q++) {
+        double gq = (q == d) ? daff1[d] : aff1[d] * dsp[q];
+        for (int e = 0; e < nd; e++) if (e != d && e != q) gq *= sp[e];
+        affOut[d * (nd + 1) + 1 + q] = gq;
+      }
+    }
   }
   // the plate entries' W: the face-row W on the plate axis times the other axes' sums
   for (int d = 0; d < nd; d++) {

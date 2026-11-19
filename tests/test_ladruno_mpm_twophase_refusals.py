@@ -175,12 +175,6 @@ def test_info_reports_route_constants_and_stab():
     assert info[10] == pytest.approx(0.25 / (lam + 2 * G / 3 + 4 * G / 3), rel=1e-12)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "WP-232l T8 miss on fd81cbdd3 (reported, not fixed in this binary): P4's literal stray-p rule "
-    "(p-active iff a two-phase particle has S^p > 0 there) admits a node that a two-phase particle "
-    "touches with a GIMP tail of ~1e-8 after one step of motion; that p row is near-singular and "
-    "p reaches -6.7e3 at step 2. Proposed fix: mode A's p-activity on the two-phase nodal mass "
-    "against mode A's cutoff, S^p renormalised over p-active nodes (route S's ruling 3d3699a50)."))
 def test_stray_p_is_fixed_where_no_two_phase_particle_reaches():
     """U2 / P4: a single-phase body beside a two-phase one; the grid column only the single-phase
     particles reach keeps p = 0 (fixed), the run stays finite."""
@@ -208,6 +202,49 @@ def test_stray_p_is_fixed_where_no_two_phase_particle_reaches():
             stray += 1
             assert ops.nodeDisp(int(t), 3) == 0.0
     assert stray > 0
+
+
+def test_rank_deficient_projection_refused():
+    """P5a's singularity guard (b): bspline2 with one particle per cell -- fewer particles than
+    p-active nodes, so the consistent projection matrix is singular; the step is refused loudly
+    and nothing moves."""
+    ops = _ops()
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e4, 0.2, 2.0)
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 1.0, "-cells", 4, 4, "-basis", "bspline2")
+    ops.mpm("mode", "implicit")
+    ops.mpm("body", 1, "box", 0.0, 0.0, 4.0, 4.0, "-ppc", 1, "-mat", 1, "-rho", 2.0)
+    ops.mpm("twoPhase", 1, "-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-perm", 0.01, 0.01)
+    ops.mpm("porePressure", 1, "uniform", 5.0)
+    ops.mpm("fix", "ymin", "y")
+    _analysis(ops)
+    x0 = _as_list(ops.mpm("particleData", "x"))
+    _refused(ops)
+    assert _as_list(ops.mpm("particleData", "x")) == x0
+    assert all(v == 5.0 for v in _as_list(ops.mpm("particleData", "p")))
+
+
+def test_sealed_column_keeps_p_bit_for_bit():
+    """P5's invariant, a guard on P5a: a motionless, sealed, kbar = 0 column keeps p, pd, pdd bit
+    for bit (no gravity, no load, no drained face, a non-uniform p)."""
+    ops = _ops()
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e4, 0.2, 2.0)
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 1.0, "-cells", 2, 4, "-basis", "gimp")
+    ops.mpm("mode", "implicit")
+    ops.mpm("body", 1, "box", 0.0, 0.0, 2.0, 4.0, "-ppc", 2, "-mat", 1, "-rho", 2.0)
+    ops.mpm("twoPhase", 1, "-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-perm", 0.0, 0.0)
+    n = len(_as_list(ops.mpm("particleData", "m")))
+    p0 = [5.0 + 0.37 * math.sin(1.3 * k) for k in range(n)]
+    ops.mpm("particlePressure", *(p0 + [0.0] * n + [0.0] * n))
+    # motionless: every grid node held at zero velocity (a homogeneous gridvel over the box)
+    ops.mpm("gridvel", "all", "box", -1.5, -1.5, 3.5, 5.5, "v", 0.0, 0.0)
+    _analysis(ops)
+    ops.mpm("analyze", 5, 0.01)
+    assert _as_list(ops.mpm("particleData", "p")) == p0
+    assert all(v == 0.0 for v in _as_list(ops.mpm("particleData", "pd")))
 
 
 def _restart_deck(ops):

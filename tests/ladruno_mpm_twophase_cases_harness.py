@@ -301,6 +301,23 @@ def run_t5(ops, stab):
             "wall_s": time.time() - t0}
 
 
+def patch_fix2(ops):
+    """Fix 2's patch check (interface 7b, P9 amended): a bspline2 hydrostatic column, kbar = 1, 200
+    steps of dt 1 s; the base particle's p equals gamma_w (H - y) to 1e-10 gamma_w H (and every
+    particle's, reported)."""
+    H, g, rs, rf, h = 10.0, 9.81, 2.0, 1.0, 0.5
+    spec = dict(mat=(1.0e4, 0.2, rs), h=h, cells=(2, 20), basis="bspline2", box=((0.0, 0.0), (1.0, H)),
+                fluid=(4444.0, 0.4, rf, 1.0, "off"), gravity=g,
+                fix=[("xmin", "x"), ("xmax", "x"), ("ymin", "y")], pfix=[("ymax", 0.0)])
+    build(ops, spec)
+    ops.mpm("analyze", 200, 1.0)
+    y = [x[1] for x in pdata(ops, "x", 2)]
+    pp = pdata(ops, "p")
+    err = [abs(pp[k] - rf * g * (H - y[k])) / (rf * g * H) for k in range(len(pp))]
+    base = min(range(len(y)), key=lambda k: y[k])
+    return {"base_err": err[base], "max_err": max(err), "pass": err[base] <= 1e-10}
+
+
 #  Diagnostic (orchestrator's ruling B on 25cc9b69e; reported, never gated)
 # ---------------------------------------------------------------------------
 def field_at_particles(ops, tmp, nodal_p):
@@ -435,6 +452,8 @@ def main(argv=None):
             r = [run_t4(ops, b, s, h=1.0) for b in ("gimp", "bspline2") for s in ("off", AUTO)]
         elif leg == "t5":
             r = [run_t5(ops, s) for s in (AUTO, "off")]
+        elif leg == "patch_fix2":
+            r = [patch_fix2(ops)]
         elif leg == "diagnostic":
             with tempfile.TemporaryDirectory() as tmp:
                 r = {"t2": [diag_t2(ops, b, s, tmp) for b in ("gimp", "bspline2") for s in ("off", AUTO)],

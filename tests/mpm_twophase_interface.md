@@ -460,6 +460,16 @@ any particle field into p_part = P g + r_vis + r_inv, where r_vis = P M⁻¹ P�
 zero. The increment x_a − x̂_a is therefore exactly zero, and the particles keep p bit for bit,
 whatever x̂ is.
 
+**Singularity guard (frozen, wp-briefs "Freeze of P5a").**
+- **(a) The solve refuses the step loudly** (rule named, nothing changed) in either of two cases:
+  - Jacobi-PCG does not reach a relative residual of 1e-14 within 4 n + 1000 iterations;
+  - any PCG curvature dᵀ M d falls to 1e-14 · max diag(M) · dᵀ d or below.
+
+  A zero diagonal entry is refused the same way. The projection runs before any grid node is
+  created or retired, so a refused step leaves the model unchanged.
+- **(b) T8 gains a rank-deficient case:** bspline2 with one particle per cell in a p-active region.
+  It must be refused, not solved.
+
 **Cost.** One sparse SPD solve per step with three right-hand sides, over the p-active nodes. The
 pattern is that of H.
 

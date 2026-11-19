@@ -390,17 +390,32 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
   // ---- supports (P9) ----------------------------------------------------------------
   std::vector<long> supStart(1, 0), node;
   std::vector<double> Sv, dSv, ScG, dScG;
+  const int NA = nd * (nd + 1);              // fix 2: a_d, grad a_d per axis
+  std::vector<double> aff((size_t)N * NA, 0.0);
   for (int p = 0; p < N; p++) {
-    ladruno_mpm::upSupport(G, eng.par.basis, eng.fc, &P.x[nd * p], &P.lp[nd * p], node, Sv, dSv, ScG, dScG);
+    ladruno_mpm::upSupport(G, eng.par.basis, eng.fc, &P.x[nd * p], &P.lp[nd * p], node, Sv, dSv, ScG, dScG,
+                           bspl ? &aff[(size_t)NA * p] : 0);
     supStart.push_back((long)node.size());
   }
-  std::map<long, double> mass;
+  std::map<long, double> mass, tpMass;       // fix 3: the two-phase nodal mass, raw W
   double mmax = 0.0;
   for (int p = 0; p < N; p++) {
     mmax = std::max(mmax, P.m[p]);
+    const bool tpp = up && isTwoPhaseParticle(p);
     for (long k = supStart[p]; k < supStart[p + 1]; k++)
-      if (node[k] >= 0) mass[node[k]] += Sv[k] * P.m[p];
+      if (node[k] >= 0) {
+        mass[node[k]] += Sv[k] * P.m[p];
+        if (tpp) tpMass[node[k]] += Sv[k] * P.m[p];
+      }
   }
+  // fix 2's coefficients follow every rescaling of the weights (B9's rule on a value + gradient)
+  auto rescale = [&](double *a, double sum, const double *gsum) {
+    for (int d = 0; d < nd; d++) {
+      double &v = a[d * (nd + 1)];
+      v /= sum;
+      for (int q = 0; q < nd; q++) a[d * (nd + 1) + 1 + q] = (a[d * (nd + 1) + 1 + q] - v * gsum[q]) / sum;
+    }
+  };
   const double mcut = modeAMassCutoff() * mmax;
   const bool ghost = ghostGamma >= 0.0;
   std::vector<char> keep(node.size(), 0), inact(node.size(), 0);
@@ -431,6 +446,7 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
           sum += Sv[k];
           for (int a = 0; a < nd; a++) gsum[a] += dSv[nd * k + a];
         }
+      if (sum > 0.0 && bspl) rescale(&aff[(size_t)NA * p], sum, gsum);
       if (sum > 0.0)
         for (long k = supStart[p]; k < supStart[p + 1]; k++) {
           if (!keep[k]) continue;
@@ -444,6 +460,135 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
           }
         }
     }
+  }
+
+  // ---- fix 3 (P4 amended): p-activity on the two-phase nodal mass; S^p renormalised -------
+  std::set<long> pAct;
+  std::vector<double> SpF, dSpF;              // per entry: the final p weight and its gradient
+  std::vector<double> piS(N, 0.0);            // fix 2: pi at the projection, per particle
+  std::map<long, std::vector<double>> pProj;  // P5a: x^ for p, pd, pdd per p-active node
+  if (up) {
+    const double pcut = eng.par.pCut * mmax;
+    for (long x : want)
+      if (ladruno_mpm::imageCutoffMass(G, eng.par.basis, eng.fc, x, tpMass[x]) > pcut) pAct.insert(x);
+    SpF.assign(node.size(), 0.0);
+    dSpF.assign(nd * node.size(), 0.0);
+    for (int p = 0; p < N; p++) {
+      if (!isTwoPhaseParticle(p)) continue;
+      bool allAct = true, anyAct = false;
+      double sum = 0.0, gsum[3] = {0.0, 0.0, 0.0};
+      for (long k = supStart[p]; k < supStart[p + 1]; k++) {
+        if (!keep[k] || node[k] < 0) continue;
+        if (pAct.count(node[k])) {
+          anyAct = true;
+          sum += Sv[k];
+          for (int a = 0; a < nd; a++) gsum[a] += dSv[nd * k + a];
+        } else if (Sv[k] != 0.0) {
+          allAct = false;
+        }
+      }
+      if (!anyAct || !(sum > 0.0)) {
+        err = "two-phase particle " + std::to_string((long long)P.id[p]) + " has no p-active node (its"
+              " two-phase nodal mass is below `mpm pressureCutoff` everywhere); refused (interface 7b,"
+              " P4 amended)";
+        return -1;
+      }
+      for (long k = supStart[p]; k < supStart[p + 1]; k++) {
+        if (!keep[k] || node[k] < 0 || !pAct.count(node[k])) continue;
+        double sp = ScG[nc * k + nd];
+        double gg[3];
+        for (int a = 0; a < nd; a++) gg[a] = dScG[(nc * k + nd) * nd + a];
+        if (!allAct) {
+          sp /= sum;
+          for (int a = 0; a < nd; a++) gg[a] = (gg[a] - sp * gsum[a]) / sum;
+        }
+        SpF[k] = sp;
+        for (int a = 0; a < nd; a++) dSpF[nd * k + a] = gg[a];
+      }
+      if (!allAct && bspl) rescale(&aff[(size_t)NA * p], sum, gsum);
+      // fix 2: pi at the projection = rhoF sum_d drive_d a_d (drive = the host's lambda b_f)
+      if (bspl) {
+        const auto it = twoPhase.find(P.body[p]);
+        const double *drv = mpmFluidDrive(p);
+        for (int d = 0; d < nd; d++) piS[p] += it->second.rhoF * drv[d] * aff[(size_t)NA * p + d * (nd + 1)];
+      }
+    }
+    // ---- P5a: the consistent L2 projection M x^ = P^T V x_part over the p-active nodes ----
+    std::map<long, int> pidx;
+    for (long x : pAct) { const int i = (int)pidx.size(); pidx[x] = i; }
+    const int np = (int)pidx.size();
+    std::vector<std::map<int, double>> M(np);
+    std::vector<double> rhs(3 * (size_t)np, 0.0);
+    for (int p = 0; p < N; p++) {
+      if (!isTwoPhaseParticle(p)) continue;
+      const double V = P.V[p];
+      const double xv[3] = {P.pw[p] - piS[p], P.pwd[p], P.pwdd[p]};
+      for (long k = supStart[p]; k < supStart[p + 1]; k++) {
+        if (SpF[k] == 0.0 || node[k] < 0) continue;
+        const int a = pidx[node[k]];
+        for (int q = 0; q < 3; q++) rhs[3 * (size_t)a + q] += V * SpF[k] * xv[q];
+        for (long l = supStart[p]; l < supStart[p + 1]; l++) {
+          if (SpF[l] == 0.0 || node[l] < 0) continue;
+          M[a][pidx[node[l]]] += V * SpF[k] * SpF[l];
+        }
+      }
+    }
+    double dmax = 0.0;
+    std::vector<double> diag(np, 0.0);
+    for (int a = 0; a < np; a++) {
+      const auto it = M[a].find(a);
+      diag[a] = (it != M[a].end()) ? it->second : 0.0;
+      dmax = std::max(dmax, diag[a]);
+    }
+    const std::string singular =
+        "the consistent pressure projection (interface 7b, P5a) is singular or did not reach rel 1e-14:"
+        " the particles no longer span the p-active nodes' shape functions (e.g. one particle per cell"
+        " on a B-spline grid); step refused, nothing changed";
+    for (int a = 0; a < np; a++)
+      if (!(diag[a] > 0.0)) { err = singular; return -1; }
+    std::vector<double> sol(3 * (size_t)np, 0.0);
+    for (int q = 0; q < 3 && np > 0; q++) {
+      // Jacobi-PCG to rel 1e-14, with the frozen singularity guard (wp-briefs "Freeze of P5a")
+      std::vector<double> xs(np, 0.0), r(np), z(np), dvec(np), Ad(np);
+      double r0 = 0.0;
+      for (int a = 0; a < np; a++) { r[a] = rhs[3 * (size_t)a + q]; r0 += r[a] * r[a]; }
+      r0 = std::sqrt(r0);
+      if (r0 > 0.0) {
+        bool ok = false;
+        double rz = 0.0;
+        for (int a = 0; a < np; a++) { z[a] = r[a] / diag[a]; dvec[a] = z[a]; rz += r[a] * z[a]; }
+        const int maxit = 4 * np + 1000;
+        for (int it = 0; it < maxit; it++) {
+          double dAd = 0.0, dd = 0.0;
+          for (int a = 0; a < np; a++) {
+            double s2 = 0.0;
+            for (const auto &kv : M[a]) s2 += kv.second * dvec[kv.first];
+            Ad[a] = s2;
+            dAd += dvec[a] * s2;
+            dd += dvec[a] * dvec[a];
+          }
+          if (!(dAd > 1e-14 * dmax * dd)) break;          // a (near-)singular direction: refuse
+          const double al = rz / dAd;
+          double rn = 0.0;
+          for (int a = 0; a < np; a++) {
+            xs[a] += al * dvec[a];
+            r[a] -= al * Ad[a];
+            rn += r[a] * r[a];
+          }
+          if (std::sqrt(rn) <= 1e-14 * r0) { ok = true; break; }
+          double rzn = 0.0;
+          for (int a = 0; a < np; a++) { z[a] = r[a] / diag[a]; rzn += r[a] * z[a]; }
+          const double be = rzn / rz;
+          rz = rzn;
+          for (int a = 0; a < np; a++) dvec[a] = z[a] + be * dvec[a];
+        }
+        if (!ok) { err = singular; return -1; }
+      }
+      for (int a = 0; a < np; a++) sol[3 * (size_t)a + q] = xs[a];
+    }
+    for (const auto &kv : pidx)
+      pProj[kv.first] = {sol[3 * (size_t)kv.second], sol[3 * (size_t)kv.second + 1],
+                         sol[3 * (size_t)kv.second + 2]};
   }
 
   {
@@ -523,21 +668,10 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
     for (int a = 0; a < nd; a++) if (a != d) setSpec(ladruno_mpm::plateId(f), a, 0.0, true);
     if (up) setSpec(ladruno_mpm::plateId(f), nd, 0.0, true);
   }
-  // P4: stray p -- a node no two-phase particle reaches with a non-zero p weight
-  if (up) {
-    std::set<long> pAct;
-    for (int p = 0; p < N; p++) {
-      if (!isTwoPhaseParticle(p)) continue;
-      for (long k = supStart[p]; k < supStart[p + 1]; k++) {
-        if (!keep[k] || node[k] < 0) continue;
-        bool nz = ScG[nc * k + nd] != 0.0;
-        for (int a = 0; a < nd; a++) nz = nz || dScG[(nc * k + nd) * nd + a] != 0.0;
-        if (nz) pAct.insert(node[k]);
-      }
-    }
+  // P4 amended (fix 3): every node that is not p-active has its p fixed (stray)
+  if (up)
     for (long x : want)
       if (!pAct.count(x)) setSpec(x, nd, 0.0, true);
-  }
   std::vector<SpecRow> newSpec;
   for (const auto &kv : spec)
     newSpec.push_back(SpecRow{kv.first.first, kv.first.second, kv.second.first, kv.second.second});
@@ -615,7 +749,6 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
   for (long x : want) mv[x].assign(RS, 0.0);
   for (int f = 0; f < 2 * nd; f++) if (eng.fc.plateOn[f]) mv[ladruno_mpm::plateId(f)].assign(RS, 0.0);
   for (int p = 0; p < N; p++) {
-    const bool tpp = up && isTwoPhaseParticle(p);
     for (long k = supStart[p]; k < supStart[p + 1]; k++) {
       if (!keep[k]) continue;
       std::vector<double> &r = mv[node[k]];
@@ -626,14 +759,14 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
           r[1 + a] += wa * P.v[nd * p + a];
           r[1 + nd + a] += wa * P.a[nd * p + a];
         }
-      if (tpp) {
-        const double wp = ScG[nc * k + nd] * P.V[p];
-        r[R0] += wp * P.pw[p];
-        r[R0 + 1] += wp * P.pwd[p];
-        r[R0 + 2] += wp * P.pwdd[p];
-        r[R0 + 3] += wp;
-      }
     }
+  }
+  // P5a: the projected p, pd, pdd (the consistent solve above); 0 off the p-active set
+  for (auto &kv : mv) {
+    const auto it = pProj.find(kv.first);
+    if (it == pProj.end()) continue;
+    for (int q = 0; q < 3; q++) kv.second[R0 + q] = it->second[q];
+    kv.second[R0 + 3] = 1.0;
   }
   for (auto &kv : mv) {
     std::vector<double> &r = kv.second;
@@ -712,8 +845,8 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
         Sc[nd * j + a] = ScG[nc * k + a];
         for (int e = 0; e < nd; e++) dSc[(nd * j + a) * nd + e] = dScG[(nc * k + a) * nd + e];
       }
-      Sp[j] = ScG[nc * k + nd];
-      for (int e = 0; e < nd; e++) dSp[nd * j + e] = dScG[(nc * k + nd) * nd + e];
+      Sp[j] = SpF.empty() ? 0.0 : SpF[k];                  // fix 3: the p-active, renormalised weight
+      for (int e = 0; e < nd; e++) dSp[nd * j + e] = SpF.empty() ? 0.0 : dSpF[nd * k + e];
       for (int q = 0; q < 3; q++) pRef[3 * j + q] = r[R0 + q];
       j++;
     }
@@ -730,7 +863,7 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
     if (up) {
       const auto it = twoPhase.find(P.body[p]);
       const ladruno_mpm::TwoPhaseProps *tp = (it != twoPhase.end()) ? &it->second : 0;
-      if (e->setTwoPhase(ndfN, tp, G.h, Sp, dSp, pRef) < 0) {
+      if (e->setTwoPhase(ndfN, tp, G.h, Sp, dSp, pRef, bspl ? &aff[(size_t)NA * p] : 0, piS[p]) < 0) {
         err = "the two-phase blocks of particle " + std::to_string((long long)P.id[p]) + " failed";
         return -2;
       }
