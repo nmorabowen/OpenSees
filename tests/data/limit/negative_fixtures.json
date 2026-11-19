@@ -347,6 +347,167 @@
    "problem": "vm_plate_shear.m0",
    "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
    "stage": "final_check"
+  },
+  {
+   "expect": "interior_field_invalid",
+   "harness_item": "a declared apex face that omits a needed condition",
+   "id": "apex_zero_omits_a_condition",
+   "mutation": {
+    "amount": 0.1,
+    "apex_zero": [
+     [
+      1,
+      7
+     ],
+     [
+      1,
+      8
+     ],
+     [
+      1,
+      9
+     ],
+     [
+      1,
+      10
+     ],
+     [
+      1,
+      11
+     ],
+     [
+      1,
+      12
+     ],
+     [
+      1,
+      13
+     ],
+     [
+      1,
+      14
+     ],
+     [
+      1,
+      15
+     ],
+     [
+      1,
+      16
+     ],
+     [
+      1,
+      17
+     ],
+     [
+      1,
+      18
+     ],
+     [
+      1,
+      19
+     ],
+     [
+      1,
+      20
+     ],
+     [
+      1,
+      21
+     ],
+     [
+      1,
+      22
+     ],
+     [
+      1,
+      23
+     ],
+     [
+      1,
+      24
+     ],
+     [
+      1,
+      25
+     ],
+     [
+      1,
+      26
+     ],
+     [
+      1,
+      27
+     ],
+     [
+      1,
+      28
+     ],
+     [
+      1,
+      29
+     ]
+    ],
+    "direction": [
+     -0.7071067811865475,
+     0.7071067811865475,
+     0.0
+    ],
+    "element": 0,
+    "elements": [
+     2,
+     3,
+     5
+    ],
+    "kind": "apex_zero_omits",
+    "local_node": 0,
+    "omitted": [
+     1,
+     6
+    ],
+    "perturbation": [
+     1e-08,
+     0.0,
+     0.0
+    ]
+   },
+   "problem": "dp_free_hydrostatic.m0",
+   "result": "dp_free_hydrostatic.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "apex_zero_lower",
+   "harness_item": "a declared apex face on a Lower bound",
+   "id": "apex_zero_on_lower",
+   "mutation": {
+    "apex_zero": [
+     [
+      0,
+      0
+     ]
+    ],
+    "kind": "add_apex_zero"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
+   "stage": "schema"
+  },
+  {
+   "expect": "hash_mismatch",
+   "harness_item": "a declared apex face not covered by the result hash",
+   "id": "apex_zero_outside_hash",
+   "mutation": {
+    "apex_zero": [
+     [
+      0,
+      0
+     ]
+    ],
+    "kind": "add_apex_zero_unhashed"
+   },
+   "problem": "dp_free_hydrostatic.m0",
+   "result": "dp_free_hydrostatic.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "schema"
   }
  ],
  "format": "ladruno-limit-negative-fixtures",
