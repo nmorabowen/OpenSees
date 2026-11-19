@@ -1387,30 +1387,44 @@ def routeS_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
     nodes = sorted({i for sup in sups for i, _, _ in sup}, key=lambda t: t[::-1])
     nid = {idx: k for k, idx in enumerate(nodes)}
     nn = len(nodes)
+    # raw nodal masses (fix 3 and the u-activity test run on raw weights)
     mass = np.zeros(nn)
-    mom = np.zeros((nn, ndm))
-    f = np.zeros((nn, ndm))
     Vw = np.zeros(nn)
     for k in range(N):
-        st_k = voigt_tensor(st["sig"][k], ndm)
-        for idx, S, dS in sups[k]:
-            a = nid[idx]
-            mass[a] += S * m
-            mom[a] += S * m * st["v"][k]
-            f[a] += S * m * g - V0 * st_k @ dS
-            Vw[a] += S * V0
-    # §7c (1): in a two-phase step a node is u-active iff m_a > max(massCutoff, pressureCutoff)
-    # m_max; otherwise dropped whole (v^ = v* = v1 = 0, a = 0, M^-1 = 0). Every particle here is
-    # two-phase, so every step is a two-phase step.
+        for idx, S, _ in sups[k]:
+            mass[nid[idx]] += S * m
+            Vw[nid[idx]] += S * V0
+    # §7c (1) corrected (9e20c87e0): a node is u-active iff m_a > max(massCutoff, pressureCutoff)
+    # m_max (raw masses). Each particle's kept entries (on u-active nodes) are renormalised ALWAYS,
+    # mode A's formula: S' = S/sigma, dS' = (dS - S' gamma)/sigma over the kept entries; entries on
+    # other nodes are absent everywhere. The p weights are NOT touched by this pass (fix 3 below
+    # runs on the raw weights).
     c_u = max(case["masscut"], case["pcut"])
     active = mass > c_u * m
-    dropped_u = [a for a in range(nn) if mass[a] > case["masscut"] * m and not active[a]]
+    dropped_u = [a for a in range(nn) if mass[a] > 0.0 and not active[a]]
+    usups = []
+    for k in range(N):
+        kept = [(i, S, dS) for i, S, dS in sups[k] if active[nid[i]]]
+        sg = sum(S for _, S, _ in kept)
+        gm = sum(dS for _, _, dS in kept)
+        usups.append([(i, S / sg, (dS - (S / sg) * gm) / sg) for i, S, dS in kept])
+    # P2G on the renormalised u weights (mass, momentum, forces)
+    massu = np.zeros(nn)
+    mom = np.zeros((nn, ndm))
+    f = np.zeros((nn, ndm))
+    for k in range(N):
+        st_k = voigt_tensor(st["sig"][k], ndm)
+        for idx, S, dS in usups[k]:
+            a = nid[idx]
+            massu[a] += S * m
+            mom[a] += S * m * st["v"][k]
+            f[a] += S * m * g - V0 * st_k @ dS
     vhat = np.zeros((nn, ndm))
-    vhat[active] = mom[active] / mass[active, None]
+    vhat[active] = mom[active] / massu[active, None]
     vstar = np.zeros((nn, ndm))
-    vstar[active] = vhat[active] + dt * f[active] / mass[active, None]
+    vstar[active] = vhat[active] + dt * f[active] / massu[active, None]
     Minv = np.zeros((nn, ndm))
-    Minv[active] = 1.0 / mass[active, None]
+    Minv[active] = 1.0 / massu[active, None]
     for idx in nodes:
         for c in _fixed_comps(grid, idx, case):
             vstar[nid[idx], c] = 0.0
@@ -1444,7 +1458,7 @@ def routeS_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
     Qm = np.zeros((nn * ndm, npn))
     fse = np.zeros(npn)
     for k in range(N):
-        sup = [(nid[i], S, dS) for i, S, dS in sups[k]]
+        sup = [(nid[i], S, dS) for i, S, dS in usups[k]]
         ps = [(pidx[a], S, dS) for a, S, dS in spr[k]]
         for b, Sb, dSb in ps:
             fse[b] += V0 * fl["rhoF"] * dSb @ (kb * g)
@@ -1477,8 +1491,8 @@ def routeS_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
     new = {k: (v.copy() if hasattr(v, "copy") else v) for k, v in st.items()}
     aF, aP = case["flip"], case["pblend"]
     for k in range(N):
-        S = np.array([s for _, s, _ in sups[k]])
-        rows = [nid[i] for i, _, _ in sups[k]]
+        S = np.array([s for _, s, _ in usups[k]])
+        rows = [nid[i] for i, _, _ in usups[k]]
         new["v"][k] = aF * (st["v"][k] + dt * S @ acc[rows]) + (1 - aF) * (S @ v1[rows])
         new["x"][k] = st["x"][k] + dt * S @ v1[rows]
         prow = [a for a, _, _ in spr[k]]
@@ -1487,7 +1501,7 @@ def routeS_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
     # §7c (2): a two-phase particle's skeleton strain comes from the grid velocity v1 (USL), the
     # conditioned velocity after the correction (0 on fixed and dropped components)
     for k in range(N):
-        L = sum(np.outer(v1[nid[i]], dS) for i, _, dS in sups[k])
+        L = sum(np.outer(v1[nid[i]], dS) for i, _, dS in usups[k])
         E = 0.5 * dt * (L + L.T)
         deps = np.array([E[0, 0], E[1, 1], 2 * E[0, 1]])
         new["sig"][k] = st["sig"][k] + D @ deps
@@ -1547,6 +1561,35 @@ def t0_routeS(case=T0S):
     return {"V0": V0, "m": m, "lp": lpv, "alpha_st": a_st, "history": hist,
             "dt_drained_pencil": dtd, "safety": 0.5,
             "rules": "interface §1, §7a Q4, §7b P5a/fix 3, §7c (u-activity, USL strain, pencil)"}
+
+
+T13 = dict(T0S, h=1.0, cells=(6, 4), box=((1.0, 1.0), (3.0, 3.0)), gravity=(0.0, 0.0), fix=[],
+           pfix=[], dt=5.0e-3, steps=200)
+
+
+def t13_translation(case=T13, v0=(1.0, 0.0)):
+    """T13's simplest leg (§7c (1) corrected), numpy expectation from the text: a free 2 x 2-cell
+    gimp two-phase block in rigid translation, v = (1, 0), no loads, no conditions, p = 0, route S,
+    dt 5e-3, 200 steps. Returns the max deviations of v (from v0), sigma' and p (from 0), and of
+    x (from X + v0 t), over all steps and particles."""
+    grid = OGrid(case["x0"], case["h"], case["cells"])
+    X, V0, m, lpv = lattice(grid, *case["box"], case["ppc"], case["rho"])
+    lp = [lpv] * grid.ndm
+    D = elastic_D(case["E"], case["nu"], grid.ndm)
+    a_st = stab_value(case["fluid"], D, grid.h, grid.ndm)
+    N = len(X)
+    st = {"x": X.copy(), "v": np.tile(np.array(v0, float), (N, 1)), "p": np.zeros(N),
+          "sig": np.zeros((N, 3))}
+    dv = dsig = dp = dx = 0.0
+    for n in range(case["steps"]):
+        st, _ = routeS_step(st, grid, case, V0, m, lp, D, a_st)
+        t = (n + 1) * case["dt"]
+        dv = max(dv, float(np.max(np.abs(st["v"] - np.array(v0)))))
+        dsig = max(dsig, float(np.max(np.abs(st["sig"]))))
+        dp = max(dp, float(np.max(np.abs(st["p"]))))
+        dx = max(dx, float(np.max(np.abs(st["x"] - (X + np.array(v0) * t)))))
+    return {"v_dev": dv, "sig_dev": dsig, "p_dev": dp, "x_dev": dx, "particles": N,
+            "final_x_mean": st["x"].mean(axis=0).tolist()}
 
 
 # --------------------------------------------------------------------------- self-checks
@@ -2249,6 +2292,8 @@ def main(argv):
         rec["t0_i"] = t0_particle_dump(T0A)
         rec["t0_ii"] = t0_modeA(T0A)
         rec["t0_iii"] = t0_routeS(T0S)
+        rec["t13_translation_gimp_free"] = dict(t13_translation(), case=T13,
+                                                expectation="v, sigma', p exact to round-off")
         print(_save("t0_oracle", rec))
         return
     if leg == "settle0":

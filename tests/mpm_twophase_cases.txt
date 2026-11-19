@@ -287,6 +287,12 @@ end
 # p 1.0e-3, sigma' 0.19 (max relative change over the 10 steps). (3) the run-time limit: the
 # drained pencil dt_d = 0.006840-0.006844 s (record dt_drained_pencil), s dt_d = 0.00342 > dt 1e-3:
 # admitted. T0 (i, ii) unchanged bit for bit.
+# Re-derived for §7c (1) corrected (9e20c87e0): every route-S step renormalises each particle's u
+# weights over its u-active nodes (mode A's formula, always; dropped entries absent everywhere; the
+# p weights untouched, fix 3 on raw weights). Against e43e0f58a: x 1.8e-9, v 2.7e-5, p 8.8e-7,
+# sigma' 1.9e-5 (max relative over the 10 steps); T0 (i, ii) bit for bit. The record also carries
+# t13_translation_gimp_free (T13's simplest leg, numpy): v, sigma', p, x exact to 3e-16, 7e-14,
+# 1e-14, 2e-14 over 200 steps.
 case t0_routeS
 kind reference
 ndm 2

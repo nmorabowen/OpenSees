@@ -243,9 +243,10 @@ def test_t0_iii_section_7c():
     s x the drained pencil."""
     d = _json("t0_oracle")
     hist = d["t0_iii"]["history"][1:]
-    assert hist[0]["grid"]["u_dropped"] == [] and hist[1]["grid"]["u_dropped"] == []
-    assert all(len(h["grid"]["u_dropped"]) == 5 for h in hist[3:])
-    assert all(i[1] == -1 for h in hist for i in h["grid"]["u_dropped"])
+    assert hist[0]["grid"]["u_dropped"] == []
+    # corrected 7c (1): only ghost nodes (i = -1 or j = -1) are ever dropped
+    assert all(i[0] == -1 or i[1] == -1 for h in hist for i in h["grid"]["u_dropped"])
+    assert all(len(h["grid"]["nodes"]) == 25 for h in hist)          # p-active: the real nodes
     assert d["case_routeS"]["dt"] <= d["t0_iii"]["safety"] * min(d["t0_iii"]["dt_drained_pencil"])
 
 
@@ -273,3 +274,9 @@ def test_r_rows_route_s_record():
     s_rows = [r for r in d["r2_cost_dt"] if r["route"] == "S"]
     assert all(r["dt_run"] <= r["dt_admitted_s0.5"] for r in s_rows)
     assert "cost_and_dt_T2column" in d["r3_route_comparison"]
+
+
+def test_t13_free_translation_is_exact():
+    """§7c (1) corrected: a free gimp two-phase block in rigid translation keeps v, sigma', p."""
+    r = R.t13_translation()
+    assert r["v_dev"] < 1e-12 and r["sig_dev"] < 1e-9 and r["p_dev"] < 1e-9 and r["x_dev"] < 1e-12
