@@ -154,7 +154,7 @@ def project(A, g, x, scale, sweeps=4):
         residual = (reduced @ out[free] - rhs) / row_scale
         out[free] -= scale[free] * (right.T @ ((left.T @ residual) / sing_kept))
     return out, {"kappa": kappa, "rank": rank, "rows": hat.shape[0], "cols": hat.shape[1],
-                 "literal_zero": int(zero.sum())}
+                 "literal_zero": int(zero.sum()), "zero_mask": zero}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -276,7 +276,8 @@ def certify_lower(m, A, g, x_c, resultant):
     mu = 0.0
     x_f = x_p.copy()
     if np.any(g_y > -margin):
-        require_zero_interior(m, g)
+        if np.any(g != 0.0) or np.any(m.k <= 0.0):
+            return None, "no_interior_field", {"rho_before": rho_before}  # this demonstration supplies no interior_sigma
         interior = -np.repeat(m.k, 4)
         mu = float(np.max((g_y + margin) / (g_y - interior)))
         if mu > TOL["TOL_REPAIR_MAX"]:
@@ -291,6 +292,8 @@ def certify_lower(m, A, g, x_c, resultant):
         "rho_cone": float(g_final.max() / s_ref), "repair_mu": mu, "rho_before_repair": rho_before,
         "rank": info["rank"], "rows": info["rows"], "cols": info["cols"], "literal_zero": info["literal_zero"],
     }
+    if np.any(x_f[info["zero_mask"]] != 0.0):
+        return None, "literal_zero_violated", metrics
     if omega > tau:
         return None, "equality_residual_above_floor", metrics
     if kappa > TOL["TOL_KAPPA_CAP"] or kappa * omega > TOL["TOL_FLOOR_MAX"]:
@@ -298,11 +301,6 @@ def certify_lower(m, A, g, x_c, resultant):
     if g_final.max() > 0.0:
         return None, "cone_violation_too_large", metrics
     return float(x_f[0]), None, metrics
-
-
-def require_zero_interior(m, g):
-    if np.any(g != 0.0) or np.any(m.k <= 0.0):
-        raise SystemExit("this demonstration handles zero fixed loads only")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -604,9 +602,11 @@ class Jump:
             x_ip, _ = project(A, g, x_int, self.scale_of(x_int))
             ci_vol, ci_jump, _, size_int = self.conditions(x_ip)
             ci_all = np.concatenate([ci_vol[np.isfinite(ci_vol)], ci_jump])
+            if not size_int > 0.0:
+                return None, "interior_field_invalid", {"interior_size": size_int}
             interior_margin = float(np.max(ci_all[active]) / size_int)
             if ci_all.max() > TOL["TOL_CONE_MARGIN"] * size_int or interior_margin > -TOL["TOL_INTERIOR_MIN"]:
-                return None, "no_admissible_correction", {"interior_margin": interior_margin, "active": int(active.sum())}
+                return None, "interior_field_invalid", {"interior_margin": interior_margin, "active": int(active.sum())}
             mu = float(np.max(c_all[active] / (c_all[active] - ci_all[active])))
             if mu > TOL["TOL_REPAIR_MAX"]:
                 return None, "repair_too_large", {"repair_mu": mu}
@@ -627,6 +627,8 @@ class Jump:
             "repaired_conditions": int(active.sum()), "value_candidate_recomputed": float(value_candidate),
             "rank": info["rank"], "rows": info["rows"], "cols": info["cols"], "literal_zero": info["literal_zero"],
         }
+        if np.any(x_f[info["zero_mask"]] != 0.0):
+            return None, "literal_zero_violated", metrics
         if omega > tau:
             return None, "equality_residual_above_floor", metrics
         if kappa > TOL["TOL_KAPPA_CAP"] or kappa * omega > TOL["TOL_FLOOR_MAX"]:

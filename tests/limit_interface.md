@@ -447,19 +447,27 @@ The gap on every mesh is recorded (`record gap mesh i`) and gates nothing: it is
 Section 13 proves the monotonicity for these formulations. A violation therefore signals a defect or an
 unconverged candidate, and is never averaged away.
 
-The limits were set late (section 18.3) and the owner accepted them on 2026-11-19 (O1). They are closed from this
+The limits were set late (section 18.3) and the owner accepted them on 2026-11-19 (OD1). They are closed from this
 revision: a limit does not move and no gate mesh changes. A miss is a real P0 failure, recorded.
 
 ### 11.3 Verdicts
 
-The verdict is per case, so **per angle and wall type**, as `evaluate_case` returns it. By owner decision O2:
+The verdict is per case, so **per angle and wall type**, as `evaluate_case` returns it, and `evaluate_program` reads the
+verdicts for P0. By owner decision OD2, after the box correction above:
 
-- after the box correction above, a Drucker-Prager miss at `phi = 30` degrees **withholds the 3D Drucker-Prager claim
-  at 30 degrees** and is recorded by angle and wall type;
+- at `phi = 30` degrees, **only two kinds of failure withhold the 3D Drucker-Prager claim at 30 degrees** instead of
+  blocking P0: the gate `gap_le MAX_GAP_3D_DP`, and a missing certificate, meaning a `certified_upper`,
+  `certified_bracket`, assertion or monotonicity item that fails because no gate-admissible certificate exists on its
+  mesh. The case is then recorded with `claim_withheld`, by angle and wall type;
+- at **any** angle, a failed `upper_nonincrease` or `lower_nondecrease` between two certified values, a failed or
+  missing `kinematic_status`, or an invalid record keeps P0 open, and any contradiction (certified Lower above certified
+  Upper beyond the floors) stops the program;
 - a miss at `phi = 0, 10, 20` degrees is a P0 failure that keeps P0 open (ADR 18.3), and no candidate passing
   triggers K2;
 - a failure of an exact formulation case (`exact_on_mesh`, `exact_lower_on_mesh`) or of the thin-slab strip still
   stops P0.
+
+`_withholdable` and `evaluate_program` in the contract test are the executable form.
 
 ## 12. P0 Upper formulation, `upper.p2d-jump-bernstein.v0`
 
@@ -938,7 +946,10 @@ tolerances. It always runs **affine projection, then inequality repair, then a f
 - **Conditioning.** `kappa_eq = sigma_max(A_hat) / sigma_min+(A_hat)`, the smallest singular value above
   `TOL_RANK sigma_max`. The value used must be an upper bound on the true ratio or an estimate within a factor 2.
   Method: a dense singular value decomposition where it fits; otherwise shift-invert Lanczos on `A_hat A_hat^T` for the
-  smallest non-zero eigenvalue, with the Ritz residual reported. The certificate states which method gave the number;
+  smallest non-zero eigenvalue, with the Ritz residual reported. That normal matrix is singular when rows are
+  dependent, so the shift `s` must be **positive** and below the eigenvalue sought. Eigenvalues at or below
+  `TOL_RANK^2 sigma_max^2` are the dependent rows and are skipped, and
+  their count must equal `n_rows - rank`. The certificate states which method gave the number;
   an iterative value is an estimate of conditioning. 237c reports `kappa_eq` on every gate mesh before any gate is read.
 - **Move.** `projection_move = max_j |x_P,j - x_j| / d_j`.
 
@@ -978,8 +989,8 @@ the cap gives an estimate with `equality_ill_conditioned`; one with `omega > tau
 5. `sigma_int = 0`, `value_int = 0` is available only when `b0`, `t0` and `F0` are all zero and every `k > 0`. Otherwise it
    must be supplied as `interior_sigma` and is itself projected by step 2 and checked. If none exists, the result stays
    an estimate with `no_interior_field`; an invalid one gives `interior_field_invalid`.
-6. **Recheck the final field from scratch:** literal zeros, `omega`, `kappa_eq`, every traction and resultant row, and
-   `g_ei <= 0` from principal stresses.
+6. **Recheck the final field from scratch:** every literal-zero unknown is exactly `0.0` (else `literal_zero_violated`),
+   `omega`, `kappa_eq`, every traction and resultant row, and `g_ei <= 0` from principal stresses.
 
 ### 17.4 Upper procedure
 
@@ -1004,9 +1015,9 @@ the cap gives an estimate with `equality_ill_conditioned`; one with `omega > tau
    finite dissipation charge is not a repair. Let `m = TOL_CONE_MARGIN * D_scale` and `P` the conditions with `c~ > m`.
    - If `P` is empty, nothing is repaired. This is always the case for von Mises: after projection no inequality remains.
    - Otherwise blend with a supplied field `(v_int, V_int)` (`interior_element_velocity` or `interior_velocity`, with
-     `interior_footing_velocity`), projected by step 2 with its own scales. It must satisfy `c~_int <= m_int` at every
-     condition and `c~_int <= -TOL_INTERIOR_MIN * D_scale_int` at every condition of `P`, else
-     `interior_field_invalid`. Then `mu = max over P of c~ / (c~ - c~_int)`, `x_new = (1 - mu) x + mu x_int`,
+     `interior_footing_velocity`), projected by step 2 with its own scales. It must have `D_scale_int > 0`, satisfy
+     `c~_int <= m_int` at every condition and `c~_int <= -TOL_INTERIOR_MIN * D_scale_int` at every condition of `P`,
+     else `interior_field_invalid`. Then `mu = max over P of c~ / (c~ - c~_int)`, `x_new = (1 - mu) x + mu x_int`,
      `mu <= TOL_REPAIR_MAX`. By convexity each condition of `P` ends at or below 0 and every other one at or below its
      margin.
    - Conditions that the rows force to zero, such as a vertex of an element with two fixed facets or a coefficient
@@ -1018,7 +1029,8 @@ the cap gives an estimate with `equality_ill_conditioned`; one with `omega > tau
    otherwise `work_nonpositive`.
 6. `D = sum (V_e/4) pi(d_ei) + sum (A_F/6) pi_J(c_B)`. Ray forms: `U = (D - W0) / W1`, so no exact normalisation is needed.
    `support`: `U = D - W0`.
-7. **Recheck the final field from scratch:** literal zeros, `omega`, `kappa_eq`, all conditions of step 2,
+7. **Recheck the final field from scratch:** every literal-zero unknown exactly `0.0` (else `literal_zero_violated`),
+   `omega`, `kappa_eq`, all conditions of step 2,
    `c~ <= TOL_CONE_MARGIN * D_scale` at every `alpha > 0` condition, and `U`.
 
 ### 17.5 What "certified" means
@@ -1044,7 +1056,8 @@ It is **not** an interval-arithmetic proof. "Rigorous" means rigorous for the st
 Reason codes: `no_candidate`, `hash_mismatch`, `query_mismatch`, `formulation_not_admitted`, `formulation_not_applicable`,
 `curved_element`, `degenerate_element`, `boundary_violation`, `projection_move_too_large`, `equality_residual_above_floor`,
 `equality_ill_conditioned`, `cone_violation_too_large`, `no_interior_field`, `interior_field_invalid`, `repair_too_large`,
-`flow_violation_too_large`, `no_admissible_correction`, `work_nonpositive`, `value_mismatch`, `unsupported_domain_claim`.
+`flow_violation_too_large`, `no_admissible_correction`, `work_nonpositive`, `value_mismatch`, `unsupported_domain_claim`,
+`literal_zero_violated`.
 
 `tests/data/limit/negative_fixtures.json` lists the fixtures for every false-green item of the harness and every row of
 ADR 11.5 (the test maps each ADR row to its fixtures). `stage` is `schema` (the format validators refuse it), `checker` (the
@@ -1104,10 +1117,10 @@ evidence, and **never to rescue a run**.
 | `FLOOR_MIN_REL` | 1e-12 | Smallest floating-point floor ever reported |
 | `TOL_CASE_ONE_SIDED` | 1e-6 | Allowance in one-sided case assertions, for floors only |
 | `TOL_CASE_EXACT_GAP` | 1e-6 | Certified gap allowed where both exact fields lie in the discrete spaces |
-| `MAX_GAP_STRIP` | 0.05 | Requirement: resolves `(2 + pi) cu` to about 2.5% either side on the listed finest mesh. Owner accepted (O1) |
-| `MAX_GAP_PRANDTL` | 0.10 | Requirement for the frictional strips, whose fans are wider and less resolved. Owner accepted (O1) |
-| `MAX_GAP_3D_VM` | 0.30 | Requirement for true-3D von Mises on mesh 5. A bracket this wide places the collapse load within 15% of its midpoint, the resolution at which a 3D bracket can still check a finite-element capacity. Owner accepted (O1) |
-| `MAX_GAP_3D_DP` | 0.50 | Requirement for true-3D Drucker-Prager on mesh 5 of each angle: within 25% of the midpoint, the coarsest resolution at which a frictional 3D bracket still says whether a capacity is plausible. Owner accepted (O1); a 30-degree miss follows O2 |
+| `MAX_GAP_STRIP` | 0.05 | Requirement: resolves `(2 + pi) cu` to about 2.5% either side on the listed finest mesh. Owner accepted (OD1) |
+| `MAX_GAP_PRANDTL` | 0.10 | Requirement for the frictional strips, whose fans are wider and less resolved. Owner accepted (OD1) |
+| `MAX_GAP_3D_VM` | 0.30 | Requirement for true-3D von Mises on mesh 5. A bracket this wide places the collapse load within 15% of its midpoint, the resolution at which a 3D bracket can still check a finite-element capacity. Owner accepted (OD1) |
+| `MAX_GAP_3D_DP` | 0.50 | Requirement for true-3D Drucker-Prager on mesh 5 of each angle: within 25% of the midpoint, the coarsest resolution at which a frictional 3D bracket still says whether a capacity is plausible. Owner accepted (OD1); a 30-degree miss follows OD2 |
 
 ### 17.9 Status terms
 
@@ -1124,19 +1137,32 @@ evidence, and **never to rescue a run**.
 bracket. Otherwise write `estimate: L=..., U=...`. Report `domain_claim`, criterion, `flow_rule` and interface law with
 every result.
 
-**Case lines.** `evaluate_case(case, certificates, brackets, feasibility)` in `tests/test_limit_contract.py` is the
-executable meaning of `assert`, `gate` and `record`. Records are matched to meshes through `problem_hashes.json`, so a
-record of another case or mesh counts as missing. Only gate-admissible records count; `schema-fixture` and
-`procedure-demo` never do. Every `formulation` line binds: a Lower item holds for each Lower formulation, an Upper item for
-each Upper formulation, a pair item for each pair, and `control` lines bind nothing. Assertions hold on every listed mesh.
-For `gap_le`, a bracket with status `order_within_floor` counts as gap 0, and `contradiction` fails the case and sets
-`stop_program`. Floors are not added to one-sided assertions: `TOL_CASE_ONE_SIDED` is the allowance for them.
+**Case lines.** `evaluate_case(case, certificates, results, feasibility, brackets)` in `tests/test_limit_contract.py`
+is the executable meaning of `assert`, `gate` and `record`.
+
+- Records are matched to meshes through `problem_hashes.json`, so a record of another case or mesh counts as missing.
+- Every record used is validated against the problem built from the case: each certificate with its result document
+  (`validate_certificate`), each feasibility record (`validate_feasibility`), and each bracket record supplied
+  (`validate_bracket`). An invalid record is listed, excluded, and keeps the case from passing.
+- Only gate-admissible records count; `schema-fixture` and `procedure-demo` never do.
+- Bracket status and gap are **recomputed** from the two gate-admissible certificates with section 17.9's rules. A bracket
+  record is checked, never trusted, and is not needed.
+- Every `formulation` line binds: a Lower item holds for each Lower formulation, an Upper item for each Upper formulation,
+  a pair item for each pair, and `control` lines bind nothing. Assertions hold on every listed mesh.
+- For `gap_le`, status `order_within_floor` counts as gap 0 **only in an `exact_on_mesh` case**, where both exact fields lie
+  in the discrete spaces; elsewhere it fails the item. `contradiction` fails the case and sets `stop_program`.
+- Floors are not added to one-sided assertions: `TOL_CASE_ONE_SIDED` is the allowance for them.
+- Each failed item carries a cause (`missing`, `estimate`, `violated`, `order_within_floor`, `no_gap`, `contradiction`).
+  The verdict sets `claim_withheld` when every failure is withholdable under OD2 (section 11.3), and `p0_blocking`
+  otherwise. `evaluate_program(verdicts, required)` reports `stop_program`, `p0_open`, the blocking and missing cases, and
+  the withheld claims.
 
 ## 18. Decision record
 
 ### 18.1 Accepted owner amendments
 
-The owner accepted A1 to A4 for ADR 237 on 2026-11-18, and decided O1 and O2 on 2026-11-19.
+The owner accepted A1 to A4 for ADR 237 on 2026-11-18, and decided OD1 and OD2 on 2026-11-19. The `OD` ids are this
+contract's; they are not the ADR's working defaults O1 and O2.
 
 | Id | Amendment | In this contract |
 |---|---|---|
@@ -1144,8 +1170,8 @@ The owner accepted A1 to A4 for ADR 237 on 2026-11-18, and decided O1 and O2 on 
 | A2 | Whole-facet jump checks. P2 jumps are quadratic | Section 12 |
 | A3 | `domain_claim` per bound. A bracket claims only what both bounds support | Section 14 |
 | A4 | Certificate repair only by an admissible construction | Sections 17.3, 17.4 |
-| O1 | Keep the disclosed gap limits and gate meshes: `MAX_GAP_STRIP` 0.05, `MAX_GAP_PRANDTL` 0.10, `MAX_GAP_3D_VM` 0.30, `MAX_GAP_3D_DP` 0.50. They close from this review-fix revision, with the chronology of section 18.3. A miss is a real P0 failure | Sections 11.2, 16.4, 17.8 |
-| O2 | After the box correction, a 3D Drucker-Prager miss at 30 degrees withholds that 3D claim and is recorded by angle and wall type. Exact-formulation failures still stop P0 | Section 11.3 |
+| OD1 | Keep the disclosed gap limits and gate meshes: `MAX_GAP_STRIP` 0.05, `MAX_GAP_PRANDTL` 0.10, `MAX_GAP_3D_VM` 0.30, `MAX_GAP_3D_DP` 0.50. They close from this review-fix revision, with the chronology of section 18.3. A miss is a real P0 failure | Sections 11.2, 16.4, 17.8 |
+| OD2 | After the box correction, a 3D Drucker-Prager miss at 30 degrees withholds that 3D claim and is recorded by angle and wall type. Exact-formulation failures still stop P0 | Section 11.3 |
 
 ### 18.2 Orchestrator P0 rulings
 
@@ -1179,7 +1205,7 @@ case. That did not happen, and the record says so:
 | `7909baa4e`, 2026-11-18 | First contract. No gap limit and no `gate` line. The strip meshes had depth along `y` |
 | 2026-11-18, uncommitted | Estimates on the strips and the 3D gate, listed below with mesh indices of the present cases |
 | `32c5a1842`, 2026-11-18 | The four `MAX_GAP_*` limits and every `gate` line first appear, **in the same commit** that records those estimates. The Drucker-Prager strips gained `mesh 64 1 32` as gate mesh 3, while their estimates are on mesh 2 |
-| This revision, 2026-11-19 | Review-fix round. The Drucker-Prager 3D gate meshes are replaced by per-angle boxes (section 11) because the old box did not hold the mechanism scale. No solve has been run on any of the new meshes. The owner accepted the limits and gate meshes as disclosed (O1); they are **closed** from this revision |
+| This revision, 2026-11-19 | Review-fix round. The Drucker-Prager 3D gate meshes are replaced by per-angle boxes (section 11) because the old box did not hold the mechanism scale. No solve has been run on any of the new meshes. The owner accepted the limits and gate meshes as disclosed (OD1); they are **closed** from this revision |
 
 **Estimates and where they sit.**
 
@@ -1233,8 +1259,8 @@ The file is not frozen, so the 2026-11-19 review-fix round is recorded here rath
 | M5 | `TOL_KAPPA_CAP` = 1e8 stated as a number; method named; 237c reports `kappa_eq` before any gate (17.1, 17.2) |
 | M6 | `certified_upper` on meshes 0 to 5 and `record gap` per mesh in all eight 3D cases (11.2) |
 | M7 | `evaluate_case` with synthetic-record tests (17.9) |
-| M8 | Chronology in 18.3; owner decision O1 closes the limits and gate meshes |
-| M9 | Per-angle boxes and meshes, verdicts per angle and wall type, owner decision O2 (11) |
+| M8 | Chronology in 18.3; owner decision OD1 closes the limits and gate meshes |
+| M9 | Per-angle boxes and meshes, verdicts per angle and wall type, owner decision OD2 (11) |
 | m1 | `lower_le_formula` and `upper_ge_formula` added and asserted on the column (16.5) |
 | m2 | Candidate `lambda` is `value`; `resultant` recomputed; scaled unknowns; fixture `wrong_lower_value` (17.3) |
 | m3 | Premise (a) at 20 degrees marked unverified in 16.4 and in both case files; Prandtl 1921 cited beside 1920 |
@@ -1244,7 +1270,27 @@ The file is not frozen, so the 2026-11-19 review-fix round is recorded here rath
 | m7 | R9 records the query normalisation; 17.5 states the norm-equivalence factor and the margin's role |
 | m8 | Mesh digests in 15.2; the public-file test opens every NPZ |
 
-**ADR 237 changes this contract now requires** (the ADR is not edited here):
+**Pre-freeze round, 2026-11-19.**
+
+| Item | Resolution |
+|---|---|
+| N1 | OD2's scope stated in 11.3: only `gap_le MAX_GAP_3D_DP` and missing certificates at 30 degrees withhold; executable in `_withholdable`, `evaluate_case` and `evaluate_program`, with tests |
+| M7 residuals | The evaluator recomputes status and gap from certificates, validates every certificate, result-linked certificate, feasibility and bracket record, and limits the zero-gap rule to `exact_on_mesh`; tests include a malformed feasibility record and a forged bracket gap |
+| `D_scale_int` | Must be positive (17.4 step 4) |
+| Shift-invert | The shift must be positive on the singular normal matrix; skipped eigenvalues must number `n_rows - rank` (17.1) |
+| Literal zeros | `literal_zero_violated` when a literal-zero unknown is not exactly zero in the final field (17.3, 17.4, 17.6) |
+| Decision ids | O1 and O2 renamed OD1 and OD2 so they cannot be read as the ADR's working defaults |
+| Demonstration | Its invalid-interior code is `interior_field_invalid`, it returns `no_interior_field` when zero stress is not interior, it requires `D_scale_int > 0`, and it checks literal zeros on the final field |
+
+**ADR 237 changes this contract required in the review-fix round** (the ADR is not edited here). Items 1 to 10 were applied
+on `origin/wp/237-limit-analysis` at `1375c2c46`. Still owed after the pre-freeze round:
+
+- 19.2: the contract's decision labels are now OD1 and OD2, not O1 and O2.
+- 10.1 verdicts: only `gap_le MAX_GAP_3D_DP` and a missing certificate withhold the 30-degree claim; monotonicity failures,
+  kinematic failures and invalid records at any angle keep P0 open, and a contradiction stops it.
+- 11.3 or 11.4: `literal_zero_violated`, the positive shift for shift-invert, and `D_scale_int > 0` for the interior field.
+
+Review-fix list, applied:
 
 1. 11.3: replace the componentwise scaled residual with the row-normwise `omega` and scales of section 17.1, drop the `kappa`
    factor from `tau_eq`, and replace `TOL_EQ_CAP` by `TOL_KAPPA_CAP` on `kappa_eq` (R10). Add literal zeros.
@@ -1254,9 +1300,9 @@ The file is not frozen, so the 2026-11-19 review-fix round is recorded here rath
 4. 10.1 gate table: per-angle boxes sized by the plane-strain extent; a certified Upper at every size with the gap trend
    recorded; verdicts per angle and wall type; the kinematic verdict from a checker-recomputed witness, with nullity
    reported only and no infeasibility verdict for `alpha > 0`.
-5. 10.1 and 18.3: record O2. A 30-degree Drucker-Prager miss withholds that 3D claim instead of triggering K2; exact
+5. 10.1 and 18.3: record OD2. A 30-degree Drucker-Prager miss withholds that 3D claim instead of triggering K2; exact
    formulation failures still stop P0.
-6. 18.2 item 4: record O1 and the chronology of section 18.3, since the limits were not set before the first solve.
+6. 18.2 item 4: record OD1 and the chronology of section 18.3, since the limits were not set before the first solve.
 7. 12: the half-space coverage rule with `ground` and `symmetry_sets`; the bracket's half-space branch cannot fire in
    version 0.
 8. 11.5: no table change; add that each row is discharged by a named fixture with one expected code.

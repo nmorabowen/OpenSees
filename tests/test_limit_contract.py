@@ -104,7 +104,7 @@ REASON_CODES = {
     "projection_move_too_large", "equality_residual_above_floor", "equality_ill_conditioned",
     "cone_violation_too_large", "no_interior_field", "interior_field_invalid", "repair_too_large",
     "flow_violation_too_large", "no_admissible_correction", "work_nonpositive", "value_mismatch",
-    "unsupported_domain_claim",
+    "unsupported_domain_claim", "literal_zero_violated",
 }
 CHECK_KEYS = {
     "rho_div", "rho_jump", "rho_bc", "rho_resultant", "projection_move", "omega_eq", "kappa_eq",
@@ -1324,69 +1324,127 @@ def _one_sided(kind, value, limit, tol):
     return value >= limit - tol * abs(limit)
 
 
-def evaluate_case(case, certificates=(), brackets=(), feasibility=(), hashes=None):
-    """Verdict of one case from checker records. Records are matched to meshes by problem hash.
+_PROBLEM_CACHE = {}
 
-    Every `formulation` line binds: a Lower assertion must hold for each Lower formulation, an Upper
-    assertion or gate for each Upper formulation, and a pair item for each (Lower, Upper) pair. `control`
-    lines bind nothing. Assertions hold on every listed mesh. Only gate-admissible records count.
+
+def case_problem_cached(case, mesh):
+    key = (case["name"], mesh, json.dumps(case["mesh"][mesh]))
+    if key not in _PROBLEM_CACHE:
+        _PROBLEM_CACHE[key] = build_case_problem(case, mesh)
+    return _PROBLEM_CACHE[key]
+
+
+WITHHOLDABLE_CAUSES = {"missing", "estimate"}
+
+
+def _withholdable(case, item):
+    """Owner decision OD2 (interface 11.3): only the gap limit and missing certificates of the 30-degree cases."""
+    if case["class"] != "upper_gate_3d" or case.get("phi_deg") != 30.0 or item["cause"] == "contradiction":
+        return False
+    if item["kind"] == "gap_le":
+        return True
+    return item["kind"] != "kinematic_status" and item["cause"] in WITHHOLDABLE_CAUSES
+
+
+def evaluate_case(case, certificates=(), results=(), feasibility=(), brackets=(), problem_loader=None, hashes=None):
+    """Verdict of one case from checker records (interface 17.9).
+
+    Records are matched to meshes by problem hash and validated against the problem built from the case: a
+    certificate with its result document, a feasibility record, and any bracket record supplied. Invalid records
+    are listed and excluded, and a case with an invalid record does not pass. Bracket status and gap are
+    recomputed from two gate-admissible certificates; a bracket record is only checked, never trusted.
+
+    Every `formulation` line binds: a Lower assertion must hold for each Lower formulation, an Upper assertion or
+    gate for each Upper formulation, and a pair item for each (Lower, Upper) pair. `control` lines bind nothing.
+    Assertions hold on every listed mesh.
     """
     table = (load_problem_hashes() if hashes is None else hashes)[case["name"]]
     mesh_of = {sha: int(key[1:]) for key, sha in table.items()}
+    load = problem_loader or (lambda mesh: case_problem_cached(case, mesh))
     meshes = range(len(case["mesh"]))
     lowers = [f for f in case["formulation"] if f in FORMULATIONS["lower"]]
     uppers = [f for f in case["formulation"] if f in FORMULATIONS["upper"]]
-    by_key, kinematic, pairs, foreign = {}, {}, {}, []
-    for doc in certificates:
-        mesh = mesh_of.get(doc["problem_sha256"])
-        if mesh is None:
-            foreign.append(doc["problem_sha256"])
-        else:
-            by_key.setdefault((mesh, doc["formulation"]), []).append(doc)
-    for doc in feasibility:
-        mesh = mesh_of.get(doc["problem_sha256"])
-        if mesh is None:
-            foreign.append(doc["problem_sha256"])
-        else:
-            kinematic.setdefault((mesh, doc["formulation"]), []).append(doc)
-    for doc in brackets:
-        mesh = mesh_of.get(doc["problem_sha256"])
-        if mesh is None:
-            foreign.append(doc["problem_sha256"])
-        else:
-            pairs.setdefault((mesh, doc["lower_formulation"], doc["upper_formulation"]), []).append(doc)
-    admitted = {doc["result_sha256"] for docs in by_key.values() for doc in docs if gate_admissible(doc)}
-    verdict = {"case": case["name"], "passed": False, "stop_program": False, "items": [], "records": [],
-               "foreign_records": foreign}
+    by_result = {doc["result_sha256"]: doc for doc in results}
+    verdict = {"case": case["name"], "passed": False, "stop_program": False, "claim_withheld": False,
+               "p0_blocking": True, "items": [], "records": [], "foreign_records": [], "invalid_records": []}
 
-    def add(kind, mesh, formulation, passed, detail=""):
+    def locate(doc, kind):
+        mesh = mesh_of.get(doc.get("problem_sha256"))
+        if mesh is None:
+            verdict["foreign_records"].append({"kind": kind, "problem_sha256": doc.get("problem_sha256")})
+        return mesh
+
+    def invalid(kind, doc, code):
+        verdict["invalid_records"].append({"kind": kind, "id": doc.get("result_sha256") or doc.get("problem_sha256"),
+                                           "code": code})
+
+    by_key, by_sha, kinematic = {}, {}, {}
+    for doc in certificates:
+        mesh = locate(doc, "certificate")
+        if mesh is None:
+            continue
+        problem, arrays = load(mesh)
+        result = by_result.get(doc.get("result_sha256"))
+        try:
+            require(result is not None, "certificate_without_candidate", "no result document")
+            validate_certificate(doc, problem, arrays, result)
+        except ContractError as error:
+            invalid("certificate", doc, error.code)
+            continue
+        by_key.setdefault((mesh, doc["formulation"]), []).append(doc)
+        by_sha[doc["result_sha256"]] = doc
+    for doc in feasibility:
+        mesh = locate(doc, "feasibility")
+        if mesh is None:
+            continue
+        try:
+            validate_feasibility(doc, load(mesh)[0])
+        except ContractError as error:
+            invalid("feasibility", doc, error.code)
+            continue
+        kinematic.setdefault((mesh, doc["formulation"]), []).append(doc)
+    for doc in brackets:
+        if locate(doc, "bracket") is None:
+            continue
+        try:
+            lower, upper = by_sha.get(doc.get("lower_result_sha256")), by_sha.get(doc.get("upper_result_sha256"))
+            require(lower is not None and upper is not None, "bracket_uncertified", "no valid certificate")
+            validate_bracket(doc, lower, upper)
+        except ContractError as error:
+            invalid("bracket", doc, error.code)
+
+    def add(kind, mesh, formulation, passed, cause="", detail=""):
         verdict["items"].append({"kind": kind, "mesh": mesh, "formulation": formulation,
-                                 "status": "pass" if passed else "fail", "detail": detail})
+                                 "status": "pass" if passed else "fail", "cause": "" if passed else cause or "violated",
+                                 "detail": detail})
 
     def certified(mesh, formulation):
         docs = by_key.get((mesh, formulation), [])
         good = [doc for doc in docs if gate_admissible(doc)]
         if good:
-            return good[0]["value_certified"], ""
+            return good[0], ""
         return None, "estimate" if docs else "missing"
 
-    def gap_of(mesh, lower, upper):
-        docs = pairs.get((mesh, lower, upper), [])
-        good = [d for d in docs if d["lower_result_sha256"] in admitted and d["upper_result_sha256"] in admitted]
-        if not good:
-            return None, "estimate" if docs else "missing"
-        doc = good[0]
-        if doc["status"] == "contradiction":
-            verdict["stop_program"] = True
-            return None, "contradiction"
-        if doc["status"] == "order_within_floor":
-            return 0.0, ""
-        return doc["gap"], "" if doc["gap"] is not None else "no_gap"
+    def pair(mesh, lower, upper):
+        """Status and gap recomputed from two gate-admissible certificates (interface 17.9)."""
+        low, why_low = certified(mesh, lower)
+        high, why_high = certified(mesh, upper)
+        if low is None or high is None:
+            return None, why_low or why_high
+        l_value, u_value = low["value_certified"], high["value_certified"]
+        if l_value <= u_value:
+            if l_value <= 0.0:
+                return None, "no_gap"
+            return (u_value - l_value) / (0.5 * (u_value + l_value)), ""
+        if l_value <= u_value + low["floor"] + high["floor"]:
+            return (0.0, "") if case["class"] == "exact_on_mesh" else (None, "order_within_floor")
+        verdict["stop_program"] = True
+        return None, "contradiction"
 
     def gap_item(kind, mesh, limit):
         for lower, upper in itertools.product(lowers, uppers):
-            gap, why = gap_of(mesh, lower, upper)
-            add(kind, mesh, f"{lower}__{upper}", gap is not None and gap <= limit, why or f"gap {gap!r}")
+            gap, why = pair(mesh, lower, upper)
+            add(kind, mesh, f"{lower}__{upper}", gap is not None and gap <= limit, why, f"gap {gap!r}")
 
     side = {"lower_le_target": ("lower", "_le"), "upper_ge_target": ("upper", "_ge"), "lower_ge_target": ("lower", "_ge"),
             "lower_ge_formula": ("lower", "_ge"), "lower_le_formula": ("lower", "_le"),
@@ -1406,24 +1464,25 @@ def evaluate_case(case, certificates=(), brackets=(), feasibility=(), hashes=Non
                 limit = _formula_value(case, mesh, tokens[1], parse_key_values(tokens[2:]))
                 tol = TOLERANCES["TOL_CASE_ONE_SIDED"]
             for formulation in (lowers if bound == "lower" else uppers):
-                value, why = certified(mesh, formulation)
+                doc, why = certified(mesh, formulation)
+                value = None if doc is None else doc["value_certified"]
                 passed = value is not None and _one_sided(direction, value, limit, tol)
-                add(kind, mesh, formulation, passed, why or f"value {value!r} limit {limit!r}")
+                add(kind, mesh, formulation, passed, why, f"value {value!r} limit {limit!r}")
     for tokens in case["gate"]:
         kind = tokens[0]
         if kind == "kinematic_status":
             for mesh, upper in itertools.product(meshes, uppers):
                 docs = [d for d in kinematic.get((mesh, upper), []) if d["status"] == tokens[1] and gate_admissible(d)]
-                add(kind, mesh, upper, bool(docs), "" if docs else "missing or inadmissible")
+                add(kind, mesh, upper, bool(docs), "missing")
         elif kind == "certified_upper":
             mesh = int(tokens[2])
             for upper in uppers:
-                value, why = certified(mesh, upper)
-                add(kind, mesh, upper, value is not None, why)
+                doc, why = certified(mesh, upper)
+                add(kind, mesh, upper, doc is not None, why)
         elif kind == "certified_bracket":
             mesh = int(tokens[2])
             for lower, upper in itertools.product(lowers, uppers):
-                gap, why = gap_of(mesh, lower, upper)
+                gap, why = pair(mesh, lower, upper)
                 add(kind, mesh, f"{lower}__{upper}", why in ("", "no_gap"), why)
         elif kind == "gap_le":
             gap_item(kind, int(tokens[3]), TOLERANCES[tokens[1]])
@@ -1435,21 +1494,37 @@ def evaluate_case(case, certificates=(), brackets=(), feasibility=(), hashes=Non
                 if first is None or second is None:
                     add(kind, fine, formulation, False, why_first or why_second)
                     continue
-                allowance = TOLERANCES["TOL_MONOTONE"] * abs(first)
-                passed = second <= first + allowance if kind == "upper_nonincrease" else second >= first - allowance
-                add(kind, fine, formulation, passed, f"coarse {first!r} fine {second!r}")
+                a, b = first["value_certified"], second["value_certified"]
+                allowance = TOLERANCES["TOL_MONOTONE"] * abs(a)
+                passed = b <= a + allowance if kind == "upper_nonincrease" else b >= a - allowance
+                add(kind, fine, formulation, passed, "violated", f"coarse {a!r} fine {b!r}")
         else:
             fail("case_format", kind)
     for tokens in case["record"]:
         require(tokens[0] == "gap" and tokens[1] == "mesh", "case_format", str(tokens))
         mesh = int(tokens[2])
         for lower, upper in itertools.product(lowers, uppers):
-            gap, why = gap_of(mesh, lower, upper)
+            gap, why = pair(mesh, lower, upper)
             verdict["records"].append({"kind": "gap", "mesh": mesh, "formulation": f"{lower}__{upper}",
                                        "gap": gap, "detail": why})
-    verdict["passed"] = (bool(verdict["items"]) and not verdict["stop_program"]
-                         and all(item["status"] == "pass" for item in verdict["items"]))
+    failures = [item for item in verdict["items"] if item["status"] == "fail"]
+    clean = not verdict["stop_program"] and not verdict["invalid_records"]
+    verdict["passed"] = bool(verdict["items"]) and clean and not failures
+    verdict["claim_withheld"] = clean and bool(failures) and all(_withholdable(case, item) for item in failures)
+    verdict["p0_blocking"] = not verdict["passed"] and not verdict["claim_withheld"]
     return verdict
+
+
+def evaluate_program(verdicts, required=()):
+    """P0 reading of case verdicts: a contradiction stops the program, a blocking case keeps P0 open, and the
+    30-degree Drucker-Prager claim may be withheld (owner decision OD2)."""
+    seen = {verdict["case"] for verdict in verdicts}
+    missing = sorted(set(required) - seen)
+    stopped = any(verdict["stop_program"] for verdict in verdicts)
+    blocking = sorted(verdict["case"] for verdict in verdicts if verdict["p0_blocking"])
+    return {"stop_program": stopped, "p0_open": stopped or bool(blocking) or bool(missing),
+            "blocking_cases": blocking, "missing_cases": missing,
+            "withheld_claims": sorted(verdict["case"] for verdict in verdicts if verdict["claim_withheld"])}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -3275,143 +3350,6 @@ def test_frictional_feasibility_rests_on_the_witness_alone():
     validate_feasibility(doc, problem)
 
 
-# Case evaluator ---------------------------------------------------------------------------------
-
-def synthetic_certificate(case, mesh, bound, formulation, value, checker="independent-checker"):
-    sha = load_problem_hashes()[case["name"]][f"m{mesh}"]
-    return {
-        "format": FORMAT_CERTIFICATE, "problem_sha256": sha, "result_sha256": f"{bound}-{formulation}-{mesh}",
-        "query_id": "q", "bound": bound, "formulation": formulation, "classification": "certified_bound",
-        "value_certified": value, "floor": TOLERANCES["FLOOR_MIN_REL"] * abs(value),
-        "checks": fixture_checks(bound, formulation), "checker": {"name": checker, "version": "1"},
-    }
-
-
-def synthetic_bracket(lower, upper):
-    low, high = lower["value_certified"], upper["value_certified"]
-    floors = lower["floor"] + upper["floor"]
-    status = "bracket" if low <= high else ("order_within_floor" if low <= high + floors else "contradiction")
-    return {
-        "problem_sha256": lower["problem_sha256"], "lower_formulation": lower["formulation"],
-        "upper_formulation": upper["formulation"], "lower_result_sha256": lower["result_sha256"],
-        "upper_result_sha256": upper["result_sha256"], "status": status,
-        "gap": (high - low) / (0.5 * (high + low)) if status == "bracket" and low > 0.0 else None,
-    }
-
-
-def synthetic_records(case, low, high, uppers=None, meshes=None, checker="independent-checker"):
-    uppers = uppers or [f for f in case["formulation"] if f.startswith("upper.")]
-    certificates, brackets = [], []
-    for mesh in (range(len(case["mesh"])) if meshes is None else meshes):
-        lower = synthetic_certificate(case, mesh, "lower", LOWER_ID, low, checker)
-        certificates.append(lower)
-        for formulation in uppers:
-            upper = synthetic_certificate(case, mesh, "upper", formulation, high, checker)
-            certificates.append(upper)
-            brackets.append(synthetic_bracket(lower, upper))
-    return certificates, brackets
-
-
-STRIP = "tresca_strip_vm_thin_slab"
-
-
-def failed_kinds(verdict):
-    return {(item["kind"], item["detail"].split(" ")[0]) for item in verdict["items"] if item["status"] == "fail"}
-
-
-def test_evaluator_passes_a_consistent_certified_strip():
-    case = ALL_CASES[STRIP]
-    verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25))
-    assert verdict["passed"] and not verdict["stop_program"]
-
-
-def test_evaluator_reads_the_named_gap_limit():
-    case = ALL_CASES[STRIP]
-    verdict = evaluate_case(case, *synthetic_records(case, 5.0, 5.3))
-    assert not verdict["passed"] and ("gap_le", "gap") in failed_kinds(verdict)
-
-
-def test_evaluator_refuses_estimates_and_reserved_checkers():
-    case = ALL_CASES[STRIP]
-    certificates, brackets = synthetic_records(case, 5.05, 5.25)
-    for doc in certificates:
-        doc["classification"] = "estimate"
-    verdict = evaluate_case(case, certificates, brackets)
-    assert not verdict["passed"] and ("lower_le_target", "estimate") in failed_kinds(verdict)
-    for checker in sorted(NON_GATE_CHECKERS):
-        verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25, checker=checker))
-        assert not verdict["passed"], checker
-        assert ("certified_bracket", "estimate") in failed_kinds(verdict)
-
-
-def test_evaluator_needs_every_listed_mesh():
-    case = ALL_CASES[STRIP]
-    verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25, meshes=[0, 1, 2]))
-    assert not verdict["passed"] and ("certified_bracket", "missing") in failed_kinds(verdict)
-
-
-def test_evaluator_refuses_records_of_another_case():
-    case = ALL_CASES[STRIP]
-    other = ALL_CASES["tresca_strip_weighted_insensitive"]
-    verdict = evaluate_case(case, *synthetic_records(other, 5.05, 5.25))
-    assert not verdict["passed"] and verdict["foreign_records"]
-
-
-def test_evaluator_binds_every_formulation_line():
-    case = ALL_CASES[STRIP]
-    verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25, uppers=[CONTROL_ID]))
-    assert not verdict["passed"], "a control-only record set does not satisfy the jump formulation"
-    assert any(item["formulation"] == JUMP_ID and item["status"] == "fail" for item in verdict["items"])
-
-
-def test_evaluator_gate_case_ignores_the_control_and_needs_the_jump_formulation():
-    case = ALL_CASES["upper3d_fixed_phi00"]
-    certificates, brackets = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
-    feasibility = []
-    for mesh in range(len(case["mesh"])):
-        feasibility.append({"format": FORMAT_FEASIBILITY, "problem_sha256": certificates[2 * mesh]["problem_sha256"],
-                            "formulation": JUMP_ID, "status": "formulation_feasible", "witness_result_sha256": "0" * 64,
-                            "checker": {"name": "independent-checker", "version": "1"}})
-    verdict = evaluate_case(case, certificates, brackets, feasibility)
-    assert verdict["passed"]
-    assert len(verdict["records"]) == 6 and all(item["gap"] is not None for item in verdict["records"])
-    control_only = evaluate_case(case, *synthetic_records(case, 4.0, 4.5, uppers=[CONTROL_ID]), feasibility)
-    assert not control_only["passed"]
-    no_kinematic = evaluate_case(case, certificates, brackets)
-    assert not no_kinematic["passed"] and ("kinematic_status", "missing") in failed_kinds(no_kinematic)
-
-
-def test_evaluator_monotonicity_uses_the_nested_pairs():
-    case = ALL_CASES[STRIP]
-    certificates, brackets = synthetic_records(case, 5.05, 5.25)
-    for doc in certificates:
-        if doc["bound"] == "upper" and doc["problem_sha256"] == load_problem_hashes()[STRIP]["m1"]:
-            doc["value_certified"] = 5.3
-            doc["floor"] = TOLERANCES["FLOOR_MIN_REL"] * 5.3
-    verdict = evaluate_case(case, certificates, brackets)
-    assert ("upper_nonincrease", "coarse") in failed_kinds(verdict)
-
-
-def test_order_within_floor_counts_as_zero_gap():
-    case = ALL_CASES["vm_plate_shear"]
-    target = case["target"]
-    verdict = evaluate_case(case, *synthetic_records(case, target * (1.0 + 5e-13), target))
-    assert verdict["passed"], failed_kinds(verdict)
-
-
-def test_contradiction_stops_the_program():
-    case = ALL_CASES[STRIP]
-    verdict = evaluate_case(case, *synthetic_records(case, 5.2, 5.1))
-    assert verdict["stop_program"] and not verdict["passed"]
-
-
-def test_column_sandwich_kills_a_zero_gravity_lower_mutant():
-    case = ALL_CASES["vm_weighted_column_sandwich"]
-    verdict = evaluate_case(case, *synthetic_records(case, S3, 1.45))
-    assert not verdict["passed"] and ("lower_le_formula", "value") in failed_kinds(verdict)
-    assert evaluate_case(case, *synthetic_records(case, 1.36, 1.3835))["passed"]
-
-
 def schema_program(s, bound, formulation=None):
     query = s["problem"]["queries"][0]
     formulation = formulation or (LOWER_ID if bound == "lower" else CONTROL_ID)
@@ -3503,7 +3441,7 @@ def test_interface_separates_owner_amendments_from_orchestrator_rulings():
     assert owner < rulings
     for item in ("A1", "A2", "A3", "A4"):
         assert f"| {item} |" in text[owner:rulings]
-    for item in ("O1", "O2"):
+    for item in ("OD1", "OD2"):
         assert f"| {item} |" in text[owner:rulings]
     for item in ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11"):
         assert f"| {item} |" in text[rulings:]
@@ -3856,6 +3794,230 @@ def test_public_files_carry_no_private_material():
     for path in DATA.glob("*.npz"):
         with np.load(path, allow_pickle=False) as npz:
             assert all(npz[name].dtype.str in ("<f8", "<i8") for name in npz.files), path.name
+
+
+# Case evaluator ---------------------------------------------------------------------------------
+
+def synthetic_pair(case, mesh, bound, formulation, value, checker="independent-checker"):
+    """A result document and the certificate a checker would write for it, valid for the case's problem."""
+    problem, arrays = case_problem_cached(case, mesh)
+    result = {"result_sha256": hashlib.sha256(f"{case['name']}|{mesh}|{bound}|{formulation}|{value!r}".encode()).hexdigest(),
+              "query_id": "q", "bound": bound, "formulation": formulation, "value": value}
+    certificate = _certificate(problem, arrays, result)
+    certificate["checker"] = {"name": checker, "version": "1"}
+    return result, certificate
+
+
+def synthetic_records(case, low, high, uppers=None, meshes=None, checker="independent-checker", values=None):
+    """(certificates, results, feasibility) for every listed mesh; values maps (mesh, bound) to a value."""
+    uppers = uppers or [f for f in case["formulation"] if f.startswith("upper.")]
+    certificates, results, feasibility = [], [], []
+    for mesh in (range(len(case["mesh"])) if meshes is None else meshes):
+        for bound, formulations, default in (("lower", [LOWER_ID], low), ("upper", uppers, high)):
+            for formulation in formulations:
+                value = (values or {}).get((mesh, bound), default)
+                result, certificate = synthetic_pair(case, mesh, bound, formulation, value, checker)
+                results.append(result)
+                certificates.append(certificate)
+                if bound == "upper":
+                    record = _feasibility(case_problem_cached(case, mesh)[0], result)
+                    record["checker"] = {"name": checker, "version": "1"}
+                    feasibility.append(record)
+    return certificates, results, feasibility
+
+
+STRIP = "tresca_strip_vm_thin_slab"
+
+
+def failed(verdict):
+    return {(item["kind"], item["cause"]) for item in verdict["items"] if item["status"] == "fail"}
+
+
+def test_evaluator_passes_a_consistent_certified_strip_without_bracket_records():
+    case = ALL_CASES[STRIP]
+    verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25))
+    assert verdict["passed"] and not verdict["stop_program"] and not verdict["p0_blocking"]
+
+
+def test_evaluator_reads_the_named_gap_limit():
+    case = ALL_CASES[STRIP]
+    verdict = evaluate_case(case, *synthetic_records(case, 5.0, 5.3))
+    assert not verdict["passed"] and ("gap_le", "violated") in failed(verdict) and verdict["p0_blocking"]
+
+
+def test_evaluator_refuses_estimates_and_reserved_checkers():
+    case = ALL_CASES[STRIP]
+    certificates, results, feasibility = synthetic_records(case, 5.05, 5.25)
+    for doc in certificates:
+        doc.update(classification="estimate", reasons=["no_interior_field"], value_certified=None, floor=None)
+    verdict = evaluate_case(case, certificates, results, feasibility)
+    assert not verdict["passed"] and ("lower_le_target", "estimate") in failed(verdict)
+    for checker in sorted(NON_GATE_CHECKERS):
+        verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25, checker=checker))
+        assert not verdict["passed"] and ("certified_bracket", "estimate") in failed(verdict), checker
+
+
+def test_evaluator_needs_every_listed_mesh():
+    case = ALL_CASES[STRIP]
+    verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25, meshes=[0, 1, 2]))
+    assert not verdict["passed"] and ("certified_bracket", "missing") in failed(verdict)
+
+
+def test_evaluator_refuses_records_of_another_case():
+    case = ALL_CASES[STRIP]
+    verdict = evaluate_case(case, *synthetic_records(ALL_CASES["tresca_strip_weighted_insensitive"], 5.05, 5.25))
+    assert not verdict["passed"] and verdict["foreign_records"]
+
+
+def test_evaluator_binds_every_formulation_line():
+    case = ALL_CASES[STRIP]
+    verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25, uppers=[CONTROL_ID]))
+    assert not verdict["passed"], "a control-only record set does not satisfy the jump formulation"
+    assert any(item["formulation"] == JUMP_ID and item["status"] == "fail" for item in verdict["items"])
+
+
+def test_evaluator_validates_every_certificate_it_uses():
+    case = ALL_CASES[STRIP]
+    certificates, results, feasibility = synthetic_records(case, 5.05, 5.25)
+    certificates[0]["checks"]["omega_eq"] = None
+    certificates[1]["tolerances"] = {}
+    results.pop()  # the last certificate loses its result document
+    verdict = evaluate_case(case, certificates, results, feasibility)
+    codes = {item["code"] for item in verdict["invalid_records"]}
+    assert {"certificate_checks", "tolerances", "certificate_without_candidate"} <= codes
+    assert not verdict["passed"] and verdict["p0_blocking"]
+
+
+def test_evaluator_validates_feasibility_and_bracket_records():
+    case = ALL_CASES["upper3d_fixed_phi00"]
+    certificates, results, feasibility = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    assert evaluate_case(case, certificates, results, feasibility)["passed"]
+    broken = copy.deepcopy(feasibility)
+    broken[0]["witness_result_sha256"] = None  # feasible without a witness
+    verdict = evaluate_case(case, certificates, results, broken)
+    assert {"kind": "feasibility", "id": broken[0]["problem_sha256"], "code": "feasibility_witness"} in verdict["invalid_records"]
+    assert not verdict["passed"] and ("kinematic_status", "missing") in failed(verdict)
+    lower, upper = certificates[0], certificates[1]
+    record = _bracket(lower, upper)
+    record["gap"] = 0.0  # a bracket record is checked, never trusted
+    verdict = evaluate_case(case, certificates, results, feasibility, [record])
+    assert [item["code"] for item in verdict["invalid_records"]] == ["bracket_gap"] and not verdict["passed"]
+
+
+def test_evaluator_recomputes_status_and_gap_from_the_certificates():
+    case = ALL_CASES[STRIP]
+    certificates, results, feasibility = synthetic_records(case, 5.05, 5.25)
+    verdict = evaluate_case(case, certificates, results, feasibility)
+    gaps = [item["detail"] for item in verdict["items"] if item["kind"] == "gap_le"]
+    assert gaps and all(detail == f"gap {(5.25 - 5.05) / 5.15!r}" for detail in gaps)
+
+
+def test_evaluator_gate_case_ignores_the_control_and_needs_the_jump_formulation():
+    case = ALL_CASES["upper3d_fixed_phi00"]
+    certificates, results, feasibility = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    verdict = evaluate_case(case, certificates, results, feasibility)
+    assert verdict["passed"]
+    assert len(verdict["records"]) == 6 and all(item["gap"] is not None for item in verdict["records"])
+    control = evaluate_case(case, *synthetic_records(case, 4.0, 4.5, uppers=[CONTROL_ID]))
+    assert not control["passed"]
+    no_kinematic = evaluate_case(case, certificates, results)
+    assert not no_kinematic["passed"] and ("kinematic_status", "missing") in failed(no_kinematic)
+
+
+def test_evaluator_monotonicity_uses_the_nested_pairs():
+    case = ALL_CASES[STRIP]
+    verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25, values={(1, "upper"): 5.3}))
+    assert ("upper_nonincrease", "violated") in failed(verdict)
+
+
+def test_order_within_floor_counts_as_zero_gap_only_for_exact_cases():
+    case = ALL_CASES["vm_plate_shear"]
+    target = case["target"]
+    verdict = evaluate_case(case, *synthetic_records(case, target * (1.0 + 5e-13), target))
+    assert verdict["passed"], failed(verdict)
+    strip = ALL_CASES[STRIP]
+    verdict = evaluate_case(strip, *synthetic_records(strip, 5.2 * (1.0 + 5e-13), 5.2))
+    assert not verdict["passed"] and ("gap_le", "order_within_floor") in failed(verdict)
+    assert not verdict["stop_program"]
+
+
+def test_contradiction_stops_the_program():
+    case = ALL_CASES[STRIP]
+    verdict = evaluate_case(case, *synthetic_records(case, 5.2, 5.1))
+    assert verdict["stop_program"] and not verdict["passed"] and verdict["p0_blocking"]
+    assert evaluate_program([verdict])["stop_program"]
+
+
+def test_column_sandwich_kills_a_zero_gravity_lower_mutant():
+    case = ALL_CASES["vm_weighted_column_sandwich"]
+    verdict = evaluate_case(case, *synthetic_records(case, S3, 1.45))
+    assert not verdict["passed"] and ("lower_le_formula", "violated") in failed(verdict)
+    assert evaluate_case(case, *synthetic_records(case, 1.36, 1.3835))["passed"]
+
+
+PHI30 = "upper3d_fixed_phi30"
+
+
+def gate_verdict(name, low, high, **changes):
+    case = ALL_CASES[name]
+    certificates, results, feasibility = synthetic_records(case, low, high, uppers=[JUMP_ID], **changes)
+    return evaluate_case(case, certificates, results, feasibility)
+
+
+def test_thirty_degree_gap_miss_withholds_the_claim_only():
+    verdict = gate_verdict(PHI30, 4.0, 7.0)  # gap 0.545 > MAX_GAP_3D_DP
+    assert not verdict["passed"] and verdict["claim_withheld"] and not verdict["p0_blocking"]
+    program = evaluate_program([verdict])
+    assert program["withheld_claims"] == [PHI30] and not program["p0_open"]
+
+
+def test_thirty_degree_missing_certificate_withholds_the_claim():
+    case = ALL_CASES[PHI30]
+    certificates, results, feasibility = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    mesh2 = load_problem_hashes()[PHI30]["m2"]
+    certificates = [doc for doc in certificates if doc["problem_sha256"] != mesh2]
+    verdict = evaluate_case(case, certificates, results, feasibility)
+    assert failed(verdict) == {("certified_upper", "missing")}
+    assert verdict["claim_withheld"] and not verdict["p0_blocking"]
+    no_feasibility = [doc for doc in feasibility if doc["problem_sha256"] != mesh2]
+    verdict = evaluate_case(case, certificates, results, no_feasibility)
+    assert not verdict["claim_withheld"] and verdict["p0_blocking"], "a missing kinematic record is not a missing certificate"
+
+
+@pytest.mark.parametrize("values,kind", [
+    ({(4, "upper"): 4.6}, "upper_nonincrease"),
+    ({(5, "lower"): 3.9}, "lower_nondecrease"),
+])
+def test_thirty_degree_monotonicity_failure_keeps_p0_open(values, kind):
+    verdict = gate_verdict(PHI30, 4.0, 4.5, values=values)
+    assert (kind, "violated") in failed(verdict)
+    assert not verdict["claim_withheld"] and verdict["p0_blocking"]
+    assert evaluate_program([verdict])["p0_open"]
+
+
+def test_thirty_degree_contradiction_stops_the_program():
+    verdict = gate_verdict(PHI30, 4.0, 4.5, values={(5, "lower"): 4.6})
+    assert verdict["stop_program"] and not verdict["claim_withheld"]
+    assert evaluate_program([verdict])["stop_program"]
+
+
+def test_thirty_degree_kinematic_failure_is_not_withheld():
+    case = ALL_CASES[PHI30]
+    certificates, results, _ = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    verdict = evaluate_case(case, certificates, results)
+    assert not verdict["claim_withheld"] and verdict["p0_blocking"]
+
+
+def test_twenty_degree_gap_miss_keeps_p0_open():
+    verdict = gate_verdict("upper3d_fixed_phi20", 4.0, 7.0)
+    assert not verdict["claim_withheld"] and verdict["p0_blocking"]
+
+
+def test_program_needs_every_required_case():
+    verdict = gate_verdict(PHI30, 4.0, 4.5)
+    assert verdict["passed"]
+    program = evaluate_program([verdict], required=[PHI30, STRIP])
+    assert program["p0_open"] and program["missing_cases"] == [STRIP]
 
 
 if __name__ == "__main__":

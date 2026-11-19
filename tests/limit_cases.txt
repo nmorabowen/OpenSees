@@ -55,7 +55,8 @@
 #   upper_le_formula      U <= formula + TOL_CASE_ONE_SIDED*|formula|   an explicit Upper field exists
 #   lower_le_formula      L <= formula + TOL_CASE_ONE_SIDED*|formula|   the formula bounds the collapse load above
 #   upper_ge_formula      U >= formula - TOL_CASE_ONE_SIDED*|formula|   the formula bounds the collapse load below
-#   gap_le g              (U - L) / ((U + L) / 2) <= g; a bracket with status order_within_floor counts as gap 0
+#   gap_le g              (U - L) / ((U + L) / 2) <= g, recomputed from the two certificates; status
+#                         order_within_floor counts as gap 0 in exact_on_mesh cases only
 # Floors are not added: the one-sided tolerances are the allowance for them.
 # An estimate never satisfies an assertion or a gate.
 #
