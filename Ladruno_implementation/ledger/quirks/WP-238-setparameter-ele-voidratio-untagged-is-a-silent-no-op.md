@@ -1,6 +1,7 @@
 ---
 wp: WP-238
 title: "`setParameter -val e -ele N voidRatio` on a ManzariDafalias-family material is a SILENT NO-OP without the material tag"
+pr: "#1120"
 date: 2026-11-19
 ---
 ### `setParameter -val e -ele N voidRatio` on a ManzariDafalias-family material is a SILENT NO-OP without the material tag (WP-238)
