@@ -1,13 +1,20 @@
 """T10: single-phase MPM answers from one binary, as JSON, for a bit-for-bit comparison.
-Usage: python t10_single.py <dist\\bin> <out.json>"""
+Usage: python t10_single.py <dist\\bin> <out.json>
+   or: python t10_single.py --testbed <out.json>   (imports opensees through tests/_testbed, as
+       the parent pytest process does)"""
 import json
 import os
 import sys
 
 B = sys.argv[1]
-os.add_dll_directory(B)
-sys.path.insert(0, B)
-import opensees as ops  # noqa: E402
+if B == "--testbed":
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _testbed import ops  # noqa: E402
+else:
+    if hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(B)
+    sys.path.insert(0, B)
+    import opensees as ops  # noqa: E402
 
 
 def lst(v):
