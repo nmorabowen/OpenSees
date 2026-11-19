@@ -602,12 +602,17 @@ def test_upper_value_matches_the_contract_fixture_tooling():
     """The work and dissipation formulas agree with the contract's fixture values, jumps included."""
     for stem, formulation in (("vm_dead_gravity_shear_layer.m0", lr.CONTROL_ID),
                               ("vm_ground_patch_halfspace.m0", lr.JUMP_ID),
-                              ("dp_free_hydrostatic.m0", lr.JUMP_ID)):
+                              ("dp_free_hydrostatic.m0", lr.JUMP_ID),
+                              ("vm_plate_shear_restrained.m0", lr.CONTROL_ID)):
         problem, arrays = contract.load_document(contract.DATA / f"{stem}.problem.json")
         result, fields = contract.load_document(contract.DATA / f"{stem}.q.{formulation}.result.json")
+        lr.validate(problem, arrays)
+        lr.assemble(problem, arrays, formulation)
         velocity = fields["element_velocity"] if formulation == lr.JUMP_ID else fields["velocity"]
-        mine = lr.upper_field_value(problem, arrays, "q", velocity, fields["footing_velocity"])[0]
+        mine, dissipation, w0, _ = lr.upper_field_value(problem, arrays, "q", velocity, fields["footing_velocity"])
         assert mine == pytest.approx(result["value"], rel=1e-12)
+        # Amendment 1, item 2: the fixture objective is c^T x with the cone variables at their minimum, D - W0.
+        assert dissipation - w0 == pytest.approx(result["objective"], rel=1e-12, abs=1e-14)
         assert mine == pytest.approx(contract.fixture_upper_value(problem, arrays, velocity, fields["footing_velocity"]),
                                      rel=1e-12)
 
@@ -655,6 +660,7 @@ def test_program_and_result_export_round_trip(tmp_path):
         reloaded, rfields = contract.load_document(tmp_path / f"vm_plate_shear.m0.q.{formulation}.result.json")
         contract.validate_result(reloaded, rfields, loaded, loaded_arrays)
         assert reloaded["value"] == pytest.approx(1.0, rel=1e-12)
+        assert reloaded["objective"] == float(program.c @ x)          # amendment 1, item 2
         assert reloaded["result_sha256"] == rdoc["result_sha256"]
     nothing, empty = lr.result_document(program, "time_limit")
     assert nothing["value"] is None and nothing["objective"] is None and not empty
@@ -1189,10 +1195,12 @@ def test_upper_interior_field_satisfies_the_projection_rows_and_clears_the_cone(
     # Projection rows (boundary, footing, restrained; the work row excluded) hold to solver accuracy.
     boundary = program.zero_residual(x)[24 * geo.E + (18 * geo.F if broken else 0):]
     assert np.abs(np.delete(boundary, -1)).max() < 1e-7
-    cv, cj, scale = lr.upper_conditions(geo, velocity)
-    live = np.concatenate([cv.ravel(), cj.ravel()])
-    live = live[np.isfinite(live)]
-    assert scale > 0.0 and np.all(live <= 1e-9 * scale) and np.mean(live < -1e-6 * scale) > 0.9
+    cv, cj, scale_vol, scale_jump = lr.upper_conditions(geo, velocity)
+    assert scale_vol > 0.0 and (scale_jump > 0.0) == broken
+    for conditions, scale in ((cv, scale_vol), (cj, scale_jump)):
+        live = conditions[np.isfinite(conditions)]
+        if live.size:
+            assert np.all(live <= 1e-9 * scale) and np.mean(live < -1e-6 * scale) > 0.9
     result, arrays_out = lr.result_document(program, doc["solver_status"], solved(name, 1, formulation)[1],
                                             doc["solver"], doc["wall_time_s"], (velocity, footing))
     contract.validate_result(result, arrays_out, problem, arrays)

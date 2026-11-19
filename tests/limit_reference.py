@@ -25,12 +25,10 @@ Every value this module produces is an **estimate**. Certification belongs to th
 Program identity. The exported matrix is canonical CSC: duplicate entries summed, explicit zeros removed,
 row indices sorted within each column. Operators use the four vertex coordinates only; mid-edge nodes
 sit at ``0.5 * (x_a + x_b)`` of their element's vertices (interface 3.1). Symmetry rows use the set's
-normal, the normal of the set's first facet in ``facets`` order (interface 5), in both bounds. That is a
-proposed clarification of interface 5, not yet in the contract; on every committed case mesh each
-symmetry facet's normal equals its set's normal exactly, so the choice does not change any case program.
+normal ``n_S``, the normal of the set's first facet in ``facets`` order, in both bounds (interface 5,
+amendment 1, item 3).
 
-Result values (a proposed clarification of interface 15.3, not yet in the contract). ``objective`` is
-``c^T x``. A Lower ``value`` is ``objective_sign * c^T x``: ``lambda``, or
+Result values (interface 15.3, amendment 1, item 2). ``objective`` is ``c^T x``. A Lower ``value`` is ``objective_sign * c^T x``: ``lambda``, or
 ``d^T R(sigma)`` for ``support``. An Upper ``value`` is the theorem's value of the stored field, ``(D - W0) /
 W1`` or ``D - W0`` with the formulas of interface 4.3 and 12.2 (17.4 steps 1 and 6). Up to equality
 residuals it does not exceed the objective, and differs from it by the solver's cone slack.
@@ -954,7 +952,7 @@ def result_document(program, solver_status, x=None, solver=None, wall_time_s=Non
         if program.bound == "lower":
             value = program.value(x)
         else:
-            # The value of the stored field (interface 17.4 steps 1 and 6), not c^T x: an interior-point
+            # Amendment 1, item 2: the value of the stored field (17.4 step 6), not c^T x. An interior-point
             # solution keeps r slightly above |z|, which would put the objective a few 1e-6 above the
             # field's own value and fail TOL_VALUE_MATCH for no defect.
             velocity = arrays["element_velocity"] if program.layout["broken"] else arrays["velocity"]
@@ -1109,10 +1107,11 @@ def lower_interior_field(program, time_limit=CLARABEL_TIME_LIMIT_S):
 def upper_conditions(geo, velocity):
     """Signed Upper conditions of interface 17.4 step 3 for a continuous (N, 3) or broken (E, 10, 3) field.
 
-    Returns ``(c_vertex (E, 4), c_jump (F, 6), D_scale)``: ``3 sqrt2 alpha |e| - theta`` at vertices with
-    ``alpha > 0`` and ``tau |c_t| - n . c_B`` at coefficients with ``tau > 0``, ``-inf`` elsewhere, and the
-    largest ``|D_ei|_F`` or ``|c_B|``. A continuous field has no jump conditions. The producer's own
-    evaluation; the checker recomputes it.
+    Returns ``(c_vertex (E, 4), c_jump (F, 6), D_scale_vol, D_scale_jump)``: ``3 sqrt2 alpha |e| - theta`` at
+    vertices with ``alpha > 0`` and ``tau |c_t| - n . c_B`` at coefficients with ``tau > 0``, ``-inf``
+    elsewhere. The scales are per kind (amendment 1, item 10): ``D_scale_vol`` the largest ``|D_ei|_F``
+    (strain-rate units), ``D_scale_jump`` the largest ``|c_B|`` (velocity units). A continuous field has no
+    jump conditions and ``D_scale_jump = 0``. The producer's own evaluation; the checker recomputes it.
     """
     velocity = np.asarray(velocity, dtype=float)
     broken = velocity.ndim == 3
@@ -1121,7 +1120,7 @@ def upper_conditions(geo, velocity):
     theta, enorm = strain_split(d)
     frobenius = np.sqrt(np.sum(d[..., :3] ** 2, axis=-1) + 0.5 * np.sum(d[..., 3:] ** 2, axis=-1))
     c_vertex = np.where(geo.alpha[:, None] > 0.0, 3.0 * S2 * geo.alpha[:, None] * enorm - theta, -np.inf)
-    d_scale = float(frobenius.max(initial=0.0))
+    scale_vol, scale_jump = float(frobenius.max(initial=0.0)), 0.0
     c_jump = np.full((geo.F, 6), -np.inf)
     if broken and geo.F:
         coeff = jump_coefficients(geo, field)
@@ -1130,34 +1129,41 @@ def upper_conditions(geo, velocity):
         slip = np.linalg.norm(coeff - opening[..., None] * n, axis=2)
         tau, _ = jump_constants(geo.alpha[geo.e_minus])
         c_jump = np.where(tau[:, None] > 0.0, tau[:, None] * slip - opening, -np.inf)
-        d_scale = max(d_scale, float(np.linalg.norm(coeff, axis=2).max(initial=0.0)))
-    return c_vertex, c_jump, d_scale
+        scale_jump = float(np.linalg.norm(coeff, axis=2).max(initial=0.0))
+    return c_vertex, c_jump, scale_vol, scale_jump
 
 
 def repair_preview(geo, velocity, interior_velocity):
     """What the repair of interface 17.4 step 4 would need, evaluated WITHOUT the checker's projection.
 
-    ``P`` is the set of conditions above ``TOL_CONE_MARGIN * D_scale``. Returns a dict with the size of
-    ``P``, the interior field's worst clearance on ``P`` relative to ``D_scale_int``, its worst condition
-    overall relative to its margin, and ``mu``. A producer-side preview, never a certificate.
+    Each kind of condition (volume, jump) uses its own scale (amendment 1, item 10). ``P`` is the set of
+    conditions above ``TOL_CONE_MARGIN`` times their kind's ``D_scale``. Returns the size of ``P``, the
+    interior field's worst clearance on ``P`` and worst condition overall, each relative to its kind's
+    ``D_scale_int``, ``mu`` and whether every requirement of step 4 holds. A preview, never a certificate.
     """
     tol = contract.TOLERANCES
-    cv, cj, scale = upper_conditions(geo, velocity)
-    iv, ij, scale_int = upper_conditions(geo, interior_velocity)
-    cand = np.concatenate([cv.ravel(), cj.ravel()])
-    inter = np.concatenate([iv.ravel(), ij.ravel()])
-    live = np.isfinite(cand)
-    cand, inter = cand[live], inter[live]
+    cv, cj, vol, jump = upper_conditions(geo, velocity)
+    iv, ij, vol_int, jump_int = upper_conditions(geo, interior_velocity)
+    cand, inter, scale, scale_int = [], [], [], []
+    for c, i, s, s_int in ((cv, iv, vol, vol_int), (cj, ij, jump, jump_int)):
+        live = np.isfinite(c)
+        cand.append(c[live])
+        inter.append(i[live])
+        scale.append(np.full(live.sum(), s))
+        scale_int.append(np.full(live.sum(), s_int))
+    cand, inter, scale, scale_int = (np.concatenate(item) for item in (cand, inter, scale, scale_int))
     in_p = cand > tol["TOL_CONE_MARGIN"] * scale
-    mu = float(np.max(cand[in_p] / (cand[in_p] - inter[in_p]), initial=0.0)) if np.all(inter[in_p] < cand[in_p]) \
-        else math.inf
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rel = np.where(scale_int > 0.0, inter / scale_int, np.where(inter <= 0.0, 0.0, np.inf))
+    mu = float(np.max(cand[in_p] / (cand[in_p] - inter[in_p]), initial=0.0)) if np.all(inter[in_p] < cand[in_p])         else math.inf
+    ready = (bool(np.all(scale_int[in_p] > 0.0)) and bool(np.all(inter <= tol["TOL_CONE_MARGIN"] * scale_int))
+             and bool(np.all(rel[in_p] <= -tol["TOL_INTERIOR_MIN"])) and mu <= tol["TOL_REPAIR_MAX"])
     return {
-        "n_conditions": int(live.sum()), "n_repaired": int(in_p.sum()), "d_scale_int": scale_int,
-        "worst_clearance_on_P": float(np.max(inter[in_p], initial=-math.inf) / scale_int) if scale_int > 0 else math.inf,
-        "worst_condition": float(np.max(inter, initial=-math.inf) / scale_int) if scale_int > 0 else math.inf,
-        "mu": mu,
-        "ready": bool(scale_int > 0 and np.all(inter <= tol["TOL_CONE_MARGIN"] * scale_int)
-                      and np.all(inter[in_p] <= -tol["TOL_INTERIOR_MIN"] * scale_int) and mu <= tol["TOL_REPAIR_MAX"]),
+        "n_conditions": int(len(cand)), "n_repaired": int(in_p.sum()),
+        "d_scale_vol_int": vol_int, "d_scale_jump_int": jump_int,
+        "worst_clearance_on_P": float(np.max(rel[in_p], initial=-math.inf)),
+        "worst_condition": float(np.max(rel, initial=-math.inf)),
+        "mu": mu, "ready": ready,
     }
 
 
