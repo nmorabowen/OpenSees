@@ -191,6 +191,7 @@ def _run(tmp, engine, np, mode="hist", system=None, refresh=False):
     if engine == "tcl":
         env["WP240_OUT"] = str(out)
         env["WP240_MODE"] = mode
+        env["WP240_PARALLEL"] = "0" if np == 0 else "1"
         env["WP240_REFRESH"] = "1" if refresh else "0"
         if system:
             env["WP240_SYSTEM"] = system

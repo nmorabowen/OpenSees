@@ -8,6 +8,7 @@
 #   WP240_OUT      output prefix (required)
 #   WP240_MODE     hist  : 400 steps past yield, residual / KE / max|u| per step
 #                  relax : `ladrunoDR relax` to rest below yield
+#   WP240_PARALLEL 1 under OpenSeesMP.exe (ParallelPlain numberer, MPIDiagonal)
 #   WP240_SYSTEM   Diagonal | MPIDiagonal   (default: by engine)
 #   WP240_REFRESH  1 = leave the KE-peak refresh of M* on (default 0: -noAutoRefresh)
 #
@@ -21,7 +22,8 @@ if {[info exists ::env(WP240_MODE)]} { set mode $::env(WP240_MODE) }
 set refresh 0
 if {[info exists ::env(WP240_REFRESH)]} { set refresh $::env(WP240_REFRESH) }
 
-set parallel [expr {[llength [info commands getNP]] > 0}]
+# OpenSees.exe also answers getNP, so the engine is named by the driver
+set parallel [expr {[info exists ::env(WP240_PARALLEL)] && $::env(WP240_PARALLEL)}]
 if {$parallel} { set pid [getPID]; set np [getNP] } else { set pid 0; set np 1 }
 set sys [expr {$parallel ? "MPIDiagonal" : "Diagonal"}]
 if {[info exists ::env(WP240_SYSTEM)]} { set sys $::env(WP240_SYSTEM) }
