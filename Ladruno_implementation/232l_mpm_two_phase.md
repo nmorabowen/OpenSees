@@ -24,28 +24,28 @@ record carries `ladrunoBuild`.
 
 | Row | Gate | Final | Build |
 |---|---|---|---|
-| T0 (i) particle blocks | rel 1e-9 | 4.6e-14 | d77caf8fd |
-| T0 (ii) three route-E steps | rel 1e-9 | 7.4e-13 | d77caf8fd |
-| T0 (iii) ten route-S steps (oracle re-derived for §7c, e43e0f58a) | rel 1e-9 | 8.1e-12 | d77caf8fd |
-| T1 FE identity (Q4 1 cell, 2×2, H8) | A 1e-12, b 1e-12 | A ≤ 5e-16, b ≤ 1.1e-15 | d77caf8fd |
-| T2p Terzaghi, route E (gimp, bspline2 × off, auto) | 0.02 | worst p 0.0065, U 0.0049 (Tv ≥ 0.1) | d77caf8fd |
-| T3 Mandel, route E (4 legs) | bands per tv; peak ≥ 1.039 | pass; peaks 1.080–1.086 | d77caf8fd |
-| T4p hydrostatic (h = H/20) | 0.01 (p) | gimp 1.0e-4, bspline2 1.3e-5 | d77caf8fd |
-| Fix-2 patch check (d064f5b7e rule: grid coefficients + field at the particles) | 1e-10 | 5.3e-14 / 4.2e-14 (particle p 6.0e-6, recorded) | d77caf8fd |
-| T5 checkerboard, route E | auto ≤ 0.3; off ≥ 0.5 | 0.134 / 0.621 | d77caf8fd |
-| T5 checkerboard, route S (A5: undamped) | ≤ 0.3 | 0.137 (off reported 0.614) | d77caf8fd |
-| T6 Terzaghi, route S, Δt 0.005 (bspline2 gated, gimp reported) | 0.02 | bspline2 p ≤ 0.0037, U ≤ 0.0006; gimp p ≤ 0.0029, U ≤ 0.0016 | d77caf8fd |
-| T6 Mandel, route S, Δt 0.005 | off 0.0214/0.0263/0.02…, auto 0.0227/0.02…; peak ≥ 1.039 | bspline2 worst 0.0162 / 0.0166, peaks 1.089 / 1.087; gimp 0.0135 / 0.0141 | d77caf8fd |
-| T7 route-S Δt limit | stable at 0.9 × drained pencil, unstable or refused at 1.5 × | **recorded miss** (strict xfail); see below | d77caf8fd |
-| T8 refusals (incl. rank-deficient, stray p, massCutoff > pressureCutoff, route-S cap) | pass | pass | d77caf8fd |
-| T9 restart bit for bit | pass | pass | d77caf8fd |
-| T10 single-phase bit for bit against cfe478254 | 24 cases | 24/24 | d77caf8fd |
-| T11 mutation: MPM IDENT (joint Q + projection cut) | the two-phase oracle and T1 go red | 14/14 red (`_twophase_oracle` + `_fe_identity` on `dist/mut_MPM_IDENT`; green on the normal build) | d77caf8fd |
-| T11 mutation: MPM ZERO ≥ 0.500, SCALE ≥ 0.398 | CI lane | pending: run 44532817830 | d77caf8fd |
-| T13 translation patch (free block, both routes, gimp / bspline2, with / without a plate) | v, σ′, p rel 1e-10 | pending: the review-of-record build | — |
-| T12 engines agree (Tcl, Python) | pass | pass | d77caf8fd |
-| Two-phase test files | — | 69 passed, 2 xfailed (T7) | d77caf8fd |
-| The whole MPM suite (`tests/test_ladruno_mpm_*.py` + the oracle's self-test) | — | 509 passed, 40 skipped (opt-in slow tiers, MUMPS matrix types absent), 14 xfailed (12 pre-registered from 232f–232k + T7 × 2), 0 failed | d77caf8fd |
+| T0 (i) particle blocks | rel 1e-9 | 4.6e-14 | cd503bdbb |
+| T0 (ii) three route-E steps | rel 1e-9 | 7.4e-13 | cd503bdbb |
+| T0 (iii) ten route-S steps (oracle re-derived for §7c, e43e0f58a) | rel 1e-9 | 8.1e-12 | cd503bdbb |
+| T1 FE identity (Q4 1 cell, 2×2, H8) | A 1e-12, b 1e-12 | A ≤ 5e-16, b ≤ 1.1e-15 | cd503bdbb |
+| T2p Terzaghi, route E (gimp, bspline2 × off, auto) | 0.02 | worst p 0.0057 (bspline2 now 0.0039 / 0.0057 with the plate-consistent mass) | cd503bdbb |
+| T3 Mandel, route E (4 legs) | bands per tv; peak ≥ 1.039 | pass; peaks 1.081–1.086 | cd503bdbb |
+| T4p hydrostatic (h = H/20) | 0.01 (p) | gimp 1.0e-4, bspline2 1.3e-5 | cd503bdbb |
+| Fix-2 patch check (d064f5b7e rule: grid coefficients + field at the particles) | 1e-10 | 5.3e-14 / 4.2e-14 (particle p 6.0e-6, recorded) | cd503bdbb |
+| T5 checkerboard, route E | auto ≤ 0.3; off ≥ 0.5 | 0.134 / 0.621 | cd503bdbb |
+| T5 checkerboard, route S (A5: undamped) | ≤ 0.3 | 0.137 (off reported 0.614) | cd503bdbb |
+| T6 Terzaghi, route S, Δt 0.005 (bspline2 gated, gimp reported) | 0.02 | bspline2 p ≤ 0.0037, U ≤ 0.0006; gimp p ≤ 0.0029, U ≤ 0.0016 | cd503bdbb |
+| T6 Mandel, route S, Δt 0.005 | off 0.0214/0.0263/0.02…, auto 0.0227/0.02…; peak ≥ 1.039 | bspline2 worst 0.0166 / 0.0170, peaks 1.089 / 1.088; gimp 0.0130 / 0.0137 | cd503bdbb |
+| T7 route-S Δt limit | stable at 0.9 × drained pencil, unstable or refused at 1.5 × | **recorded miss** (strict xfail); see below | cd503bdbb |
+| T8 refusals (incl. rank-deficient, stray p, massCutoff > pressureCutoff, route-S cap) | pass | pass | cd503bdbb |
+| T9 restart bit for bit | pass | pass | cd503bdbb |
+| T10 single-phase bit for bit against cfe478254 | 24 cases | 24/24 | cd503bdbb |
+| T11 mutation: MPM IDENT (joint Q + projection cut) | the two-phase oracle and T1 go red | 14/14 red (`_twophase_oracle` + `_fe_identity` on `dist/mut_MPM_IDENT`; green on the normal build) | cd503bdbb |
+| T11 mutation: MPM ZERO ≥ 0.500, SCALE ≥ 0.398 | CI lane | 0.500 / 0.398 on d77caf8fd (run 44532817830); re-dispatched on the final head | d77caf8fd |
+| T13 translation patch (free block, both routes, gimp / bspline2, with / without a plate) | v, σ′, p rel 1e-10 | 8/8; worst v 1.0e-13 (route E), 7.9e-17 (route S) | cd503bdbb |
+| T12 engines agree (Tcl, Python) | pass | pass | cd503bdbb |
+| Two-phase test files (incl. `_gates`: zone_a 16, slow full forms 21) | — | all pass; T7 2 xfailed | cd503bdbb |
+| The whole MPM suite (`tests/test_ladruno_mpm_*.py` + the oracle's self-test) | — | 526 passed, 61 skipped (opt-in slow tiers incl. the gates' full forms, MUMPS matrix types absent), 14 xfailed (12 pre-registered from 232f–232k + T7 × 2), 0 failed; the gates' full forms separately 21/21 | cd503bdbb |
 
 Mandel route S, amplification of the step map at Δt 0.005 (bspline2): ρ = 0.999999998 after §7c,
 against 1.00093 before (4b74bd335); measured on 69ffff490, whose route S equals d77caf8fd's.

@@ -480,7 +480,7 @@ def run_t3(ops, basis, stab, rec, upto=None):
         pc = sum(pp[k] for k in col) / len(col) / p0
         peak = max(peak, pc)
         for r, bnd in zip(g["rows"], g["band"]):
-            if steps[str(r["tv"])] == step:
+            if steps.get(str(r["tv"])) == step:
                 rows[str(r["tv"])] = {"p_center": pc, "p_exact_quarter": r["p_exact_quarter_over_p0"],
                                       "err": abs(pc - r["p_exact_quarter_over_p0"]), "band": bnd,
                                       "fe_err": r["err_quarter_over_p0"]}

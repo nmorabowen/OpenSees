@@ -5,7 +5,8 @@ records the cases file names. The harness is tests/ladruno_mpm_twophase_cases_ha
 (and tests/ladruno_mpm_twophase_harness.py for T0 (iii)).
 - zone_a: short forms. T0 (iii); T13 translation (8 legs); T5 route S; the fix-2 patch check;
   T10 bit for bit against cfe478254; T2p, T3, T4p and T6 on one leg to their first gated row.
-- zone_b: full forms. T2p, T3, T4p, T6 on every leg; T5 route E.
+- zone_a + slow (opt in with --runslow or LADRUNO_RUN_SLOW=1): full forms. T2p, T3, T4p, T6 on every
+  leg; T5 route E. (Not zone_b: this repo's zone_b means "needs gmsh" and is skipped without it.)
 """
 from __future__ import annotations
 
@@ -135,8 +136,9 @@ def test_t6_short():
     assert row["p_err_max"] <= row["band_p"] and row["U_err"] <= row["band_U"], row
 
 
-# ---------------------------------------------------------------------------- zone_b
-@pytest.mark.zone_b
+# ---------------------------------------------------------------------------- zone_a, slow tier (full forms)
+@pytest.mark.zone_a
+@pytest.mark.slow
 @pytest.mark.parametrize("basis", ["gimp", "bspline2"])
 @pytest.mark.parametrize("stab", ["off", "auto"])
 def test_t2p_full(basis, stab):
@@ -147,7 +149,8 @@ def test_t2p_full(basis, stab):
         assert r["rows"][tv]["U_err"] <= _band("t2_ref_terzaghi", "U_err@" + tv), r
 
 
-@pytest.mark.zone_b
+@pytest.mark.zone_a
+@pytest.mark.slow
 @pytest.mark.parametrize("basis", ["gimp", "bspline2"])
 @pytest.mark.parametrize("stab", ["off", "auto"])
 def test_t3_full(basis, stab):
@@ -158,7 +161,8 @@ def test_t3_full(basis, stab):
     assert r["peak"] >= _band("t3_ref_mandel", "p_center_peak"), r
 
 
-@pytest.mark.zone_b
+@pytest.mark.zone_a
+@pytest.mark.slow
 @pytest.mark.parametrize("basis", ["gimp", "bspline2"])
 @pytest.mark.parametrize("stab", ["off", "auto"])
 def test_t4p_full(basis, stab):
@@ -167,7 +171,8 @@ def test_t4p_full(basis, stab):
     assert r["p_err"] <= _band("t4_ref_hydro", "hydro_p_err"), r
 
 
-@pytest.mark.zone_b
+@pytest.mark.zone_a
+@pytest.mark.slow
 @pytest.mark.parametrize("basis", ["gimp", "bspline2"])
 @pytest.mark.parametrize("stab", ["off", "auto"])
 @pytest.mark.parametrize("case", ["terzaghi", "mandel"])
@@ -183,7 +188,8 @@ def test_t6_full(basis, stab, case):
     assert r["pass"], r
 
 
-@pytest.mark.zone_b
+@pytest.mark.zone_a
+@pytest.mark.slow
 def test_t5_route_e_checkerboard():
     ops = _ops()
     lo = H.band_value(H.case_band_line("t5_ref_b4", "route E, stab auto").split("<=")[1])
