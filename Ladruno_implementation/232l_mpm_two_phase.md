@@ -2,7 +2,7 @@
 
 ADR 232 phase 6, PR #1116, branch `wp/232l-mpm-two-phase`. Interface `tests/mpm_twophase_interface.md`
 (P1–P13, §7a, §7b, §7c and its amendment). User guide: [[232_ladruno_mpm_guide]], "Two-phase particles".
-Records: `tests/data/mpm/twophase/` (`route_e_p5a_results.json`, `route_s_results.json`,
+Warrant build: **d77caf8fdfbf37a244ab7e2a58e0ccef926b3d3b** (release candidate, 2026-11-19). Records: `tests/data/mpm/twophase/` (`route_e_p5a_results.json`, `route_s_results.json`,
 `t0_t1_mpm*.json`, `t0_iii_mpm.json`, `t10_single_phase_bitwise.json`, `r_rows_route_e.json`). Every
 record carries `ladrunoBuild`.
 
@@ -24,28 +24,30 @@ record carries `ladrunoBuild`.
 
 | Row | Gate | Final | Build |
 |---|---|---|---|
-| T0 (i) particle blocks | rel 1e-9 | 4.6e-14 | 844d84212 |
-| T0 (ii) three route-E steps | rel 1e-9 | 7.4e-13 | 844d84212 |
-| T0 (iii) ten route-S steps (oracle re-derived for §7c, e43e0f58a) | rel 1e-9 | 8.1e-12 | 69ffff490 |
-| T1 FE identity (Q4 1 cell, 2×2, H8) | A 1e-12, b 1e-12 | A ≤ 5e-16, b ≤ 1.1e-15 | 844d84212 |
-| T2p Terzaghi, route E (gimp, bspline2 × off, auto) | 0.02 | worst p 0.0065, U 0.0049 (Tv ≥ 0.1) | 844d84212 |
-| T3 Mandel, route E (4 legs) | bands per tv; peak ≥ 1.039 | pass; peaks 1.080–1.086 | 844d84212 |
-| T4p hydrostatic (h = H/20) | 0.01 (p) | gimp 1.0e-4, bspline2 1.3e-5 | 844d84212 |
-| Fix-2 patch check (d064f5b7e rule: grid coefficients + field at the particles) | 1e-10 | 5.3e-14 / 4.2e-14 (particle p 6.0e-6, recorded) | 844d84212 |
-| T5 checkerboard, route E | auto ≤ 0.3; off ≥ 0.5 | 0.134 / 0.621 | 844d84212 |
-| T5 checkerboard, route S (A5: undamped) | ≤ 0.3 | 0.137 (off reported 0.614) | 69ffff490 |
-| T6 Terzaghi, route S, Δt 0.005 (bspline2 gated, gimp reported) | 0.02 | bspline2 p ≤ 0.0037, U ≤ 0.0006; gimp p ≤ 0.0029, U ≤ 0.0016 | 69ffff490 |
-| T6 Mandel, route S, Δt 0.005 | off 0.0214/0.0263/0.02…, auto 0.0227/0.02…; peak ≥ 1.039 | bspline2 worst 0.0162 / 0.0166, peaks 1.089 / 1.087; gimp 0.0135 / 0.0141 | 69ffff490 |
-| T7 route-S Δt limit | stable at 0.9 × drained pencil, unstable or refused at 1.5 × | **recorded miss** (strict xfail); see below | 5d64922a4, 69ffff490 |
-| T8 refusals (incl. rank-deficient, stray p, massCutoff > pressureCutoff, route-S cap) | pass | pass | 69ffff490 |
-| T9 restart bit for bit | pass | pass | 69ffff490 |
-| T10 single-phase bit for bit against cfe478254 | 24 cases | 24/24 | 69ffff490 |
-| T11 mutation (MPM ZERO ≥ 0.500, SCALE ≥ 0.398; IDENT turns T0 (i) / T1 red) | — | pending: CI lane on the final head | — |
-| T12 engines agree (Tcl, Python) | pass | pass | 69ffff490 |
-| Two-phase test files | — | 69 passed, 2 xfailed (T7) | 69ffff490 |
+| T0 (i) particle blocks | rel 1e-9 | 4.6e-14 | d77caf8fd |
+| T0 (ii) three route-E steps | rel 1e-9 | 7.4e-13 | d77caf8fd |
+| T0 (iii) ten route-S steps (oracle re-derived for §7c, e43e0f58a) | rel 1e-9 | 8.1e-12 | d77caf8fd |
+| T1 FE identity (Q4 1 cell, 2×2, H8) | A 1e-12, b 1e-12 | A ≤ 5e-16, b ≤ 1.1e-15 | d77caf8fd |
+| T2p Terzaghi, route E (gimp, bspline2 × off, auto) | 0.02 | worst p 0.0065, U 0.0049 (Tv ≥ 0.1) | d77caf8fd |
+| T3 Mandel, route E (4 legs) | bands per tv; peak ≥ 1.039 | pass; peaks 1.080–1.086 | d77caf8fd |
+| T4p hydrostatic (h = H/20) | 0.01 (p) | gimp 1.0e-4, bspline2 1.3e-5 | d77caf8fd |
+| Fix-2 patch check (d064f5b7e rule: grid coefficients + field at the particles) | 1e-10 | 5.3e-14 / 4.2e-14 (particle p 6.0e-6, recorded) | d77caf8fd |
+| T5 checkerboard, route E | auto ≤ 0.3; off ≥ 0.5 | 0.134 / 0.621 | d77caf8fd |
+| T5 checkerboard, route S (A5: undamped) | ≤ 0.3 | 0.137 (off reported 0.614) | d77caf8fd |
+| T6 Terzaghi, route S, Δt 0.005 (bspline2 gated, gimp reported) | 0.02 | bspline2 p ≤ 0.0037, U ≤ 0.0006; gimp p ≤ 0.0029, U ≤ 0.0016 | d77caf8fd |
+| T6 Mandel, route S, Δt 0.005 | off 0.0214/0.0263/0.02…, auto 0.0227/0.02…; peak ≥ 1.039 | bspline2 worst 0.0162 / 0.0166, peaks 1.089 / 1.087; gimp 0.0135 / 0.0141 | d77caf8fd |
+| T7 route-S Δt limit | stable at 0.9 × drained pencil, unstable or refused at 1.5 × | **recorded miss** (strict xfail); see below | d77caf8fd |
+| T8 refusals (incl. rank-deficient, stray p, massCutoff > pressureCutoff, route-S cap) | pass | pass | d77caf8fd |
+| T9 restart bit for bit | pass | pass | d77caf8fd |
+| T10 single-phase bit for bit against cfe478254 | 24 cases | 24/24 | d77caf8fd |
+| T11 mutation: MPM IDENT (joint Q + projection cut) | the two-phase oracle and T1 go red | 14/14 red (`_twophase_oracle` + `_fe_identity` on `dist/mut_MPM_IDENT`; green on the normal build) | d77caf8fd |
+| T11 mutation: MPM ZERO ≥ 0.500, SCALE ≥ 0.398 | CI lane | pending: run 44532817830 | d77caf8fd |
+| T12 engines agree (Tcl, Python) | pass | pass | d77caf8fd |
+| Two-phase test files | — | 69 passed, 2 xfailed (T7) | d77caf8fd |
+| The whole MPM suite (`tests/test_ladruno_mpm_*.py` + the oracle's self-test) | — | 509 passed, 40 skipped (opt-in slow tiers, MUMPS matrix types absent), 14 xfailed (12 pre-registered from 232f–232k + T7 × 2), 0 failed | d77caf8fd |
 
 Mandel route S, amplification of the step map at Δt 0.005 (bspline2): ρ = 0.999999998 after §7c,
-against 1.00093 before (4b74bd335).
+against 1.00093 before (4b74bd335); measured on 69ffff490, whose route S equals d77caf8fd's.
 
 ## Recorded misses and owner decisions
 
@@ -104,7 +106,42 @@ against 1.00093 before (4b74bd335).
 
 ## R rows — route S
 
-*(Placeholder: 232l-V's route-S reported rows, run on a dist copy, go here.)*
+`r_rows_route_s.json` (232l-V, 2d4a95129, build 69ffff490; route S is unchanged since then).
+
+- **R1, first settlement** u(T_r)/s0 at the end of a 20-transit ramp. Route S runs at
+  0.49 × Δt_d and reads the settlement as the particle quadrature.
+  - T2's soil (closed form under the ramp: 1.077):
+
+    | Leg | LadrunoUP | Route E gimp / bspline2 | Route S gimp / bspline2 |
+    |---|---|---|---|
+    | off | 1.088 | 1.088 / 1.085 | 1.083 / 1.081 |
+    | auto 0.1 | 1.091 | 1.091 / 1.088 | 1.085 / 1.084 |
+    | auto 0.25 | 1.095 | 1.095 / 1.092 | 1.090 / 1.088 |
+
+  - Stiff fluid, K_f 2.2e6 (closed form 14.61):
+
+    | Leg | LadrunoUP | Route E gimp / bspline2 | Route S gimp / bspline2 |
+    |---|---|---|---|
+    | off | 14.60 | 14.42 / 13.92 | 15.37 / 14.63 |
+    | auto 0.1 | 21.37 | 21.20 / 20.59 | 22.18 / 21.43 |
+    | auto 0.25 | 28.89 | 28.83 / 28.29 | 29.82 / 29.11 |
+
+  - Stabilization inflates the first settlement on the stiff fluid in every code, as TIMs reported.
+    The routes track LadrunoUP.
+- **R2, cost and Δt** on T2's column:
+
+  | Code | Δt run | ms per step | ms per simulated s |
+  |---|---|---|---|
+  | Route S gimp (s 0.5 admits 0.00673; Δt_d 0.01346, undrained 0.00952) | 0.0066 | 0.19 | 29.1 |
+  | Route E gimp | 0.02 | 0.59 | 29.7 |
+  | Route S bspline2 (Δt_d 0.01775) | 0.0087 | 0.72 | 83.2 |
+  | Route E bspline2 | 0.02 | 2.06 | 103.1 |
+  | LadrunoUP Q4 1 × 10 | 0.02 | 0.064 | 3.2 |
+
+- **R3, route comparison:**
+  - First settlement on T2's soil (auto 0.25, ramp): closed form 1.077, LadrunoUP 1.095,
+    route E 1.095 / 1.092, route S 1.090 / 1.088.
+  - B4 CB_lap (auto / off): route E 0.134 / 0.621, route S 0.137 / 0.614, LadrunoUP 0.126 / 0.603.
 
 ## Known limits
 

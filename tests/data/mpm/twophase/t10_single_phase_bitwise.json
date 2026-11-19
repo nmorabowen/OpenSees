@@ -1,7 +1,7 @@
 {
  "leg": "t10_single_phase_bitwise",
  "baseline_build": "cfe47825407f2918081eb8083d5865206ddbfd69",
- "build": "69ffff490e27e9b0486dbd1798fb5dd3a6e0c802",
+ "build": "d77caf8fdfbf37a244ab7e2a58e0ccef926b3d3b",
  "note": "single-phase decks (mode explicit/implicit/quasiStatic x gimp/bspline2 x ElasticIsotropic/DruckerPrager x antiLocking off/fbar): particle x, v, sig after the run (tests/mpm_twophase_t10_single.py); baseline = the 232k merge cfe478254, the binary the fd81cbdd3 build replaced being gone",
  "cases": [
   "explicit_gimp_elastic_off",
