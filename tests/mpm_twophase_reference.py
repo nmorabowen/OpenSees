@@ -1985,6 +1985,143 @@ def r3_cell_crossing(basis, translate=True, stab=("auto", 0.25)):
     return out
 
 
+# ---------------------------------------------------------------------- R rows, route S
+RS_DEFINITION = (
+    "u(0+) for the dynamic decks (chosen before running): the plate settlement at the end of a "
+    "linear load ramp of T_r = 20 undrained wave transits of the column, T_r = 20 L/c_u, c_u = "
+    "sqrt((Eoed + Kf/n)/rho), rho = 2 (T2's): 1.897 s for T2's soil, 0.1204 s for Kf 2.2e6. "
+    "ratio = u(T_r)/s0, s0 = q L/(Eoed + Kf/n). Beside it the closed form's own ratio under the same "
+    "ramp, s_ramp(T_r)/s0 (Duhamel; the real drainage during the ramp), and LadrunoUP and route E "
+    "(mode A) on the same ramp at dt = T_r/50. Route S: mode F at dt = 0.49 x its drained pencil "
+    "(just under the default cap s 0.5); settlement read as the particle quadrature "
+    "-sum_p (F_yy - 1) V0_p / width (mode F has no plate node). Quasi-static rho = 2e-6 is not "
+    "reachable explicitly (the drained pencil scales with sqrt(rho)).")
+
+
+def _rs_deck(ops, basis, Kf, stab, t_ramp, mode="explicit"):
+    """T2's column under the plate, load ramped 0 -> 1 over t_ramp (Path series), route S (mode F)
+    or route E (mode A, Newmark 0.6/0.3025, Linear)."""
+    c = TERZ
+    w = 2.0 if basis.startswith("bspline") else 1.0
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, c["E"], c["nu"], c["rho"])
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 1.0, "-cells", int(w), 10, "-basis", basis)
+    ops.mpm("mode", mode)
+    ops.mpm("body", 1, "box", 0.0, 0.0, w, c["L"], "-ppc", 2, "-mat", 1, "-rho", c["rho"])
+    sa = ["-stab", "off"] if stab == "off" else ["-stab", "auto", float(stab[1])]
+    ops.mpm("twoPhase", 1, "-Kf", Kf, "-poro", c["poro"], "-rhoF", c["rhoF"],
+            "-perm", c["kbar"], c["kbar"], *sa)
+    ops.mpm("fix", "xmin", "x")
+    ops.mpm("fix", "xmax", "x")
+    ops.mpm("fix", "ymin", "y")
+    ops.mpm("pfix", "ymax", 0.0)
+    ops.mpm("plate", "ymax", c["q"] * w)
+    ops.timeSeries("Path", 77, "-time", 0.0, t_ramp, 1.0e6, "-values", 0.0, 1.0, 1.0)
+    ops.mpm("timeSeries", 77)
+    if mode != "explicit":
+        ops.constraints("Transformation")
+        ops.numberer("RCM")
+        ops.system("UmfPack")
+        ops.algorithm("Linear")
+        ops.integrator("Newmark", 0.6, 0.3025)
+        ops.analysis("Transient")
+    return w
+
+
+def _ramp_consts(Kf):
+    c = TERZ
+    k = terzaghi_constants(c["E"], c["nu"], Kf, c["poro"], c["kbar"], c["L"], c["q"])
+    cu = math.sqrt((k["Eoed"] + k["Qbar"]) / c["rho"])
+    tr = 20.0 * c["L"] / cu
+    s_cf = terzaghi_settle_ramp(k["cv"] * tr / c["L"] ** 2, k["cv"] * tr / c["L"] ** 2,
+                                k["s0"], k["sinf"])
+    return k, cu, tr, s_cf
+
+
+def rs_first_settlement(route, basis, Kf, stab):
+    """Row 1 (route S or route E) on the ramp of RS_DEFINITION. Returns the ratio at T_r."""
+    import time
+    ops = fe_engine()
+    k, cu, tr, s_cf = _ramp_consts(Kf)
+    if route == "S":
+        w = _rs_deck(ops, basis, Kf, stab, tr)
+        dtd = _flat(ops.mpm("criticalTimeStep", "drainedPencil"))[0]
+        dt = 0.49 * dtd
+    else:
+        w = _rs_deck(ops, basis, Kf, stab, tr, mode="implicit")
+        dt, dtd = tr / 50.0, None
+    V0 = np.array(_flat(ops.mpm("particleData", "V")))
+    nst = int(math.ceil(tr / dt - 1e-9))
+    dt = tr / nst
+    t0 = time.perf_counter()
+    ops.mpm("analyze", nst, dt)
+    wall = time.perf_counter() - t0
+    if route == "S":
+        F = np.array(_flat(ops.mpm("particleData", "F"))).reshape(-1, 4)
+        U = -float(np.sum((F[:, 3] - 1.0) * V0)) / w
+    else:
+        F = np.array(_flat(ops.mpm("particleData", "F"))).reshape(-1, 4)
+        U = -float(np.sum((F[:, 3] - 1.0) * V0)) / w
+    return {"route": route, "basis": basis, "Kf": Kf,
+            "stab": stab if isinstance(stab, str) else list(stab), "t_ramp": tr, "dt": dt,
+            "steps": nst, "dt_drained_pencil": dtd, "u": U, "ratio": U / k["s0"],
+            "ratio_closed_form": s_cf / k["s0"], "u_undrained": k["s0"],
+            "ms_per_step": 1e3 * wall / nst}
+
+
+def fe_ramp_settlement(Kf, stab):
+    """LadrunoUP Q4 1 x 10, plate, the same ramp, dt = T_r/50: u(T_r)/s0."""
+    k, cu, tr, s_cf = _ramp_consts(Kf)
+    old = TERZ["Kf"]
+    TERZ["Kf"] = Kf
+    try:
+        r = fe_terzaghi(1, stab, t_ramp=tr, first_small=False, dt=tr / 50.0,
+                        tvs=(k["cv"] * tr / TERZ["L"] ** 2,))
+    finally:
+        TERZ["Kf"] = old
+    row = r["rows"][0]
+    return {"route": "LadrunoUP", "Kf": Kf, "stab": stab if isinstance(stab, str) else list(stab),
+            "t_ramp": tr, "dt": tr / 50.0, "u": row["settle"], "ratio": row["settle"] / k["s0"],
+            "ratio_closed_form": row["settle_exact"] / k["s0"]}
+
+
+def rs_cost_and_dt():
+    """Row 2: on T2's column (T2's soil, stab auto 0.25): route S's pencils and the admitted dt at
+    s 0.5; wall time per step for route S at 0.49 dt_d, route E and LadrunoUP at dt 0.02 (Linear),
+    and per simulated second."""
+    import time
+    ops = fe_engine()
+    out = []
+    for basis in ("gimp", "bspline2"):
+        _rs_deck(ops, basis, TERZ["Kf"], ("auto", 0.25), 1.0)
+        dtd = _flat(ops.mpm("criticalTimeStep", "drainedPencil"))[0]
+        dtu = _flat(ops.mpm("criticalTimeStep", "undrainedPencil"))[0]
+        dte = _flat(ops.mpm("criticalTimeStep"))[0]
+        dt = 0.49 * dtd
+        n = 2000
+        t0 = time.perf_counter()
+        ops.mpm("analyze", n, dt)
+        ms = 1e3 * (time.perf_counter() - t0) / n
+        out.append({"route": "S", "basis": basis, "dt_drained_pencil": dtd,
+                    "dt_undrained_pencil": dtu, "dt_estimator_h_over_c": dte,
+                    "dt_admitted_s0.5": 0.5 * dtd, "dt_run": dt, "ms_per_step": ms,
+                    "ms_per_simulated_s": ms / dt})
+        _rs_deck(ops, basis, TERZ["Kf"], ("auto", 0.25), 1.0, mode="implicit")
+        n = 900
+        t0 = time.perf_counter()
+        ops.mpm("analyze", n, 0.02)
+        ms = 1e3 * (time.perf_counter() - t0) / n
+        out.append({"route": "E", "basis": basis, "dt_run": 0.02,
+                    "dt_admitted": "unconditional (Newmark 0.6/0.3025)", "ms_per_step": ms,
+                    "ms_per_simulated_s": ms / 0.02})
+    fe = [r for r in r4_cost(nsteps=900, dt=0.02) if r["code"] == "LadrunoUP Q4"
+          and r["algorithm"] == "Linear"][0]
+    out.append({"route": "LadrunoUP Q4 1 x 10", "dt_run": 0.02, "dt_admitted": "unconditional",
+                "ms_per_step": fe["ms_per_step"], "ms_per_simulated_s": fe["ms_per_step"] / 0.02})
+    return out
+
+
 # ==============================================================================================
 def main(argv):
     leg = argv[1] if len(argv) > 1 else "closed"
@@ -2170,6 +2307,47 @@ def main(argv):
                            "protocol's drained confinement -> sealed shear needs; per the "
                            "orchestrator's protocol none is invented")}
         print(_save("r_rows_route_e", rec))
+        return
+    if leg == "rrows_s":
+        # R rows for route S (reported, never gated), and the route comparison
+        rec = _provenance("r_rows_route_s", "rs_first_settlement, fe_ramp_settlement, "
+                          "rs_cost_and_dt")
+        rec["reported_never_gated"] = True
+        rec["definition_u0"] = RS_DEFINITION
+        stabs = ("off", ("auto", 0.1), ("auto", 0.25))
+        rows = []
+        for Kf in (4444.0, 2.2e6):
+            for st in stabs:
+                rows.append(fe_ramp_settlement(Kf, st))
+                for route in ("S", "E"):
+                    for basis in ("gimp", "bspline2"):
+                        rows.append(rs_first_settlement(route, basis, Kf, st))
+        rec["r1_first_settlement"] = rows
+        rec["r2_cost_dt"] = rs_cost_and_dt()
+
+        def pick(route, basis, Kf, stab):
+            for r in rows:
+                if (r["route"] == route and r.get("basis", basis) == basis and r["Kf"] == Kf
+                        and r["stab"] == stab):
+                    return r["ratio"]
+            return None
+        cost = {(r["route"], r.get("basis")): r for r in rec["r2_cost_dt"]}
+        rec["r3_route_comparison"] = {
+            "first_settlement_T2soil_auto0.25_ramp": {
+                "closed_form": [r for r in rows if r["Kf"] == 4444.0][0]["ratio_closed_form"],
+                "LadrunoUP": pick("LadrunoUP", None, 4444.0, ["auto", 0.25]),
+                "route_E_gimp": pick("E", "gimp", 4444.0, ["auto", 0.25]),
+                "route_E_bspline2": pick("E", "bspline2", 4444.0, ["auto", 0.25]),
+                "route_S_gimp": pick("S", "gimp", 4444.0, ["auto", 0.25]),
+                "route_S_bspline2": pick("S", "bspline2", 4444.0, ["auto", 0.25])},
+            "CB_lap_B4 (quoted, orchestrator)": {"route_E": {"auto0.25": 0.134, "off": 0.621},
+                                                 "route_S": {"auto0.25": 0.137, "off": 0.614},
+                                                 "LadrunoUP": {"auto0.25": 0.1259, "off": 0.6030}},
+            "cost_and_dt_T2column": {
+                f"{k[0]}{'_' + k[1] if k[1] else ''}": {
+                    "ms_per_step": v["ms_per_step"], "ms_per_simulated_s": v["ms_per_simulated_s"],
+                    "dt": v.get("dt_admitted_s0.5", v.get("dt_run"))} for k, v in cost.items()}}
+        print(_save("r_rows_route_s", rec))
         return
     if leg == "b4":
         rec = _provenance("b4_fe", "fe_b4")

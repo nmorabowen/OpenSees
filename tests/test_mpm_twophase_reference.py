@@ -261,3 +261,15 @@ def test_r_rows_route_e_record():
     assert {(r["basis"], r["translate"]) for r in d["r3_cell_crossing"]} == {
         ("gimp", True), ("gimp", False), ("bspline2", True), ("bspline2", False)}
     assert d["r5_undrained_simple_shear"]["status"].startswith("not run")
+
+
+def test_r_rows_route_s_record():
+    """Reported rows (never gated): provenance, the u(0+) definition, shape."""
+    d = _json("r_rows_route_s")
+    _provenance_ok(d)
+    assert d["reported_never_gated"] is True
+    assert "20 undrained wave transits" in d["definition_u0"]
+    assert len(d["r1_first_settlement"]) == 30          # 2 Kf x 3 stab x (FE + 2 routes x 2 bases)
+    s_rows = [r for r in d["r2_cost_dt"] if r["route"] == "S"]
+    assert all(r["dt_run"] <= r["dt_admitted_s0.5"] for r in s_rows)
+    assert "cost_and_dt_T2column" in d["r3_route_comparison"]
