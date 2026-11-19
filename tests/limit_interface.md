@@ -467,7 +467,7 @@ the mechanics. Only a record from a real checker can satisfy a gate (`gate_admis
 
 For each case and the binding Upper formulation, all of these must hold, using **certified** values only:
 
-1. `kinematic_status` is `formulation_feasible` on every listed mesh;
+1. `kinematic_status` is `formulation_feasible` on meshes 0 to 4;
 2. a certified Upper exists on meshes 0 to 4;
 3. a certified bracket (certified Lower and certified Upper) exists on meshes 0 to 4;
 4. `U_fine <= U_coarse + TOL_MONOTONE |U_coarse|` along the nested pair `(0, 4)`;
@@ -476,8 +476,8 @@ For each case and the binding Upper formulation, all of these must hold, using *
 *Amendment 3 (section 19.3, owner decision OD5).* This list replaces the frozen one. The frozen list asked for a certified
 Upper on every listed mesh (ADR 10.1, "a certified Upper at every size"), a certified bracket on mesh 5, a mesh-5 gap of
 at most `MAX_GAP_3D_VM` for `phi = 0` or `MAX_GAP_3D_DP` otherwise, and monotonicity along both nested pairs. Mesh 5 now
-gates nothing in P0, and the pair `(3, 5)` is not checked. Item 1 was not changed: it still covers every listed mesh,
-mesh 5 included.
+gates nothing in P0, and the pair `(3, 5)` is not checked. That includes the kinematic test: the frozen item 1 covered
+every listed mesh, and the case lines now name meshes 0 to 4 (`gate kinematic_status formulation_feasible mesh i`).
 
 The gap on every mesh, mesh 5 included, is recorded (`record gap mesh i`) and gates nothing: it is the gap trend the
 ADR asks for. `MAX_GAP_3D_VM` and `MAX_GAP_3D_DP` keep their values as **P4 exit targets** for adaptive true-3D
@@ -1372,6 +1372,8 @@ arguments.
   certificate and a refusal from a gate checker, the item fails with cause `refused`, which is never withholdable.
 - Bracket status and gap are **recomputed** from the two gate-admissible certificates with section 17.9's rules. A bracket
   record is checked, never trusted, and is not needed.
+- `gate kinematic_status <status>` without a mesh checks every listed mesh; with `mesh i` it checks mesh `i` only
+  (amendment 3). The eight `upper_gate_3d` cases use the second form for meshes 0 to 4; no other case changed.
 - Every `formulation` line binds: a Lower item holds for each Lower formulation, an Upper item for each Upper formulation,
   a pair item for each pair, and `control` lines bind nothing. Assertions hold on every listed mesh.
 - For `gap_le`, status `order_within_floor` counts as gap 0 **only in an `exact_on_mesh` case**, where both exact fields lie
@@ -1399,7 +1401,7 @@ recorded by amendment 2, OD5 by amendment 3). The `OD` ids are this contract's; 
 | OD2 | After the box correction, a 3D Drucker-Prager miss at 30 degrees withholds that 3D claim and is recorded by angle and wall type. Exact-formulation failures still stop P0 | Section 11.3 |
 | OD3 | 2026-11-19, after strip results were seen (disclosed in 19.2.2): continuous P2 (`upper.p2c-vertex.v0`) is a non-binding `control` on the two Tresca strip cases too, so the jump pair alone decides those gates. The Prandtl thin slabs are not covered | Section 19.2.2; `tests/limit_cases.txt` |
 | OD4 | 2026-11-19: confirms R12. A checker capacity or conditioning failure is not an OD2 miss; it keeps P0 open | Sections 11.3, 15.8, 19.2.1 item 5 |
-| OD5 | 2026-11-19, after mesh-4 and mesh-5 results were seen (disclosed in 19.3): the true-3D P0 gate is a certified Upper and a certified bracket on meshes 0 to 4 with monotonicity along `(0, 4)`. Mesh 5 gates nothing in P0 and stays as evidence. `MAX_GAP_3D_VM` 0.30 and `MAX_GAP_3D_DP` 0.50 keep their values as P4 exit targets for adaptive true-3D. ADR kill criterion K1 is judged at P4, not at P0 exit. Supersedes OD1 for the two 3D limits and the 3D gate meshes only | Sections 11, 11.2, 11.3, 17.8, 18.3, 19.3; `tests/limit_cases.txt` |
+| OD5 | 2026-11-19, after mesh-4 and mesh-5 results were seen (disclosed in 19.3): the true-3D P0 gate is the kinematic test, a certified Upper and a certified bracket on meshes 0 to 4 with monotonicity along `(0, 4)`. Mesh 5 gates nothing in P0 and stays as evidence. `MAX_GAP_3D_VM` 0.30 and `MAX_GAP_3D_DP` 0.50 keep their values as P4 exit targets for adaptive true-3D. ADR kill criterion K1 is judged at P4, not at P0 exit. Supersedes OD1 for the two 3D limits and the 3D gate meshes only | Sections 11, 11.2, 11.3, 17.8, 18.3, 19.3; `tests/limit_cases.txt` |
 
 ### 18.2 Orchestrator P0 rulings
 
@@ -1854,7 +1856,7 @@ frozen text and amendments 1 and 2 otherwise stand.
 
 | Item | Change | Sections | Executable form |
 |---|---|---|---|
-| A | In each of `upper3d_{fixed,roller}_phi{00,10,20,30}` the gate lines are now `kinematic_status formulation_feasible`, `certified_upper mesh i` and `certified_bracket mesh i` for `i = 0..4`, `upper_nonincrease 0 4` and `lower_nondecrease 0 4`. Removed: `certified_upper mesh 5`, `certified_bracket mesh 5`, `gap_le MAX_GAP_3D_* mesh 5`, `upper_nonincrease 3 5`, `lower_nondecrease 3 5`. Added: `certified_bracket` on meshes 0 to 4, where the frozen gate asked for a bracket on mesh 5 only | 11, 11.2; `limit_cases.txt` | `test_true_3d_gate_cases_are_complete`, `test_true_3d_gate_is_meshes_0_to_4_after_amendment_3` |
+| A | In each of `upper3d_{fixed,roller}_phi{00,10,20,30}` the gate lines are now `kinematic_status formulation_feasible mesh i`, `certified_upper mesh i` and `certified_bracket mesh i` for `i = 0..4`, `upper_nonincrease 0 4` and `lower_nondecrease 0 4`. Removed: the bare `kinematic_status formulation_feasible` (every listed mesh), `certified_upper mesh 5`, `certified_bracket mesh 5`, `gap_le MAX_GAP_3D_* mesh 5`, `upper_nonincrease 3 5`, `lower_nondecrease 3 5`. The gate grammar gains `kinematic_status <status> mesh <i>`; the bare form keeps its meaning in every other case. Added: `certified_bracket` on meshes 0 to 4, where the frozen gate asked for a bracket on mesh 5 only | 11, 11.2; `limit_cases.txt` | `test_true_3d_gate_cases_are_complete`, `test_true_3d_gate_is_meshes_0_to_4_after_amendment_3`, `test_kinematic_gate_is_scoped_to_meshes_0_to_4_in_3d_cases`, `test_bare_kinematic_gate_still_requires_every_listed_mesh` |
 | B | Mesh 5's `mesh_file` line, `nested 3 5` and every `record gap mesh 0..5` line stay. A record gates nothing; mesh 5 is evidence for P4 and K1. A contradiction found through a mesh-5 record still stops the program | 11, 11.2, 11.3 | `test_mesh_five_gates_nothing_in_p0`, `test_thirty_degree_contradiction_stops_the_program` |
 | C | `MAX_GAP_3D_VM` 0.30 and `MAX_GAP_3D_DP` 0.50 keep their values and are now **P4 exit targets** for adaptive true-3D (certified gap at a fixed budget), not P0 gates. `TOLERANCES` is unchanged, so no tolerance block in a certificate changes | 11.2, 17.8 | `test_three_d_gap_limits_are_p4_targets_with_unchanged_values` |
 | D | ADR kill criterion K1 is judged at P4, not at P0 exit. P0 exit item 9 becomes: the solver study states which open path certifies at what size and records the K1 evidence | 18.3; ADR 237 | text |
@@ -1866,9 +1868,8 @@ tolerance and every refusal rule. Gate lines are not problem data, so every `pro
 `problem_hashes.json` is checked against the cases by `test_committed_problem_hashes_match_the_cases` and did not change.
 No fixture was regenerated.
 
-**Open point.** Item 1 of section 11.2 was not part of the decision and is unchanged: `kinematic_status` is still checked on
-every listed mesh, mesh 5 included. Whether the checker can write a mesh-5 feasibility record within its capacity has not
-been measured. If it cannot, mesh 5 still holds P0 open through that item, and the owner must decide it.
+**Kinematic test.** By the same decision the kinematic test is scoped to meshes 0 to 4: a mesh-5 feasibility
+record is evidence and gates nothing in P0.
 
 **Disclosure: decided after results.** This decision was taken **after** mesh-4 and mesh-5 results had been seen, not
 before the first solve (ADR 18.2 item 4). It reverses the closure that OD1 stated for the 3D limits and gate meshes

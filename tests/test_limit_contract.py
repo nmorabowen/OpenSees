@@ -1865,7 +1865,11 @@ def evaluate_case(case, certificates=(), results=(), feasibility=(), methods=(),
     for tokens in case["gate"]:
         kind = tokens[0]
         if kind == "kinematic_status":
-            for mesh, upper in itertools.product(meshes, uppers):
+            # Bare form: every listed mesh. 'mesh i' form: mesh i only (amendment 3).
+            scope = [int(tokens[3])] if len(tokens) == 4 and tokens[2] == "mesh" else meshes
+            if len(tokens) not in (2, 4):
+                fail("case_format", str(tokens))
+            for mesh, upper in itertools.product(scope, uppers):
                 docs = [d for d in kinematic.get((mesh, upper), []) if d["status"] == tokens[1] and gate_admissible(d)]
                 add(kind, mesh, upper, bool(docs), "missing")
         elif kind == "certified_upper":
@@ -3143,7 +3147,7 @@ def test_true_3d_gate_cases_are_complete(name):
     assert all(kinds[key] == wall for key in ("xmin", "xmax", "ymin", "ymax", "base"))
 
 
-AMENDMENT_3_GATE = ([["kinematic_status", "formulation_feasible"]]
+AMENDMENT_3_GATE = ([["kinematic_status", "formulation_feasible", "mesh", str(i)] for i in range(5)]
                     + [["certified_upper", "mesh", str(i)] for i in range(5)]
                     + [["certified_bracket", "mesh", str(i)] for i in range(5)]
                     + [["upper_nonincrease", "0", "4"], ["lower_nondecrease", "0", "4"]])
@@ -4762,6 +4766,39 @@ def test_thirty_degree_gap_branch_of_od2_still_withholds():
     assert not verdict["passed"] and verdict["claim_withheld"] and not verdict["p0_blocking"]
     program = evaluate_program([verdict])
     assert program["withheld_claims"] == [PHI30] and not program["p0_open"]
+
+
+def test_kinematic_gate_is_scoped_to_meshes_0_to_4_in_3d_cases():
+    """Amendment 3: no mesh-5 feasibility record still passes; a missing mesh-3 record fails the kinematic gate."""
+    case = ALL_CASES[PHI30]
+    certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    hashes = load_problem_hashes()[PHI30]
+    no_five = [doc for doc in feasibility if doc["problem_sha256"] != hashes["m5"]]
+    assert len(no_five) < len(feasibility)
+    verdict = evaluate_case(case, certificates, results, no_five, methods)
+    assert verdict["passed"], failed(verdict)
+    assert sorted(item["mesh"] for item in verdict["items"] if item["kind"] == "kinematic_status") == list(range(5))
+    no_three = [doc for doc in feasibility if doc["problem_sha256"] != hashes["m3"]]
+    verdict = evaluate_case(case, certificates, results, no_three, methods)
+    assert failed(verdict) == {("kinematic_status", "missing")} and verdict["p0_blocking"]
+    assert [item["mesh"] for item in verdict["items"] if item["status"] == "fail"] == [3]
+
+
+def test_bare_kinematic_gate_still_requires_every_listed_mesh():
+    """The bare form keeps its meaning: on a copy of a 3D case with the bare line, a missing mesh-5 record fails."""
+    case = copy.deepcopy(ALL_CASES[PHI30])
+    case["gate"] = [["kinematic_status", "formulation_feasible"]] + [
+        tokens for tokens in case["gate"] if tokens[0] != "kinematic_status"]
+    certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    sha = load_problem_hashes()[PHI30]["m5"]
+    verdict = evaluate_case(case, certificates, results, feasibility, methods)
+    assert verdict["passed"], failed(verdict)
+    assert sorted(item["mesh"] for item in verdict["items"] if item["kind"] == "kinematic_status") == list(range(6))
+    verdict = evaluate_case(case, certificates, results,
+                            [doc for doc in feasibility if doc["problem_sha256"] != sha], methods)
+    assert failed(verdict) == {("kinematic_status", "missing")}
+    bare_cases = [name for name in ACTIVE if ["kinematic_status", "formulation_feasible"] in ALL_CASES[name]["gate"]]
+    assert not set(bare_cases) & set(GATE_3D)
 
 
 @pytest.mark.parametrize("name", ["upper3d_fixed_phi00", "upper3d_roller_phi20", PHI30])

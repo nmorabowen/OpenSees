@@ -10,9 +10,10 @@
 #         The decision came after strip results were seen; the disclosure is in interface 19.2.2.
 #         The two Drucker-Prager Prandtl thin slabs still bind P2c until the owner decides them case by case.
 #         Amendment 3 (interface 19.3, owner decision OD5 of 2026-11-19) takes mesh 5 out of the P0 gate of every
-#         upper_gate_3d case. Each now gates a certified Upper and a certified bracket on meshes 0 to 4 and the
-#         nested pair (0, 4) only. Mesh 5, 'nested 3 5' and every 'record gap' line stay: mesh 5 is evidence for
-#         P4 and for kill criterion K1. MAX_GAP_3D_VM and MAX_GAP_3D_DP keep their values as P4 exit targets.
+#         upper_gate_3d case. Each now gates the kinematic test, a certified Upper and a certified bracket on
+#         meshes 0 to 4 and the nested pair (0, 4) only. Mesh 5, 'nested 3 5' and every 'record gap' line
+#         stay: mesh 5 is evidence for P4 and for kill criterion K1. MAX_GAP_3D_VM and MAX_GAP_3D_DP keep
+#         their values as P4 exit targets.
 #         The decision came after mesh-4 and mesh-5 results were seen; the disclosure is in interface 19.3.
 #
 # FORMAT (line based, ASCII)
@@ -51,7 +52,8 @@
 #               | gap_le <value> | gravity_work_eq <tol>
 #               | lower_ge_formula <name> [key=value ...] | upper_le_formula <name> [key=value ...]
 #               | lower_le_formula <name> [key=value ...] | upper_ge_formula <name> [key=value ...]
-#   gate        kinematic_status formulation_feasible
+#   gate        kinematic_status formulation_feasible [mesh <i>]
+#                                        bare: every listed mesh; with 'mesh i': mesh i only (amendment 3)
 #               | certified_upper mesh <i> | certified_bracket mesh <i>
 #               | gap_le <NAMED_LIMIT> mesh <i>
 #               | upper_nonincrease <i> <j> | lower_nondecrease <i> <j>
@@ -612,7 +614,11 @@ boundary    base fixed plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
@@ -665,7 +671,11 @@ boundary    base fixed plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
@@ -718,7 +728,11 @@ boundary    base fixed plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
@@ -771,7 +785,11 @@ boundary    base fixed plane z -3
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
@@ -824,7 +842,11 @@ boundary    base symmetry plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
@@ -877,7 +899,11 @@ boundary    base symmetry plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
@@ -930,7 +956,11 @@ boundary    base symmetry plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
@@ -983,7 +1013,11 @@ boundary    base symmetry plane z -3
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
