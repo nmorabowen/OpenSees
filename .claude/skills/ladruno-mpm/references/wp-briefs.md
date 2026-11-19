@@ -1695,6 +1695,34 @@ number).**
 - **Re-run order after the build:** T3 bspline2, the fix-2 patch check, T8 rank-deficient, T5, a
   re-check of T0/T1/sealed/T10 (cheap), then T2p and T4p.
 
+**Build `d06695367` (records `9b90c3536`): T3 bspline2 passes, and the fix-2 patch check misses.**
+- **T3 bspline2:** ≤ 0.0118 against 0.02; peaks 1.082 and 1.080. T3 is now 4/4.
+- **Fix-2 patch check:** base particle 1.0e-3 γ_w H against 1e-10. The grid field is exact to 2e-15
+  (near-rigid probe), so the miss is on the particle carrier.
+
+**Ruling (2026-11-18), a design gap between P5a and fix 2, before any T2p/T4p number.** Fix 2
+writes the field as Σ S^p c + π. An initial p = 0 with π ≠ 0 at the first projection violates the
+strongly imposed zero-flux condition, so 0 is not in the admissible space. Its invisible part −π_⊥
+then stays on the particles under FLIP. §7b's claim that "the invisible residual is zero when the
+initial field is zero" is false once π ≠ 0.
+- **The fix (A′, narrower than 232l-C's option A):** at the first projection at which π ≠ 0, add to
+  each two-phase particle's p only π's own invisible part,
+  π_⊥ = π − P M⁻¹ Pᵀ V π (over the same p-active set, M and S^p).
+  - This projects the initial condition onto the admissible space. The user's own invisible content
+    is untouched, so the sealed-column invariant still holds.
+  - ṗ and p̈ are unchanged, because π's rate is neglected (§7b).
+  - Later changes of π need nothing more: G2P already adds Δπ in full, so the residual stays as it
+    was.
+  - A drive that ramps from zero never triggers it.
+  - The restart pack records that A′ has been applied, so a restart does not apply it twice.
+  - `mpm info twoPhase` reports max |π_⊥| applied.
+- **Option A is declined:** re-expressing the whole field would erase user content the sealed-column
+  guard protects.
+- **Option C is declined:** it moves a gate.
+- **The patch gate stays at 1e-10.**
+- **Harness correction accepted:** the "field at the particles" readout must include π. The earlier
+  bspline2 diagnostic numbers that omitted it are annotated, not rewritten.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
