@@ -1787,6 +1787,35 @@ drained face is lost (dp/dy = −0.957 γ_w).
   read-only. Any remaining contradiction then surfaces in one pass rather than one build at a time.
   The audit is not the ready-flip review of record, which still runs.
 
+**The Fable carrier audit (2026-11-18, code @ `af2a0ff7d`, read-only).** Four findings beyond the
+known u-side rescale, all still present at `58727204e`. Findings 1 and 2 were verified in-tree by the
+orchestrator. All four are implementation or text defects, ruled as fixes, with no band or reference
+moving:
+1. **Dangling `else` (`LadrunoMPMCore.h:620-625`).** Fix 2's affine `if` was inserted between the
+   u-fold `add(…mir…)` and its `else add(…i…)`. On a face with a u condition and `pfix` (T2's
+   `plate ymax` + `pfix ymax`), the ghost's W goes to the mirror and to the ghost: ΣW = 1.03125, and
+   the plate's motion interpolates as 0.97 U. **T2p on bspline2 run on any build before the fix is
+   void (not a measurement).** Fix: restore the if/else pairing. Add a unit check that ΣW = 1 to
+   1e-14 at every particle beside a `plate` + `pfix` face.
+2. **A′ and π_c mutate state before the step is accepted (`LadrunoMPMTwoPhase.cpp:695-703`).**
+   Later refusals, a Newton failure and the debug hooks (`particleBlocks`, `assemble`) can follow,
+   so A′ can apply twice or be skipped. `particlePressure`/`porePressure` after a dump can also
+   leave the flag set. Fix: compute A′'s π_⊥ and the new π_c at the projection, but commit them
+   (P.pw, π_c, the applied flag, max |π_⊥|) only when the step is accepted, i.e. in the after-step
+   path. The debug hooks must leave all of them unchanged. Setting p by command clears the applied
+   flag (A′ re-arms for the new field). Tests: dump → analyze → reset → analyze gives one π_⊥;
+   a refused first step leaves the flag unset.
+3. **π at the first projection used λ = 1, not the series value.** §7a Q2 ("1 before the first
+   step") conflicts with A′'s "π = 0 at the first projection" for a ramp. **Text amendment:** π is
+   always evaluated at the drive of the step being taken, i.e. the series value the step's
+   `applyLoad` uses, including at the first projection; §7a Q2 is superseded for π. A test: a
+   ramped bspline2 gravity deck reports max |π_⊥| = 0.
+4. **`massCutoff` limits mode-A p-activity** (p-active ⊆ the u-kept set). **Text amendment:** with
+   a two-phase body, mode A refuses `massCutoff` > `pressureCutoff` loudly, naming the rule. The
+   "never moved by `massCutoff`" sentence is scoped to route S (mode F). With massCutoff ≤
+   pressureCutoff, the subset is automatic, because two-phase mass ≤ total mass. The T8 refusal is
+   tested.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
