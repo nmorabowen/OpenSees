@@ -57,6 +57,7 @@ ParticleWriter::components(const std::string &f, int ndm)
   if (f == "STRAIN") return two ? "eps11,eps22,gamma12"
                                 : "eps11,eps22,eps33,gamma12,gamma23,gamma13";
   if (f == "VOLUME") return "V";
+  if (f == "PORE_PRESSURE") return "p";      // WP-232l (P12): additive (232a_mpm_contracts.md:636)
   if (f == "GIMP_HALF_LENGTH") return two ? "lx,ly" : "lx,ly,lz";
   if (f == "DEFORMATION_GRADIENT") return two ? "F11,F12,F21,F22"
                                               : "F11,F12,F13,F21,F22,F23,F31,F32,F33";
@@ -907,7 +908,8 @@ ParticleWriter::openStage(const StageMeta &m, int step, double time, std::string
     {"POSITION", "Position", "L", 1}, {"VELOCITY", "Velocity", "L/t", 1},
     {"STRESS", "Stress", "F/L^2", 2}, {"STRAIN", "Strain (unrotated, engineering shear)", "", 2},
     {"VOLUME", "Volume", "L^3", 0}, {"GIMP_HALF_LENGTH", "GIMP half-length", "L", 1},
-    {"DEFORMATION_GRADIENT", "Deformation gradient", "", 2}};
+    {"DEFORMATION_GRADIENT", "Deformation gradient", "", 2},
+    {"PORE_PRESSURE", "Pore pressure (compression positive)", "F/L^2", 0}};   // WP-232l (P12)
   for (const std::string &fname : impl->cfg.fields) {
     const Meta *mt = 0;
     for (const Meta &x : metas) if (fname == x.name) mt = &x;

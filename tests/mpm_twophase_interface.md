@@ -196,7 +196,8 @@ for p − p̂ gives the same p^{n+1}.
   (`ladruno_format.py:1015`), §2.6 of the contracts doc. apeGmsh's reader is queued with T, not here.
   Queries: `mpm particleData p | pd | pdd`; `mpm particlePressure <p..> [<pd..> <pdd..>]` sets them
   (flat, storage order, as `particleVelocity`); `mpm info twoPhase <body>` →
-  [route 1 E | 2 S, K_f, n, ρ_f, k̄.., α, K_s, stabMode, α₀ or α, α_st(h)].
+  [route 1 E | 2 S, K_f, n, ρ_f, k̄.., α, K_s, stabMode, α₀ or α, α_st(h), pressureCutoff]
+  (the last entry added by ruling c84f71fb3).
 - **P13 (U12).** Mode-A pack **5** (`MPM_PACK_VERSION = 4`, `LadrunoMPMImplicit.cpp:1533`): per
   particle p, pd, pdd; per body the fluid constants; α_p, kinematics, pfix, plates (with the plate
   node's tag), tractions. A pack < 5 with a two-phase body is refused; without one it restores as
@@ -340,8 +341,11 @@ Matrices are row-major lists of rows; every number uses 17 significant digits.
       - m̃_a is the folded nodal mass, × 2^k on a B-spline face layer
         (`imageCutoffMass`);
       - m_max = max over every particle, single- and two-phase, of m_p;
-      - c_m is `mpm massCutoff` when given, otherwise 5e-2 (mode A's test,
-        `LadrunoMPMImplicit.cpp:741-753`);
+      - c_m is route S's own knob, `mpm pressureCutoff <c>` (default 5e-2, the value of mode
+        A's test at `LadrunoMPMImplicit.cpp:741-753`; reported by `mpm info twoPhase`). It is
+        never moved by `mpm massCutoff`, which keeps setting the u-side cutoffs only (mode F
+        1e-10, mode A 5e-2). This is ruling c84f71fb3, and T8 checks that `massCutoff` leaves
+        it unchanged. Mode A's p rows follow `renormalize` (P4) and have no separate knob;
     - some two-phase particle has S^p > 0 there.
   - **Renormalisation.** Each two-phase particle's S^p and ∇S^p are renormalised over its
     p-active nodes by Q3's formula, using B9's rule on B-spline images.

@@ -466,12 +466,19 @@ LadrunoMPMPattern::admitAnalysis(const LadrunoMPMAnalysisRefs &A, std::string &e
     const std::string why = stageGuard();
     if (!why.empty()) { err = why; return -1; }
   }
+  // WP-232l (tests/mpm_twophase_interface.md P7): two-phase bodies and plates
+  {
+    const std::string why = twoPhaseAdmission(A);
+    if (!why.empty()) { err = why; return -1; }
+  }
   // WP-232j (K3, amendment 5): the F-bar tangent is unsymmetric even for elastic
   // materials (J10); a symmetric-storage system would solve a different matrix.
   // WP-232k (D15): so are SANISAND's and HS's unless -implex freezes an isotropic
   // elastic operator (LadrunoHS.cpp:669; ladrunoImplexFreezeTangent).
   const std::string unsymSoil = unsymmetricSoil();
-  if ((eng.par.antiLocking || !unsymSoil.empty()) && A.soe != 0) {
+  // WP-232l (P7 (1)): a two-phase body's [K, -Q; 0, H] with Q^T in the damping is unsymmetric
+  const bool twoPh = anyTwoPhase();
+  if ((eng.par.antiLocking || !unsymSoil.empty() || twoPh) && A.soe != 0) {
     const int t = A.soe->getClassTag();
     // C3: every symmetric-storage SOE class (classTags.h), and the two whose symmetry is a
     // matType option (PARDISO -matType / -sym, MUMPS -matrixType 1|2), read by the bridges
@@ -483,7 +490,8 @@ LadrunoMPMPattern::admitAnalysis(const LadrunoMPMAnalysisRefs &A, std::string &e
                      t == LinSOE_TAGS_DistributedProfileSPDLinSOE ||
                      t == LinSOE_TAGS_SProfileSPDLinSOE || solverSym;
     if (sym) {
-      err = std::string(eng.par.antiLocking ? "`mpm antiLocking fbar`" : unsymSoil.c_str()) +
+      err = std::string(twoPh ? "a two-phase body ([K, -Q; 0, H] with Q^T in the damping, ADR-71 §3.2)"
+                              : (eng.par.antiLocking ? "`mpm antiLocking fbar`" : unsymSoil.c_str())) +
             " makes the particle tangent unsymmetric in general: the"
             " symmetric-storage system (class tag " + std::to_string(t) +
             (solverSym ? ", a symmetric matrix type" : "") +
@@ -559,6 +567,8 @@ LadrunoMPMPattern::teardownModeA(void)
   std::vector<long> exts;
   for (const auto &kv : liveTag) exts.push_back(kv.first);
   for (long x : exts) retireNode(x);
+  retirePlates();                         // WP-232l (P10)
+  tractionLoads.clear();
   if (nOld > 0) eleBase += nOld;          // a removed element's tag is not reused either
   if (dom != 0) dom->domainChange();
 }
@@ -703,6 +713,9 @@ LadrunoMPMPattern::GridVel::boxAt(double t, double lo_[3], double hi_[3]) const
 int
 LadrunoMPMPattern::prepareStep(double hStep, std::string &err)
 {
+  // WP-232l (tests/mpm_twophase_interface.md P4, P9, P10): a two-phase epoch, a plate or a
+  // traction take the general path; without them this function runs bit for bit as before
+  if (anyTwoPhase() || anyPlate() || !tractions.empty()) return prepareStepUP(hStep, err);
   Domain *dom = this->getDomain();
   ladruno_mpm::Particles &P = eng.P;
   const ladruno_mpm::Grid &G = eng.grid;
@@ -1529,13 +1542,20 @@ void getParticles(Unpacker &u, ladruno_mpm::Particles &P)
 // WP-232i: 2, + the particle body force. WP-232j (J13): 3, + the anti-locking setting;
 // a version-2 pack restores with anti-locking off. WP-232k: 4, + each gridvel's
 // `translate` / `profile` (D17) and the SANISAND stage the last walk gave (D10); a
-// version-3 pack restores them as absent / 0.
-const int MPM_PACK_VERSION = 4;
+// version-3 pack restores them as absent / 0. WP-232l (P13): 5, + the particles' p, pd, pdd,
+// the two-phase bodies, kinematics, alpha_p, pfix, plates (with their nodes) and tractions; a
+// pack below 5 restores them as absent and is refused with a two-phase body.
+const int MPM_PACK_VERSION = 5;
 
 int
 LadrunoMPMPattern::setPackVersion(int v)
 {
-  if (v != 2 && v != 3 && v != MPM_PACK_VERSION) return -1;
+  if (v != 2 && v != 3 && v != 4 && v != MPM_PACK_VERSION) return -1;
+  if (v < 5 && anyTwoPhase()) {                     // WP-232l (P13)
+    opserr << "WARNING mpm debug packVersion " << v << " -- refused with two-phase particles: the"
+              " restart pack needs version 5 (the pore pressures)\n";
+    return -1;
+  }
   // AMEND A4 (232k): packs 2 and 3 carry no stage record; with soil particles a restore would
   // run on a wrong class-wide SANISAND flag
   if (v < 4 && anySoil()) {
@@ -1561,6 +1581,7 @@ LadrunoMPMPattern::packState(Vector &out)
               " need version 4 (the stage record): writing version " << MPM_PACK_VERSION << "\n";
     ver = MPM_PACK_VERSION;
   }
+  if (ver < 5 && anyTwoPhase()) ver = MPM_PACK_VERSION;   // WP-232l (P13)
   k.put(ver);
   k.put(G.ndm);
   for (int d = 0; d < 3; d++) k.put(G.x0[d]);
@@ -1609,6 +1630,29 @@ LadrunoMPMPattern::packState(Vector &out)
     k.put((double)hsWalked.size());
     for (const auto &kv : hsWalked) { k.put(kv.first); k.put(kv.second); }
   }
+  if (ver >= 5) {                                   // WP-232l (P13)
+    k.putv(eng.P.pw); k.putv(eng.P.pwd); k.putv(eng.P.pwdd);
+    k.putv(snapshot.pw); k.putv(snapshot.pwd); k.putv(snapshot.pwdd);
+    k.put(eng.par.smallKin); k.put(eng.par.pBlend); k.put(eng.par.pCut);
+    for (int f = 0; f < 6; f++) {
+      k.put(eng.fc.pfixOn[f] ? 1 : 0); k.put(eng.fc.pfixVal[f]);
+      k.put(eng.fc.plateOn[f] ? 1 : 0); k.put(eng.fc.plateF[f]); k.put(plateTag[f]);
+    }
+    k.put((double)twoPhase.size());
+    for (const auto &kv : twoPhase) {
+      const ladruno_mpm::TwoPhaseProps &t = kv.second;
+      k.put(kv.first); k.put(t.Kf); k.put(t.n); k.put(t.rhoF);
+      for (int d = 0; d < 3; d++) k.put(t.kbar[d]);
+      k.put(t.alpha); k.put(t.Ks); k.put(t.stabMode); k.put(t.stabValue);
+      k.put(t.fluidBodyGiven ? 1 : 0);
+      for (int d = 0; d < 3; d++) k.put(t.fluidBody[d]);
+    }
+    k.put((double)tractions.size());
+    for (const Traction &t : tractions) {
+      k.puts(t.name); k.put(t.face);
+      for (int d = 0; d < 3; d++) { k.put(t.lo[d]); k.put(t.hi[d]); k.put(t.t[d]); }
+    }
+  }
   out.resize((int)k.d.size());
   for (int i = 0; i < (int)k.d.size(); i++) out(i) = k.d[i];
   return 0;
@@ -1619,7 +1663,7 @@ LadrunoMPMPattern::unpackState(const Vector &in)
 {
   Unpacker u(in);
   const int ver = (int)u.get();
-  if (ver != MPM_PACK_VERSION && ver != 3 && ver != 2) return -1;   // WP-232j (J13): 2 restores as off
+  if (ver != MPM_PACK_VERSION && ver != 4 && ver != 3 && ver != 2) return -1;   // WP-232j (J13): 2 restores as off
   int ndm = (int)u.get();
   double x0[3], h;
   int n[3];
@@ -1694,7 +1738,55 @@ LadrunoMPMPattern::unpackState(const Vector &in)
       hsWalked[tag] = (int)u.get();
     }
   }
+  // WP-232l (P13): a pack below 5 has no pore pressures: they restore as 0 and no body is
+  // two-phase, so nothing can run on a wrong state
+  twoPhase.clear();
+  tractions.clear();
+  tractionLoads.clear();
+  eng.par.smallKin = 0;
+  eng.par.pBlend = 1.0;
+  eng.par.pCut = 5.0e-2;
+  for (int f = 0; f < 6; f++) {
+    eng.fc.pfixOn[f] = false; eng.fc.pfixVal[f] = 0.0;
+    eng.fc.plateOn[f] = false; eng.fc.plateF[f] = 0.0; plateTag[f] = 0;
+  }
+  {
+    const size_t N = eng.P.id.size(), Ns = snapshot.id.size();
+    eng.P.pw.assign(N, 0.0); eng.P.pwd.assign(N, 0.0); eng.P.pwdd.assign(N, 0.0);
+    snapshot.pw.assign(Ns, 0.0); snapshot.pwd.assign(Ns, 0.0); snapshot.pwdd.assign(Ns, 0.0);
+  }
+  if (ver >= 5) {
+    u.getv(eng.P.pw); u.getv(eng.P.pwd); u.getv(eng.P.pwdd);
+    u.getv(snapshot.pw); u.getv(snapshot.pwd); u.getv(snapshot.pwdd);
+    eng.par.smallKin = (int)u.get();
+    eng.par.pBlend = u.get();
+    eng.par.pCut = u.get();
+    for (int f = 0; f < 6; f++) {
+      eng.fc.pfixOn[f] = u.get() != 0.0; eng.fc.pfixVal[f] = u.get();
+      eng.fc.plateOn[f] = u.get() != 0.0; eng.fc.plateF[f] = u.get(); plateTag[f] = (int)u.get();
+    }
+    const int nt = (int)u.get();
+    for (int i = 0; i < nt && !u.bad; i++) {
+      ladruno_mpm::TwoPhaseProps t;
+      const int body = (int)u.get();
+      t.Kf = u.get(); t.n = u.get(); t.rhoF = u.get();
+      for (int d = 0; d < 3; d++) t.kbar[d] = u.get();
+      t.alpha = u.get(); t.Ks = u.get(); t.stabMode = (int)u.get(); t.stabValue = u.get();
+      t.fluidBodyGiven = u.get() != 0.0;
+      for (int d = 0; d < 3; d++) t.fluidBody[d] = u.get();
+      twoPhase[body] = t;
+    }
+    const int nr = (int)u.get();
+    for (int i = 0; i < nr && !u.bad; i++) {
+      Traction t;
+      t.name = u.gets();
+      t.face = (int)u.get();
+      for (int d = 0; d < 3; d++) { t.lo[d] = u.get(); t.hi[d] = u.get(); t.t[d] = u.get(); }
+      tractions.push_back(t);
+    }
+  }
   if (u.bad) return -1;
+  for (int f = 0; f < 6; f++) if (plateTag[f] != 0) liveTags.insert(plateTag[f]);
   // review item 3: a pack older than 4 has no stage record; relinkElements refuses it if the
   // restored particle materials are soil (they are reachable only after the relink)
   restoredPackVersion = ver;

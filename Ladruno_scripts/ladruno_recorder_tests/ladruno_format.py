@@ -1023,6 +1023,7 @@ PARTICLE_FIELDS = {
     "VOLUME": ("V", "V"),
     "GIMP_HALF_LENGTH": ("lx,ly", "lx,ly,lz"),
     "DEFORMATION_GRADIENT": ("F11,F12,F21,F22", "F11,F12,F13,F21,F22,F23,F31,F32,F33"),
+    "PORE_PRESSURE": ("p", "p"),   # WP-232l (P12): additive, compression positive
 }
 FIELD_ATTRS = ("DISPLAY_NAME", "COMPONENTS", "TYPE", "DATA_TYPE", "PARTITION_REDUCTION")
 #: MODE -> the stage KIND it runs under (232a §2.3)

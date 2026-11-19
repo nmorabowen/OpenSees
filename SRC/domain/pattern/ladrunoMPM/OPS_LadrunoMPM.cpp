@@ -98,6 +98,7 @@
 #include <OPS_Globals.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <string.h>
 #include <string>
@@ -355,6 +356,79 @@ int cmdFix(LadrunoMPMPattern *h, bool wall)
   return 0;
 }
 
+// WP-232l (tests/mpm_twophase_interface.md P1): LadrunoUP's flags and defaults, unknown flags
+// fatal. mpm twoPhase <body> -Kf <Kf> -poro <n> -rhoF <rf> (-perm <k..> | -permH <k..> -gammaW <gw>)
+//   [-alpha <a>] [-Ks <Ks>] [-stab auto [<a0>] | off | <alpha>] [-fluidBody <b..>] [-dynSeepage off]
+int cmdTwoPhase(LadrunoMPMPattern *h)
+{
+  const int nd = h->engine().ndm();
+  const char *usage = "twoPhase <body> -Kf <Kf> -poro <n> -rhoF <rhoF> (-perm <k..> | -permH <k..>"
+                      " -gammaW <gw>) [-alpha <a>] [-Ks <Ks>] [-stab auto [<a0>] | off | <alpha>]"
+                      " [-fluidBody <b..>] [-dynSeepage off]";
+  int body;
+  if (!readInt(body)) return fail(usage);
+  ladruno_mpm::TwoPhaseProps tp;
+  bool kf = false, po = false, rf = false, pe = false, ph = false, gw = false;
+  double permH[3] = {0, 0, 0}, gammaW = 0.0;
+  while (OPS_GetNumRemainingInputArgs() > 0) {
+    const std::string opt = OPS_GetString();
+    if (opt == "-Kf") { if (!readDoubles(1, &tp.Kf)) return fail(usage); kf = true; }
+    else if (opt == "-poro") { if (!readDoubles(1, &tp.n)) return fail(usage); po = true; }
+    else if (opt == "-rhoF") { if (!readDoubles(1, &tp.rhoF)) return fail(usage); rf = true; }
+    else if (opt == "-perm") { if (ph || !readDoubles(nd, tp.kbar)) return fail("twoPhase -- -perm wants ndm values, not with -permH"); pe = true; }
+    else if (opt == "-permH") { if (pe || !readDoubles(nd, permH)) return fail("twoPhase -- -permH wants ndm values, not with -perm"); ph = true; }
+    else if (opt == "-gammaW") { if (!readDoubles(1, &gammaW) || !(gammaW > 0.0)) return fail("twoPhase -- -gammaW > 0"); gw = true; }
+    else if (opt == "-alpha") { if (!readDoubles(1, &tp.alpha)) return fail(usage); }
+    else if (opt == "-Ks") { if (!readDoubles(1, &tp.Ks)) return fail(usage); }
+    else if (opt == "-fluidBody") {
+      if (!readDoubles(nd, tp.fluidBody)) return fail("twoPhase -- -fluidBody wants ndm values");
+      tp.fluidBodyGiven = true;
+    } else if (opt == "-dynSeepage") {
+      const std::string v = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+      if (v == "on")
+        return fail("twoPhase -- -dynSeepage on is refused at particles (U3; LadrunoUP's own default is"
+                    " off: trial-acceleration noise feeds f_seep, ADR-71 §12)");
+      if (v != "off") return fail("twoPhase -- -dynSeepage off");
+    } else if (opt == "-stab") {
+      const std::string v = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+      if (v == "off") { tp.stabMode = 0; tp.stabValue = 0.0; }
+      else if (v == "auto") {
+        tp.stabMode = 1;
+        tp.stabValue = 0.25;
+        // an optional alpha0: peek as a string (in Python a float reads as "Invalid String
+        // Input!", element guide "Parser"); a flag starts with '-' and a letter
+        if (OPS_GetNumRemainingInputArgs() > 0) {
+          const std::string a = OPS_GetString();
+          OPS_ResetCurrentInputArg(-1);
+          const bool flag = a.size() > 1 && a[0] == '-' && std::isalpha((unsigned char)a[1]);
+          if (!flag) {
+            double a0;
+            if (!readDoubles(1, &a0) || !(a0 > 0.0))
+              return fail("twoPhase -- -stab auto alpha0 must be a number > 0");
+            tp.stabValue = a0;
+          }
+        }
+      } else {
+        OPS_ResetCurrentInputArg(-1);
+        double a;
+        if (!readDoubles(1, &a) || a < 0.0)
+          return fail("twoPhase -- -stab auto [<alpha0>] | off | <alpha >= 0>");
+        tp.stabMode = 2;
+        tp.stabValue = a;
+      }
+    } else {
+      return fail("twoPhase -- unknown option '" + opt + "' (unknown flags are fatal, as LadrunoUP's)");
+    }
+  }
+  if (!kf || !po || !rf || !(pe || ph))
+    return fail("twoPhase -- missing required argument(s): -Kf, -poro, -rhoF and -perm (or -permH/-gammaW)");
+  if (ph != gw) return fail("twoPhase -- -permH and -gammaW come together");
+  if (ph) for (int d = 0; d < nd; d++) tp.kbar[d] = permH[d] / gammaW;
+  std::string err;
+  if (h->setTwoPhaseBody(body, tp, err) < 0) return fail("twoPhase -- " + err);
+  return 0;
+}
+
 int particleField(const ladruno_mpm::Particles &P, const std::string &f, std::vector<double> &out)
 {
   out.clear();
@@ -374,6 +448,9 @@ int particleField(const ladruno_mpm::Particles &P, const std::string &f, std::ve
   else if (f == "sigHat") out = P.sigHat;
   else if (f == "epsHat") out = P.eps;
   else if (f == "sig0") out = P.sig0;
+  else if (f == "p") out = P.pw;          // WP-232l (P12): pore pressure, compression positive
+  else if (f == "pd") out = P.pwd;
+  else if (f == "pdd") out = P.pwdd;
   else return fail("particleData -- unknown field '" + f + "'");
   return 0;
 }
@@ -600,6 +677,28 @@ int cmdDebug(LadrunoMPMPattern *h)
     else return fail("debug reseed default|always|skip");
     return 0;
   }
+  if (what == "particleBlocks") {                                      // WP-232l (§7a Q1, Q2)
+    const char *usage = "debug particleBlocks <p> <path> <s_u> <s_p> <s_v> <s_pd> <s_a> <s_pdd>";
+    int p;
+    if (!readInt(p) || OPS_GetNumRemainingInputArgs() < 7) return fail(usage);
+    const std::string path = OPS_GetString();
+    double s[6];
+    if (!readDoubles(6, s)) return fail(usage);
+    std::string err;
+    if (h->debugParticleBlocks(p, path, s, err) < 0) return fail("debug particleBlocks -- " + err);
+    return 0;
+  }
+  if (what == "assemble") {                                            // WP-232l (§7a, T1)
+    if (OPS_GetNumRemainingInputArgs() < 2) return fail("debug assemble <path> <dt>");
+    const std::string path = OPS_GetString();
+    double dt;
+    if (!readDoubles(1, &dt)) return fail("debug assemble <path> <dt>");
+    LadrunoMPMAnalysisRefs none;
+    std::string err;
+    if (h->debugAssemble(path, dt, g_refs != 0 ? *g_refs : none, err) < 0)
+      return fail("debug assemble -- " + err);
+    return 0;
+  }
   if (what == "activeNodes") {
     std::vector<long> act;
     E.activeNodes(act);
@@ -767,7 +866,7 @@ int OPS_LadrunoMPM(void)
             return fail("output -fields " + f + " -- v1 admits no STATE_ token (the guide lists the admitted ones)");
           if (ladruno_mpm_io::ParticleWriter::components(f, nd).empty())
             return fail("output -fields " + f + " -- not a v1 particle field (POSITION VELOCITY STRESS "
-                        "STRAIN VOLUME GIMP_HALF_LENGTH DEFORMATION_GRADIENT)");
+                        "STRAIN VOLUME GIMP_HALF_LENGTH DEFORMATION_GRADIENT PORE_PRESSURE)");
           fields.push_back(f);
         }
       } else {
@@ -921,6 +1020,76 @@ int OPS_LadrunoMPM(void)
     E.par.safety = a;
     return 0;
   }
+  // ---- WP-232l: two-phase particles (tests/mpm_twophase_interface.md) -----------------
+  if (sub == "twoPhase") return cmdTwoPhase(h);
+  if (sub == "pfix") {
+    double p0;
+    const int f = OPS_GetNumRemainingInputArgs() > 0 ? ladruno_mpm::faceIndex(OPS_GetString()) : -1;
+    if (f < 0 || !readDoubles(1, &p0)) return fail("pfix <face> <p0> (p0 = 0: drained)");
+    std::string err;
+    if (h->setPfix(f, p0, err) < 0) return fail("pfix -- " + err);
+    return 0;
+  }
+  if (sub == "plate") {
+    double F;
+    const int f = OPS_GetNumRemainingInputArgs() > 0 ? ladruno_mpm::faceIndex(OPS_GetString()) : -1;
+    if (f < 0 || !readDoubles(1, &F)) return fail("plate <face> <F> (total normal force into the body, x lambda)");
+    std::string err;
+    if (h->setPlate(f, F, err) < 0) return fail("plate -- " + err);
+    return 0;
+  }
+  if (sub == "traction") {
+    const char *usage = "traction <name> <face> <lo..> <hi..> <t..>";
+    if (OPS_GetNumRemainingInputArgs() < 2) return fail(usage);
+    const std::string name = OPS_GetString();
+    const int f = ladruno_mpm::faceIndex(OPS_GetString());
+    double lo[3], hi[3], t[3];
+    if (f < 0 || !readDoubles(nd, lo) || !readDoubles(nd, hi) || !readDoubles(nd, t)) return fail(usage);
+    std::string err;
+    if (h->addTraction(name, f, lo, hi, t, err) < 0) return fail("traction -- " + err);
+    return 0;
+  }
+  if (sub == "kinematics") {
+    const std::string m = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+    if (m != "small" && m != "hypo") return fail("kinematics small|hypo");
+    std::string err;
+    if (h->setKinematics(m == "small" ? 1 : 0, err) < 0) return fail("kinematics -- " + err);
+    return 0;
+  }
+  if (sub == "pressureCutoff") {                                       // ruling c84f71fb3
+    double c;
+    if (!readDoubles(1, &c) || !(c >= 0.0)) return fail("pressureCutoff <c >= 0> (route S's p cutoff)");
+    E.par.pCut = c;
+    return 0;
+  }
+  if (sub == "pressureBlend") {
+    double a;
+    std::string err;
+    if (!readDoubles(1, &a)) return fail("pressureBlend <alpha_p in [0, 1]>");
+    if (h->setPressureBlend(a, err) < 0) return fail("pressureBlend -- " + err);
+    return 0;
+  }
+  if (sub == "particlePressure" || sub == "particleAcceleration") {
+    const int n = OPS_GetNumRemainingInputArgs();
+    std::vector<double> v(n > 0 ? n : 0);
+    if (n > 0 && !readDoubles(n, v.data())) return fail(sub + " -- every value must be a number");
+    std::string err;
+    const int rc = (sub == "particlePressure") ? h->setParticlePressure(v, err)
+                                               : h->setParticleAcceleration(v, err);
+    if (rc < 0) return fail(sub + " -- " + err);
+    return 0;
+  }
+  if (sub == "porePressure") {
+    int body;
+    double pv;
+    if (!readInt(body) || OPS_GetNumRemainingInputArgs() < 2 || std::string(OPS_GetString()) != "uniform" ||
+        !readDoubles(1, &pv))
+      return fail("porePressure <body> uniform <p>");
+    std::string err;
+    const int n = h->setBodyPorePressure(body, pv, err);
+    if (n < 0) return fail("porePressure -- " + err);
+    return outInt(n);
+  }
   if (sub == "criticalTimeStep" || sub == "particleData" || sub == "condForce" ||
       sub == "particleResponse" || (sub == "info" && OPS_GetNumRemainingInputArgs() > 0)) {
     std::vector<std::string> a(1, sub);
@@ -962,6 +1131,14 @@ int OPS_LadrunoMPM(void)
     if (what == "antiLockingCounts") {                               // WP-232j (F1)
       std::vector<double> c = {(double)E.alAveraged, (double)E.alFallback};
       return outDoubles(c);
+    }
+    if (what == "twoPhase") {                                        // WP-232l (P12)
+      int body;
+      if (!readInt(body)) return fail("info twoPhase <body>");
+      std::vector<double> out;
+      std::string err;
+      if (h->twoPhaseInfo(body, out, err) < 0) return fail("info twoPhase -- " + err);
+      return outDoubles(out);
     }
     bool ok = false;
     const long c = h->infoCounter(what, ok);

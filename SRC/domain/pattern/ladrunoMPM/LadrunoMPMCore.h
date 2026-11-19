@@ -339,6 +339,14 @@ struct Params {
   // WP-232j (tests/mpm_antilocking_interface.md J1, K3): 0 off (default, the shipped
   // arithmetic bit for bit), 1 fbar (the cell-centre F-bar on the step increment)
   int    antiLocking = 0;
+  // WP-232l (tests/mpm_twophase_interface.md P6): 0 hypo (default, the shipped arithmetic
+  // bit for bit), 1 small (dEps = sym(dF - I), R = I, V = V0, no geometric stiffness)
+  int    smallKin = 0;
+  // WP-232l (P5): the pore-pressure G2P blend alpha_p (1 = incremental, FLIP-like)
+  double pBlend = 1.0;
+  // WP-232l (§7a Q4, ruling c84f71fb3): route S's p-activity cutoff, `mpm pressureCutoff`;
+  // `mpm massCutoff` never moves it
+  double pCut = 5.0e-2;
 };
 
 // --------------------------------------------------------------------------- //
@@ -392,7 +400,40 @@ inline int fbarIncrement(int nd, const double *dF, const double *dFc, double *dF
 struct FaceConditions {
   unsigned fixMask[6] = {0, 0, 0, 0, 0, 0};          // bit d = component d fixed
   double   wallMu[6] = {-1.0, -1.0, -1.0, -1.0, -1.0, -1.0};   // < 0: no wall
+  // WP-232l (tests/mpm_twophase_interface.md P8, P10): `mpm pfix <face> <p0>` and
+  // `mpm plate <face> <F>` (a rigid frictionless plate: one normal unknown U)
+  bool     pfixOn[6] = {false, false, false, false, false, false};
+  double   pfixVal[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  bool     plateOn[6] = {false, false, false, false, false, false};
+  double   plateF[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 };
+
+// WP-232l (P9): a face folds the u components of its ghosts iff it carries a u condition
+// (`fix` or `plate`). Without a plate this is 232i's `fixMask != 0` exactly.
+inline bool foldsU(const FaceConditions &fc, int f)
+{
+  return fc.fixMask[f] != 0u || fc.plateOn[f];
+}
+
+// WP-232l (P1): the fluid constants of one two-phase body (LadrunoUP's flags and defaults)
+struct TwoPhaseProps {
+  double Kf = 0.0, n = 0.0, rhoF = 0.0;
+  double kbar[3] = {0.0, 0.0, 0.0};   // k_hydraulic / gamma_w per axis
+  double alpha = 1.0, Ks = -1.0;      // Biot alpha; grain bulk modulus (<= 0: incompressible)
+  int    stabMode = 1;                // 0 off, 1 auto (stabValue = alpha0), 2 manual (stabValue = alpha)
+  double stabValue = 0.25;
+  bool   fluidBodyGiven = false;      // else the drive is `mpm gravity`
+  double fluidBody[3] = {0.0, 0.0, 0.0};
+  double oneOverQbar() const
+  {
+    double v = n / Kf;
+    if (Ks > 0.0) v += (alpha - n) / Ks;
+    return v;
+  }
+};
+
+// The id of plate face f's unknown in support lists (never a lattice index)
+inline long plateId(int f) { return -(2L + f); }
 
 inline int faceIndex(const std::string &s)
 {
@@ -446,8 +487,8 @@ inline double imageCutoffMass(const Grid &g, Basis b, const FaceConditions &fc, 
   g.extIJK(ext, ijk);
   double f = 1.0;
   for (int d = 0; d < g.ndm; d++) {
-    if (ijk[d] == 0 && fc.fixMask[2 * d] != 0u) f *= 2.0;
-    if (ijk[d] == g.n[d] && fc.fixMask[2 * d + 1] != 0u) f *= 2.0;
+    if (ijk[d] == 0 && foldsU(fc, 2 * d)) f *= 2.0;              // WP-232l: plate faces fold too
+    if (ijk[d] == g.n[d] && foldsU(fc, 2 * d + 1)) f *= 2.0;
   }
   return m * f;
 }
@@ -526,6 +567,203 @@ inline bool foldedSupport(const Grid &g, Basis b, const FaceConditions &fc, cons
   return odd;
 }
 
+// --------------------------------------------------------------------------- //
+//  WP-232l (tests/mpm_twophase_interface.md P9, P10, §7a): the general support  //
+//  of one particle, per component c = 0..nd-1 (u) and c = nd (p), for a         //
+//  two-phase epoch or a model with a plate. Per axis, a 1D entry i maps, per     //
+//  component, to (target, sign) pairs:                                           //
+//   - beyond a face f (B-spline only): u folds onto the mirror iff foldsU(f),    //
+//     sign -1 for a fixed component or the plate's normal one (which also adds  //
+//     +2 on the plate unknown: u_g = 2U - u_mirror), +1 otherwise; else the      //
+//     ghost stays its own node. p folds iff foldsU(f) or pfix(f), odd under      //
+//     pfix (drained), even otherwise (impervious).                              //
+//   - the face row of a plate face, normal component: the plate unknown, +1.     //
+//  The unsigned weight W (the lumped mass) folds ghosts onto mirrors where u    //
+//  folds, never onto the plate; the plate entry's W is its face-row W.          //
+//  Appends per entry, in rising engine index (x fastest), plate entries last:   //
+//  node id (plateId(f) for a plate), W, grad W (nd), S'_c (nc = nd + 1), grad    //
+//  S'_c (nc x nd, component-major). Entries with every weight and gradient 0    //
+//  are dropped. GIMP / linear without a plate: S'_c = W = S for every c.        //
+// --------------------------------------------------------------------------- //
+inline void upSupport(const Grid &g, Basis b, const FaceConditions &fc, const double *x,
+                      const double *lp, std::vector<long> &oNode, std::vector<double> &oW,
+                      std::vector<double> &odW, std::vector<double> &oSc, std::vector<double> &odSc)
+{
+  const int nd = g.ndm, nc = nd + 1;
+  const int PLATE = -1000000;            // a 1D target meaning "the plate unknown of this axis"
+  struct E1 { int t; double s, ds; };
+  std::vector<E1> wE[3], cE[3][4];
+  int plateFace[3] = {-1, -1, -1};
+  double wFace[3] = {0, 0, 0}, dwFace[3] = {0, 0, 0};   // the W of the plate's face row
+  auto add = [](std::vector<E1> &L, int t, double s, double ds) {
+    for (E1 &e : L) if (e.t == t) { e.s += s; e.ds += ds; return; }
+    L.push_back(E1{t, s, ds});
+  };
+  const bool bs = isBSpline(b);
+  for (int d = 0; d < nd; d++) {
+    AxisSupport ax;
+    axisSupport(g, b, d, x[d], lp[d], ax);
+    for (int k = 0; k < ax.count; k++) {
+      const int i = ax.idx[k];
+      const double S = ax.S[k], dS = ax.dS[k];
+      int f = -1, mir = i;
+      if (bs) {
+        if (i < 0) { f = 2 * d; mir = -i; }
+        else if (i > g.n[d]) { f = 2 * d + 1; mir = 2 * g.n[d] - i; }
+      }
+      const int rowFace = (i == 0) ? 2 * d : ((i == g.n[d]) ? 2 * d + 1 : -1);
+      if (f >= 0 && foldsU(fc, f)) add(wE[d], mir, S, dS);
+      else add(wE[d], i, S, dS);
+      if (rowFace >= 0 && fc.plateOn[rowFace]) {
+        plateFace[d] = rowFace;
+        wFace[d] += S;
+        dwFace[d] += dS;
+      }
+      for (int c = 0; c < nc; c++) {
+        std::vector<E1> &L = cE[d][c];
+        if (f >= 0) {
+          if (c < nd) {
+            if (foldsU(fc, f)) {
+              const bool plateN = fc.plateOn[f] && c == d;
+              const double sg = ((fc.fixMask[f] & (1u << c)) || plateN) ? -1.0 : 1.0;
+              add(L, mir, sg * S, sg * dS);
+              if (plateN) { add(L, PLATE, 2.0 * S, 2.0 * dS); plateFace[d] = f; }
+            } else {
+              add(L, i, S, dS);
+            }
+          } else {
+            if (foldsU(fc, f) || fc.pfixOn[f]) {
+              const double sg = fc.pfixOn[f] ? -1.0 : 1.0;
+              add(L, mir, sg * S, sg * dS);
+            } else {
+              add(L, i, S, dS);
+            }
+          }
+        } else if (c == d && rowFace >= 0 && fc.plateOn[rowFace]) {
+          add(L, PLATE, S, dS);
+        } else {
+          add(L, i, S, dS);
+        }
+      }
+    }
+  }
+  struct Acc { double W = 0.0, dW[3] = {0, 0, 0}, Sc[4] = {0, 0, 0, 0}, dSc[4][3] = {}; };
+  std::vector<std::pair<long, Acc>> acc;
+  auto slot = [&](long id) -> Acc & {
+    for (auto &pr : acc) if (pr.first == id) return pr.second;
+    acc.push_back(std::make_pair(id, Acc()));
+    return acc.back().second;
+  };
+  const bool three = (nd == 3);
+  {
+    const int cz = three ? (int)wE[2].size() : 1;
+    for (int kz = 0; kz < cz; kz++)
+      for (int ky = 0; ky < (int)wE[1].size(); ky++)
+        for (int kx = 0; kx < (int)wE[0].size(); kx++) {
+          const E1 *e[3] = {&wE[0][kx], &wE[1][ky], three ? &wE[2][kz] : 0};
+          int ijk[3] = {e[0]->t, e[1]->t, three ? e[2]->t : 0};
+          Acc &A = slot(g.extId(ijk));
+          double w = 1.0;
+          for (int d = 0; d < nd; d++) w *= e[d]->s;
+          A.W += w;
+          for (int q = 0; q < nd; q++) {
+            double gq = e[q]->ds;
+            for (int d = 0; d < nd; d++) if (d != q) gq *= e[d]->s;
+            A.dW[q] += gq;
+          }
+        }
+  }
+  for (int c = 0; c < nc; c++) {
+    const int cz = three ? (int)cE[2][c].size() : 1;
+    for (int kz = 0; kz < cz; kz++)
+      for (int ky = 0; ky < (int)cE[1][c].size(); ky++)
+        for (int kx = 0; kx < (int)cE[0][c].size(); kx++) {
+          const E1 *e[3] = {&cE[0][c][kx], &cE[1][c][ky], three ? &cE[2][c][kz] : 0};
+          int pAxis = -1;
+          for (int d = 0; d < nd; d++) if (e[d]->t == PLATE) pAxis = d;
+          long id;
+          if (pAxis >= 0) {
+            id = plateId(plateFace[pAxis]);
+          } else {
+            int ijk[3] = {e[0]->t, e[1]->t, three ? e[2]->t : 0};
+            id = g.extId(ijk);
+          }
+          Acc &A = slot(id);
+          double w = 1.0;
+          for (int d = 0; d < nd; d++) w *= e[d]->s;
+          A.Sc[c] += w;
+          for (int q = 0; q < nd; q++) {
+            double gq = e[q]->ds;
+            for (int d = 0; d < nd; d++) if (d != q) gq *= e[d]->s;
+            A.dSc[c][q] += gq;
+          }
+        }
+  }
+  // the plate entries' W: the face-row W on the plate axis times the other axes' sums
+  for (int d = 0; d < nd; d++) {
+    if (plateFace[d] < 0 || (wFace[d] == 0.0 && dwFace[d] == 0.0)) continue;
+    Acc &A = slot(plateId(plateFace[d]));
+    double sum[3] = {1, 1, 1}, dsum[3] = {0, 0, 0};
+    for (int e = 0; e < nd; e++) {
+      if (e == d) continue;
+      sum[e] = 0.0;
+      for (const E1 &q : wE[e]) { sum[e] += q.s; dsum[e] += q.ds; }
+    }
+    double w = wFace[d];
+    for (int e = 0; e < nd; e++) if (e != d) w *= sum[e];
+    A.W += w;
+    for (int q = 0; q < nd; q++) {
+      double gq = (q == d) ? dwFace[d] : wFace[d] * dsum[q];
+      for (int e = 0; e < nd; e++) if (e != d && e != q) gq *= sum[e];
+      A.dW[q] += gq;
+    }
+  }
+  std::stable_sort(acc.begin(), acc.end(),
+                   [](const std::pair<long, Acc> &a, const std::pair<long, Acc> &b2) {
+                     const bool pa = a.first < 0, pb = b2.first < 0;
+                     if (pa != pb) return !pa;          // lattice entries first
+                     return pa ? a.first > b2.first : a.first < b2.first;
+                   });
+  for (const auto &pr : acc) {
+    const Acc &A = pr.second;
+    bool any = A.W != 0.0;
+    for (int q = 0; q < nd; q++) any = any || A.dW[q] != 0.0;
+    for (int c = 0; c < nc; c++) {
+      any = any || A.Sc[c] != 0.0;
+      for (int q = 0; q < nd; q++) any = any || A.dSc[c][q] != 0.0;
+    }
+    if (!any) continue;
+    oNode.push_back(pr.first);
+    oW.push_back(A.W);
+    for (int q = 0; q < nd; q++) odW.push_back(A.dW[q]);
+    for (int c = 0; c < nc; c++) oSc.push_back(A.Sc[c]);
+    for (int c = 0; c < nc; c++)
+      for (int q = 0; q < nd; q++) odSc.push_back(A.dSc[c][q]);
+  }
+}
+
+// WP-232l (P6, `mpm kinematics small`): the small-strain increment of a relative
+// deformation gradient dF (row-major nd x nd): deps = sym(dF - I) in the hypo kernel's
+// Voigt order, engineering shear ({xx,yy,zz,xy,yz,zx} in 3D, {xx,yy,xy} in plane strain),
+// R1 = I. False when det(dF) <= 0 (an inverted increment is refused as in hypo).
+inline bool smallIncrement(int nd, const double *dF, double *deps, double *R1)
+{
+  if (nd == 3) {
+    const double det = dF[0] * (dF[4] * dF[8] - dF[5] * dF[7]) -
+                       dF[1] * (dF[3] * dF[8] - dF[5] * dF[6]) +
+                       dF[2] * (dF[3] * dF[7] - dF[4] * dF[6]);
+    if (!(det > 0.0)) return false;
+    deps[0] = dF[0] - 1.0; deps[1] = dF[4] - 1.0; deps[2] = dF[8] - 1.0;
+    deps[3] = dF[1] + dF[3]; deps[4] = dF[5] + dF[7]; deps[5] = dF[2] + dF[6];
+    for (int k = 0; k < 9; k++) R1[k] = (k % 4 == 0) ? 1.0 : 0.0;
+  } else {
+    if (!(dF[0] * dF[3] - dF[1] * dF[2] > 0.0)) return false;
+    deps[0] = dF[0] - 1.0; deps[1] = dF[3] - 1.0; deps[2] = dF[1] + dF[2];
+    R1[0] = 1.0; R1[1] = 0.0; R1[2] = 0.0; R1[3] = 1.0;
+  }
+  return true;
+}
+
 const int64_t MAX_PARTICLE_ID = (int64_t(1) << 53) - 1;   // 232a ruling 2
 
 struct Particles {
@@ -536,6 +774,9 @@ struct Particles {
   std::vector<double>   m, V0, lp;                 // constant
   std::vector<double>   x, v, V, F, R, eps, sigHat, sig, sig0;   // committed
   std::vector<double>   a;      // particle acceleration: mode A only (WP-232f); mode F leaves it 0
+  // WP-232l (P2): pore pressure p (compression positive), and its rate and acceleration
+  // (mode A, Newmark's re-seed); 0 for single-phase particles
+  std::vector<double>   pw, pwd, pwdd;
 
   int size() const { return (int)id.size(); }
   void clear()
@@ -544,6 +785,7 @@ struct Particles {
     m.clear(); V0.clear(); lp.clear();
     x.clear(); v.clear(); V.clear(); F.clear(); R.clear(); a.clear();
     eps.clear(); sigHat.clear(); sig.clear(); sig0.clear();
+    pw.clear(); pwd.clear(); pwdd.clear();
   }
 };
 
@@ -639,6 +881,9 @@ class Engine {
     P.m.push_back(rho * V0);
     P.V0.push_back(V0);
     P.V.push_back(V0);
+    P.pw.push_back(0.0);                // WP-232l (P2)
+    P.pwd.push_back(0.0);
+    P.pwdd.push_back(0.0);
     for (int d = 0; d < nd; d++) {
       P.x.push_back(x[d]);
       P.v.push_back(v ? v[d] : 0.0);
@@ -983,9 +1228,14 @@ class Engine {
           F1[nd * a + c] = s;
         }
       double deps[6], R1[9], J1 = 0.0;
-      const int st = (nd == 3)
-        ? ladruno_hypo::hypoIncrementFromF(Fn, F1, deps, R1, &J1)
-        : ladruno_hypo::hypoIncrementFromFPlaneStrain(Fn, F1, deps, R1, &J1);
+      int st;
+      if (par.smallKin) {              // WP-232l (P6): small strain, R = I, V = V0
+        st = smallIncrement(nd, dF, deps, R1) ? 0 : -1;
+        J1 = 1.0;
+      } else {
+        st = (nd == 3) ? ladruno_hypo::hypoIncrementFromF(Fn, F1, deps, R1, &J1)
+                       : ladruno_hypo::hypoIncrementFromFPlaneStrain(Fn, F1, deps, R1, &J1);
+      }
       if (st != 0) {
         err = "the kinematic update of particle " + std::to_string((long long)P.id[p]) +
               " refused: det(F_mid) <= 0 or det(F) <= 0 (inverted or collapsed)";
@@ -1006,7 +1256,8 @@ class Engine {
         teps[nvv * p + k] = e1[k];
         tsh[nvv * p + k] = P.sig0[nvv * p + k] + sm[k];
       }
-      if (nd == 3) ladruno_hypo::pushStress6(R1, &tsh[nvv * p], &tsig[nvv * p]);
+      if (par.smallKin) for (int k = 0; k < nvv; k++) tsig[nvv * p + k] = tsh[nvv * p + k];
+      else if (nd == 3) ladruno_hypo::pushStress6(R1, &tsh[nvv * p], &tsig[nvv * p]);
       else ladruno_hypo::pushStressPlaneStrain(R1, &tsh[nvv * p], &tsig[nvv * p]);
       for (int k = 0; k < nn; k++) { tF[nn * p + k] = F1[k]; tR[nn * p + k] = R1[k]; }
       tV[p] = J1 * P.V0[p];

@@ -268,7 +268,35 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   // D13: "particle id <id>, nDMaterial <class> tag <t>" of the first refusing particle
   std::string refuserText(int p) const;
 
+  // ---- WP-232l: two-phase particles (tests/mpm_twophase_interface.md) ---------------
+  // P1: `mpm twoPhase <body> ...` -- the body's fluid constants; before the first step
+  int    setTwoPhaseBody(int body, const ladruno_mpm::TwoPhaseProps &tp, std::string &err);
+  // P8 `mpm pfix <face> <p0>`; P10 `mpm plate <face> <F>`; P10b `mpm traction ...`
+  int    setPfix(int face, double p0, std::string &err);
+  int    setPlate(int face, double F, std::string &err);
+  int    addTraction(const std::string &name, int face, const double *lo, const double *hi,
+                     const double *t, std::string &err);
+  // P6 `mpm kinematics small|hypo`; P5 `mpm pressureBlend <alpha_p>`
+  int    setKinematics(int small, std::string &err);
+  int    setPressureBlend(double a, std::string &err);
+  // §7a Q5: initial particle state (flat, storage order); `mpm porePressure <body> uniform <p>`
+  int    setParticlePressure(const std::vector<double> &v, std::string &err);
+  int    setParticleAcceleration(const std::vector<double> &a, std::string &err);
+  int    setBodyPorePressure(int body, double p, std::string &err);
+  // P12: `mpm info twoPhase <body>`
+  int    twoPhaseInfo(int body, std::vector<double> &out, std::string &err);
+  // §7a: `mpm debug particleBlocks <p> <path> <6 scales>`; `mpm debug assemble <path> <dt>`
+  int    debugParticleBlocks(int p, const std::string &path, const double *scales, std::string &err);
+  int    debugAssemble(const std::string &path, double dt, const LadrunoMPMAnalysisRefs &A,
+                       std::string &err);
+  bool   anyTwoPhase(void) const;
+  bool   anyPlate(void) const;
+  bool   isTwoPhaseParticle(int p) const;
+
   // ---- LadrunoMPMPointHost --------------------------------------------------------
+  bool   mpmSmallKinematics(void) { return eng.par.smallKin != 0; }
+  double mpmPressureBlend(void) { return eng.par.pBlend; }
+  const double *mpmFluidDrive(int p);
   int    mpmStageParameter(const char **argv, int argc, Parameter &param);   // D9 (c)
   void   mpmTrialRefused(int p);                                             // D14
   ladruno_mpm::Particles &mpmParticles(void) { return eng.P; }
@@ -375,6 +403,18 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   void                    writeFailDump(double t, int attempt);
   // mode F's affine check with the particles' materials (defined where Mats is complete)
   void                    engineAffineCheck(const double *A, const double *b, std::vector<double> &o);
+
+  // ---- WP-232l state ------------------------------------------------------------
+  std::map<int, ladruno_mpm::TwoPhaseProps> twoPhase;   // body id -> fluid constants
+  int                     plateTag[6] = {0, 0, 0, 0, 0, 0};   // the plate unknowns' nodes (0 none)
+  struct Traction { std::string name; int face; double lo[3], hi[3], t[3]; };
+  std::vector<Traction>   tractions;
+  std::vector<std::pair<int, std::vector<double>>> tractionLoads;   // this step: node tag, force
+  std::vector<double>     fdBuf;                   // mpmFluidDrive scratch
+  int    prepareStepUP(double h, std::string &err);   // a two-phase epoch or a plate (§2, §3)
+  int    tagOfExt(long ext) const;                     // a lattice id or plateId(f) -> live tag
+  void   retirePlates(void);
+  std::string twoPhaseAdmission(const LadrunoMPMAnalysisRefs &A) const;
 
   double modeAMassCutoff(void) const;
   int    prepareStep(double h, std::string &err);

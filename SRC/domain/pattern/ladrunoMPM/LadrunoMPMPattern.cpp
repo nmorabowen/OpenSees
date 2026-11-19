@@ -227,6 +227,26 @@ LadrunoMPMPattern::applyLoad(double pseudoTime)
     SP_Constraint *sp;
     while ((sp = it()) != 0)
       if (!sp->isHomogeneous()) sp->applyConstraint(pseudoTime - stepT0);
+    // WP-232l (P10, P10b): the plates' forces (positive F into the body) and the tractions'
+    // nodal forces, x lambda; Domain::applyLoad zeroed every node's unbalance just before
+    Domain *dom = this->getDomain();
+    if (dom != 0) {
+      for (int f = 0; f < 6; f++) {
+        if (!eng.fc.plateOn[f] || plateTag[f] == 0) continue;
+        Node *n = dom->getNode(plateTag[f]);
+        if (n == 0) continue;
+        Vector F(n->getNumberDOF());
+        F(f / 2) = (f % 2) ? -eng.fc.plateF[f] : eng.fc.plateF[f];
+        n->addUnbalancedLoad(F, lambda);
+      }
+      for (const auto &tl : tractionLoads) {
+        Node *n = dom->getNode(tl.first);
+        if (n == 0 || n->getNumberDOF() != (int)tl.second.size()) continue;
+        Vector F(n->getNumberDOF());
+        for (int a = 0; a < F.Size(); a++) F(a) = tl.second[a];
+        n->addUnbalancedLoad(F, lambda);
+      }
+    }
   }
 }
 
@@ -432,7 +452,9 @@ LadrunoMPMPattern::admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic,
     err = "nDMaterial " + std::to_string(matTag) + " (class tag " + std::to_string(ct) +
           ") is not admitted at MPM particles. Admitted: ElasticIsotropic, LadrunoJ2"
           " (without -autoRegularization), DruckerPrager, LadrunoSANISAND and LadrunoHS"
-          " (ADR 232 §6, WP-232k)";
+          " (ADR 232 §6, WP-232k). Porous materials (PDMY, PIMY, FluidSolidPorous) are not"
+          " admitted: two-phase particles take an effective-stress material and `mpm twoPhase`"
+          " (WP-232l U1)";
     delete copy;
     copy = 0;
     return -1;
@@ -812,6 +834,18 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
                   " \"Soil particles\"). Mode A admits it on every basis (quasi-static runs).\n";
         return -1;
       }
+  // WP-232l: route S (mode F) is a later batch of this WP; until it lands, mode F refuses a
+  // two-phase body and the conditions only route E reads, rather than ignore them
+  {
+    bool pf = false;
+    for (int f = 0; f < 6; f++) pf = pf || eng.fc.pfixOn[f];
+    if (anyTwoPhase() || anyPlate() || pf || !tractions.empty()) {
+      opserr << "ERROR mpm analyze -- a two-phase body, `mpm pfix`, `mpm plate` and `mpm traction`"
+                " run in mode A (route E) in this build; route S (mode F, tests/mpm_twophase_interface.md"
+                " §5) is not built yet. Refused rather than ignored.\n";
+      return -1;
+    }
+  }
   // WP-232k (D18, #1109): mode F used to accept `mpm pforce` and ignore it, a silent wrong
   // answer. Particle point forces are mode A's (interface §5); refused here.
   for (double f : pforce)
@@ -1231,6 +1265,7 @@ LadrunoMPMPattern::writeOutputNow(std::string &err)
       else if (f == "VOLUME") r.push_back(P.V[q]);
       else if (f == "GIMP_HALF_LENGTH") r.insert(r.end(), &P.lp[nd * q], &P.lp[nd * q] + nd);
       else if (f == "DEFORMATION_GRADIENT") r.insert(r.end(), &P.F[nn * q], &P.F[nn * q] + nn);
+      else if (f == "PORE_PRESSURE") r.push_back(q < (int)P.pw.size() ? P.pw[q] : 0.0);   // WP-232l
     }
   }
   if (writer->writeOutput(dom->getCommitTag(), dom->getCurrentTime(), ids, rows, err) < 0) return -1;

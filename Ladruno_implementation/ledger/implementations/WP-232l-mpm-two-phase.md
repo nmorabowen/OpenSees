@@ -1,0 +1,9 @@
+---
+wp: WP-232l
+title: "WP-232l: MPM two-phase particles -- saturated Biot u-p, route E (mode A) and route S (mode F)"
+pr: "#1116"
+date: 2026-11-18
+status: "draft"
+section: "table"
+---
+| **WP-232l — MPM two-phase particles, ADR 232 phase 6** ([[232_ladruno_mpm_general_driver_adr]] §9 phase 6, amendment "232l kickoff"; frozen interface `tests/mpm_twophase_interface.md`, P1–P13 and §7a). `mpm twoPhase <body>` (LadrunoUP's flags and defaults) makes a body two-phase. In a two-phase epoch every mode-A grid node carries ndf = ndm + 1, p last; a stray p is fixed. Each two-phase `LadrunoMPMPoint` adds LadrunoUP's Q, H, S, H̃ and f_seep through `LadrunoUPKernel.h` at its own weights (h = the grid spacing), with LadrunoUP's block placement and a solid-only Rayleigh damping. Particles carry p, ṗ, p̈ (volume-weighted projection, incremental update, `mpm pressureBlend`). New commands: `mpm kinematics small|hypo`, `mpm pfix`, `mpm plate` (a rigid frictionless plate: one normal unknown), `mpm traction` (GIMP / linear), `mpm particlePressure`, `mpm particleAcceleration`, `mpm porePressure`, `mpm info twoPhase`, `mpm pressureCutoff`, `mpm debug particleBlocks`, `mpm debug assemble`. Also new: a `PORE_PRESSURE` particle output field (additive) and restart pack 4 → 5. Route S (mode F) is not built yet; mode F refuses two-phase bodies until it lands. | LoadPattern host + element extension | **none — no new classes** | `SRC/domain/pattern/ladrunoMPM/{LadrunoMPMCore.h,LadrunoMPMPattern.h,LadrunoMPMPattern.cpp,LadrunoMPMImplicit.cpp,LadrunoMPMTwoPhase.cpp,LadrunoMPMIO.cpp,OPS_LadrunoMPM.cpp,CMakeLists.txt}`, `SRC/element/ladrunoMPMPoint/{LadrunoMPMPoint.h,LadrunoMPMPoint.cpp}`, `Ladruno_scripts/ladruno_recorder_tests/ladruno_format.py`, `tests/mpm_twophase_interface.md` | draft | [#1116](https://github.com/nmorabowen/OpenSees/pull/1116) |
