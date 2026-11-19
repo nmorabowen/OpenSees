@@ -1894,6 +1894,97 @@ def r4_cost(nsteps=900, dt=0.02):
     return out
 
 
+R3 = {"H": 10.0, "h": 0.5, "g": 9.81, "rho": 2.0, "rhoF": 1.0, "E": 1.0e4, "nu": 0.2,
+      "Kf": 4444.0, "poro": 0.4, "kbar": 1.0e-4, "D": 2.0, "V": 0.05, "Tr": 2.0,
+      "settle1": (900, 1.0), "translate_dt": 0.1, "settle2": (100, 1.0)}
+
+
+def r3_cell_crossing(basis, translate=True, stab=("auto", 0.25)):
+    """Row 3 (orchestrator's protocol): T4's column, SEALED (every face impervious, no pfix), particle
+    p initialised hydrostatic gamma_w (H - Y) by `mpm particlePressure`, the skeleton loaded by its
+    own gravity from t = 0 and settled (900 s, dt 1 s: Tv 5), then translated rigidly down 4 cells
+    (D = 2 m) by K0's floor, `gridvel floor box 0 -1 W 0 v free -V profile t0 Tr t1 translate y`
+    (mpm_soil_interface.md D17), V = 0.05 m/s, ramps Tr = 2 s: |a| = 0.025 m/s^2, inertial pressure
+    <= rho_sat a H = 0.5 kPa = 0.51 % gamma_w H; dt 0.1 s through the translation; then settled
+    (100 s, dt 1 s). Twin: v = 0, the same timeline. Metric: the offset-free RMS of
+    (p - mean p) - (gamma_w (H - Y0) - mean), Y0 the initial particle Y, over gamma_w H."""
+    ops = fe_engine()
+    c = R3
+    H, h = c["H"], c["h"]
+    W = 2 * h if basis.startswith("bspline") else h
+    gw = c["rhoF"] * c["g"]
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, c["E"], c["nu"], c["rho"])
+    ops.mpm("grid", 232, "-origin", 0.0, -5.0, "-h", h, "-cells", int(round(W / h)), 31,
+            "-basis", basis)
+    ops.mpm("mode", "implicit")
+    ops.mpm("body", 1, "box", 0.0, 0.0, W, H, "-ppc", 2, "-mat", 1, "-rho", c["rho"])
+    # 232k's D19a carrier: a bonded single-phase elastic block y in [-1.5, 0] under the column; the
+    # translating gridvel prescribes the rows 2 to 4 cells below the soil, inside the block, so no
+    # prescribed row enters or leaves a soil particle's support (the bare-nodes floor of D19 drops
+    # the column ~0.3 m when its top row leaves the moving box: measured, then replaced)
+    ops.nDMaterial("ElasticIsotropic", 2, c["E"], c["nu"], c["rho"])
+    ops.mpm("body", 2, "box", 0.0, -1.5, W, 0.0, "-ppc", 2, "-mat", 2, "-rho", c["rho"])
+    sa = ["-stab", "off"] if stab == "off" else ["-stab", "auto", float(stab[1])]
+    ops.mpm("twoPhase", 1, "-Kf", c["Kf"], "-poro", c["poro"], "-rhoF", c["rhoF"],
+            "-perm", c["kbar"], c["kbar"], *sa)
+    ops.mpm("gravity", 0.0, -c["g"])
+    ops.mpm("fix", "xmin", "x")
+    ops.mpm("fix", "xmax", "x")
+    n1, dt1 = c["settle1"]
+    t0 = n1 * dt1
+    t1 = t0 + c["D"] / c["V"] + c["Tr"]
+    v = -c["V"] if translate else 0.0
+    ops.mpm("gridvel", "floor", "box", 0.0, -2.0, W, -1.0, "v", "free", v,
+            "profile", t0, c["Tr"], t1, "translate", "y")
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("UmfPack")
+    ops.algorithm("Linear")
+    ops.integrator("Newmark", 0.6, 0.3025)
+    ops.analysis("Transient")
+    xs = _flat(ops.mpm("particleData", "x"))
+    Yall = np.array(xs[1::2])
+    soil = Yall > 0.0                      # body 1 (the block's particles lie below y = 0)
+    Y0 = Yall[soil]
+    ops.mpm("particlePressure", *[gw * (H - y) if y > 0.0 else 0.0 for y in Yall])
+    ref = gw * (H - Y0)
+
+    def metric():
+        p = np.array(_flat(ops.mpm("particleData", "p")))[soil]
+        e = (p - p.mean()) - (ref - ref.mean())
+        return float(np.sqrt(np.mean(e * e)) / (gw * H)), float(p.mean() - ref.mean())
+
+    out = {"basis": basis, "translate": translate, "stab": stab if isinstance(stab, str) else list(stab),
+           "W": W, "t0": t0, "t1": t1, "protocol": dict(c), "particles": len(Y0),
+           "floor": "D19a block: elastic carrier y in [-1.5, 0], gridvel rows y in [-2, -1]"}
+    out["metric_initial"] = metric()[0]
+    ops.mpm("analyze", n1, dt1)
+    out["after_settle1"], out["offset_after_settle1"] = metric()
+    nt = int(round((t1 - t0) / c["translate_dt"]))
+    worst = 0.0
+    hist = []
+    for k in range(nt):
+        ops.mpm("analyze", 1, c["translate_dt"])
+        if k % 10 == 9:
+            m_, off = metric()
+            worst = max(worst, m_)
+            yy = np.array(_flat(ops.mpm("particleData", "x"))[1::2])[soil]
+            hist.append({"t": t0 + (k + 1) * c["translate_dt"], "metric": m_, "offset": off,
+                         "mean_dy": float(np.mean(yy - Y0))})
+    out["max_during_translation"] = worst
+    out["translation_history"] = hist
+    out["after_translation"] = metric()[0]
+    n2, dt2 = c["settle2"]
+    ops.mpm("analyze", n2, dt2)
+    out["after_settle2"], out["offset_after_settle2"] = metric()
+    y = np.array(_flat(ops.mpm("particleData", "x"))[1::2])[soil]
+    out["mean_displacement_y"] = float(np.mean(y - Y0))
+    out["displacement_spread"] = float(np.ptp(y - Y0))
+    return out
+
+
 # ==============================================================================================
 def main(argv):
     leg = argv[1] if len(argv) > 1 else "closed"
@@ -2068,6 +2159,16 @@ def main(argv):
                                               for b in ("gimp", "bspline2") for bl in (1.0, 0.0)]
         if "r4" in which:
             rec["r4_cost"] = r4_cost()
+        if "r3" in which:
+            rec["r3_cell_crossing"] = [r3_cell_crossing(b, tr) for b in ("gimp", "bspline2")
+                                       for tr in (True, False)]
+        if "r5" in which:
+            rec["r5_undrained_simple_shear"] = {
+                "status": "not run: no drainage switch at particles",
+                "reason": ("tests/mpm_twophase_interface.md (P8 `mpm pfix <face> <p0>`; §1-§7c) offers "
+                           "no way to release a pfix or change the permeability mid-run, which the "
+                           "protocol's drained confinement -> sealed shear needs; per the "
+                           "orchestrator's protocol none is invented")}
         print(_save("r_rows_route_e", rec))
         return
     if leg == "b4":

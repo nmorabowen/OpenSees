@@ -258,3 +258,6 @@ def test_r_rows_route_e_record():
     assert {(r["basis"], r["pressureBlend"]) for r in d["r2_projection_diffusion"]} == {
         ("gimp", 1.0), ("gimp", 0.0), ("bspline2", 1.0), ("bspline2", 0.0)}
     assert len(d["r4_cost"]) == 6
+    assert {(r["basis"], r["translate"]) for r in d["r3_cell_crossing"]} == {
+        ("gimp", True), ("gimp", False), ("bspline2", True), ("bspline2", False)}
+    assert d["r5_undrained_simple_shear"]["status"].startswith("not run")
