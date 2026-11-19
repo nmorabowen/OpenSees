@@ -1,0 +1,56 @@
+{
+ "bound": "lower",
+ "checker": {
+  "name": "schema-fixture",
+  "version": "0"
+ },
+ "checks": {
+  "repair_mu": null,
+  "rho_bc": null,
+  "rho_cone": null,
+  "rho_div": null,
+  "rho_eq_final": null,
+  "rho_flow": null,
+  "rho_iso_final": null,
+  "rho_jump": null,
+  "rho_resultant": null,
+  "straightness_max": null,
+  "work_reference": null
+ },
+ "classification": "certified_bound",
+ "criteria": [
+  "von_mises"
+ ],
+ "domain_claim": "box_stated",
+ "floor": 1.7320508075688772e-12,
+ "flow_rule": "associated",
+ "format": "ladruno-limit-certificate",
+ "format_version": 0,
+ "formulation": "lower.p1d-vertex.v0",
+ "interface_laws": [],
+ "problem_sha256": "f470c8fd87080299a81002a86ef38d3e3b2de0a9d696b72c2c5dcc5ce494f356",
+ "query_id": "q",
+ "reasons": [],
+ "result_sha256": "af38ade713e0a265cfae7ca2bdfb3cc8b2c1ffab5fce417da22275502ee02db6",
+ "tolerances": {
+  "FLOOR_MIN_REL": 1e-12,
+  "TOL_CASE_EXACT_GAP": 1e-06,
+  "TOL_CASE_ONE_SIDED": 1e-06,
+  "TOL_CONE_ACCEPT": 1e-06,
+  "TOL_CONE_MARGIN": 1e-12,
+  "TOL_EQ_ACCEPT": 1e-06,
+  "TOL_EQ_FINAL": 1e-11,
+  "TOL_FEAS_LOCKED": 1e-06,
+  "TOL_FEAS_OK": 1e-09,
+  "TOL_FLOW_ACCEPT": 1e-06,
+  "TOL_FLOW_FINAL": 1e-11,
+  "TOL_GEOM_PLANE": 1e-09,
+  "TOL_GEOM_STRAIGHT": 1e-09,
+  "TOL_GEOM_VOLUME": 1e-10,
+  "TOL_INTERIOR_MIN": 1e-06,
+  "TOL_REPAIR_MAX": 0.001,
+  "TOL_WORK_MIN": 1e-12
+ },
+ "value_candidate": 1.7320508075688772,
+ "value_certified": 1.7320508075688772
+}
