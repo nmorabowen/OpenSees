@@ -341,5 +341,136 @@
     }
    }
   ]
+ },
+ "patch_fix2_steady_58727204e": {
+  "build": "58727204eb342860700b17550a747a6e869f13ed",
+  "date": "2026-11-18 21:31",
+  "wall_s": 168.85950922966003,
+  "results": [
+   {
+    "E": 10000.0,
+    "drive": true,
+    "unit": "rhoF g H",
+    "steps": 128,
+    "steady": true,
+    "last_change": 7.634169658421463e-14,
+    "base_err": 5.9959521377025835e-06,
+    "max_err": 1.5957184026701243e-05,
+    "pass": false,
+    "selfcheck_bookkeeping_max": 5.192753137217307e-14,
+    "selfcheck_pi_c_max": 0.0,
+    "motion_max": 1.7356266704496945e-05,
+    "selfcheck_pass": true,
+    "history": {
+     "1": {
+      "bookkeeping": 2.897218086687462e-16,
+      "pi_c_eq_pi": 0.0,
+      "motion": 1.6091213095944264e-05
+     },
+     "2": {
+      "bookkeeping": 2.4198561378730985e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 1.7356266704496945e-05
+     },
+     "5": {
+      "bookkeeping": 2.992169882575383e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 1.5057143591307034e-05
+     },
+     "20": {
+      "bookkeeping": 3.2023782269637674e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 1.5975827248161003e-05
+     },
+     "100": {
+      "bookkeeping": 1.4651990056904182e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 1.5957184046692047e-05
+     },
+     "128": {
+      "bookkeeping": 2.3818965013203105e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 1.5957184046402325e-05
+     }
+    }
+   }
+  ],
+  "diagnosis": "MISS (base 6.0e-6 against 1e-10, steady at step 128); the renormalisation fix works: the grid field is exact, |sum S^p c + pi - gw(H - y)| <= 2.35e-14 gw H at every particle and every coefficient c_a = gw(H - Y_a) to 2.4e-14. The particle error is the P5a motion residual, the part of q that the moved supports cannot represent (max 1.7e-5 per step; frozen once the column stops, never damped by P5a). Bookkeeping 5.2e-14, pi_c = pi exactly. The pi = 0 twin carries the same kind of residual (base 2.2e-9, max 1.5e-6); E 1e6 5.7e-8; rigid 5.7e-11 passes."
+ },
+ "patch_fix2_controls_58727204e": {
+  "build": "58727204eb342860700b17550a747a6e869f13ed",
+  "date": "2026-11-18 21:31",
+  "wall_s": 170.74884557724,
+  "results": [
+   {
+    "E": 10000.0,
+    "drive": false,
+    "unit": "rhoF g H",
+    "steps": 107,
+    "steady": true,
+    "last_change": 5.522237326423566e-14,
+    "base_err": 2.2271262221454113e-09,
+    "max_err": 1.5457043397230267e-06,
+    "pass": false
+   },
+   {
+    "E": 1000000.0,
+    "drive": true,
+    "unit": "rhoF g H",
+    "steps": 110,
+    "steady": true,
+    "last_change": 6.156588434210857e-14,
+    "base_err": 5.728850065757457e-08,
+    "max_err": 4.879663131870453e-07,
+    "pass": false
+   },
+   {
+    "E": 1000000000.0,
+    "drive": true,
+    "unit": "rhoF g H",
+    "steps": 130,
+    "steady": true,
+    "last_change": 9.937458037337995e-14,
+    "base_err": 5.7290314750679554e-11,
+    "max_err": 4.926344709898195e-10,
+    "pass": true,
+    "selfcheck_bookkeeping_max": 5.334966452940601e-14,
+    "selfcheck_pi_c_max": 0.0,
+    "motion_max": 4.9660664299783e-10,
+    "selfcheck_pass": true,
+    "history": {
+     "1": {
+      "bookkeeping": 2.897218086687462e-16,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.9660664299783e-10
+     },
+     "2": {
+      "bookkeeping": 3.533700685106614e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.893384100913701e-10
+     },
+     "5": {
+      "bookkeeping": 4.436959351293111e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.954236771647126e-10
+     },
+     "20": {
+      "bookkeeping": 3.97778436895172e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.923719739773591e-10
+     },
+     "100": {
+      "bookkeeping": 3.1213430536670254e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.926073186240633e-10
+     },
+     "130": {
+      "bookkeeping": 3.595775895272783e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.926073186240633e-10
+     }
+    }
+   }
+  ]
  }
 }
