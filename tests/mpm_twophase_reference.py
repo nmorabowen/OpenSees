@@ -687,7 +687,7 @@ def fe_b4(stab):
 # FE identity (route E): linear basis, particles at the 2x2 (2x2x2) Gauss points, V_p = Gauss
 # weight x detJ = (h/2)^ndm, small strain. The common state is interface §7a Q5's re-seed: the
 # particles carry sigma' = 0, F = I and the values of t1_particle_values; the FE nodal state is
-# their P5 projection (u = 0, v = v^, a = a^, p = p^, pd = pd^, pdd = pdd^).
+# their projection, P5a for p, pd, pdd (u = 0, v = v^, a = a^, p = p^, pd = pd^, pdd = pdd^).
 T1 = {"E": 1.0e4, "nu": 0.2, "rho": 2.0, "Kf": 4444.0, "poro": 0.4, "rhoF": 1.0, "kbar": 1.0e-2,
       "g": 9.81, "dt": 0.01, "gamma": 0.6, "beta": 0.3025, "h": 1.0, "renorm_cut": 0.05}
 T1_MESHES = {"q4_1": (2, 1), "q4_2x2": (2, 2), "h8_1": (3, 1)}     # name -> (ndm, cells per axis)
@@ -779,9 +779,10 @@ def renormalize(supports, masses, cut):
     return out, mnode
 
 
-def p5_projection(parts, supports, two_phase=None):
-    """Interface §7a Q5: m_a = sum S m; v^, a^ mass-weighted; p^, pd^, pdd^ volume-weighted over
-    the two-phase particles (two_phase: per-particle flags, default all)."""
+def p5_projection(parts, supports, two_phase=None, consistent=True):
+    """Interface §7a Q5 with §7b P5a: m_a = sum S m; v^, a^ mass-weighted; p^, pd^, pdd^ by the
+    consistent L2 projection over the two-phase particles (consistent=False: P5's lumped,
+    volume-weighted form, kept for the record). Returns (nodal dict, M's smallest eigenvalue)."""
     acc = {}
     for k, (P, sup) in enumerate(zip(parts, supports)):
         tp = True if two_phase is None else two_phase[k]
@@ -803,7 +804,39 @@ def p5_projection(parts, supports, two_phase=None):
                     "a": (r["ma"] / r["m"]).tolist(),
                     "p": r["Vp"] / V if V > 0 else 0.0, "pd": r["Vpd"] / V if V > 0 else 0.0,
                     "pdd": r["Vpdd"] / V if V > 0 else 0.0}
-    return out
+    if not consistent:
+        return out, None
+    # P5a (interface §7b): p, pd, pdd by the consistent L2 projection over the p-active nodes
+    # (every node a two-phase particle touches, here), M x^ = P^T V x_part, solved densely
+    tp = [True] * len(parts) if two_phase is None else list(two_phase)
+    pn = sorted({i for k, sup in enumerate(supports) if tp[k] for i, _, _ in sup},
+                key=lambda t: t[::-1])
+    X, eigmin = consistent_l2(
+        [[(i, S) for i, S, _ in sup] for k, sup in enumerate(supports) if tp[k]],
+        [P["V"] for k, P in enumerate(parts) if tp[k]],
+        [[P["p"], P["pd"], P["pdd"]] for k, P in enumerate(parts) if tp[k]], pn)
+    for a, idx in enumerate(pn):
+        out[idx]["p"], out[idx]["pd"], out[idx]["pdd"] = (float(v) for v in X[a])
+    return out, eigmin
+
+
+def consistent_l2(weights, V, values, nodes):
+    """P5a: solve M x^ = P^T V x with M_ab = sum_p V_p S_pa S_pb over `nodes` (dense; the oracle
+    rule of the P5a freeze). weights[k] = [(node, S^p)], values[k] = the particle's row of fields.
+    Returns (x^ [len(nodes), nfields], the smallest eigenvalue of M)."""
+    ix = {n: a for a, n in enumerate(nodes)}
+    nn = len(nodes)
+    vals = np.atleast_2d(np.asarray(values, float))
+    if vals.shape[0] != len(weights):
+        vals = vals.T
+    M = np.zeros((nn, nn))
+    R = np.zeros((nn, vals.shape[1]))
+    for w, Vp, x in zip(weights, V, vals):
+        for i, Si in w:
+            R[ix[i]] += Vp * Si * x
+            for j, Sj in w:
+                M[ix[i], ix[j]] += Vp * Si * Sj
+    return np.linalg.solve(M, R), float(np.linalg.eigvalsh(M).min())
 
 
 def stab_alpha(h, K, G, a0):
@@ -824,7 +857,7 @@ def fe_t1(mesh, mat, stab):
     parts = t1_particles(ndm, n, h, c["rho"])
     sups = [linear_support(P["x"], n, h) for P in parts]
     sups, _ = renormalize(sups, [P["m"] for P in parts], c["renorm_cut"])
-    proj = p5_projection(parts, sups)
+    proj, eigmin = p5_projection(parts, sups)
     ops.wipe()
     ops.model("basic", "-ndm", ndm, "-ndf", ndf)
     tag = {}
@@ -903,6 +936,7 @@ def fe_t1(mesh, mat, stab):
         alpha_st = float(stab)
     return {"mesh": mesh, "ndm": ndm, "cells": n, "material": mat,
             "stab": stab if isinstance(stab, str) else list(stab), "alpha_st": alpha_st,
+            "projection": "P5a consistent L2 (interface §7b)", "M_eigmin": eigmin,
             "particles": parts, "nodes": nodes_out, "dofs": labels,
             "A": A.tolist(), "b": b.tolist(), "dU": dU.tolist(),
             "printB_after_step_norm": float(np.linalg.norm(b_after)),
@@ -1231,7 +1265,7 @@ def modeA_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
     sups, _ = renormalize(sups, [m] * N, case["renorm_cut"])
     parts = [{"m": m, "V": V0, "v": st["v"][k], "a": st["a"][k], "p": st["p"][k],
               "pd": st["pd"][k], "pdd": st["pdd"][k]} for k in range(N)]
-    proj = p5_projection(parts, sups)
+    proj, eigmin = p5_projection(parts, sups)
     nodes = sorted(proj, key=lambda t: t[::-1])
     eq = {idx: k * ndf for k, idx in enumerate(nodes)}
     neq = len(nodes) * ndf
@@ -1309,7 +1343,9 @@ def modeA_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
         deps = sum(bmat(sup[j][2], ndm) @ u[j] for j in range(len(sup)))
         new["sig"][k] = st["sig"][k] + D @ deps
     grid_out = {"nodes": [grid.node_id(i) for i in nodes], "node_idx": [list(i) for i in nodes],
-                "U": U1.tolist(), "V": V1.tolist(), "A": A1.tolist()}
+                "U": U1.tolist(), "V": V1.tolist(), "A": A1.tolist(), "M_eigmin": eigmin,
+                "phat": [proj[i]["p"] for i in nodes], "pdhat": [proj[i]["pd"] for i in nodes],
+                "pddhat": [proj[i]["pdd"] for i in nodes]}
     return new, grid_out
 
 
@@ -1389,15 +1425,12 @@ def routeS_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
         sg = sum(S for _, S, _ in kept)
         gm = sum(dS for _, _, dS in kept)
         spr.append([(a, S / sg, (dS - (S / sg) * gm) / sg) for a, S, dS in kept])
-    Vw2 = np.zeros(nn)
-    Vp2 = np.zeros(nn)
-    for k in range(N):
-        for a, S, _ in spr[k]:
-            Vw2[a] += S * V0
-            Vp2[a] += S * V0 * st["p"][k]
+    # P5a: p^ is the consistent L2 projection over the p-active nodes (pinned ones included)
+    Xh, eigmin = consistent_l2([[(a, S) for a, S, _ in spr[k]] for k in range(N)], [V0] * N,
+                               [[st["p"][k]] for k in range(N)], pact)
     phat = np.zeros(nn)
-    for a in pact:
-        phat[a] = Vp2[a] / Vw2[a]
+    for k_, a in enumerate(pact):
+        phat[a] = Xh[k_, 0]
     Sst = np.zeros((npn, npn))
     Hm = np.zeros((npn, npn))
     Qm = np.zeros((nn * ndm, npn))
@@ -1459,7 +1492,7 @@ def routeS_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
         new["sig"][k] = st["sig"][k] + D @ deps
     return new, {"nodes": [grid.node_id(nodes[a]) for a in pact],
                  "node_idx": [list(nodes[a]) for a in pact], "p": pval.tolist(),
-                 "phat": ph.tolist()}
+                 "phat": ph.tolist(), "M_eigmin": eigmin}
 
 
 def t0_routeS(case=T0S):
@@ -1488,7 +1521,7 @@ def oracle_vs_fe_t1(leg):
     parts = leg["particles"]
     sups = [linear_support(P["x"], n, c["h"]) for P in parts]
     sups, _ = renormalize(sups, [P["m"] for P in parts], c["renorm_cut"])
-    proj = p5_projection(parts, sups)
+    proj, eigmin = p5_projection(parts, sups)
     lab = {(tuple(int(round(v / c["h"])) for v in L[1:1 + ndm]), L[-1]): e
            for e, L in enumerate(leg["dofs"])}
     neq = len(leg["dofs"])
@@ -1524,6 +1557,120 @@ def oracle_vs_fe_t1(leg):
     Afe, bfe = np.array(leg["A"]), np.array(leg["b"])
     return (float(np.linalg.norm(A - Afe) / np.linalg.norm(Afe)),
             float(np.linalg.norm(b - bfe) / np.linalg.norm(bfe)))
+
+
+# --------------------------------------------------------------------- §7b numpy checks
+def sealed_column_check(steps=3):
+    """The P5a sealed-column invariant (§7b): motionless (every u fixed), sealed (no pfix),
+    kbar = 0, pd = pdd = 0, gravity 0, sigma' = 0, and a particle p field the grid CANNOT
+    represent (9 particles, 4 nodes). Mode-A steps must keep every particle p bit for bit,
+    whatever x^ is. Returns (max |p_n - p_0| over the steps, the invisible residual norm)."""
+    case = dict(T0A, cells=(1, 1), box=((0.0, 0.0), (1.0, 1.0)), ppc=3, gravity=(0.0, 0.0),
+                fix=[("xmin", (0, 1)), ("xmax", (0, 1)), ("ymin", (0, 1)), ("ymax", (0, 1))],
+                pfix=[], rayleigh=(0.0, 0.0),
+                fluid=dict(T0A["fluid"], perm=(0.0, 0.0)))
+    grid = OGrid(case["x0"], case["h"], case["cells"])
+    X, V0, m, lpv = lattice(grid, *case["box"], case["ppc"], case["rho"])
+    lp = [lpv] * 2
+    D = elastic_D(case["E"], case["nu"], 2)
+    a_st = stab_value(case["fluid"], D, grid.h, 2)
+    N = len(X)
+    st = {"x": X.copy(), "v": np.zeros((N, 2)), "a": np.zeros((N, 2)),
+          "p": np.array([5.0 + 3.0 * math.sin(7.0 * x) * math.cos(5.0 * y) for x, y in X]),
+          "pd": np.zeros(N), "pdd": np.zeros(N), "sig": np.zeros((N, 3))}
+    p0 = st["p"].copy()
+    worst = 0.0
+    for _ in range(steps):
+        st, g = modeA_step(st, grid, case, V0, m, lp, D, a_st)
+        worst = max(worst, float(np.max(np.abs(st["p"] - p0))))
+    sups, _ = renormalize([grid.support(x, lp) for x in X], [m] * N, case["renorm_cut"])
+    interp = np.array([sum(S * g["U"][3 * g["node_idx"].index(list(i)) + 2] for i, S, _ in sup)
+                       for sup in sups])
+    return worst, float(np.linalg.norm(p0 - interp)), st
+
+
+def bspline2_1d(r, h):
+    """mpm_bspline_interface.md B1, quadratic."""
+    xi = r / h
+    a = abs(xi)
+    s = 1.0 if xi > 0 else (-1.0 if xi < 0 else 0.0)
+    if a < 0.5:
+        return 0.75 - xi * xi, -2.0 * xi / h
+    if a < 1.5:
+        return 0.5 * (1.5 - a) ** 2, -s * (1.5 - a) / h
+    return 0.0, 0.0
+
+
+def fix2_hydrostatic_check(H=2.0, W=1.0, h=0.5, ppc=2, rhoF=1.0, g=9.81, lam=1.0,
+                           affine=True):
+    """§7b fix 2, the static algebra, on a bspline2 column x in [0, W], y in [0, H]: xmin/xmax
+    impervious with a tangential drive (p images even), ymin impervious with the normal drive
+    b_f = (0, -g) (the AFFINE even image c_g = c_m + rhoF lam b_f,y (Y_g - Y_m)), ymax drained
+    p0 = 0 (odd image). With the nodal coefficients c_a = rhoF g (H - Y_a) on the real nodes:
+      (a) sum_a S'_a c_a + pi_p = rhoF g (H - y_p) at every particle (values and gradients),
+      (b) the p-row flux integrand grad(p_h) - rhoF b_f vanishes at every particle (zero flux:
+          the hydrostatic field is an exact steady solution of the p rows),
+      (c) the P5a projection of x_part - pi returns the c_a, and G2P (adding pi back) returns
+          the particle p exactly.
+    affine=False is the negative control (P9's plain even image). Returns the three max errors
+    (over gamma_w H; (b) over gamma_w)."""
+    nx, ny = int(round(W / h)), int(round(H / h))
+    b = np.array([0.0, -g]) * lam
+    phys = lambda y: rhoF * g * (H - y)          # noqa: E731
+    pts = []
+    for j in range(ppc * ny):
+        for i in range(ppc * nx):
+            pts.append(((i + 0.5) * h / ppc, (j + 0.5) * h / ppc))
+    errs = [0.0, 0.0, 0.0]
+    weights, values, nodes = [], [], set()
+    for (x, y) in pts:
+        ax = []
+        for d, (xp, n) in enumerate(((x, nx), (y, ny))):
+            c = min(int(math.floor(xp / h)), n - 1)
+            lst = []
+            for i in range(c - 1, c + 3):
+                S, dS = bspline2_1d(xp - i * h, h)
+                if S == 0.0 and dS == 0.0:
+                    continue
+                lst.append((i, S, dS))
+            ax.append(lst)
+        Sp = {}
+        pi_v, pi_g = 0.0, np.zeros(2)
+        for (ix, Sx, dSx) in ax[0]:
+            for (iy, Sy, dSy) in ax[1]:
+                S, dS = Sx * Sy, np.array([dSx * Sy, Sx * dSy])
+                jx, sx = ix, 1.0
+                if ix < 0:
+                    jx = -ix                         # xmin image, even
+                elif ix > nx:
+                    jx = 2 * nx - ix                 # xmax image, even
+                jy, sy, aff = iy, 1.0, 0.0
+                if iy < 0:
+                    jy = -iy                         # ymin image, affine even
+                    aff = rhoF * b[1] * (iy * h - jy * h) if affine else 0.0
+                elif iy > ny:
+                    jy, sy = 2 * ny - iy, -1.0       # ymax image, odd (p0 = 0)
+                key = (jx, jy)
+                w = sx * sy
+                if key in Sp:
+                    Sp[key] = (Sp[key][0] + w * S, Sp[key][1] + w * dS)
+                else:
+                    Sp[key] = (w * S, w * dS)
+                pi_v += S * aff * sx
+                pi_g += dS * aff * sx
+        ph = sum(S * phys(k[1] * h) for k, (S, _) in Sp.items()) + pi_v
+        gr = sum(dS * phys(k[1] * h) for k, (_, dS) in Sp.items()) + pi_g
+        errs[0] = max(errs[0], abs(ph - phys(y)) / (rhoF * g * H))
+        errs[1] = max(errs[1], float(np.max(np.abs(gr - rhoF * b))) / (rhoF * g))
+        weights.append([(k, S) for k, (S, _) in Sp.items()])
+        values.append([phys(y) - pi_v])
+        nodes.update(Sp)
+    nodes = sorted(nodes, key=lambda t: t[::-1])
+    X, _ = consistent_l2(weights, [(h / ppc) ** 2] * len(pts), values, nodes)
+    cmap = {n: X[a, 0] for a, n in enumerate(nodes)}
+    for n, cval in cmap.items():
+        errs[2] = max(errs[2], abs(cval - phys(n[1] * h)) / (rhoF * g * H))
+    return errs
 
 
 # ==============================================================================================
@@ -1645,7 +1792,7 @@ def main(argv):
         rec = {"leg": "t0_oracle", "deck": "tests/mpm_twophase_reference.py::t0_*",
                "date": _dt.date.today().isoformat(),
                "units": "kN, t, m, s, kPa; sigma tension-positive, p compression-positive",
-               "source": "tests/mpm_twophase_interface.md §1, §7a (+ rulings 9064acca3)",
+               "source": "tests/mpm_twophase_interface.md §1, §7a, §7b (+ rulings 9064acca3, 3d3699a50, P5a freeze 2ecebf6ae)",
                "case_modeA": T0A, "case_routeS": T0S}
         rec["t0_i"] = t0_particle_dump(T0A)
         rec["t0_ii"] = t0_modeA(T0A)

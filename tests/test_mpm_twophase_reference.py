@@ -192,3 +192,47 @@ def test_t0_drained_nodes_and_p_activity():
     for h in s["history"][1:]:
         assert len(h["grid"]["nodes"]) == 25
         assert min(i[1] for i in h["grid"]["node_idx"]) == 0
+
+
+# ----------------------------------------------------------------------------------------------
+# §7b: P5a, fix 2
+# ----------------------------------------------------------------------------------------------
+def test_p5a_projection_is_exact_on_grid_fields():
+    """M^-1 P^T V P = I: a grid field interpolated to the particles projects back to itself."""
+    grid = R.OGrid(R.T0A["x0"], R.T0A["h"], R.T0A["cells"])
+    X, V0, m, lpv = R.lattice(grid, *R.T0A["box"], R.T0A["ppc"], R.T0A["rho"])
+    sups, _ = R.renormalize([grid.support(x, [lpv, lpv]) for x in X], [m] * len(X), 0.05)
+    nodes = sorted({i for s in sups for i, _, _ in s}, key=lambda t: t[::-1])
+    rng = np.random.default_rng(7)
+    g = {n: rng.normal() for n in nodes}
+    vals = [[sum(S * g[i] for i, S, _ in s)] for s in sups]
+    Xh, eig = R.consistent_l2([[(i, S) for i, S, _ in s] for s in sups], [V0] * len(X), vals, nodes)
+    assert eig > 0
+    assert max(abs(Xh[a, 0] - g[n]) for a, n in enumerate(nodes)) < 1e-12
+
+
+def test_t0_and_t1_use_p5a():
+    d = _json("t0_oracle")
+    for h in d["t0_ii"]["history"][1:] + d["t0_iii"]["history"][1:]:
+        assert h["grid"]["M_eigmin"] > 1e-3          # SPD with margin at every step
+    t = _json("t1_fe")
+    for leg in t["legs"].values():
+        assert leg["projection"].startswith("P5a") and leg["M_eigmin"] > 1e-3
+
+
+def test_sealed_column_invariant_bit_for_bit():
+    """§7b: motionless, sealed, kbar = 0, pd = pdd = 0 -- particle p unchanged bit for bit, for a
+    field the grid cannot represent (its invisible residual is O(1))."""
+    worst, resid, _ = R.sealed_column_check(steps=3)
+    assert worst == 0.0
+    assert resid > 1.0
+
+
+def test_fix2_affine_image_reproduces_hydrostatics():
+    """§7b fix 2: with the affine even image on the impervious base, the hydrostatic field is
+    reproduced (values, gradients: zero Darcy flux) and survives the P5a projection; P9's plain
+    even image does not (negative control)."""
+    e = R.fix2_hydrostatic_check()
+    assert max(e) < 1e-13
+    bad = R.fix2_hydrostatic_check(affine=False)
+    assert bad[0] > 1e-3 and bad[1] > 0.1

@@ -224,6 +224,9 @@ end
 #     nodes, the mpm_interface.md §2 ids), S, dS.
 # (ii) three steps `mpm analyze 3 0.01`; after each step, every particle's x, v, a, sig (sigma'),
 #     p, pd, pdd. Grid nodal solutions in history[k].grid (diagnosis only, not gated).
+# P5a (interface §7b, frozen 2ecebf6ae): p^, pd^, pdd^ are the CONSISTENT L2 projection over the
+# p-active nodes (pinned included), solved densely; history[k].grid.M_eigmin records M's smallest
+# eigenvalue (0.0259 in t0_ii, 0.00867 in t0_iii: SPD with margin), grid.phat the projection.
 case t0_modeA
 kind reference
 ndm 2
@@ -297,7 +300,7 @@ dt 1.0e-3
 steps 10
 data tests/data/mpm/twophase/t0_oracle.json
 field t0_iii.history[k].particles.{x, v, sig, p}   k = 0 .. 10
-field t0_iii.history[k].grid.{nodes, node_idx, p, phat}
+field t0_iii.history[k].grid.{nodes, node_idx, p, phat, M_eigmin}
 band all 1e-9 (relative, per field)
 ref numpy oracle from interface §1 route S + §7a Q4 + rulings 9064acca3, 3d3699a50
 end
@@ -318,8 +321,10 @@ end
 #   v_i = 0.10 sin(1.1 x + 0.7 y + 0.5 z + 0.3 i + 0.2)    a_i = 0.50 cos(0.9 x - 0.6 y + 0.4 z + 0.5 i + 0.1)
 #   p = 5 + 2 sin(0.8 x + 1.2 y + 0.3 z)    pd = 0.5 cos(1.3 x - 0.4 y + 0.2 z)
 #   pdd = 0.2 sin(0.6 x + 0.9 y - 0.7 z + 0.4)
-# The FE nodal state is their P5 projection (§7a Q5: u 0, v^, a^ mass-weighted, p^, pd^, pdd^
-# volume-weighted; renormalize is the identity here). A = the Newmark first-iteration tangent
+# The FE nodal state is their projection (§7a Q5 with §7b P5a: u 0, v^, a^ mass-weighted; p^,
+# pd^, pdd^ the consistent L2 projection M x^ = P^T V x; renormalize is the identity here;
+# record legs.*.M_eigmin). Regenerated for P5a on cfe478254 (= b751dcbfe's code; fd81cbdd3 gives
+# the same A, b and nodal values bit for bit). A = the Newmark first-iteration tangent
 # (printA); b = A dU (the step is one exact LU solve; printB after a Linear step is the post-solve
 # right side, ~1e-14, recorded as printB_after_step_norm). dofs[e] = [tag, x, y(, z), dof] labels
 # equation e; map the MPM's `mpm debug assemble` rows by coordinates and dof.
