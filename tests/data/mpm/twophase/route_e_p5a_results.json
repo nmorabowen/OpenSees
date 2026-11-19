@@ -210,5 +210,136 @@
     "pass": false
    }
   ]
+ },
+ "patch_fix2_steady": {
+  "build": "0fc5a3f131ce78f8647c25e052f9476e6f261aa9",
+  "date": "2026-11-18 21:12",
+  "wall_s": 164.9602620601654,
+  "results": [
+   {
+    "E": 10000.0,
+    "drive": true,
+    "unit": "rhoF g H",
+    "steps": 128,
+    "steady": true,
+    "last_change": 6.822948594148974e-14,
+    "base_err": 0.0012426451265525303,
+    "max_err": 0.001382653647187804,
+    "pass": false,
+    "selfcheck_bookkeeping_max": 4.64060186023737e-14,
+    "selfcheck_pi_c_max": 0.0,
+    "motion_max": 4.228724167432435e-05,
+    "selfcheck_pass": true,
+    "history": {
+     "1": {
+      "bookkeeping": 2.897218086687462e-16,
+      "pi_c_eq_pi": 0.0,
+      "motion": 3.9922367186826614e-05
+     },
+     "2": {
+      "bookkeeping": 2.2855202836192694e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 3.7267558650874984e-05
+     },
+     "5": {
+      "bookkeeping": 2.868076146948321e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.1566316368508534e-05
+     },
+     "20": {
+      "bookkeeping": 3.179527975428016e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 3.85803665361369e-05
+     },
+     "100": {
+      "bookkeeping": 2.876721789621645e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 3.8626920233104046e-05
+     },
+     "128": {
+      "bookkeeping": 2.366889734174338e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 3.862692023361106e-05
+     }
+    }
+   }
+  ],
+  "diagnosis": "MISS (base 1.24e-3 at steady state, step 128). The q + pi invariant holds: bookkeeping <= 4.6e-14, pi_c = pi exactly (0.0), rigid control base 5.7e-11. The grid field itself is off by a uniform +1.24e-3 gamma_w H: the steady field is gamma_w (10.0124 - y). Cause (block dumps, harness-side, build 0fc5a3f13): after settlement the top particle (y 9.8313) gives the y = 10.5 row (beyond the pfix face) a weight 0.0133, below the u mass cutoff; buildPSup's u-side renormalisation drops it and divides EVERY component of the kept entries, the p component and fix 2's affine coefficients included, by 0.98660. The p weights were already odd-folded (S^p(9.5) = S(9.5) - S(10.5)), so the extra division breaks linear reproduction at the drained face: the linear coefficients give a field error 2.26e-4 at that particle (predicted 0.01687 x (1/0.98660 - 1) = 2.29e-4) and d/dy -0.957 gamma_w instead of -1. Rigid: the row keeps 0.031 > cutoff, nothing is dropped, exact. pi = 0 twin: the exact field is 0, so the rescale is invisible."
+ },
+ "patch_fix2_controls": {
+  "build": "0fc5a3f131ce78f8647c25e052f9476e6f261aa9",
+  "date": "2026-11-18 21:12",
+  "wall_s": 168.9268593788147,
+  "results": [
+   {
+    "E": 10000.0,
+    "drive": false,
+    "unit": "rhoF g H",
+    "steps": 107,
+    "steady": true,
+    "last_change": 5.49366077988156e-14,
+    "base_err": 2.226999564076354e-09,
+    "max_err": 2.142771927048104e-06,
+    "pass": false
+   },
+   {
+    "E": 1000000.0,
+    "drive": true,
+    "unit": "rhoF g H",
+    "steps": 110,
+    "steady": true,
+    "last_change": 6.938837317616472e-14,
+    "base_err": 5.728850442395809e-08,
+    "max_err": 4.87966309316543e-07,
+    "pass": false
+   },
+   {
+    "E": 1000000000.0,
+    "drive": true,
+    "unit": "rhoF g H",
+    "steps": 130,
+    "steady": true,
+    "last_change": 9.140723063498944e-14,
+    "base_err": 5.728872128073187e-11,
+    "max_err": 4.926380291357821e-10,
+    "pass": true,
+    "selfcheck_bookkeeping_max": 6.6609698997454e-14,
+    "selfcheck_pi_c_max": 0.0,
+    "motion_max": 4.966066384709267e-10,
+    "selfcheck_pass": true,
+    "history": {
+     "1": {
+      "bookkeeping": 2.897218086687462e-16,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.966066384709267e-10
+     },
+     "2": {
+      "bookkeeping": 3.656701597993459e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.893384372527897e-10
+     },
+     "5": {
+      "bookkeeping": 3.471484058420816e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.954236862185191e-10
+     },
+     "20": {
+      "bookkeeping": 4.554448847876438e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.923719966118754e-10
+     },
+     "100": {
+      "bookkeeping": 3.788262314222997e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.926072688281275e-10
+     },
+     "130": {
+      "bookkeeping": 3.213246818387393e-14,
+      "pi_c_eq_pi": 0.0,
+      "motion": 4.926072869357405e-10
+     }
+    }
+   }
+  ]
  }
 }

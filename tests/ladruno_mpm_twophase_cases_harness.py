@@ -7,7 +7,7 @@ hydrostatic column (block t4_ref_hydro), and for Mandel the record's own p_exact
 
 Standalone:
     python tests/ladruno_mpm_twophase_cases_harness.py --bin <dist\\bin> <leg> [<leg> ...]
-legs: patch, patch_fix2, patch_fix2_selfcheck, t2, t2_reported, t3_gimp, t3_bspline2, t4,
+legs: patch, patch_fix2, patch_fix2_controls, t2, t2_reported, t3_gimp, t3_bspline2, t4,
       t4_reported, t5, diagnostic
 Every result is appended to tests/data/mpm/twophase/route_e_results.json with ladrunoBuild.
 """
@@ -68,7 +68,8 @@ def build(ops, s):
     if s.get("fluid") is not None:
         Kf, n, rf, k, stab = s["fluid"]
         sa = ["-stab", "off"] if stab == "off" else ["-stab", "auto", float(stab[1])]
-        ops.mpm("twoPhase", 1, "-Kf", Kf, "-poro", n, "-rhoF", rf, "-perm", k, k, *sa)
+        fb = ["-fluidBody", *s["fluidBody"]] if s.get("fluidBody") is not None else []
+        ops.mpm("twoPhase", 1, "-Kf", Kf, "-poro", n, "-rhoF", rf, "-perm", k, k, *sa, *fb)
     if s.get("gravity"):
         ops.mpm("gravity", 0.0, -s["gravity"])
     for face, comps in s.get("fix", []):
@@ -302,61 +303,117 @@ def run_t5(ops, stab):
             "wall_s": time.time() - t0}
 
 
-def patch_fix2(ops):
-    """Fix 2's patch check (interface 7b, P9 amended): a bspline2 hydrostatic column, kbar = 1, 200
-    steps of dt 1 s; the base particle's p equals gamma_w (H - y) to 1e-10 gamma_w H (and every
-    particle's, reported)."""
-    H, g, rs, rf, h = 10.0, 9.81, 2.0, 1.0, 0.5
-    spec = dict(mat=(1.0e4, 0.2, rs), h=h, cells=(2, 20), basis="bspline2", box=((0.0, 0.0), (1.0, H)),
-                fluid=(4444.0, 0.4, rf, 1.0, "off"), gravity=g,
-                fix=[("xmin", "x"), ("xmax", "x"), ("ymin", "y")], pfix=[("ymax", 0.0)])
-    build(ops, spec)
-    ops.mpm("analyze", 200, 1.0)
-    y = [x[1] for x in pdata(ops, "x", 2)]
-    pp = pdata(ops, "p")
-    err = [abs(pp[k] - rf * g * (H - y[k])) / (rf * g * H) for k in range(len(pp))]
-    base = min(range(len(y)), key=lambda k: y[k])
-    return {"base_err": err[base], "max_err": max(err), "pass": err[base] <= 1e-10}
+def _dump_all(ops, tmp, n):
+    """Every particle's block dump at the committed state: (pi, {node tag: S^p}) per particle.
+    Each dump runs the step preparation, which re-seeds the grid nodes with the projection."""
+    out = []
+    for p in range(n):
+        path = str(Path(tmp) / ("sc_%d.json" % p))
+        ops.mpm("debug", "particleBlocks", p, path, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        d = json.loads(Path(path).read_text())
+        out.append((d.get("pi", 0.0), {t: s for t, s in zip(d["nodes"], d["Sp"]) if s != 0.0}, d["V"]))
+    return out
 
 
+def _projection(d, q):
+    """c^ = M^-1 P^T V q over the nodes the supports touch (P5a's consistent projection, the
+    unconditioned pRef), M = sum_p V S^p S^p^T: dense Gaussian elimination, numpy-free.
+    (`nodeDisp` after a dump returns the committed grid p, not the re-seeded projection.)"""
+    tags = sorted({t for _, S, _ in d for t in S})
+    ix = {t: i for i, t in enumerate(tags)}
+    m = len(tags)
+    A = [[0.0] * (m + 1) for _ in range(m)]
+    for (_, S, V), qq in zip(d, q):
+        for ta, sa in S.items():
+            ra = A[ix[ta]]
+            ra[m] += V * sa * qq
+            for tb, sb in S.items():
+                ra[ix[tb]] += V * sa * sb
+    for c in range(m):
+        piv = max(range(c, m), key=lambda r: abs(A[r][c]))
+        A[c], A[piv] = A[piv], A[c]
+        for r in range(c + 1, m):
+            f = A[r][c] / A[c][c]
+            if f != 0.0:
+                Ar, Ac = A[r], A[c]
+                for k in range(c, m + 1):
+                    Ar[k] -= f * Ac[k]
+    x = [0.0] * m
+    for r in range(m - 1, -1, -1):
+        x[r] = (A[r][m] - sum(A[r][k] * x[k] for k in range(r + 1, m))) / A[r][r]
+    return {t: x[ix[t]] for t in tags}
 
-def patch_fix2_selfcheck(ops, tmp, E=1.0e4, steps=200):
-    """The q + pi invariant's self-check (interface 7b, ruling on 89718fdad), numpy-free: the patch
-    column of patch_fix2, and after every step max_p |(p_p - pi(x_p)) - (P c)_p - r_user,p| with
-    r_user = 0, in gamma_w H; gate 1e-12. c is the grid p read after the step (before the dumps,
-    which re-seed the nodes); pi and S^p come from each particle's block dump at the committed
-    positions. Also reported: the same with c the re-seeded projection c^ = M^-1 P^T V q at those
-    positions (q's own invisible part there), and the plain base error."""
+
+def patch_fix2(ops, tmp, E=1.0e4, drive=True, selfcheck=True, cap=2000, stop=1e-13):
+    """Fix 2's patch check (interface 7b, P9 amended; stopping rule and self-check ruled at
+    0fc5a3f13): the bspline2 hydrostatic column, kbar = 1, dt 1 s, stepped until the step-to-step
+    change of max|p_p| is <= 1e-13 gamma_w H (cap 2000 steps: reaching it is a miss); the base
+    particle's p equals gamma_w (H - y) to 1e-10 gamma_w H. drive=False: the pi = 0 twin
+    (-fluidBody 0 0, steady p = 0).
+    Self-check, after every step (numpy-free, black box), in gamma_w H:
+      bookkeeping  |(p_n - pi_n) - [(p_{n-1} - pi_{n-1}) + sum S^p_{n-1} (c_n - c^_{n-1})]|, gate
+                   1e-12: q = p - pi is FLIP-carried (alpha_p = 1); S^p_{n-1}, c^_{n-1} are the step's
+                   supports and projection (dumps at n-1), c_n the grid p after the step;
+      pi_c = pi    |p after the dumps - p before|: the preparation adds pi(x) - pi_c, so 0 iff
+                   pi_c = pi(x_p) at the committed positions (gate 1e-12);
+      motion       |(p_n - pi_n) - sum S^p_n c^_n|: q's part the moved supports cannot represent
+                   (reported, never gated)."""
     H, g, rs, rf, h = 10.0, 9.81, 2.0, 1.0, 0.5
     s = rf * g * H
     spec = dict(mat=(E, 0.2, rs), h=h, cells=(2, 20), basis="bspline2", box=((0.0, 0.0), (1.0, H)),
                 fluid=(4444.0, 0.4, rf, 1.0, "off"), gravity=g,
-                fix=[("xmin", "x"), ("xmax", "x"), ("ymin", "y")], pfix=[("ymax", 0.0)])
+                fix=[("xmin", "x"), ("xmax", "x"), ("ymin", "y")], pfix=[("ymax", 0.0)],
+                fluidBody=None if drive else (0.0, 0.0))
     build(ops, spec)
-    worst, worst_step, worst_proj, hist = 0.0, -1, 0.0, {}
-    for st in range(1, steps + 1):
-        ops.mpm("analyze", 1, 1.0)
+    n = len(pdata(ops, "p"))
+    book = picc = motion = 0.0
+    hist = {}
+    prev = None
+    if selfcheck:
+        d = _dump_all(ops, tmp, n)
         pp = pdata(ops, "p")
-        c_step = {t: v[1] for t, v in nodal_pressure(ops).items()}
-        fp = field_at_particles(ops, tmp, c_step)
-        r = max(abs(pp[k] - fp[k]["field"]) for k in range(len(pp))) / s
-        c_proj = {t: v[1] for t, v in nodal_pressure(ops).items()}
-        rp = max(abs(pp[k] - sum(sp * c_proj.get(n, 0.0) for n, sp in zip(q["nodes"], q["Sp"]))
-                     - (q["field"] - sum(sp * c_step.get(n, 0.0) for n, sp in zip(q["nodes"], q["Sp"]))))
-                 for k, q in enumerate(fp)) / s
-        if r > worst:
-            worst, worst_step = r, st
-        worst_proj = max(worst_proj, rp)
-        if st in (1, 2, 5, 20, 100, steps):
-            hist[str(st)] = {"selfcheck": r, "vs_reseeded_projection": rp,
-                             "missing_nodes": sum(q["missing"] for q in fp)}
+        q0 = [pp[k] - d[k][0] for k in range(n)]
+        prev = (q0, d, _projection(d, q0))
+    pmax_old, steps, change = None, 0, None
+    while steps < cap:
+        ops.mpm("analyze", 1, 1.0)
+        steps += 1
+        pp = pdata(ops, "p")
+        pmax = max(abs(v) for v in pp)
+        change = abs(pmax - pmax_old) / s if pmax_old is not None else None
+        pmax_old = pmax
+        if selfcheck:
+            c = {t: v[1] for t, v in nodal_pressure(ops).items()}
+            q_prev, d_prev, chat_prev = prev
+            d = _dump_all(ops, tmp, n)
+            pp2 = pdata(ops, "p")
+            q = [pp[k] - d[k][0] for k in range(n)]
+            chat = _projection(d, q)
+            b = max(abs(q[k] - q_prev[k] - sum(sp * (c.get(t, 0.0) - chat_prev.get(t, 0.0))
+                                               for t, sp in d_prev[k][1].items())) for k in range(n)) / s
+            pc = max(abs(pp2[k] - pp[k]) for k in range(n)) / s
+            m = max(abs(q[k] - sum(sp * chat.get(t, 0.0) for t, sp in d[k][1].items())) for k in range(n)) / s
+            book, picc, motion = max(book, b), max(picc, pc), max(motion, m)
+            if steps in (1, 2, 5, 20, 100, 200, 500, 1000) or steps % 1000 == 0:
+                hist[str(steps)] = {"bookkeeping": b, "pi_c_eq_pi": pc, "motion": m}
+            prev = (q, d, chat)
+        if change is not None and change <= stop:
+            break
+    if selfcheck:
+        hist[str(steps)] = {"bookkeeping": b, "pi_c_eq_pi": pc, "motion": m}
     y = [x[1] for x in pdata(ops, "x", 2)]
     pp = pdata(ops, "p")
-    base = min(range(len(y)), key=lambda k: y[k])
-    return {"E": E, "steps": steps, "unit": "rhoF g H", "selfcheck_max": worst, "at_step": worst_step,
-            "vs_reseeded_projection_max": worst_proj, "history": hist,
-            "base_err": abs(pp[base] - rf * g * (H - y[base])) / s,
-            "pass": worst <= 1e-12}
+    ex = [rf * g * (H - y[k]) if drive else 0.0 for k in range(n)]
+    err = [abs(pp[k] - ex[k]) / s for k in range(n)]
+    base = min(range(n), key=lambda k: y[k])
+    steady = change is not None and change <= stop
+    r = {"E": E, "drive": drive, "unit": "rhoF g H", "steps": steps, "steady": steady,
+         "last_change": change, "base_err": err[base], "max_err": max(err),
+         "pass": steady and err[base] <= 1e-10}
+    if selfcheck:
+        r.update({"selfcheck_bookkeeping_max": book, "selfcheck_pi_c_max": picc, "motion_max": motion,
+                  "selfcheck_pass": book <= 1e-12 and picc <= 1e-12, "history": hist})
+    return r
 
 
 #  Diagnostic (orchestrator's ruling B on 25cc9b69e; reported, never gated)
@@ -496,11 +553,14 @@ def main(argv=None):
             r = [run_t4(ops, b, s, h=1.0) for b in ("gimp", "bspline2") for s in ("off", AUTO)]
         elif leg == "t5":
             r = [run_t5(ops, s) for s in (AUTO, "off")]
-        elif leg == "patch_fix2":
-            r = [patch_fix2(ops)]
-        elif leg == "patch_fix2_selfcheck":         # E = 1e4: the patch column; 1e9: rigid control
+        elif leg == "patch_fix2":                   # the gate: E 1e4 with the per-step self-check
             with tempfile.TemporaryDirectory() as tmp:
-                r = [patch_fix2_selfcheck(ops, tmp, E) for E in (1.0e4, 1.0e9)]
+                r = [patch_fix2(ops, tmp)]
+        elif leg == "patch_fix2_controls":          # reported beside it (ruling 0fc5a3f13)
+            with tempfile.TemporaryDirectory() as tmp:
+                r = [patch_fix2(ops, tmp, 1.0e4, drive=False, selfcheck=False),
+                     patch_fix2(ops, tmp, 1.0e6, selfcheck=False),
+                     patch_fix2(ops, tmp, 1.0e9)]           # rigid: self-check + motion per step
         elif leg == "diagnostic":
             with tempfile.TemporaryDirectory() as tmp:
                 r = {"t2": [diag_t2(ops, b, s, tmp) for b in ("gimp", "bspline2") for s in ("off", AUTO)],
