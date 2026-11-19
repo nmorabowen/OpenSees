@@ -3017,7 +3017,11 @@ def test_case_inventory_covers_the_required_set():
 def test_reference_case_values_and_assertions(name):
     case = ALL_CASES[name]
     assert case["source"] and case["checked"] and case["units"]
-    assert set(case["formulation"]) == {LOWER_ID, CONTROL_ID, JUMP_ID}
+    if case["class"] == "one_sided_reference":
+        # Amendment 2, item B (OD3): continuous P2 is a control on the strips; the jump pair binds.
+        assert set(case["formulation"]) == {LOWER_ID, JUMP_ID} and case["control"] == [CONTROL_ID]
+    else:
+        assert set(case["formulation"]) == {LOWER_ID, CONTROL_ID, JUMP_ID}
     assert case["target"] == pytest.approx(TARGET_FORMULAS[case["formula"]](case["formula_params"]), rel=1e-14)
     kinds = {tokens[0] for tokens in case["assert"]}
     assert {"lower_le_target", "upper_ge_target"} <= kinds, "both one-sided assertions are required"
@@ -5319,6 +5323,37 @@ def test_lower_objective_is_checked_and_upper_objective_is_not():
     upper["objective"] = 123.0
     upper["result_sha256"] = document_hash(upper, arrays, "result_sha256")
     validate_result(upper, arrays, s["problem"], s["arrays"])
+
+
+STRIP_CASES = ("tresca_strip_vm_thin_slab", "tresca_strip_weighted_insensitive", "dp_prandtl_cohesion_thin_slab",
+               "dp_prandtl_surcharge_thin_slab")
+
+
+@pytest.mark.parametrize("name", STRIP_CASES)
+def test_strip_cases_bind_the_jump_pair_and_keep_the_control(name):
+    """Amendment 2, item B (owner decision OD3): continuous P2 is a control on the strips."""
+    case = ALL_CASES[name]
+    assert case["formulation"] == [LOWER_ID, JUMP_ID]
+    assert CONTROL_ID in case["control"]
+
+
+def test_strip_control_miss_does_not_fail_the_gate_and_a_jump_miss_does():
+    """OD3: on the strip the P2c pair may miss MAX_GAP_STRIP (gap 0.079 as recorded in 19.2.2) without failing the
+    gate; a jump-pair miss still fails it."""
+    case = ALL_CASES[STRIP]
+    lower, jump_upper, control_upper = 5.00525, 5.18571, 5.4168
+    assert (control_upper - lower) / (0.5 * (control_upper + lower)) > TOLERANCES["MAX_GAP_STRIP"]
+    certificates, results, feasibility, methods = synthetic_records(case, lower, jump_upper)
+    for mesh in range(len(case["mesh"])):
+        result, certificate, method = synthetic_pair(case, mesh, "upper", CONTROL_ID, control_upper)
+        results.append(result)
+        certificates.append(certificate)
+        methods.append(method)
+    verdict = evaluate_case(case, certificates, results, feasibility, methods)
+    assert verdict["passed"], failed(verdict)
+    assert not any(CONTROL_ID in item["formulation"] for item in verdict["items"]), "the control binds nothing"
+    miss = evaluate_case(case, *synthetic_records(case, lower, 5.3))
+    assert not miss["passed"] and ("gap_le", "violated") in failed(miss) and miss["p0_blocking"]
 
 
 def symmetry_set_normal(problem, arrays, set_index):
