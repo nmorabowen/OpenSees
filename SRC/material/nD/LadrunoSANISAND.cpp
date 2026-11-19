@@ -3344,6 +3344,7 @@ LadrunoSANISAND::ladrunoTrialUpdate(void)
         // version was a single `static bool`, so on a model with several
         // SANISAND materials it named whichever tag happened to latch first
         // and hid the rest.
+        // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
         static int ladrunoCommitLatchWarnCount = 0;   // Ladruno WP-99 (F7)
         if (ladrunoCommitLatchWarnCount < 10) {
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
@@ -3782,6 +3783,7 @@ LadrunoSANISAND::ladrunoWarnRoundoffAlphaIn(void)
         return;
 
     mRoundoffAlphaInWarned = true;
+    // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
     static int ladrunoRoundoffAlphaInWarnCount = 0;   // Ladruno WP-112 (F14)
     if (ladrunoRoundoffAlphaInWarnCount < 10) {
         opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
@@ -4015,6 +4017,7 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
         // "once per instance" bounds the output. Throttling the message is only
         // safe because the count is now recoverable from `implexRefusals`.
         LadrunoImplexGlobals::instance().noteRefusalD2();
+        // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
         static int ladrunoImplexD2WarnCount = 0;     // Ladruno ADR-92 fix
         if (ladrunoImplexD2WarnCount < 10) {
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
@@ -4405,7 +4408,9 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
                 // budget AND additionally allow one line at each NEW |dt| (i.e. once
                 // per rung), under a hard overall cap so the 2.58 MB failure mode
                 // RED-1 F7 measured cannot come back.
+                // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
                 static double ladrunoImplexCtlLastDt    = -1.0;   // Ladruno ADR-92 fix
+                // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
                 static int    ladrunoImplexCtlRungLines = 0;      // Ladruno ADR-92 fix
                 bool newRung = false;                             // Ladruno ADR-92 fix
                 if (dtAbs != ladrunoImplexCtlLastDt && ladrunoImplexCtlRungLines < 40) {
@@ -4413,6 +4418,7 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
                     ladrunoImplexCtlRungLines++;
                     newRung = true;
                 }
+                // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
                 static int ladrunoImplexCtlWarnCount = 0;   // Ladruno ADR-92 fix
                 if (newRung || ladrunoImplexCtlWarnCount < 10) {
                     opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
@@ -4623,6 +4629,7 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     const bool companionFailed = mSubstepCapHitInME || mLadrunoSas.refused;   // Ladruno ADR-92 fix; WP-129
     if (companionFailed) {
         LadrunoImplexGlobals::instance().noteRefusalCompanion();
+        // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
         static int ladrunoImplexCompanionWarnCount = 0;   // Ladruno ADR-92 fix
         if (ladrunoImplexCompanionWarnCount < 10) {
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()

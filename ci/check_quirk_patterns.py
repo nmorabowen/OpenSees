@@ -173,6 +173,25 @@ bodies are seen whole).
                 kernel (#1101). Append `*cxx_runtime_flags()` to the compile
                 command. Comments and docstrings are ignored; no waiver.
 
+  thread-static  (no alias; WP-239) A function-scope `static` in a MATERIAL
+                class that opts into the WP-107/WP-192 threaded element loops
+                (a `ladrunoThreadSafeUpdate`/`ladrunoThreadSafeForm` definition
+                in its .h/.cpp whose body is anything but `return false;`). A
+                plain function-scope static is one object for every instance on
+                every thread: ASDSteel1D's implicit-correction Newton history
+                (`static std::array<Vector,10> U_iterative`) let two points
+                committing on different threads pick each other's iterate, and
+                the shell sections' `static bool initialized` latch filled only
+                the first thread's `thread_local` ID. Make it `thread_local`,
+                per-instance or stack-backed. Exempt: `const`/`constexpr`,
+                `thread_local`, `std::atomic`/`std::mutex`/`std::once_flag`, and
+                functions that never run on a worker (OPS_* parsers,
+                send/recvSelf, set/getResponse, Print, set/updateParameter,
+                getCopy, *Sensitivity*, constructors, destructors, instance).
+                Class-scope static members are not scanned. Waive (the
+                statement's lines or the line above):
+                    // ladruno-lint: thread-ok <reason>
+
 A waiver needs a reason of at least 12 characters, and a waiver that no longer
 suppresses anything is itself a finding (stale).
 
@@ -194,7 +213,7 @@ STAMP = "LADRUNO-HEADER-START"
 MIN_REASON = 12
 SUFFIXES = (".cpp", ".h", ".hpp", ".cc", ".cxx")
 
-WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok|sequence-ok|decl-ok|revert-ok|unknown-ok)\b(.*)$")
+WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok|sequence-ok|decl-ok|revert-ok|unknown-ok|thread-ok)\b(.*)$")
 RAYLEIGH = re.compile(r"(?:\bthis\s*->\s*)?\bgetRayleighDampingForces\s*\(\s*\)")
 SINGLETON = re.compile(r"\bstatic\s+([A-Za-z_]\w*)\s*&\s*instance\s*\(")
 RESET_CALL = re.compile(r"\b([A-Za-z_]\w*)::instance\s*\(\s*\)\s*(?:\.|->)\s*reset\w*\s*\(")
@@ -1450,6 +1469,64 @@ def check_gxx_static(root, rel):
     return findings
 
 # --------------------------------------------------------------------------
+# thread-static (WP-239)
+# --------------------------------------------------------------------------
+THREAD_OPTIN = re.compile(r"(?:^|::)ladrunoThreadSafe(?:Update|Form)$")
+THREAD_SKIP = re.compile(r"(?:^|::)(?:OPS_\w*|sendSelf|recvSelf|setResponse|getResponse|Print|setParameter|"
+                         r"updateParameter|activateParameter|getCopy|instance|\w*Sensitivity\w*|~\w+)$")
+THREAD_STATIC = re.compile(r"^static\b(?!\s+(?:const|constexpr)\b)(?!\s+std::(?:atomic|mutex|once_flag)\b)")
+
+
+def _opts_into_threads(cl):
+    """True when cleaned lines define a ladrunoThreadSafeUpdate/Form whose body is not just `return false;`."""
+    for f in functions(cl):
+        if THREAD_OPTIN.search(f.name):
+            body = [strip_prefix(t) for t, *_ in statements(cl, f)]
+            if body != ["return false"]:
+                return True
+    return False
+
+
+def check_thread_static(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    mat = root / "SRC" / "material"
+    stems = set()
+    for path, _raw, cl in _sources(root, stamped_only=False, needles=("ladrunoThreadSafe",)):
+        if mat in path.parents and _opts_into_threads(cl):
+            stems.add(path.with_suffix(""))
+    for stem in sorted(stems):
+        for path in (stem.with_suffix(sfx) for sfx in sorted(SUFFIXES)):
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            raw, cl = text.splitlines(), clean(text)
+            for f in functions(cl):
+                parts = f.name.split("::")
+                if THREAD_SKIP.search(f.name) or (len(parts) >= 2 and parts[-1] == parts[-2]):
+                    continue
+                for stmt, a, b in statements(cl, f):
+                    body = strip_prefix(stmt)
+                    if not THREAD_STATIC.match(body) or re.search(r"\bthread_local\b", body):
+                        continue
+                    wl, reason = waiver_at(raw, b, "thread-ok", above=b - a + 1)
+                    if wl is not None:
+                        used.add((str(path), wl))
+                        if len(reason) >= MIN_REASON:
+                            continue
+                        findings.append(f"thread-static {rel(path)}:{a + 1}: thread-ok waiver reason too short")
+                        continue
+                    decl = " ".join(body.split())[:70]
+                    findings.append(
+                        f"thread-static {rel(path)}:{a + 1}: {f.name} has a plain function-scope static "
+                        f"('{decl}') in a material that opts into the threaded element loops -- one object "
+                        "for every instance on every thread (ASDSteel1D U_iterative, WP-239). Make it "
+                        "thread_local, per-instance or stack-backed, or waive with "
+                        "'// ladruno-lint: thread-ok <reason>'")
+    return findings
+
+
+# --------------------------------------------------------------------------
 # the rule registry (WP-162). One entry per rule, named by slug. `alias` is the
 # pre-WP-162 L-number, accepted by --only for one release.
 # --------------------------------------------------------------------------
@@ -1499,6 +1576,9 @@ _RULE_LIST = [
     Rule("gxx-static", None, check_gxx_static, None, "tests",
          "a test that builds a g++ harness without `cxx_runtime_flags()` / `-static`: on Windows the "
          "exe loads Git for Windows' older libstdc++-6.dll and segfaults (WP-199, #1101)"),
+    Rule("thread-static", None, check_thread_static, "thread-ok", "threaded materials",
+         "a plain function-scope `static` in a material that opts into the WP-107/WP-192 threaded "
+         "element loops: one object shared by every instance on every thread (WP-239)"),
 ]
 RULES = {r.slug: r for r in _RULE_LIST}
 ALIASES = {r.alias: r.slug for r in _RULE_LIST if r.alias}
