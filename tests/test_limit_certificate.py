@@ -54,7 +54,9 @@ def upper_result(name, problem, arrays, velocity, footing, formulation, mesh=0, 
     field = velocity[arrays["tets"]] if broken and velocity.ndim == 2 else velocity
     fields = {"element_velocity" if broken else "velocity": field, "footing_velocity": footing, **more}
     value = ct.fixture_upper_value(problem, arrays, field, footing)
-    return make_result(name, problem, arrays, "upper", value, fields, formulation, mesh)
+    # Amendment 1, item 2: value is the field value; objective is c^T x = D - W0.
+    return make_result(name, problem, arrays, "upper", value, fields, formulation, mesh,
+                       objective=ct.fixture_upper_objective(problem, arrays, field, footing))
 
 
 def lower_result(name, problem, arrays, value, sigma, mesh=0, extra_fields=None, **extra):
@@ -63,15 +65,18 @@ def lower_result(name, problem, arrays, value, sigma, mesh=0, extra_fields=None,
 
 
 def certified(problem, arrays, result, fields, **options):
-    """Run the checker and read its certificate back through the contract: valid, real and gate-admissible."""
+    """Run the checker and read its certificate and method report back through the contract: valid, real and
+    gate-admissible, and not gate-admissible without the report."""
     outcome = lc.check(problem, arrays, result, fields, **options)
-    certificate = outcome.certificate
+    assert outcome.refusal is None, outcome.refusal
+    certificate, method = outcome.certificate, outcome.method
     assert certificate["reasons"] == [], certificate["reasons"]
     ct.validate_certificate(certificate, problem, arrays, result)
+    ct.validate_method_report(method, certificate, problem, result, fields, arrays)
+    assert lc.method_failures(certificate, method, fields) == []
     form = ct.query_by_id(problem, result["query_id"])["form"]
-    assert ct.gate_admissible(certificate, form) and lc.gate_admissible(certificate, outcome.method)
-    assert not lc.gate_admissible(certificate), "without its method report a certificate satisfies no gate"
-    assert outcome.method["query_form"] == form and lc.method_failures(certificate, outcome.method) == []
+    assert ct.gate_admissible(certificate, form, method) and lc.gate_admissible(certificate, form, method)
+    assert not ct.gate_admissible(certificate, form) and not lc.gate_admissible(certificate, form), "no report, no gate"
     assert certificate["checker"]["name"] == lc.CHECKER_NAME and outcome.passed is None
     return outcome
 
@@ -84,9 +89,11 @@ def estimate(problem, arrays, result, fields, code, **options):
 
 def is_estimate(outcome, code):
     certificate = outcome.certificate
-    assert certificate["classification"] == "estimate" and certificate["reasons"] == [code], certificate["reasons"]
+    assert outcome.refusal is None and certificate["classification"] == "estimate" and certificate["reasons"] == [code], certificate["reasons"]
     assert certificate["value_certified"] is None and certificate["floor"] is None
-    assert not ct.gate_admissible(certificate) and not lc.gate_admissible(certificate, outcome.method)
+    if outcome.method is not None:
+        ct.validate_method_report(outcome.method, certificate)
+    assert not ct.gate_admissible(certificate, method=outcome.method) and not lc.gate_admissible(certificate, method=outcome.method)
     return outcome
 
 
@@ -139,6 +146,10 @@ def test_tables_match_the_frozen_contract():
     assert (lc.EDGES, lc.FACET_VERTICES, lc.FACET_NODES) == (ct.EDGES, ct.FACET_VERTICES, ct.FACET_NODES)
     assert (lc.LOWER_ID, lc.CONTROL_ID, lc.JUMP_ID) == (ct.LOWER_ID, ct.CONTROL_ID, ct.JUMP_ID)
     assert {lc.SCHEMA_FIXTURE_CHECKER, lc.PROCEDURE_DEMO_CHECKER} == ct.NON_GATE_CHECKERS
+    assert (lc.FORMAT_METHOD, lc.FORMAT_REFUSAL) == (ct.FORMAT_METHOD, ct.FORMAT_REFUSAL)
+    assert set(lc.KAPPA_SVD_METHODS) == ct.KAPPA_SVD_METHODS and set(lc.KAPPA_EIGEN_METHODS) == ct.KAPPA_EIGEN_METHODS
+    assert set(lc.DEPENDENT_ROUTES) == ct.DEPENDENT_ROUTES and set(lc.INTERIOR_SOURCES) == ct.INTERIOR_SOURCES
+    assert set(lc.REFUSAL_KINDS) == ct.REFUSAL_KINDS and set(lc.REFUSAL_STAGES) == ct.REFUSAL_STAGES
     assert lc.CHECKER_NAME not in ct.NON_GATE_CHECKERS
 
 
@@ -379,22 +390,34 @@ def test_omega_is_row_normwise_with_scales():
     ("vm_plate_shear", ct.LOWER_ID), ("vm_plate_shear", ct.CONTROL_ID), ("vm_plate_shear", ct.JUMP_ID),
     ("tresca_strip_vm_thin_slab", ct.CONTROL_ID),
 ])
-def test_sparse_conditioning_proves_a_bound_above_the_dense_value(name, formulation):
+def test_both_conditioning_routes_prove_a_bound_and_every_skipped_row(name, formulation):
     problem, arrays = case_problem(name, 1 if name == "vm_plate_shear" else 0)
     dense = lc.conditioning_report(problem, arrays, "q", formulation)
     sparse = lc.conditioning_report(problem, arrays, "q", formulation, dense_entries_max=0)
-    assert dense["method"].startswith("dense") and sparse["method"].startswith("shift-invert")
-    assert dense["capacity_refusal"] is None and sparse["capacity_refusal"] is None
-    # The value reported is a bound the route proves: never below the true ratio. Its slack is that of the norm bound
-    # on sigma_max and of the second shift; the Ritz estimate beside it is the ratio itself.
-    assert dense["kappa_eq"] <= sparse["kappa_eq"] <= 4.0 * dense["kappa_eq"]
-    assert sparse["kappa_estimate"] == pytest.approx(dense["kappa_eq"], rel=1e-6)
-    dependent = dense["reduced_rows"] - dense["rank"]
-    assert dependent > 0, "these systems have dependent rows, so the count has to be proved"
-    assert sparse["rank"] == dense["rank"] and sparse["dependent_rows_skipped"] == dependent == dense["dependent_rows_skipped"]
-    assert f"{dependent} dependent rows proved by dense singular value decompositions" in sparse["proof"]
-    assert sparse["ritz_residual"] < 1e-8
-    assert 1.0 <= dense["kappa_eq"] <= T["TOL_KAPPA_CAP"]
+    assert dense["method"] == "dense_svd" and sparse["method"] == "eigen_normal_rows"
+    assert dense["refusal"] is None and sparse["refusal"] is None
+    ratio = dense["kappa_estimate"]                          # the ratio of the computed singular values
+    for report in (dense, sparse):
+        assert report["kappa_eq"] == report["sigma_max_upper"] / report["sigma_min_lower"]
+        assert ratio * (1.0 - 1e-9) <= report["kappa_eq"] <= T["TOL_KAPPA_CAP"], "a bound, never below the ratio"
+        assert sum(proof["count"] for proof in report["proofs"]) == report["rows_skipped"] == report["n_rows"] - report["rank"]
+        assert report["proofs"][0]["route"] == "shape_forced_zeros", "rows emptied by the literal zeros"
+        assert report["proofs"][0]["count"] == report["n_rows"] - report["rows_with_entries"]
+    assert dense["kappa_eq"] <= ratio * (1.0 + 1e-6) and sparse["kappa_eq"] <= 4.0 * ratio
+    assert sparse["kappa_estimate"] == pytest.approx(ratio, rel=1e-6)
+    assert sparse["rank"] == dense["rank"] and sparse["rows_skipped"] == dense["rows_skipped"]
+    dependent = dense["proofs"][1]
+    assert dependent["route"] == "dense_svd_blocks" and dependent["count"] > 0, "these systems have dependent rows"
+    threshold = T["TOL_RANK"] * dense["sigma_max_upper"]
+    assert dependent["residual_bound"] == dense["perturbation_bound"] <= threshold
+    assert dense["sigma_min_lower"] > threshold + dependent["residual_bound"], "both separation checks of 17.1"
+    assert dense["residual"] is None and dense["completeness"] is None
+    basis = sparse["proofs"][1]
+    assert basis["route"] == "null_space_basis" and basis["count"] == dependent["count"]
+    assert 0.0 <= basis["residual_bound"] <= T["TOL_RANK"] * sparse["sigma_max_upper"]
+    complete = sparse["completeness"]
+    assert complete["route"] == "inertia" and complete["count_below"] == sparse["rows_skipped"]
+    assert complete["shift"] > sparse["residual"] >= 0.0 and sparse["sigma_min_lower"] ** 2 <= complete["shift"] - sparse["residual"]
 
 
 def near_dependent_block(perturbation):
@@ -410,83 +433,112 @@ def near_dependent_block(perturbation):
 
 
 def test_near_dependent_block_is_never_counted_as_dependent_rows():
-    """The reviewer's probe: a singular value of 1e-8 sigma_max sits below the first shift of the normal matrix,
-    where a count alone would call it a dependent row and report the next singular value. The row blocks show it is
-    not dependent at TOL_RANK, so the sparse route gives no kappa_eq at all."""
+    """The review probe: a singular value of 1e-8 sigma_max gives an eigenvalue of the normal matrix that sits with
+    the zeros. A count alone would call it a dependent row and bound kappa by the next singular value. No route
+    proves it dependent at TOL_RANK, so the eigenvalue route refuses, and the dense route keeps it."""
     matrix, rhs, scale, zero = near_dependent_block(1e-7)
     dense = lc.Conditioning(matrix, rhs, scale, zero)
-    assert dense.method.startswith("dense") and dense.rank == 360 and dense.skipped == 0
+    assert dense.method == "dense_svd" and dense.rank == 360 and dense.rows_skipped == 0 and dense.proofs == []
     assert 1e6 < dense.kappa < 1e10, "the block is nearly dependent, not dependent"
     sparse = lc.Conditioning(matrix, rhs, scale, zero, dense_entries_max=0)
-    assert sparse.kappa is None and sparse.method == "unavailable" and sparse.rank is None and sparse.skipped is None
-    assert "1 eigenvalues of the normal matrix lie below the first shift" in sparse.refusal
-    assert "prove 0 dependent rows" in sparse.refusal
+    assert sparse.kappa is None and sparse.rank is None and sparse.method is None
+    assert sparse.refusal["kind"] == "conditioning" and sparse.refusal["stage"] == "dependent_rows"
+    assert "above the rank threshold" in sparse.refusal["detail"], "its best null vector misses TOL_RANK sigma_max by decades"
     # The same block with the row exactly dependent: one dependent row is proved, and the bound holds.
     matrix, rhs, scale, zero = near_dependent_block(0.0)
     dense = lc.Conditioning(matrix, rhs, scale, zero)
     sparse = lc.Conditioning(matrix, rhs, scale, zero, dense_entries_max=0)
-    assert dense.rank == 359 == sparse.rank and sparse.skipped == 1
-    assert dense.kappa <= sparse.kappa <= 4.0 * dense.kappa
-    assert "1 dependent rows proved" in sparse.proof and "the largest of 60 rows" in sparse.proof
-    # When the block is too large to decompose, an explicit orthonormal basis of the null space proves the count.
+    assert dense.rank == 359 == sparse.rank and sparse.rows_skipped == 1 == dense.rows_skipped
+    assert dense.proofs == [{"route": "dense_svd_blocks", "count": 1, "residual_bound": dense.perturbation}]
+    assert [proof["route"] for proof in sparse.proofs] == ["null_space_basis"] and "1 row blocks" in sparse.text
+    assert dense.estimate <= dense.kappa <= sparse.kappa <= 4.0 * dense.estimate
+    # When the block is too large to decompose, subspace iteration gives the basis.
     basis = lc.Conditioning(matrix, rhs, scale, zero, dense_entries_max=0, block_entries_max=100)
-    assert basis.rank == 359 and "orthonormal basis Y of 1 vectors" in basis.proof and dense.kappa <= basis.kappa <= 4.0 * dense.kappa
-    # That basis does not rescue the nearly dependent block either: its vector misses TOL_RANK sigma_max by decades.
+    assert basis.rank == 359 and "subspace iteration" in basis.text and dense.estimate <= basis.kappa <= 4.0 * dense.estimate
+    assert basis.proofs[0]["residual_bound"] <= T["TOL_RANK"] * basis.sigma_max_upper
+    # That basis does not rescue the nearly dependent block either.
     matrix, rhs, scale, zero = near_dependent_block(1e-7)
     near = lc.Conditioning(matrix, rhs, scale, zero, dense_entries_max=0, block_entries_max=100)
-    assert near.kappa is None and "an explicit null-space basis reaches only" in near.refusal
-    # With neither a decomposable block nor room for a basis, nothing is proved.
-    monkey = lc.NULL_BASIS_ENTRIES_MAX
+    assert near.kappa is None and near.refusal["kind"] == "conditioning" and near.refusal["stage"] == "dependent_rows"
+    # With neither a decomposable block nor room for a basis, the refusal is one of capacity.
+    room = lc.NULL_BASIS_ENTRIES_MAX
     try:
         lc.NULL_BASIS_ENTRIES_MAX = 10.0
         matrix, rhs, scale, zero = near_dependent_block(0.0)
         none = lc.Conditioning(matrix, rhs, scale, zero, dense_entries_max=0, block_entries_max=100)
-        assert none.kappa is None and "is too large as well" in none.refusal
+        assert none.kappa is None and none.refusal["kind"] == "capacity" and none.refusal["stage"] == "dependent_rows"
     finally:
-        lc.NULL_BASIS_ENTRIES_MAX = monkey
+        lc.NULL_BASIS_ENTRIES_MAX = room
+
+
+def test_dense_route_refuses_a_singular_value_inside_the_rank_band(monkeypatch):
+    """17.1: a value counts as zero only at or below TOL_RANK sigma_max_upper, and the kept ones must clear that
+    threshold by the perturbation bound on both sides. A value in between proves nothing either way."""
+    import scipy.sparse as sp
+    monkeypatch.setattr(lc, "SVD_PERTURBATION", 1e5)          # a wide band, so that a value can be placed inside it
+
+    def item(eta):
+        matrix = sp.csr_matrix(np.array([[1.0, 1.0], [1.0, 1.0 + eta]]))
+        return lc.Conditioning(matrix, np.zeros(2), np.ones(2), np.zeros(2, dtype=bool))
+
+    inside = item(5e-10)                                      # sigma_min is about 1.25 TOL_RANK sigma_max
+    assert inside.kappa is None and inside.refusal["kind"] == "conditioning" and inside.refusal["stage"] == "dependent_rows"
+    assert "not separated from the rank threshold" in inside.refusal["detail"]
+    zero = item(1e-13)                                        # clearly a zero: skipped, with its proof
+    threshold = T["TOL_RANK"] * zero.sigma_max_upper
+    assert zero.rank == 1 and zero.proofs == [{"route": "dense_svd_blocks", "count": 1, "residual_bound": zero.perturbation}]
+    assert zero.perturbation <= threshold and zero.sigma_min_lower > threshold + zero.perturbation
+    kept = item(1e-6)                                         # clearly kept
+    assert kept.rank == 2 and kept.proofs == [] and 1e6 < kept.kappa < 1e7
 
 
 def test_kappa_eq_is_reported_on_a_gate_mesh_before_any_result_exists():
-    """Interface 17.1: 237c reports kappa_eq on the gate meshes. The first one is run here, by both routes."""
+    """Interface 17.1: 237c reports kappa_eq, or the refusal, on the gate meshes. The first one is run here."""
     problem, arrays = case_problem("upper3d_fixed_phi00", 0)
     report = lc.conditioning_report(problem, arrays, "q", ct.JUMP_ID, dense_entries_max=0)
-    assert report["elements"] == 243 and report["dependent_rows_skipped"] == 0 and "forced by the shape" in report["proof"]
+    assert report["elements"] == 243 and report["method"] == "eigen_normal_rows"
+    assert [proof["route"] for proof in report["proofs"]] == ["shape_forced_zeros"], "no dependent row on this mesh"
     assert 10.0 < report["kappa_estimate"] <= report["kappa_eq"] < 1e3
     frictional = lc.conditioning_report(*case_problem("upper3d_fixed_phi30", 0), "q", ct.JUMP_ID)
-    assert frictional["method"].startswith("dense") and frictional["kappa_eq"] < 1e3, "only footprint rows remain"
-    # Those rows all share the six footing unknowns: the sparse route takes the other normal matrix, whose zero
-    # eigenvalues are the six forced by its shape.
+    assert frictional["method"] == "dense_svd" and frictional["kappa_eq"] < 1e3, "only footprint rows remain"
+    # Those rows all share the six footing unknowns: the eigenvalue route takes A_hat^T A_hat, whose zeros below the
+    # shift are exactly the unknowns beyond the rank.
     arrow = lc.conditioning_report(*case_problem("upper3d_fixed_phi30", 0), "q", ct.JUMP_ID, dense_entries_max=0)
-    assert "A_hat^T A_hat" in arrow["method"] and "the 6 eigenvalues" in arrow["proof"]
-    assert frictional["kappa_eq"] <= arrow["kappa_eq"] <= 4.0 * frictional["kappa_eq"]
-    assert arrow["rank"] == frictional["rank"] and arrow["dependent_rows_skipped"] == 0
+    assert arrow["method"] == "eigen_normal_columns" and arrow["rank"] == frictional["rank"] == arrow["rows_with_entries"]
+    assert arrow["completeness"]["count_below"] == arrow["n_unknowns"] - arrow["rank"]
+    assert frictional["kappa_estimate"] <= arrow["kappa_eq"] <= 4.0 * frictional["kappa_estimate"]
 
 
-def test_conditioning_above_the_cap_is_an_estimate_and_a_capacity_limit_is_a_refusal():
+def test_proved_bound_above_the_cap_is_an_estimate_and_an_unproved_one_is_a_refusal(monkeypatch):
+    """17.2: a proved kappa_eq above the cap gives equality_ill_conditioned; a bound that cannot be proved gives the
+    refusal record of 15.8 instead of any certificate."""
     problem, arrays, result, fields = stored("vm_plate_shear", ct.CONTROL_ID)
-    model = lc.Model(problem, arrays)
-    query = lc.Query(model, problem["queries"][0])
-    system = lc.UpperSystem(model, query, ct.CONTROL_ID)
-    x = system.pack(fields["velocity"], fields["footing_velocity"])
-    zero = lc.literal_zeros(system.matrix, system.rhs)
-
-    class Stub:
-        kappa = None
-
-    for kappa, expected in ((2.0 * T["TOL_KAPPA_CAP"], "equality_ill_conditioned"), (50.0, None)):
-        Stub.kappa = kappa
-        run = lc._Run(problem, result, model, "upper", None, {})
-        assert run.recheck_equalities(system, x, system.scales(x), zero, Stub) == expected
-    Stub.kappa = None
-    with pytest.raises(lc.CapacityRefusal):
-        lc._Run(problem, result, model, "upper", None, {}).recheck_equalities(system, x, system.scales(x), zero, Stub)
-    # A system the checker cannot factorise is refused outright: no estimate, no certificate, no feasibility record.
-    for call in (lc.check, lc.final_check, lc.feasibility):
+    refused = lc.check(problem, arrays, result, fields, dense_entries_max=0, sparse_rows_max=10)
+    assert refused.certificate is None and refused.method is None and not refused.certified
+    record = refused.refusal
+    ct.validate_refusal(record, problem, result)
+    assert (record["kind"], record["stage"]) == ("capacity", "kappa_bound") and "sparse factorisation limit of 10" in record["detail"]
+    assert record["resources"]["n_rows"] > record["resources"]["n_unknowns"] > 0 and record["resources"]["nnz"] > 0
+    assert record["checker"]["name"] == lc.CHECKER_NAME and ct.is_gate_checker(record)
+    for call in (lc.final_check, lc.feasibility):       # neither has a refusal record of its own: nothing is written
         with pytest.raises(lc.CapacityRefusal) as error:
             call(problem, arrays, result, fields, dense_entries_max=0, sparse_rows_max=10)
-        assert error.value.code == "checker_capacity" and "exceed the sparse factorisation limit of 10" in str(error.value)
+        assert error.value.code == "checker_capacity" and error.value.kind == "capacity"
     report = lc.conditioning_report(problem, arrays, "q", ct.CONTROL_ID, dense_entries_max=0, sparse_rows_max=10)
-    assert report["kappa_eq"] is None and report["rank"] is None and "exceed the sparse factorisation limit" in report["capacity_refusal"]
+    assert report["kappa_eq"] is None and report["rank"] is None and report["refusal"]["kind"] == "capacity"
+
+    # A proved bound above the cap: the estimate carries its method report, and no gate takes it.
+    real = lc.Conditioning
+
+    class Stiff(real):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.sigma_min_lower = self.sigma_max_upper / (2.0 * T["TOL_KAPPA_CAP"])
+            self.kappa = self.sigma_max_upper / self.sigma_min_lower
+
+    monkeypatch.setattr(lc, "Conditioning", Stiff)
+    outcome = estimate(problem, arrays, result, fields, "equality_ill_conditioned")
+    assert outcome.certificate["checks"]["kappa_eq"] > T["TOL_KAPPA_CAP"] and outcome.method["kappa"]["kappa_upper"] > T["TOL_KAPPA_CAP"]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -542,7 +594,7 @@ def test_exact_lower_at_yield_under_dead_load_needs_a_supplied_interior_field():
     outcome = certified(problem, arrays, doc, more)
     value = outcome.certificate["value_certified"]
     assert 0.7 * (1.0 - 1e-11) <= value <= 0.7 and 0.0 < outcome.certificate["checks"]["repair_mu"] < 1e-11
-    assert outcome.report["interior_field"] == "supplied"
+    assert outcome.method["interior_field"] == {"source": "result", "sha256": ct.interior_field_sha256("lower", ct.LOWER_ID, more)}
     # An interior field that is not strictly inside, or does not meet the equalities, is refused.
     doc, more = lower_result("vm_dead_gravity_shear_layer", problem, arrays, result["value"], fields["sigma"],
                              extra_fields={"interior_sigma": fields["sigma"]}, interior_value=result["value"])
@@ -625,7 +677,9 @@ def test_schema_negative_fixtures_never_become_certificates():
 
 def test_every_negative_fixture_is_exercised():
     stages = {entry["stage"] for entry in ct.NEGATIVE}
-    assert stages == {"schema", "checker", "final_check"} and len(ct.NEGATIVE) == 23
+    assert stages == {"schema", "checker", "final_check"} and len(ct.NEGATIVE) == 25
+    ids = {entry["id"] for entry in ct.NEGATIVE}
+    assert {"normal_jump_isochoric", "vm_jump_opening", "restrained_footing_component"} <= ids and "normal_jump_one_node" not in ids
 
 
 def test_other_identity_failures_have_their_codes():
@@ -702,18 +756,38 @@ def test_von_mises_jump_opening_is_refused_by_the_normal_jump_rows():
 
 
 def test_normal_jump_mutant_of_the_checker_is_killed(monkeypatch):
-    """Dropping the normal-jump rows must turn a test red. The committed fixture ``normal_jump_one_node`` does not
-    do it, because its one moved node also strains its element; the opening above does."""
+    """Dropping the normal-jump rows must turn tests red. The fixtures of amendment 1 touch nothing but the normal
+    jump, so a checker without those rows certifies every one of them."""
     problem, arrays, _, opened = opened_cube(1e-3)
     doc, fields = upper_result("vm_free_pull", problem, arrays, opened, NO_FOOTING, ct.JUMP_ID)
-    entry = [e for e in ct.NEGATIVE if e["id"] == "normal_jump_one_node"][0]
-    fixture = ct.apply_negative(entry)[:4]
+    fixtures = {name: ct.apply_negative([e for e in ct.NEGATIVE if e["id"] == name][0])[:4]
+                for name in ("normal_jump_isochoric", "vm_jump_opening")}
+    for name, fixture in fixtures.items():
+        outcome = estimate(*fixture, "projection_move_too_large")
+        model = lc.Model(fixture[0], fixture[1])
+        system = lc.UpperSystem(model, lc.Query(model, fixture[0]["queries"][0]), ct.JUMP_ID)
+        residual = np.abs(system.matrix @ system.pack(fixture[3]["element_velocity"], fixture[3]["footing_velocity"]) - system.rhs)
+        assert residual[system.kinds != "normal_jump"].max() < 1e-14 < 1e-4 < residual[system.kinds == "normal_jump"].max(), name
+        assert outcome.certificate["checks"]["projection_move"] > 1e-5
     monkeypatch.setattr(lc.UpperSystem, "_normal_jump_rows", lambda self, rows: None)
-    estimate(*fixture, "projection_move_too_large")           # the mutant survives the committed fixture
-    mutant = lc.check(problem, arrays, doc, fields)
-    assert mutant.certified, "without the rows an open von Mises facet is certified: the opening test is what kills the mutant"
+    for name, fixture in fixtures.items():
+        assert lc.check(*fixture).certified, f"without the rows {name} is certified: the fixture is what kills the mutant"
+    assert lc.check(problem, arrays, doc, fields).certified
     monkeypatch.undo()
     estimate(problem, arrays, doc, fields, "projection_move_too_large")
+
+
+def test_restrained_component_fixture_touches_only_its_own_row():
+    entry = [e for e in ct.NEGATIVE if e["id"] == "restrained_footing_component"][0]
+    problem, arrays, result, fields, _ = ct.apply_negative(entry)
+    model = lc.Model(problem, arrays)
+    system = lc.UpperSystem(model, lc.Query(model, problem["queries"][0]), ct.CONTROL_ID)
+    residual = np.abs(system.matrix @ system.pack(fields["velocity"], fields["footing_velocity"]) - system.rhs)
+    assert residual[system.kinds != "restrained"].max() < 1e-14 and residual[system.kinds == "restrained"].max() == pytest.approx(1e-3)
+    outcome = estimate(problem, arrays, result, fields, "projection_move_too_large")
+    assert outcome.certificate["checks"]["projection_move"] == pytest.approx(1e-3)
+    clean = stored("vm_plate_shear_restrained", ct.CONTROL_ID)
+    assert certified(*clean).fields["footing_velocity"][0, 2] == 0.0
 
 
 def test_final_check_never_certifies():
@@ -746,15 +820,12 @@ def test_final_check_refuses_a_velocity_outside_the_flow_and_jump_cones():
         outcome = refused_final(*ct.apply_negative(entry)[:4], "flow_violation_too_large")
         checks = outcome.certificate["checks"]
         assert max(checks["rho_flow"], checks["rho_jump_cone"] or 0.0) > T["TOL_CONE_MARGIN"]
-    # A slip without opening of 1e-9 on a Drucker-Prager facet: inside TOL_FLOW_ACCEPT, outside the final margin.
-    problem, arrays, result, fields = stored("dp_free_hydrostatic", ct.JUMP_ID)
-    nodes, tets = arrays["nodes"], arrays["tets"]
-    side = np.nonzero(nodes[tets[:, :4]].mean(axis=1)[:, 1] > nodes[tets[:, :4]].mean(axis=1)[:, 0])[0]
-    slipped = nodes[tets].copy()
-    slipped[side] += 1e-9 * np.array([0.0, 0.0, 1.0])
-    doc, more = upper_result("dp_free_hydrostatic", problem, arrays, slipped, NO_FOOTING, ct.JUMP_ID)
+    # A jump just outside its cone on a Drucker-Prager plane: within TOL_FLOW_ACCEPT, outside the final margin.
+    problem, arrays, candidate, _ = opening_with_slip(1e-3, 1e-10)
+    doc, more = upper_result("dp_free_hydrostatic", problem, arrays, candidate, NO_FOOTING, ct.JUMP_ID)
     outcome = refused_final(problem, arrays, doc, more, "flow_violation_too_large")
-    assert outcome.certificate["checks"]["rho_flow"] == 0.0 and T["TOL_CONE_MARGIN"] < outcome.certificate["checks"]["rho_jump_cone"] < 1e-8
+    assert outcome.certificate["checks"]["rho_flow"] == 0.0
+    assert T["TOL_CONE_MARGIN"] < outcome.certificate["checks"]["rho_jump_cone"] < T["TOL_FLOW_ACCEPT"]
 
 
 def test_nonzero_velocity_on_a_restrained_component_is_refused():
@@ -845,16 +916,17 @@ def test_sparse_route_certifies_the_same_field_with_the_same_numbers(bound, form
         doc, fields = upper_result("vm_plate_shear", problem, arrays, noisy, footing, formulation, 1)
     dense = certified(problem, arrays, doc, fields)
     sparse = certified(problem, arrays, doc, fields, dense_entries_max=0)
-    assert dense.method["kappa_method"].startswith("dense") and sparse.method["kappa_method"].startswith("shift-invert")
+    assert dense.method["kappa"]["method"] == "dense_svd" and sparse.method["kappa"]["method"] == "eigen_normal_rows"
     one, two = dense.certificate, sparse.certificate
     assert two["value_certified"] == pytest.approx(one["value_certified"], rel=1e-12)
-    assert one["checks"]["kappa_eq"] <= two["checks"]["kappa_eq"] <= 4.0 * one["checks"]["kappa_eq"]
-    assert sparse.method["kappa_estimate"] == pytest.approx(one["checks"]["kappa_eq"], rel=1e-6)
-    assert sparse.method["dependent_rows_skipped"] == dense.method["dependent_rows_skipped"] > 0
-    assert "dependent rows proved" in sparse.method["kappa_proof"] and sparse.method["ritz_residual"] < 1e-8
+    assert dense.report["kappa_estimate"] <= two["checks"]["kappa_eq"] <= 4.0 * dense.report["kappa_estimate"]
+    assert sparse.report["kappa_estimate"] == pytest.approx(dense.report["kappa_estimate"], rel=1e-6)
+    assert sparse.method["rows_skipped"] == dense.method["rows_skipped"] > 0
+    assert [proof["route"] for proof in sparse.method["dependent_rows"]["proofs"]] == ["shape_forced_zeros", "null_space_basis"]
+    assert [proof["route"] for proof in dense.method["dependent_rows"]["proofs"]] == ["shape_forced_zeros", "dense_svd_blocks"]
     assert two["checks"]["projection_move"] == pytest.approx(one["checks"]["projection_move"], rel=1e-6)
     assert max(one["checks"]["omega_eq"], two["checks"]["omega_eq"]) <= lc.TAU_EQ
-    assert sparse.report["rank"] == dense.report["rank"]
+    assert sparse.report["rank"] == dense.report["rank"] == dense.method["dependent_rows"]["rank"]
 
 
 def test_drucker_prager_volume_cone_is_repaired_with_a_relative_interior_field():
@@ -885,37 +957,90 @@ def test_drucker_prager_volume_cone_is_repaired_with_a_relative_interior_field()
     estimate(problem, arrays, doc, more, "interior_field_invalid")
 
 
-def test_drucker_prager_jump_cone_is_repaired_on_bernstein_coefficients():
-    """A slip of 1e-9 with no opening across one plane leaves the jump cone; an opening field restores it."""
-    problem, arrays, result, fields = stored("dp_free_hydrostatic", ct.JUMP_ID)
+def opening_with_slip(opening, excess):
+    """The free Drucker-Prager cube with one side of the plane x = y moved by an opening and a slip that leaves the
+    jump cone by ``excess``: tau s - o = excess on every coefficient of the plane. Also the purely opening field."""
+    problem, arrays, _, _ = stored("dp_free_hydrostatic", ct.JUMP_ID)
     nodes, tets = arrays["nodes"], arrays["tets"]
     centroids = nodes[tets[:, :4]].mean(axis=1)
     side = np.nonzero(centroids[:, 1] > centroids[:, 0])[0]
     normal = np.array([-1.0, 1.0, 0.0]) / ct.S2
-    candidate, opening = nodes[tets].copy(), nodes[tets].copy()
-    candidate[side] += 1e-9 * np.array([0.0, 0.0, 1.0])
-    opening[side] += 0.1 * normal
+    tau, _ = ct.jump_constants(problem["regions"][0]["alpha"])
+    candidate, open_only = nodes[tets].copy(), nodes[tets].copy()
+    candidate[side] += opening * normal + (opening + excess) / tau * np.array([0.0, 0.0, 1.0])
+    open_only[side] += 0.1 * normal
+    return problem, arrays, candidate, open_only
+
+
+def test_drucker_prager_jump_cone_is_repaired_on_bernstein_coefficients():
+    """A jump that leaves its cone by 1e-10 on one plane is repaired with a field that only opens there."""
+    problem, arrays, candidate, open_only = opening_with_slip(1e-3, 1e-10)
     rows = ct.signed_jump_conditions(problem, arrays, candidate)
-    assert max(float(coefficient.max()) for _, coefficient in rows) > 1e-10
-    interior = {"interior_element_velocity": opening, "interior_footing_velocity": NO_FOOTING}
+    assert max(float(coefficient.max()) for _, coefficient in rows) == pytest.approx(1e-10, rel=1e-3)
+    interior = {"interior_element_velocity": open_only, "interior_footing_velocity": NO_FOOTING}
     doc, more = upper_result("dp_free_hydrostatic", problem, arrays, candidate, NO_FOOTING, ct.JUMP_ID, **interior)
     outcome = certified(problem, arrays, doc, more)
     checks = outcome.certificate["checks"]
     assert 0.0 < checks["repair_mu"] < 1e-7 and checks["rho_jump_cone"] <= T["TOL_CONE_MARGIN"]
+    assert outcome.method["interior_field"] == {"source": "result", "sha256": ct.interior_field_sha256("upper", ct.JUMP_ID, more)}
     rows = ct.signed_jump_conditions(problem, arrays, outcome.fields["element_velocity"])
-    assert max(float(coefficient.max()) for _, coefficient in rows) <= T["TOL_CONE_MARGIN"] * math.sqrt(3.0)
+    assert max(float(coefficient.max()) for _, coefficient in rows) <= T["TOL_CONE_MARGIN"] * 2e-3
     value = outcome.certificate["value_certified"]
-    assert 5.0 / 3.0 - 2.0 * outcome.certificate["floor"] <= value <= (5.0 / 3.0) * (1.0 + 1e-6)
+    assert 5.0 / 3.0 - 2.0 * outcome.certificate["floor"] <= value <= (5.0 / 3.0) * 1.01, "an admissible field bounds from above"
     doc, more = upper_result("dp_free_hydrostatic", problem, arrays, candidate, NO_FOOTING, ct.JUMP_ID)
     estimate(problem, arrays, doc, more, "no_admissible_correction")
     # A repair that would move the field by more than TOL_REPAIR_MAX is refused.
-    weak = nodes[tets].copy()
-    weak[side] += 2e-6 * normal
+    _, _, far, weak = opening_with_slip(1e-1, 5e-8)
+    weak = arrays["nodes"][arrays["tets"]] + (weak - arrays["nodes"][arrays["tets"]]) * 2e-5       # opens by 2e-6 only
     weak_interior = {"interior_element_velocity": weak, "interior_footing_velocity": NO_FOOTING}
-    far = nodes[tets].copy()
-    far[side] += 1e-7 * np.array([0.0, 0.0, 1.0])
     doc, more = upper_result("dp_free_hydrostatic", problem, arrays, far, NO_FOOTING, ct.JUMP_ID, **weak_interior)
     estimate(problem, arrays, doc, more, "repair_too_large")
+
+
+def test_jump_conditions_are_scaled_by_the_jump_alone():
+    """17.4 step 3 under amendment 1: a strain rate and a velocity are never scaled together. A slip of 1e-9 with no
+    opening under a strain rate of order 1e3 is negligible on a mixed scale and a plain violation on its own."""
+    problem, arrays, _, _ = stored("dp_free_hydrostatic", ct.JUMP_ID)
+    nodes, tets = arrays["nodes"], arrays["tets"]
+    side = np.nonzero(nodes[tets[:, :4]].mean(axis=1)[:, 1] > nodes[tets[:, :4]].mean(axis=1)[:, 0])[0]
+    field = 1e3 * nodes[tets]
+    field[side] += 1e-9 * np.array([0.0, 0.0, 1.0])
+    model = lc.Model(problem, arrays)
+    query = lc.Query(model, problem["queries"][0])
+    system = lc.UpperSystem(model, query, ct.JUMP_ID)
+    state = lc.UpperState(model, system, query, system.pack(field, NO_FOOTING))
+    tau, _ = ct.jump_constants(0.2)
+    assert state.d_scale_vol == pytest.approx(1e3 * math.sqrt(3.0)) and state.d_scale_jump == pytest.approx(1e-9, rel=1e-6)
+    assert state.rho_flow == 0.0 and state.rho_jump == pytest.approx(tau, rel=1e-6)
+    assert tau * 1e-9 / state.d_scale_vol < T["TOL_CONE_MARGIN"], "the mixed scale would have let it through"
+    doc, more = upper_result("dp_free_hydrostatic", problem, arrays, field, NO_FOOTING, ct.JUMP_ID)
+    estimate(problem, arrays, doc, more, "flow_violation_too_large")
+    # No jump at all: the jump ratio is 0, not a division by zero.
+    clean = lc.UpperState(model, system, query, system.pack(1e3 * nodes[tets], NO_FOOTING))
+    assert clean.d_scale_jump == 0.0 and clean.rho_jump == 0.0
+
+
+def test_lower_symmetry_rows_use_the_set_normal():
+    """Interface 5 under amendment 1: every symmetry row of a set uses n_S, the normal of its first facet."""
+    problem, arrays = case_problem("upper3d_roller_phi10", 0)
+    model = lc.Model(problem, arrays)
+    system = lc.LowerSystem(model, lc.Query(model, problem["queries"][0]))
+    pick = np.nonzero(model.facet_kind == "symmetry")[0]
+    assert len(pick) > 20 and len(model.set_normal) == 5
+    rng = np.random.default_rng(3)
+    sigma = rng.normal(size=(model.n_elements, 4, 6))
+    boundary = (system.matrix @ system.pack(0.0, sigma))[system.kinds == "boundary"]
+    free = np.sum(model.facet_kind == "free")
+    rows = boundary[9 * free:].reshape(len(pick), 3, 2)
+    for index, row in enumerate(pick):
+        e, f = arrays["facets"][row]
+        first = int(np.nonzero(arrays["facet_set"] == arrays["facet_set"][row])[0][0])
+        normal, _ = ct.facet_geometry(arrays["nodes"][arrays["tets"][arrays["facets"][first][0]][:4]], int(arrays["facets"][first][1]))
+        np.testing.assert_array_equal(model.set_normal[int(arrays["facet_set"][row])], normal)
+        tangents = ct.tangent_basis(normal)
+        for slot, vertex in enumerate(ct.FACET_VERTICES[int(f)]):
+            traction = ct.voigt_n(normal) @ sigma[e, vertex]
+            np.testing.assert_allclose(rows[index, slot], [tangents[0] @ traction, tangents[1] @ traction], atol=1e-13)
 
 
 def test_lower_repair_larger_than_the_limit_is_refused():
@@ -949,7 +1074,8 @@ def test_a_field_produced_by_the_checker_itself_gets_no_gate_admissible_certific
     ct.validate_certificate(certificate, problem, arrays, own)
     assert certificate["checker"]["name"] == ct.PROCEDURE_DEMO_CHECKER
     outcome = lc.check(problem, arrays, own, fields)
-    assert not ct.gate_admissible(certificate) and not lc.gate_admissible(certificate, outcome.method)
+    ct.validate_method_report(outcome.method, certificate)
+    assert not ct.gate_admissible(certificate, "ray", outcome.method) and not lc.gate_admissible(certificate, "ray", outcome.method)
     record, _ = lc.feasibility(problem, arrays, own, fields)
     assert not ct.gate_admissible(record)
 
@@ -1041,33 +1167,105 @@ def test_half_space_claim_needs_coverage_of_every_face_off_the_ground():
 # ---------------------------------------------------------------------------------------------
 
 def case_records(name):
-    """Results, certificates and feasibility records of the exact fields on every listed mesh of a case."""
+    """Results, certificates, method reports and feasibility records of the exact fields on every listed mesh."""
     case = CASES[name]
-    results, certificates, feasibility = [], [], []
+    results, certificates, methods, feasibility = [], [], [], []
     for mesh in range(len(case["mesh"])):
         problem, arrays = case_problem(name, mesh)
         value, sigma, velocity, footing = exact_fields(name, arrays)
         pairs = [lower_result(name, problem, arrays, value, sigma, mesh)]
         pairs += [upper_result(name, problem, arrays, velocity, footing, form, mesh) for form in (ct.CONTROL_ID, ct.JUMP_ID)]
         for doc, fields in pairs:
+            outcome = lc.check(problem, arrays, doc, fields)
             results.append(doc)
-            certificates.append(lc.check(problem, arrays, doc, fields).certificate)
+            certificates.append(outcome.certificate)
+            methods.append(outcome.method)
             if doc["bound"] == "upper":
                 feasibility.append(lc.feasibility(problem, arrays, doc, fields)[0])
-    return case, results, certificates, feasibility
+    return case, results, certificates, methods, feasibility
 
 
 @pytest.mark.parametrize("name", ["vm_uniaxial_tension", "vm_plate_shear", "vm_plate_shear_offset_ref", "dp_hydrostatic_tension"])
-def test_exact_case_passes_the_contract_evaluator_on_the_checker_certificates(name):
-    case, results, certificates, feasibility = case_records(name)
+def test_exact_case_passes_the_contract_evaluator_on_the_checker_records(name):
+    case, results, certificates, methods, feasibility = case_records(name)
     assert all(item["classification"] == "certified_bound" for item in certificates)
-    verdict = ct.evaluate_case(case, certificates, results, feasibility)
+    verdict = ct.evaluate_case(case, certificates, results, feasibility, methods)
     assert verdict["passed"] and not verdict["invalid_records"] and not verdict["stop_program"], ct.failed(verdict)
     assert {item["kind"] for item in verdict["items"]} == {"lower_le_target", "upper_ge_target", "gap_le"}
+    # Without the method reports every certificate is unproved, and the case fails.
+    bare = ct.evaluate_case(case, certificates, results, feasibility)
+    assert not bare["passed"] and {cause for _, cause in ct.failed(bare)} == {"unproved"}
     # An estimate in place of one certificate fails the case.
     spoiled = [dict(item) for item in certificates]
     spoiled[0].update(classification="estimate", reasons=["no_interior_field"], value_certified=None, floor=None)
-    assert not ct.evaluate_case(case, spoiled, results, feasibility)["passed"]
+    assert not ct.evaluate_case(case, spoiled, results, feasibility, methods)["passed"]
+
+
+def test_what_the_checker_leaves_unproved_is_never_withheld_by_the_evaluator(monkeypatch):
+    """Interface 11.3 and 15.8: at 30 degrees OD2 withholds a missing certificate and nothing else. A refusal, a
+    certificate without a valid method report, an ill-conditioned estimate and a result nobody answered all keep P0
+    open, read through the contract's own evaluator from the checker's own records."""
+    case = CASES["upper3d_fixed_phi30"]
+    problem, arrays = case_problem("upper3d_fixed_phi30", 0)
+    sigma = np.zeros((len(arrays["tets"]), 4, 6))
+    result, fields = lower_result("upper3d_fixed_phi30", problem, arrays, 0.0, sigma)        # zero stress: admissible at multiplier 0
+    good = lc.check(problem, arrays, result, fields)
+    assert good.certified and good.method["kappa"]["method"] == "eigen_normal_rows" and good.certificate["value_certified"] == 0.0
+
+    def lower_items(verdict):
+        """The gate that reads the Lower bound of mesh 0: lower_nondecrease 0 4, which the evaluator files under mesh 4."""
+        return [item for item in verdict["items"] if item["kind"] == "lower_nondecrease" and item["mesh"] == 4]
+
+    def causes(verdict):
+        return {item["cause"] for item in lower_items(verdict) if item["status"] == "fail"}
+
+    def blocking(verdict):
+        """No failed item on this mesh and formulation is withholdable, whatever else the verdict holds."""
+        return all(not ct._withholdable(case, item) for item in lower_items(verdict) if item["status"] == "fail")
+
+    def withholdable(verdict):
+        return all(ct._withholdable(case, item) for item in lower_items(verdict) if item["status"] == "fail")
+
+    # No result offered at all: missing, the one absence OD2 withholds.
+    nothing = ct.evaluate_case(case)
+    assert causes(nothing) == {"missing"} and withholdable(nothing)
+    # The certificate with its report: the nested-pair item of mesh 0 no longer fails for mesh 0.
+    proved = ct.evaluate_case(case, [good.certificate], [result], (), [good.method])
+    assert not proved["invalid_records"] and causes(proved) <= {"missing"}, causes(proved)
+    # A certificate without its method report, or with one that proves nothing: unproved.
+    bare = ct.evaluate_case(case, [good.certificate], [result])
+    assert "unproved" in causes(bare) and blocking(bare) and bare["p0_blocking"] and not bare["claim_withheld"]
+    weak = dict(good.method, kappa=dict(good.method["kappa"], completeness=None))
+    unproved = ct.evaluate_case(case, [good.certificate], [result], (), [weak])
+    assert "unproved" in causes(unproved) and unproved["p0_blocking"] and unproved["invalid_records"][0]["kind"] == "method"
+    # A refusal instead of a certificate: refused.
+    refusal = lc.check(problem, arrays, result, fields, sparse_rows_max=100).refusal
+    refused = ct.evaluate_case(case, (), [result], (), (), refusals=[refusal])
+    assert not refused["invalid_records"] and causes(refused) == {"refused"} and blocking(refused)
+    assert refused["p0_blocking"] and not refused["claim_withheld"]
+    program = ct.evaluate_program([refused], required=[case["name"]])
+    assert program["p0_open"] and case["name"] not in program["withheld_claims"]
+    # A result that nobody answered: unchecked.
+    unchecked = ct.evaluate_case(case, (), [result])
+    assert causes(unchecked) == {"unchecked"} and unchecked["p0_blocking"] and not unchecked["claim_withheld"]
+    # A proved bound above the cap: an estimate with equality_ill_conditioned, read as ill_conditioned.
+    real = lc.Conditioning
+
+    class Stiff(real):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.sigma_min_lower = self.sigma_max_upper / (2.0 * T["TOL_KAPPA_CAP"])
+            self.kappa = self.sigma_max_upper / self.sigma_min_lower
+
+    monkeypatch.setattr(lc, "Conditioning", Stiff)
+    stiff = estimate(problem, arrays, result, fields, "equality_ill_conditioned")
+    monkeypatch.undo()
+    ill = ct.evaluate_case(case, [stiff.certificate], [result], (), [stiff.method])
+    assert not ill["invalid_records"] and "ill_conditioned" in causes(ill) and ill["p0_blocking"] and not ill["claim_withheld"]
+    # An ordinary estimate stays an estimate, which OD2 may withhold at 30 degrees.
+    ordinary = dict(stiff.certificate, reasons=["no_interior_field"])
+    plain = ct.evaluate_case(case, [ordinary], [result])
+    assert causes(plain) == {"estimate"} and withholdable(plain)
 
 
 def test_bracket_record_and_files_are_in_the_frozen_format(tmp_path):
@@ -1078,88 +1276,174 @@ def test_bracket_record_and_files_are_in_the_frozen_format(tmp_path):
         _, _, high, high_fields = stored(name, formulation)
         upper = lc.check(problem, arrays, high, high_fields)
         record = lc.bracket(lower.certificate, upper.certificate, lower.method, upper.method)
-        ct.validate_bracket(record, lower.certificate, upper.certificate)
+        ct.validate_bracket(record, lower.certificate, upper.certificate, lower.method, upper.method)
         assert record["status"] == "bracket" and 0.0 <= record["gap"] <= 1e-11 and record["domain_claim"] == "box_stated"
-        paths = [lc.write_certificate(tmp_path, low, lower), lc.write_certificate(tmp_path, high, upper),
+        paths = [lc.write_outcome(tmp_path, low, lower), lc.write_outcome(tmp_path, high, upper),
                  lc.write_bracket(tmp_path, low, high, record)]
         assert [path.name for path in paths] == [
             f"{ct.record_stem(name, ct.LOWER_ID)}.certificate.json", f"{ct.record_stem(name, formulation)}.certificate.json",
             f"{ct.bracket_stem(name, ct.LOWER_ID, formulation)}.bracket.json"]
         for path, document in zip(paths, (lower.certificate, upper.certificate, record)):
             assert ct.load_document(path)[0] == document, "strict JSON, no non-finite number, nothing lost"
+        assert (tmp_path / f"{ct.record_stem(name, formulation)}.certificate.method.json").exists()
         feasibility, _ = lc.feasibility(problem, arrays, high, high_fields)
         path = lc.write_feasibility(tmp_path, high, feasibility)
         assert path.name == f"{ct.record_stem(name, formulation)}.feasibility.json"
         ct.validate_feasibility(ct.load_document(path)[0], problem)
 
 
-def test_method_report_is_kept_beside_the_certificate_and_gates_need_it(tmp_path):
-    """The frozen certificate cannot say how kappa_eq was obtained. The checker's method report can, and a gate
-    reader takes no certificate without it."""
+def test_method_report_is_written_in_the_frozen_schema_and_gates_need_it(tmp_path):
+    """Interface 15.9: the report beside the certificate says how kappa_eq was proved and which rows were skipped.
+    The checker's own reading of the rules and the contract's validator must agree on every bent report."""
     problem, arrays, result, fields = stored("vm_plate_shear", ct.LOWER_ID)
     outcome = certified(problem, arrays, result, fields)
-    path = lc.write_certificate(tmp_path, result, outcome)
+    path = lc.write_outcome(tmp_path, result, outcome)
     beside = path.with_name(f"{ct.record_stem('vm_plate_shear', ct.LOWER_ID)}.certificate.method.json")
-    assert beside.exists()
+    assert path.name.endswith(".certificate.json") and beside.exists()
     certificate, method = lc.read_gate_certificate(path)
     assert certificate == outcome.certificate and method == outcome.method == ct.load_document(beside)[0]
-    assert method["format"] == lc.FORMAT_METHOD and method["certificate_sha256"] == lc.document_hash(certificate, {}, "")
-    assert method["kappa_method"] == "dense singular value decomposition" and method["kappa_eq"] == certificate["checks"]["kappa_eq"]
-    assert method["dependent_rows_skipped"] == method["reduced_rows"] - method["rank"] >= 0
-    assert method["ritz_residual"] is None and method["interior_field"] == "zero", "this exact field is repaired with zero stress"
-    assert method["kappa_proof"] and method["query_form"] == "ray" and method["checker"] == certificate["checker"]
+    ct.validate_method_report(method, certificate, problem, result, fields, arrays)
+    assert method["certificate_sha256"] == ct.certificate_hash(certificate) == lc.certificate_hash(certificate)
+    kappa = method["kappa"]
+    assert kappa["method"] == "dense_svd" and kappa["kappa_upper"] == certificate["checks"]["kappa_eq"]
+    assert kappa["kappa_upper"] == kappa["sigma_max_upper"] / kappa["sigma_min_lower"] and kappa["perturbation_bound"] > 0.0
+    assert kappa["residual"] is None and kappa["completeness"] is None
+    rows = method["dependent_rows"]
+    assert method["rows_skipped"] == sum(proof["count"] for proof in rows["proofs"]) == rows["n_rows"] - rows["rank"] > 0
 
-    # Every way of losing or bending the report closes the gate.
-    for key, value, failure in (("kappa_method", "unavailable", "kappa_method"), ("kappa_method", None, "kappa_method"),
-                                ("kappa_proof", "", "kappa_proof"), ("kappa_eq", 1.0, "kappa_eq"),
-                                ("dependent_rows_skipped", method["dependent_rows_skipped"] + 1, "dependent_rows_skipped"),
-                                ("dependent_rows_skipped", None, "dependent_rows_skipped"), ("ritz_residual", "small", "ritz_residual"),
-                                ("interior_field", "none", "interior_field"), ("interior_field", "magic", "interior_field"),
-                                ("query_form", "other", "query_form"), ("certificate_sha256", "0" * 64, "certificate_sha256"),
-                                ("checker", {"name": "someone", "version": "1"}, "checker"), ("format", "other", "certificate_method_missing")):
-        bent = dict(method, **{key: value})
-        assert failure in lc.method_failures(certificate, bent), key
-        assert not lc.gate_admissible(certificate, bent), key
-    dropped = {key: value for key, value in method.items() if key != "ritz_residual"}
-    assert not lc.gate_admissible(certificate, dropped)
-    iterative = dict(method, kappa_method="shift-invert Lanczos on A_hat A_hat^T")
-    assert lc.method_failures(certificate, iterative) == ["ritz_residual"], "an iterative kappa_eq reports its Ritz residual"
+    def bent(**changes):
+        doc = {key: (dict(value) if isinstance(value, dict) else value) for key, value in method.items()}
+        for key, value in changes.items():
+            if "." in key:
+                outer, inner = key.split(".")
+                doc[outer][inner] = value
+            else:
+                doc[key] = value
+        return doc
+
+    cases = [
+        bent(**{"kappa.kappa_upper": kappa["kappa_upper"] * 0.5}), bent(**{"kappa.sigma_min_lower": kappa["sigma_min_lower"] * 0.5}),
+        bent(**{"kappa.sigma_min_lower": 0.0}), bent(**{"kappa.method": "lanczos"}), bent(**{"kappa.residual": 1e-9}),
+        bent(**{"kappa.method": "eigen_normal_rows", "kappa.residual": 1e-12}),               # an eigenvalue route with no completeness
+        bent(**{"kappa.method": "eigen_normal_rows", "kappa.residual": 1e-12,
+                "kappa.completeness": {"route": "inertia", "shift": 1e-13, "count_below": method["rows_skipped"]}}),
+        bent(**{"kappa.method": "eigen_normal_rows", "kappa.residual": 1e-12,
+                "kappa.completeness": {"route": "inertia", "shift": kappa["sigma_min_lower"] ** 2 * 2.0, "count_below": 0}}),
+        bent(rows_skipped=method["rows_skipped"] + 1), bent(**{"dependent_rows.proofs": rows["proofs"][:1]}),
+        bent(**{"dependent_rows.proofs": [dict(proof, residual_bound=1.0) if proof["route"] != "shape_forced_zeros" else proof
+                                          for proof in rows["proofs"]]}),
+        bent(**{"dependent_rows.proofs": rows["proofs"] + [{"route": "guess", "count": 1, "residual_bound": 0.0}]}),
+        bent(interior_field={"source": "none", "sha256": None}), bent(interior_field={"source": "result", "sha256": "abc"}),
+        bent(certificate_sha256="0" * 64), bent(checker={"name": "someone", "version": "1"}), bent(query_id="other"),
+        {key: value for key, value in method.items() if key != "rows_skipped"}, dict(method, extra=1),
+    ]
+    for doc in cases:
+        assert lc.method_failures(certificate, doc), doc
+        with pytest.raises(ct.ContractError):
+            ct.validate_method_report(doc, certificate)
+        assert not lc.gate_admissible(certificate, "ray", doc) and not ct.gate_admissible(certificate, "ray", doc)
+    # A valid eigenvalue report passes both readers, and each of its completeness rules is live in both.
+    sparse = certified(problem, arrays, result, fields, dense_entries_max=0)
+    eigen = sparse.method["kappa"]
+    assert eigen["method"] == "eigen_normal_rows" and eigen["completeness"]["route"] == "inertia"
+    assert eigen["completeness"]["count_below"] == sparse.method["rows_skipped"] and eigen["residual"] < eigen["completeness"]["shift"]
+    assert eigen["sigma_min_lower"] ** 2 <= eigen["completeness"]["shift"] - eigen["residual"]
+    for change in ({"shift": eigen["sigma_min_lower"] ** 2 * 0.5}, {"count_below": eigen["completeness"]["count_below"] - 1},
+                   {"route": "ritz"}, {"shift": 0.5 * eigen["residual"]}):
+        doc = dict(sparse.method, kappa=dict(eigen, completeness=dict(eigen["completeness"], **change)))
+        assert lc.method_failures(sparse.certificate, doc), change
+        with pytest.raises(ct.ContractError):
+            ct.validate_method_report(doc, sparse.certificate)
     # A report cannot be moved to another certificate, and a certificate that changed no longer matches its report.
     other = certified(*stored("vm_plate_shear", ct.CONTROL_ID))
-    assert not lc.gate_admissible(other.certificate, method) and not lc.gate_admissible(certificate, other.method)
-    assert not lc.gate_admissible(dict(certificate, value_certified=certificate["value_certified"] * 2.0), method)
+    assert not lc.gate_admissible(other.certificate, "ray", method) and not lc.gate_admissible(certificate, "ray", other.method)
+    assert not lc.gate_admissible(dict(certificate, value_certified=certificate["value_certified"] * 2.0), "ray", method)
 
     beside.unlink()
     assert lc.read_certificate(path) == (certificate, None)
     with pytest.raises(lc.Refusal) as error:
         lc.read_gate_certificate(path)
-    assert error.value.code == "certificate_method_missing"
-    lc.write_document(beside, dict(method, kappa_eq=1.0))
+    assert error.value.code == "method_report_missing"
+    lc.write_document(beside, bent(**{"kappa.kappa_upper": 1.0}))
     with pytest.raises(lc.Refusal) as error:
         lc.read_gate_certificate(path)
-    assert error.value.code == "certificate_method_invalid"
+    assert error.value.code in ("method_kappa_not_proved", "method_kappa_mismatch")
 
-    # An estimate has a report too, and stays out of every gate. A final check writes nothing.
-    low = estimate(*stored("vm_dead_gravity_shear_layer", ct.LOWER_ID), "no_interior_field")
-    estimate_path = lc.write_certificate(tmp_path, stored("vm_dead_gravity_shear_layer", ct.LOWER_ID)[2], low)
+    # An estimate keeps its report and stays out of every gate; one that stopped before any bound has none.
+    stopped = estimate(*stored("vm_dead_gravity_shear_layer", ct.LOWER_ID), "no_interior_field")
+    assert stopped.method is not None and stopped.method["kappa"]["kappa_upper"] == stopped.certificate["checks"]["kappa_eq"]
+    estimate_path = lc.write_outcome(tmp_path, stored("vm_dead_gravity_shear_layer", ct.LOWER_ID)[2], stopped)
     with pytest.raises(lc.Refusal) as error:
         lc.read_gate_certificate(estimate_path)
-    assert error.value.code in ("certificate_not_gate_admissible", "certificate_method_invalid")
+    assert error.value.code == "certificate_not_gate_admissible"
+    entry = [e for e in ct.NEGATIVE if e["id"] == "wrong_load_normalisation"][0]
+    assert estimate(*ct.apply_negative(entry)[:4], "value_mismatch").method is None
     with pytest.raises(lc.Refusal) as error:
-        lc.write_certificate(tmp_path, result, lc.final_check(problem, arrays, result, fields))
+        lc.write_outcome(tmp_path, result, lc.final_check(problem, arrays, result, fields))
     assert error.value.code == "no_certificate"
+
+
+def test_refusal_record_is_written_instead_of_a_certificate(tmp_path):
+    """Interface 15.8: no proved bound, no certificate. The record names the kind, the stage and the system."""
+    problem, arrays, result, fields = stored("vm_plate_shear", ct.JUMP_ID)
+    outcome = lc.check(problem, arrays, result, fields, dense_entries_max=0, sparse_rows_max=10)
+    assert outcome.certificate is None and outcome.method is None
+    path = lc.write_outcome(tmp_path, result, outcome)
+    assert path.name == f"{ct.record_stem('vm_plate_shear', ct.JUMP_ID)}.refusal.json"
+    assert not list(tmp_path.glob("*.certificate*.json")), "a refusal is written instead of a certificate, never beside one"
+    record = ct.load_document(path)[0]
+    ct.validate_refusal(record, problem, result)
+    assert record == outcome.refusal and set(record) == {
+        "format", "format_version", "problem_sha256", "result_sha256", "query_id", "bound", "formulation", "kind", "stage",
+        "detail", "resources", "checker", "tolerances"}
+    assert record["kind"] == "capacity" and record["stage"] == "kappa_bound" and "value" not in record
+    # A certificate beside a refusal is an invalid record set for a gate reader.
+    good = lc.check(problem, arrays, result, fields)
+    lc.write_outcome(tmp_path, result, good)
+    with pytest.raises(lc.Refusal) as error:
+        lc.read_gate_certificate(tmp_path / f"{ct.record_stem('vm_plate_shear', ct.JUMP_ID)}.certificate.json")
+    assert error.value.code == "refusal_conflict"
+    # A conditioning refusal: the bound exists in no proved form, whatever the capacity.
+    real = lc.Conditioning
+
+    class Unproved(real):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._refuse("conditioning", "dependent_rows", "a row that is only nearly dependent")
+
+    try:
+        lc.Conditioning = Unproved
+        outcome = lc.check(problem, arrays, result, fields)
+    finally:
+        lc.Conditioning = real
+    ct.validate_refusal(outcome.refusal, problem, result)
+    assert (outcome.refusal["kind"], outcome.refusal["stage"]) == ("conditioning", "dependent_rows")
+    # A field made by the checker's own code is refused under the reserved name, like its certificates.
+    own = dict(result, producer={"name": lc.CHECKER_NAME, "version": lc.CHECKER_VERSION})
+    own["result_sha256"] = ct.document_hash(own, fields, "result_sha256")
+    demo = lc.check(problem, arrays, own, fields, dense_entries_max=0, sparse_rows_max=10).refusal
+    assert demo["checker"]["name"] == ct.PROCEDURE_DEMO_CHECKER and not ct.is_gate_checker(demo)
 
 
 def test_interior_field_of_a_repair_is_recorded():
     problem, arrays, result, fields = stored("dp_uniaxial_tension", ct.CONTROL_ID)
-    assert certified(problem, arrays, result, fields).method["interior_field"] == "none", "no repair, no interior field"
+    assert certified(problem, arrays, result, fields).method["interior_field"] == {"source": "none", "sha256": None}
     mutation = [e for e in ct.NEGATIVE if e["id"] == "dissipation_charge_as_repair"][0]["mutation"]
     velocity = fields["velocity"].copy()
     velocity[mutation["node"], mutation["component"]] += mutation["amount"]
     interior = {"interior_velocity": arrays["nodes"].copy(), "interior_footing_velocity": NO_FOOTING}
     doc, more = upper_result("dp_uniaxial_tension", problem, arrays, velocity, NO_FOOTING, ct.CONTROL_ID, **interior)
     outcome = certified(problem, arrays, doc, more)
-    assert outcome.method["interior_field"] == "supplied" and outcome.certificate["checks"]["repair_mu"] > 0.0
+    assert outcome.certificate["checks"]["repair_mu"] > 0.0
+    assert outcome.method["interior_field"] == {"source": "result", "sha256": ct.interior_field_sha256("upper", ct.CONTROL_ID, more)}
+    # The identity is that of the arrays used: with other interior arrays the report no longer matches the result.
+    swapped = dict(more, interior_velocity=2.0 * more["interior_velocity"])
+    assert lc.method_failures(outcome.certificate, outcome.method, swapped) == ["method_interior"]
+    with pytest.raises(ct.ContractError) as error:
+        ct.validate_method_report(outcome.method, outcome.certificate, problem, doc, swapped, arrays)
+    assert error.value.code == "method_interior"
+    zero = certified(*stored("vm_plate_shear", ct.LOWER_ID))
+    assert zero.method["interior_field"] == {"source": "zero", "sha256": None} and zero.certificate["checks"]["repair_mu"] > 0.0
 
 
 def rebound(certificate, method, **changes):
@@ -1167,8 +1451,8 @@ def rebound(certificate, method, **changes):
     changed = dict(certificate, **changes)
     checks = changed["checks"]
     changed["floor"] = max(T["FLOOR_MIN_REL"], checks["kappa_eq"] * checks["omega_eq"]) * abs(changed["value_certified"])
-    return changed, dict(method, certificate_sha256=lc.document_hash(changed, {}, ""), problem_sha256=changed["problem_sha256"],
-                         result_sha256=changed["result_sha256"])
+    return changed, dict(method, certificate_sha256=ct.certificate_hash(changed), problem_sha256=changed["problem_sha256"],
+                         result_sha256=changed["result_sha256"], query_id=changed["query_id"])
 
 
 def test_bracket_statuses_and_refusals():
@@ -1178,11 +1462,11 @@ def test_bracket_statuses_and_refusals():
     lower, upper, lower_method, upper_method = one.certificate, two.certificate, one.method, two.method
     within, within_method = rebound(lower, lower_method, value_certified=upper["value_certified"] + 0.5 * upper["floor"])
     record = lc.bracket(within, upper, within_method, upper_method)
-    ct.validate_bracket(record, within, upper)
+    ct.validate_bracket(record, within, upper, within_method, upper_method)
     assert record["status"] == "order_within_floor" and record["gap"] is None
     above, above_method = rebound(lower, lower_method, value_certified=1.01)
     record = lc.bracket(above, upper, above_method, upper_method)
-    ct.validate_bracket(record, above, upper)
+    ct.validate_bracket(record, above, upper, above_method, upper_method)
     assert record["status"] == "contradiction" and record["gap"] is None, "a certified Lower above a certified Upper"
 
     def refused(code, low_pair, high_pair):
@@ -1195,25 +1479,35 @@ def test_bracket_statuses_and_refusals():
     refused("bracket_uncertified", (dict(lower, classification="estimate"), lower_method), good_high)
     refused("hash_mismatch", rebound(lower, lower_method, problem_sha256="0" * 64), good_high)
     refused("query_mismatch", rebound(lower, lower_method, query_id="other"), good_high)
-    # Only gate-admissible inputs form a bracket: no missing report, no reserved checker name, no bent certificate.
-    refused("bracket_not_gate_admissible", (lower, None), good_high)
-    refused("bracket_not_gate_admissible", good_low, (upper, None))
-    refused("bracket_not_gate_admissible", good_low, (upper, lower_method))
-    refused("bracket_not_gate_admissible", (dict(lower, value_certified=0.5), lower_method), good_high)
+    # Only gate-admissible inputs form a bracket: no missing report, no report of another certificate, no bent
+    # certificate, no reserved checker name. The contract's bracket validator refuses the same pairs.
+    refused("method_report_missing", (lower, None), good_high)
+    refused("method_report_missing", good_low, (upper, None))
+    refused("method_certificate_hash", good_low, (upper, lower_method))
+    refused("method_certificate_hash", (dict(lower, value_certified=0.5), lower_method), good_high)
+    good = lc.bracket(lower, upper, lower_method, upper_method)
+    for bad_low, bad_high, code in (((lower, None), good_high, "method_report_missing"),
+                                    (good_low, (upper, lower_method), "method_certificate_hash")):
+        with pytest.raises(ct.ContractError) as error:
+            ct.validate_bracket(good, bad_low[0], bad_high[0], bad_low[1], bad_high[1])
+        assert error.value.code == code
     own = dict(low, producer={"name": lc.CHECKER_NAME, "version": lc.CHECKER_VERSION})
     own["result_sha256"] = ct.document_hash(own, low_fields, "result_sha256")
     demo = lc.check(problem, arrays, own, low_fields)
     assert demo.certified and demo.certificate["checker"]["name"] == ct.PROCEDURE_DEMO_CHECKER
     refused("bracket_not_gate_admissible", (demo.certificate, demo.method), good_high)
     for committed in ("vm_plate_shear", "vm_uniaxial_tension"):
-        fixture = ct.load_document(DATA / f"{ct.record_stem(committed, ct.LOWER_ID)}.certificate.json")[0]
-        refused("bracket_not_gate_admissible", (fixture, lower_method), good_high)
+        stem = ct.record_stem(committed, ct.LOWER_ID)
+        fixture = ct.load_document(DATA / f"{stem}.certificate.json")[0]
+        fixture_method = ct.load_document(DATA / f"{stem}.certificate.method.json")[0]
+        ct.validate_method_report(fixture_method, fixture)
+        assert lc.method_failures(fixture, fixture_method) == [], "the committed reports are valid by both readers"
+        refused("bracket_not_gate_admissible", (fixture, fixture_method), good_high)
 
     zero = "halfspace_by_zero_extension"
-    assert lc.bracket(*[item for pair in zip(rebound(lower, lower_method, domain_claim=zero), rebound(upper, upper_method, domain_claim=zero))
-                        for item in pair])["domain_claim"] == zero
-    wide, wide_method = rebound(upper, upper_method, domain_claim=zero)
-    assert lc.bracket(lower, wide, lower_method, wide_method)["domain_claim"] == "box_stated"
+    low_wide, high_wide = rebound(lower, lower_method, domain_claim=zero), rebound(upper, upper_method, domain_claim=zero)
+    assert lc.bracket(low_wide[0], high_wide[0], low_wide[1], high_wide[1])["domain_claim"] == zero
+    assert lc.bracket(lower, high_wide[0], lower_method, high_wide[1])["domain_claim"] == "box_stated"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1366,8 +1660,32 @@ def test_frictional_witness_outside_the_cone_is_inconclusive_never_infeasible():
     problem, arrays, result, fields, _ = ct.apply_negative(entry)
     record, report = lc.feasibility(problem, arrays, result, fields)
     ct.validate_feasibility(record, problem)
-    assert record["status"] == "inconclusive" and record["witness_residual"] is None
-    assert record["rho_feas"] > T["TOL_FEAS_OK"] and report["witness_reasons"] == ["flow_violation_too_large"]
+    # The projection was accepted, so the projected field is the witness field (11.1); its residual is far from zero.
+    assert report["witness_reasons"] == ["flow_violation_too_large"] and record["status"] == "inconclusive"
+    assert record["witness_result_sha256"] == result["result_sha256"]
+    assert record["witness_residual"] == record["rho_feas"] > 1e-5 > T["TOL_FEAS_OK"]
+
+
+def test_witness_residual_is_taken_at_the_projected_field_not_at_the_stored_arrays():
+    """11.1 under amendment 1: stored arrays meet the equality rows only to solver accuracy. The witness field is
+    what the projection of 17.4 makes of them."""
+    problem, arrays, result, fields = stored("vm_plate_shear", ct.JUMP_ID)
+    rng = np.random.default_rng(21)
+    noisy = fields["element_velocity"] + 1e-8 * rng.normal(size=fields["element_velocity"].shape)
+    doc, more = upper_result("vm_plate_shear", problem, arrays, noisy, fields["footing_velocity"], ct.JUMP_ID)
+    record, report = lc.feasibility(problem, arrays, doc, more)
+    ct.validate_feasibility(record, problem)
+    assert report["stored_field_residual"] > 10.0 * T["TOL_FEAS_OK"], "the stored arrays alone would not pass"
+    assert record["witness_residual"] <= 1e-12 and record["status"] == "formulation_feasible" and ct.gate_admissible(record)
+    assert record["witness_result_sha256"] == doc["result_sha256"]
+    # Without a footing the count of footing modes is null, with the rank computed or not (11.1).
+    for name, formulation in (("vm_uniaxial_tension", ct.JUMP_ID), ("dp_free_hydrostatic", ct.JUMP_ID)):
+        for options in ({}, {"feasibility_dense_unknowns": 0}):
+            free, _ = lc.feasibility(*stored(name, formulation), **options)
+            ct.validate_feasibility(free, stored(name, formulation)[0])
+            assert free["footing_modes"] is None and (free["rank"] is None) == bool(options) and free["status"] == "formulation_feasible"
+    skipped, _ = lc.feasibility(problem, arrays, doc, more, feasibility_dense_unknowns=0)
+    assert (skipped["rank"], skipped["nullity"], skipped["footing_modes"]) == (None, None, None), "skipped together"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1398,7 +1716,7 @@ def test_fixed_components_query_is_a_ray_with_its_fixed_values():
     upper = high.certificate
     assert lower["value_certified"] == pytest.approx(1.0, rel=1e-11) and upper["value_certified"] == pytest.approx(1.0, rel=1e-11)
     assert upper["checks"]["work_reference"] == pytest.approx(1.0)
-    ct.validate_bracket(lc.bracket(lower, upper, low.method, high.method), lower, upper)
+    ct.validate_bracket(lc.bracket(lower, upper, low.method, high.method, "fixed_components"), lower, upper, low.method, high.method)
 
 
 def test_support_query_gives_a_point_and_a_half_space():
@@ -1424,8 +1742,8 @@ def test_support_query_gives_a_point_and_a_half_space():
     high = certified(problem, arrays, doc, fields)
     upper = high.certificate
     assert upper["value_certified"] == pytest.approx(1.0, rel=1e-12) and upper["checks"]["work_reference"] is None
-    record = lc.bracket(lower, upper, low.method, high.method)
-    ct.validate_bracket(record, lower, upper)
+    record = lc.bracket(lower, upper, low.method, high.method, "support")
+    ct.validate_bracket(record, lower, upper, low.method, high.method)
     assert record["status"] == "bracket" and record["gap"] is None
     # A plate velocity other than d is not this query's field.
     made = {"velocity": 2.0 * velocity, "footing_velocity": 2.0 * footing}
@@ -1443,41 +1761,53 @@ def test_conditioning_command_writes_the_table(tmp_path):
     document = ct.load_document(out)[0]
     assert document["format"] == lc.FORMAT_CONDITIONING and len(document["rows"]) == 3
     assert [row["formulation"] for row in document["rows"]] == CASES["vm_plate_shear"]["formulation"]
-    assert all(row["capacity_refusal"] is None and row["kappa_eq"] >= 1.0 for row in document["rows"])
+    assert all(row["refusal"] is None and row["kappa_eq"] >= 1.0 and row["method"] == "dense_svd" for row in document["rows"])
     refusing = lc.conditioning_table(["vm_plate_shear"], [0], dense_entries_max=0, sparse_rows_max=10)
-    assert all(row["kappa_eq"] is None and "sparse factorisation limit" in row["capacity_refusal"] for row in refusing["rows"])
+    for row in refusing["rows"]:
+        assert row["kappa_eq"] is None and row["method"] is None and row["proofs"] is None
+        assert row["refusal"]["kind"] == "capacity" and row["refusal"]["stage"] == "kappa_bound"
 
 
 CONDITIONING_RECORD = Path(__file__).with_name("limit_conditioning_report.json")
+# Interface 11.2 (amendment 1, item 8): what the checker's capacity cannot prove at this amendment.
+UNPROVED_ON_MESH_5 = {(name, 5, ct.LOWER_ID) for name in ct.GATE_3D} | {(name, 5, ct.JUMP_ID) for name in ct.GATE_3D if name.endswith("phi00")}
 
 
 def test_committed_conditioning_record_covers_every_gate_mesh_and_hides_no_refusal():
-    """kappa_eq on meshes 0 to 5 of the eight true-3D cases and on the strips, as the command wrote it. A system the
-    checker could not evaluate is in the record as a capacity refusal, with no number."""
+    """kappa_eq, or the refusal, on meshes 0 to 5 of the eight true-3D cases and on the strips, as the command wrote
+    it (interface 17.1). The refusals are exactly the two groups the amended interface names."""
     document = ct.load_document(CONDITIONING_RECORD)[0]
     assert document["format"] == lc.FORMAT_CONDITIONING and document["checker"]["name"] == lc.CHECKER_NAME
     hashes = ct.load_problem_hashes()
     gate_cases = [name for name in ct.ACTIVE if CASES[name]["class"] in lc.GATE_CLASSES]
-    assert len(gate_cases) == 12 and len([name for name in gate_cases if CASES[name]["class"] == "upper_gate_3d"]) == 8
+    assert len(gate_cases) == 12 and sorted(name for name in gate_cases if CASES[name]["class"] == "upper_gate_3d") == sorted(ct.GATE_3D)
     expected = {(name, mesh, formulation) for name in gate_cases for mesh in range(len(CASES[name]["mesh"]))
                 for formulation in CASES[name]["formulation"]}
     rows = {(row["case"], row["mesh"], row["formulation"]): row for row in document["rows"]}
     assert set(rows) == expected and len(document["rows"]) == len(expected) == 144
-    evaluated, refused = 0, []
+    refused = set()
     for (name, mesh, formulation), row in rows.items():
         assert row["problem_sha256"] == hashes[name][f"m{mesh}"], "the record is of this case on this mesh"
         if row["kappa_eq"] is None:
-            assert isinstance(row["capacity_refusal"], str) and row["capacity_refusal"] and row["rank"] is None
-            assert row["method"] == "unavailable"
-            refused.append((name, mesh, formulation))
-        else:
-            assert row["capacity_refusal"] is None and row["proof"] and row["method"] != "unavailable"
-            assert 1.0 <= row["kappa_eq"] <= T["TOL_KAPPA_CAP"] and row["kappa_eq"] * lc.TAU_EQ <= T["TOL_FLOOR_MAX"]
-            assert row["dependent_rows_skipped"] == row["reduced_rows"] - row["rank"] >= 0
-            evaluated += 1
-    assert evaluated + len(refused) == 144
-    # What this implementation cannot reach is known and stated: the finest true-3D meshes.
-    assert all(CASES[name]["class"] == "upper_gate_3d" and mesh == 5 for name, mesh, _ in refused), refused
+            assert row["refusal"]["kind"] in ct.REFUSAL_KINDS and row["refusal"]["stage"] in ct.REFUSAL_STAGES and row["refusal"]["detail"]
+            assert row["rank"] is None and row["method"] is None and row["proofs"] is None, "no proof, no number"
+            refused.add((name, mesh, formulation))
+            continue
+        assert row["refusal"] is None and row["method"] in ct.KAPPA_SVD_METHODS | ct.KAPPA_EIGEN_METHODS
+        assert row["kappa_eq"] == row["sigma_max_upper"] / row["sigma_min_lower"] <= T["TOL_KAPPA_CAP"]
+        assert row["kappa_eq"] * lc.TAU_EQ <= T["TOL_FLOOR_MAX"] and row["kappa_eq"] >= 1.0
+        threshold = T["TOL_RANK"] * row["sigma_max_upper"]
+        assert sum(proof["count"] for proof in row["proofs"]) == row["rows_skipped"] == row["n_rows"] - row["rank"]
+        for proof in row["proofs"]:
+            assert proof["route"] in ct.DEPENDENT_ROUTES
+            assert proof["residual_bound"] is None if proof["route"] == "shape_forced_zeros" else 0.0 <= proof["residual_bound"] <= threshold
+        if row["method"] in ct.KAPPA_EIGEN_METHODS:
+            complete = row["completeness"]
+            zeros = row["rows_skipped"] if row["method"] == "eigen_normal_rows" else row["n_unknowns"] - row["rank"]
+            assert complete["route"] == "inertia" and complete["count_below"] == zeros
+            assert complete["shift"] > row["residual"] >= 0.0 and row["sigma_min_lower"] ** 2 <= complete["shift"] - row["residual"]
+    assert refused == UNPROVED_ON_MESH_5 and len(refused) == 10
+    assert all(rows[key]["refusal"]["kind"] == "capacity" for key in refused)
     # One row is recomputed here, with the capacity the record states.
     key = ("upper3d_fixed_phi30", 0, ct.JUMP_ID)
     again = lc.conditioning_report(*case_problem(key[0], key[1]), "q", key[2], **document["capacity"])

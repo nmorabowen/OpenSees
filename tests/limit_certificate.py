@@ -13,18 +13,16 @@ Routes chosen to differ from a conic solver's:
 * the jump cone from opening and slip taken directly, with no tangent basis and no second-order cone;
 * quadrature weights from the factorial formula for barycentric monomials.
 
-Entry points: ``check`` (a certificate), ``final_check`` (the recheck alone: a verdict, never a certificate),
-``bracket``, ``feasibility`` (the record of interface 15.5), ``conditioning_report`` and the ``conditioning`` command
-(kappa_eq before any result exists), and the ``write_*`` and ``read_*`` helpers.
+Entry points: ``check`` (a certificate with its method report, or a refusal), ``final_check`` (the recheck alone:
+a verdict, never a certificate), ``bracket``, ``feasibility`` (the record of interface 15.5), ``conditioning_report``
+and the ``conditioning`` command (kappa_eq, or the refusal, before any result exists), ``write_outcome`` and the
+``read_*`` helpers.
 
-The frozen certificate has no key for the method behind ``kappa_eq``. ``check`` therefore returns a method report
-with every certificate, ``write_certificate`` stores it beside the certificate, and ``gate_admissible`` and
-``bracket`` take no certificate without it.
-
-``kappa_eq`` comes from a dense singular value decomposition up to ``DENSE_ENTRIES_MAX`` entries. Beyond that it is
-an upper bound proved by Sylvester counts on a factorised normal matrix, with every dependent row proved by a dense
-decomposition of its row block. A system the checker cannot evaluate raises ``CapacityRefusal``: that is neither an
-estimate nor a withheld claim, and it says nothing about the result.
+Under contract amendment 1 (interface 19.1): ``kappa_eq`` is a proved upper bound, and every skipped row has a proof
+(17.1); each certificate comes with the method report of 15.9, without which ``gate_admissible`` and ``bracket`` take
+none; when no bound is proved, or the system exceeds the checker's capacity, ``check`` returns the refusal record of
+15.8 instead of a certificate; symmetry rows use the set normal in both bounds; flow and jump conditions have their
+own scales; and the feasibility witness is the projected field.
 
 Uses the standard library, numpy and scipy. ``tests/test_limit_certificate.py`` cross-checks every table held
 here against the contract test.
@@ -51,9 +49,15 @@ FORMAT_RESULT = "ladruno-limit-result"
 FORMAT_FEASIBILITY = "ladruno-limit-feasibility"
 FORMAT_CERTIFICATE = "ladruno-limit-certificate"
 FORMAT_BRACKET = "ladruno-limit-bracket"
-FORMAT_METHOD = "ladruno-limit-certificate-method"      # the checker's own record beside a certificate; not a frozen format
+FORMAT_METHOD = "ladruno-limit-certificate-method"      # amendment 1, interface 15.9
+FORMAT_REFUSAL = "ladruno-limit-refusal"                # amendment 1, interface 15.8
 FORMAT_CONDITIONING = "ladruno-limit-conditioning-report"
-INTERIOR_FIELDS = ("none", "zero", "supplied")
+KAPPA_SVD_METHODS = ("dense_svd", "dense_svd_blocks")
+KAPPA_EIGEN_METHODS = ("eigen_normal_rows", "eigen_normal_columns")
+DEPENDENT_ROUTES = ("shape_forced_zeros", "dense_svd_blocks", "null_space_basis")
+INTERIOR_SOURCES = ("none", "zero", "result")
+REFUSAL_KINDS = ("capacity", "conditioning")
+REFUSAL_STAGES = ("projection", "dependent_rows", "kappa_bound")
 
 LOWER_ID = "lower.p1d-vertex.v0"
 CONTROL_ID = "upper.p2c-vertex.v0"
@@ -122,6 +126,8 @@ SPARSE_ROWS_MAX = 250_000      # largest normal matrix handed to the sparse dire
 SHIFT_REL = 1e-12              # positive shift of the shift-invert step, relative to sigma_max^2 (interface 17.1)
 PROBE_REL = 1e-6               # rows above this share of a null-space probe are examined for dependence
 PROBES = 2                     # random probes of the null space of the normal matrix
+SVD_PERTURBATION = 16.0        # stated bound on a dense singular value: this times max(m, n) u sigma_1
+RESIDUAL_SAFETY = 2.0          # factor on every computed residual bound, for the rounding of its own evaluation
 NULL_BASIS_ENTRIES_MAX = 1.0e8 # largest explicit null-space basis, with its image, held in memory
 FEAS_DENSE_UNKNOWNS = 4000     # rank, nullity and footing modes are reported up to this many unknowns
 LSMR_COMPATIBLE = 1e-9         # relative residual below which a least-squares system counts as solved exactly
@@ -136,13 +142,18 @@ class Refusal(ValueError):
 
 
 class CapacityRefusal(Refusal):
-    """The checker cannot evaluate this system: too large for its factorisations, or a conditioning it cannot prove.
+    """The checker cannot finish: the system does not fit its capacity, or no conditioning bound is proved.
 
-    It is never an estimate and never a withheld claim. It says nothing about the result.
+    ``check`` turns it into the refusal record of interface 15.8, written instead of a certificate. It is never an
+    estimate and never a missing certificate, and it says nothing about the result.
     """
 
-    def __init__(self, detail=""):
-        super().__init__("checker_capacity", detail)
+    def __init__(self, refusal, resources=None):
+        if not isinstance(refusal, dict):
+            refusal = {"kind": "capacity", "stage": "kappa_bound", "detail": str(refusal)}
+        super().__init__("checker_capacity", f"{refusal['kind']} at {refusal['stage']}: {refusal['detail']}")
+        self.kind, self.stage, self.detail_text = refusal["kind"], refusal["stage"], refusal["detail"]
+        self.resources = resources or {"n_rows": 0, "n_unknowns": 0, "nnz": 0}
 
 
 def _require(condition, code, detail=""):
@@ -672,7 +683,8 @@ class LowerSystem:
 
         pick = np.nonzero(model.facet_kind == "symmetry")[0]
         if len(pick):
-            eb, fb, normal, facet = model.ext[pick, 0], model.ext[pick, 1], model.ext_normal[pick], np.arange(len(pick))
+            eb, fb, facet = model.ext[pick, 0], model.ext[pick, 1], np.arange(len(pick))
+            normal = np.array([model.set_normal[int(index)] for index in model.facet_set[pick]])     # n_S, never the facet's own
             tangents = np.array([tangent_pair(n) for n in normal])                    # (n, 2, 3)
             coefficient = np.einsum("ntc,ncv->ntv", tangents, traction_matrix(normal))  # (n, 2, 6)
             entries = []
@@ -868,7 +880,23 @@ def backward_error(matrix, rhs, x, scale):
 
 
 class Conditioning:
-    """The reduced, scaled system A_hat of interface 17.1, its conditioning, and its minimum-norm solver."""
+    """The reduced, scaled system A_hat of interface 17.1 (amendment 1): a proved bound on its conditioning, the
+    proofs of its dependent rows, and its minimum-norm solver.
+
+    The reduced system keeps every row and the unknowns that are not literal zeros. ``kappa`` is a proved upper bound
+    on sigma_max / sigma_r, with r the rows not proved dependent, or it is None and ``refusal`` says why
+    (``kind``, ``stage``, ``detail``). Rows are skipped only with a proof:
+
+    * ``shape_forced_zeros``: the row has no entry left after the literal zeros;
+    * ``dense_svd_blocks``: the dense route, one block, with the perturbation bound ``delta`` of its decomposition and
+      both separation checks;
+    * ``null_space_basis``: left null vectors, from dense decompositions of the row blocks that carry the null space
+      or from subspace iteration, with a computed bound on ``|Z^T A_hat|`` and on the departure from orthonormality.
+
+    The eigenvalue routes take ``sigma_min_lower`` from a counted inertia: the factorised normal matrix has exactly as
+    many eigenvalues below the shift as rows were skipped, and ``residual`` bounds everything that separates the
+    factorised matrix from the exact normal matrix.
+    """
 
     def __init__(self, matrix, rhs, scale, zero, dense_entries_max=DENSE_ENTRIES_MAX, sparse_rows_max=SPARSE_ROWS_MAX,
                  block_entries_max=DENSE_ENTRIES_MAX):
@@ -882,56 +910,71 @@ class Conditioning:
         self.row_max = row_max[self.rows]
         self.a_hat = (sp.diags(1.0 / self.row_max) @ reduced[self.rows][:, used]).tocsr() if len(self.rows) else None
         self.scale = scale[self.cols]
-        self.n_rows, self.n_cols = len(self.rows), len(self.cols)
-        self.kappa, self.rank, self.sigma_max, self.sigma_min = None, None, None, None
-        self.ritz_residual, self.skipped, self.refusal, self.proof, self.kappa_estimate = None, None, None, None, None
+        self.n_rows, self.n_cols = len(self.rows), len(self.cols)                # rows and unknowns that hold entries
+        self.total_rows, self.total_unknowns = int(matrix.shape[0]), int(len(keep_cols))
+        self.empty_rows = self.total_rows - self.n_rows
+        self.nnz = int(self.a_hat.nnz) if self.a_hat is not None else 0
+        self.kappa = self.sigma_max_upper = self.sigma_min_lower = self.perturbation = self.residual = None
+        self.completeness, self.method, self.refusal, self.estimate, self.ritz_residual = None, None, None, None, None
+        self.dependent, self.proofs, self.text, self.null_route = 0, [], "", ""
         self._dense, self._lu, self._normal_shift = None, None, None
+        if self.empty_rows:
+            self.proofs.append({"route": "shape_forced_zeros", "count": int(self.empty_rows), "residual_bound": None})
         if self.n_rows == 0:
-            self.method, self.kappa, self.rank, self.skipped = "no equality rows remain: kappa_eq is 1 by convention", 1.0, 0, 0
-            self.proof, self.kappa_estimate = "there is no equality system", 1.0
+            # No equality system: kappa_eq is 1 by convention, with unit bounds.
+            self.method, self.kappa, self.sigma_max_upper, self.sigma_min_lower, self.perturbation = "dense_svd", 1.0, 1.0, 1.0, 0.0
+            self.estimate, self.text = 1.0, "no equality row holds an entry"
         elif self.n_rows * self.n_cols <= dense_entries_max:
             self._factor_dense()
         else:
             self._factor_sparse()
 
-    def _factor_dense(self):
-        u, s, vt = scipy.linalg.svd(self.a_hat.toarray(), full_matrices=False)
-        keep = s > TOLERANCES["TOL_RANK"] * s[0]
-        self._dense = (u[:, keep], s[keep], vt[keep])
-        self.rank, self.sigma_max, self.sigma_min = int(keep.sum()), float(s[0]), float(s[keep][-1])
-        self.kappa = self.kappa_estimate = self.sigma_max / self.sigma_min
-        self.skipped = self.n_rows - self.rank
-        self.method = "dense singular value decomposition"
-        self.proof = "every singular value is computed"
+    @property
+    def rows_skipped(self):
+        return int(self.empty_rows + self.dependent)
 
-    def _refuse(self, detail):
-        self.method, self.refusal, self.kappa = "unavailable", detail, None
+    @property
+    def rank(self):
+        return None if self.kappa is None else int(self.total_rows - self.rows_skipped)
+
+    def _refuse(self, kind, stage, detail):
+        self.refusal, self.kappa = {"kind": kind, "stage": stage, "detail": detail}, None
+
+    def _factor_dense(self):
+        """Dense singular values of the whole of A_hat: one block, with both separation checks of 17.1."""
+        u, s, vt = scipy.linalg.svd(self.a_hat.toarray(), full_matrices=False)
+        delta = SVD_PERTURBATION * max(self.a_hat.shape) * UNIT_ROUNDOFF * float(s[0])
+        upper = float(s[0]) + delta
+        threshold = TOLERANCES["TOL_RANK"] * upper
+        keep = s > threshold
+        kept = float(s[keep][-1])
+        if delta > threshold or not kept - delta > threshold + delta:
+            self._refuse("conditioning", "dependent_rows",
+                         f"dense singular values: the smallest kept value {kept:.3e} is not separated from the rank threshold "
+                         f"{threshold:.3e} by the perturbation bound {delta:.3e}")
+            return
+        self._dense = (u[:, keep], s[keep], vt[keep])
+        self.dependent = int(self.n_rows - keep.sum())
+        if self.dependent:
+            self.proofs.append({"route": "dense_svd_blocks", "count": self.dependent, "residual_bound": delta})
+        self.method, self.sigma_max_upper, self.sigma_min_lower, self.perturbation = "dense_svd", upper, kept - delta, delta
+        self.kappa = self.sigma_max_upper / self.sigma_min_lower
+        self.estimate = float(s[0]) / kept
+        self.text = "dense singular value decomposition of the whole reduced system"
 
     def _factor_sparse(self):
-        """Shift-invert Lanczos on a normal matrix of A_hat with positive shifts (interface 17.1).
-
-        kappa_eq is reported only as a bound this route proves, and the route refuses when it cannot prove one:
-
-        * a first shift just above zero counts the eigenvalues below it (Sylvester, diagonal pivots only);
-        * that count is never read as dependent rows on its own. It is accepted when it equals the zero eigenvalues
-          forced by the shape of A_hat, or when a dense singular value decomposition of the rows involved, block by
-          block, finds exactly that many singular values at or below TOL_RANK sigma_max. A row that is only nearly
-          dependent fails this, and no kappa_eq is given;
-        * a second shift with the same count shows that no eigenvalue lies between the two, so the smallest
-          non-zero singular value is at least its square root;
-        * sigma_max is bounded above by a norm bound, not by a Ritz value.
-
-        A_hat A_hat^T and A_hat^T A_hat have the same non-zero eigenvalues. The interface names the first; the second
-        is tried first when it is the sparser one, as for footing rows that all share the six footing unknowns.
-        """
+        """An eigenvalue route on a normal matrix of A_hat (17.1). A_hat^T A_hat is tried first when it is the sparser
+        one, as for footing rows that all share the six footing unknowns; it can prove full row rank only."""
         counts = np.bincount(self.a_hat.indices, minlength=self.n_cols).astype(float)
         fill_rows, fill_cols = float(np.sum(counts ** 2)), float(np.sum(np.diff(self.a_hat.indptr).astype(float) ** 2))
         for by_rows in ((True,) if fill_rows <= fill_cols else (False, True)):
+            self.refusal, self.dependent, self.proofs = None, 0, [proof for proof in self.proofs if proof["route"] == "shape_forced_zeros"]
             try:
                 if self._normal_route(by_rows):
                     return
             except (RuntimeError, MemoryError, spla.ArpackError) as error:
-                self._refuse(f"sparse factorisation of {self.n_rows} rows by {self.n_cols} unknowns failed: {type(error).__name__}")
+                self._refuse("capacity", "kappa_bound", f"sparse factorisation of {self.n_rows} rows by {self.n_cols} unknowns failed: "
+                             f"{type(error).__name__}")
                 if by_rows:
                     return
 
@@ -939,117 +982,95 @@ class Conditioning:
         """One normal matrix. Returns True when it settles the matter, False to hand over to the row matrix."""
         size, other = (self.n_rows, self.n_cols) if by_rows else (self.n_cols, self.n_rows)
         if size > self.sparse_rows_max:
-            self._refuse(f"{self.n_rows} rows and {self.n_cols} unknowns exceed the sparse factorisation limit of "
-                         f"{self.sparse_rows_max}")
+            self._refuse("capacity", "kappa_bound", f"{self.n_rows} rows and {self.n_cols} unknowns exceed the sparse factorisation "
+                         f"limit of {self.sparse_rows_max:.0f}")
             return by_rows
+        if not by_rows and self.n_rows > self.n_cols:
+            return False                    # more rows than unknowns: dependent rows exist and need the row matrix
         normal = (self.a_hat @ self.a_hat.T if by_rows else self.a_hat.T @ self.a_hat).tocsc()
         identity = sp.identity(size, format="csc")
+        norm_one, norm_inf = float(abs(self.a_hat).sum(axis=0).max()), float(abs(self.a_hat).sum(axis=1).max())
+        # A proved bound on lambda_max: Gershgorin on the normal matrix and the product of the 1 and infinity norms.
+        upper = math.sqrt(min(float(abs(normal).sum(axis=1).max()), norm_one * norm_inf)) * (1.0 + 1e-12)
+        threshold = TOLERANCES["TOL_RANK"] * upper
+        formation = (int(np.diff(self.a_hat.indptr).max()) + int(counts_max(self.a_hat)) + 4) * UNIT_ROUNDOFF * norm_one * norm_inf
 
         def factor(shift):
             lu = spla.splu((normal - shift * identity).tocsc(), permc_spec="MMD_AT_PLUS_A", diag_pivot_thresh=0.0,
                            options={"SymmetricMode": True})
-            # With diagonal pivots only, the negative pivots are the eigenvalues below the shift.
+            # With diagonal pivots only, L D L^T is a congruence and the negative pivots are its negative eigenvalues.
             count = int(np.sum(lu.U.diagonal() < 0.0)) if np.array_equal(lu.perm_r, lu.perm_c) else None
             return lu, count, spla.LinearOperator((size, size), matvec=lu.solve, dtype=float)
 
-        top = float(spla.eigsh(normal, k=1, which="LA", return_eigenvectors=False, tol=1e-10)[0])     # from below
-        bound = min(float(abs(normal).sum(axis=1).max()),
-                    float(abs(self.a_hat).sum(axis=0).max()) * float(abs(self.a_hat).sum(axis=1).max()))
+        top = float(spla.eigsh(normal, k=1, which="LA", return_eigenvectors=False, tol=1e-10)[0])
         low = SHIFT_REL * top
-        lu, count, inverse = factor(low)
-        if count is None:
-            self._refuse("the factorisation pivoted off the diagonal, so the eigenvalues below the shift could not be counted")
+        lu, seen, inverse = factor(low)     # a first look just above zero: how many zeros to explain, and a rough value
+        if seen is None:
+            self._refuse("conditioning", "kappa_bound", "the factorisation pivoted off the diagonal, so no inertia could be counted")
             return True
-        if count == max(0, size - other):
-            proof = f"the {count} eigenvalues below the first shift are the zeros forced by the shape of A_hat"
-        elif not by_rows:
-            return False
-        else:
-            proved, blocks, largest = self._dependent_rows(lu, low, math.sqrt(top))
-            if proved < 0:
-                # One block too large to decompose: prove the count with an explicit basis of the null space instead.
-                worst = self._null_space_bound(lu, low, count)
-                if worst is None or not worst <= TOLERANCES["TOL_RANK"] * math.sqrt(top):
-                    self._refuse(f"{count} eigenvalues of the normal matrix lie below the first shift; a row block of {largest} "
-                                 "rows is too large for a dense decomposition, and an explicit null-space basis "
-                                 + ("is too large as well" if worst is None else f"reaches only {worst / math.sqrt(top):.1e} sigma_max")
-                                 + ": the dependent rows are not proved")
+        if by_rows:
+            wanted = seen
+            if seen:
+                proved = self._dependent_rows(lu, low, threshold, seen)
+                if proved is None:
                     return True
-                proved = count
-                blocks, largest = 0, 0
-            if proved != count:
-                self._refuse(f"{count} eigenvalues of the normal matrix lie below the first shift, and the row blocks prove "
-                             f"{proved} dependent rows at TOL_RANK: a singular value may lie between TOL_RANK sigma_max and "
-                             f"{math.sqrt(SHIFT_REL):.0e} sigma_max, so no kappa_eq is proved")
-                return True
-            if blocks:
-                proof = (f"{count} dependent rows proved by dense singular value decompositions of {blocks} row blocks, "
-                         f"the largest of {largest} rows")
-            else:
-                proof = (f"{count} dependent rows proved by an orthonormal basis Y of {count} vectors with "
-                         f"||A_hat^T y|| <= {worst / math.sqrt(top):.1e} sigma_max ||y|| for every y in its span")
+                self.dependent = seen
+                self.proofs.append({"route": "null_space_basis", "count": int(seen), "residual_bound": proved})
+        else:
+            wanted = self.n_cols - self.n_rows          # the zeros of A_hat^T A_hat when no row is dependent
+            if seen != wanted:
+                return False
         rough = float(spla.eigsh(normal, k=1, sigma=low, which="LA", OPinv=inverse, return_eigenvectors=False, tol=1e-6)[0])
-        del lu, inverse                    # one factorisation in memory at a time
-        shift, value = None, None
+        del lu, inverse                     # one factorisation in memory at a time
+        shift, value, residual = None, None, None
         for share in (0.9, 0.7, 0.5, 0.25, 0.1, 0.01, 0.001):       # the rough value may sit above the eigenvalue
             trial = share * rough
             if trial <= 2.0 * low:
                 break
             lu_two, count_two, inverse_two = factor(trial)
-            if count_two == count:
-                shift = trial
-                try:
-                    pair = spla.eigsh(normal, k=1, sigma=shift, which="LA", OPinv=inverse_two, tol=1e-10)
-                    z, value = pair[1][:, 0], float(pair[0][0])
-                    self.ritz_residual = float(np.linalg.norm(normal @ z - value * z) / (abs(value) * np.linalg.norm(z)))
-                except spla.ArpackError:
-                    value = None
-                break
-            del lu_two, inverse_two        # an eigenvalue lies below this shift: look lower
+            if count_two == wanted:
+                residual = (factor_residual(lu_two) + formation + 4.0 * UNIT_ROUNDOFF * (upper ** 2 + trial)) * RESIDUAL_SAFETY
+                if trial > residual and math.sqrt(trial - residual) > threshold:
+                    shift = trial
+                    try:
+                        pair = spla.eigsh(normal, k=1, sigma=shift, which="LA", OPinv=inverse_two, tol=1e-10)
+                        z, value = pair[1][:, 0], float(pair[0][0])
+                        self.ritz_residual = float(np.linalg.norm(normal @ z - value * z) / (abs(value) * np.linalg.norm(z)))
+                    except spla.ArpackError:
+                        value = None
+                    break
+            del lu_two, inverse_two         # an eigenvalue lies below this shift, or the shift is within its residual
         if shift is None:
-            self._refuse(f"no second shift above {low:.3e} separates the smallest non-zero eigenvalue (first estimate {rough:.3e})")
-            return True
-        if value is None or not value >= shift:
-            self._refuse("the Ritz pair above the second shift did not converge, so its residual cannot be reported")
+            self._refuse("conditioning", "kappa_bound",
+                         f"no shift above {low:.3e} has exactly the {wanted} proved zero eigenvalues below it and exceeds its "
+                         f"residual bound (first estimate {rough:.3e}, last residual bound {residual})")
             return True
         self._normal_shift = (normal, low) if by_rows else None
         self.refusal = None
-        self.sigma_max = math.sqrt(top)
-        self.sigma_min = math.sqrt(value) if value is not None and value > 0.0 else None
-        self.kappa_estimate = self.sigma_max / self.sigma_min if self.sigma_min else None
-        self.kappa = math.sqrt(bound / shift)
-        self.rank = size - count
-        self.skipped = self.n_rows - self.rank
-        self.proof = proof
-        self.method = (f"shift-invert Lanczos on {'A_hat A_hat^T' if by_rows else 'A_hat^T A_hat'} with Sylvester counts at two "
-                       "shifts; kappa_eq is the proved upper bound sqrt(norm bound on lambda_max / second shift)")
+        self.method = "eigen_normal_rows" if by_rows else "eigen_normal_columns"
+        lower = math.sqrt(shift - residual)
+        while lower * lower > shift - residual:         # the square of the bound must not round above shift - residual
+            lower = math.nextafter(lower, 0.0)
+        self.sigma_max_upper, self.sigma_min_lower = upper, lower
+        self.perturbation, self.residual = residual, residual
+        # The interface counts zeros over the whole reduced system: rows without entries and unknowns in no row included.
+        below = wanted + (self.empty_rows if by_rows else self.total_unknowns - self.n_cols)
+        self.completeness = {"route": "inertia", "shift": shift, "count_below": int(below)}
+        self.kappa = self.sigma_max_upper / self.sigma_min_lower
+        self.estimate = math.sqrt(top / value) if value else None
+        self.text = (f"inertia of the factorised {'A_hat A_hat^T' if by_rows else 'A_hat^T A_hat'} at shift {shift:.3e}; "
+                     "sigma_max from a norm bound" + (f"; null-space basis from {self.null_route}" if self.dependent else ""))
         return True
 
-    def _null_space_bound(self, lu, low, count):
-        """The largest ||A_hat^T y|| over unit vectors of an explicit ``count``-dimensional subspace, or None.
-
-        Subspace iteration with -low (M - low I)^-1 gives an orthonormal Y. If ||A_hat^T Y||_2 is at most
-        TOL_RANK sigma_max, then A_hat has at least ``count`` singular values at or below TOL_RANK sigma_max
-        (Courant-Fischer), and the Sylvester count says there are no more below the shift.
-        """
-        if (self.n_rows + self.n_cols) * count > NULL_BASIS_ENTRIES_MAX:
-            return None
-        basis = np.random.default_rng(1).standard_normal((self.n_rows, count))
-        for _ in range(3):
-            basis, triangle = np.linalg.qr(-low * lu.solve(basis))
-            diagonal = np.abs(np.diag(triangle))
-            if not diagonal.min() > 1e-8 * diagonal.max():
-                return None                 # the iterate lost rank: fewer independent null vectors than counted
-        image = self.a_hat.T @ basis
-        return math.sqrt(max(0.0, float(scipy.linalg.eigvalsh(image.T @ image, subset_by_index=[count - 1, count - 1])[0])))
-
-    def _dependent_rows(self, lu, low, sigma_max):
-        """Dependent rows proved by dense decompositions of the row blocks that carry the null space.
+    def _dependent_rows(self, lu, low, threshold, seen):
+        """Prove ``seen`` dependent rows with left null vectors. Returns the residual bound, or None after a refusal.
 
         -low (M - low I)^-1 is, to rounding, the projector onto the null space of M = A_hat A_hat^T. Applied to random
         vectors it marks the rows that null vectors touch. Marked rows that share an unknown form a block; blocks share
-        no unknown, so the null space splits over them. Each block is decomposed densely, and only singular values at
-        or below TOL_RANK sigma_max count. Missing a row can lose a proof; it cannot create one.
+        no unknown, so the null space splits over them, and the left singular vectors of each block for its values at
+        or below the threshold, extended by zero, are null vectors Z of A_hat with |Z^T A_hat| the largest block
+        residual. If a block is too large for a dense decomposition, subspace iteration gives the basis instead.
+        Missing a row can lose a proof; it cannot create one.
         """
         from scipy.sparse.csgraph import connected_components
         rng = np.random.default_rng(0)
@@ -1062,26 +1083,69 @@ class Conditioning:
             if size > 0.0:
                 marked |= np.abs(probe) > PROBE_REL * size
         rows = np.nonzero(marked)[0]
-        if len(rows) == 0:
-            return 0, 0, 0
         sub = self.a_hat[rows].tocsr()
         pattern = sub.copy()
         pattern.data = np.ones_like(pattern.data)
-        blocks, label = connected_components(pattern @ pattern.T, directed=False)
+        blocks, label = connected_components(pattern @ pattern.T, directed=False) if len(rows) else (0, np.zeros(0, dtype=int))
         order = np.argsort(label, kind="stable")
-        ends = np.cumsum(np.bincount(label, minlength=blocks))
-        proved, largest, start = 0, 0, 0
-        for stop in ends:
+        proved, residual, departure, start, too_large = 0, 0.0, 0.0, 0, 0
+        for stop in np.cumsum(np.bincount(label, minlength=blocks)):
             members = order[start:stop]
             start = stop
             piece = sub[members]
             cols = np.unique(piece.indices)
-            if len(members) * len(cols) > self.block_entries_max:
-                return -1, blocks, len(members)        # a block too large to decompose: nothing is proved
-            values = scipy.linalg.svdvals(piece[:, cols].toarray())
-            proved += len(members) - int(np.sum(values > TOLERANCES["TOL_RANK"] * sigma_max))
-            largest = max(largest, len(members))
-        return proved, blocks, largest
+            if len(members) * max(len(members), len(cols)) > self.block_entries_max:
+                too_large = len(members)
+                break
+            dense = piece[:, cols].toarray()
+            # All left singular vectors are needed, and no more of the right ones than the block has rows.
+            u, values, _ = scipy.linalg.svd(dense, full_matrices=dense.shape[0] > dense.shape[1])
+            small = np.ones(len(members), dtype=bool)
+            small[: len(values)] = values <= threshold
+            if not small.any():
+                continue
+            z = u[:, small]
+            image = z.T @ dense
+            residual = max(residual, float(np.linalg.norm(image)) + 8.0 * dense.shape[1] * UNIT_ROUNDOFF * float(np.linalg.norm(dense)))
+            departure = max(departure, float(np.linalg.norm(z.T @ z - np.eye(z.shape[1]))))
+            proved += int(small.sum())
+        block_bound = residual / math.sqrt(max(1e-300, 1.0 - departure)) * RESIDUAL_SAFETY
+        if too_large or proved != seen or not (departure < 0.5 and block_bound <= threshold):
+            basis = self._null_space_basis(lu, low, seen) if (too_large or proved <= seen) else None
+            if basis is None:
+                kind = "capacity" if too_large and (self.n_rows + self.n_cols) * seen > NULL_BASIS_ENTRIES_MAX else "conditioning"
+                self._refuse(kind, "dependent_rows",
+                             f"{seen} eigenvalues of A_hat A_hat^T lie just above zero; row blocks prove {proved} dependent rows"
+                             + (f", one block of {too_large} rows is too large for a dense decomposition" if too_large else "")
+                             + ", and no null-space basis of that size meets TOL_RANK sigma_max: a singular value may lie between "
+                             f"the rank threshold and {math.sqrt(SHIFT_REL):.0e} sigma_max")
+                return None
+            residual, departure = basis
+            self.null_route = "subspace iteration"
+        else:
+            self.null_route = f"left singular vectors of {blocks} row blocks"
+        bound = residual / math.sqrt(max(1e-300, 1.0 - departure)) * RESIDUAL_SAFETY
+        if not (departure < 0.5 and bound <= threshold):
+            self._refuse("conditioning", "dependent_rows", f"the null-space basis of {seen} vectors has residual bound {bound:.3e} "
+                         f"above the rank threshold {threshold:.3e}")
+            return None
+        return bound
+
+    def _null_space_basis(self, lu, low, count):
+        """(|Y^T A_hat| bound, departure of Y from orthonormality) of a basis from subspace iteration, or None."""
+        if (self.n_rows + self.n_cols) * count > NULL_BASIS_ENTRIES_MAX:
+            return None
+        basis = np.random.default_rng(1).standard_normal((self.n_rows, count))
+        for _ in range(3):
+            basis, triangle = np.linalg.qr(-low * lu.solve(basis))
+            diagonal = np.abs(np.diag(triangle))
+            if not diagonal.min() > 1e-8 * diagonal.max():
+                return None                 # the iterate lost rank: fewer independent null vectors than counted
+        image = self.a_hat.T @ basis
+        worst = math.sqrt(max(0.0, float(scipy.linalg.eigvalsh(image.T @ image, subset_by_index=[count - 1, count - 1])[0])))
+        rounding = 8.0 * int(counts_max(self.a_hat)) * UNIT_ROUNDOFF * math.sqrt(float(abs(self.a_hat).sum(axis=0).max())
+                                                                                * float(abs(self.a_hat).sum(axis=1).max()))
+        return worst + rounding, float(np.linalg.norm(basis.T @ basis - np.eye(count)))
 
     def minimum_norm(self, residual_hat):
         """The minimum-norm correction of the scaled unknowns for one scaled residual."""
@@ -1110,11 +1174,46 @@ def _capacity(options):
             "block_entries_max": options.get("block_entries_max", DENSE_ENTRIES_MAX)}
 
 
+def counts_max(matrix):
+    """The largest number of entries in a column of a sparse matrix."""
+    return np.bincount(matrix.indices, minlength=matrix.shape[1]).max() if matrix.nnz else 0
+
+
+def factor_residual(lu):
+    """A bound on |L D L^T - P (M - s I) P^T|_2 for a factorisation with diagonal pivots, D the diagonal of U.
+
+    L D L^T - A = L (D L^T - U) + (L U - A). The second term is bounded componentwise by gamma_k |L| |U|, with k the
+    longest row of L or column of U (the number of products in one entry); the first is computed. Each 2-norm is
+    bounded by the root of the product of the 1 and infinity norms, and those come from products with a vector of ones.
+    The factors are large, so they are taken once and overwritten by their absolute values.
+    """
+    lower, upper = lu.L.tocsc(), lu.U.tocsr()
+    lower.sort_indices()
+    upper.sort_indices()
+    pivots = upper.diagonal()
+    terms = int(max(np.bincount(lower.indices, minlength=lower.shape[0]).max(), counts_max(upper))) + 2
+    gamma = terms * UNIT_ROUNDOFF / (1.0 - terms * UNIT_ROUNDOFF)
+    if np.array_equal(upper.indptr, lower.indptr) and np.array_equal(upper.indices, lower.indices):
+        # Row i of U and column i of L hold the same entries: D L^T - U is formed entry by entry.
+        slack = sp.csr_matrix((np.abs(upper.data - lower.data * np.repeat(pivots, np.diff(lower.indptr))), upper.indices, upper.indptr),
+                              shape=upper.shape)
+    else:
+        slack = abs(upper - (lower @ sp.diags(pivots)).T).tocsr()
+    np.abs(lower.data, out=lower.data)
+    np.abs(upper.data, out=upper.data)
+    ones = np.ones(lower.shape[0])
+
+    def two_norm(right):
+        return math.sqrt(float((lower @ (right @ ones)).max()) * float((right.T @ (lower.T @ ones)).max()))
+
+    return gamma * two_norm(upper) + 2.0 * two_norm(slack)
+
+
 def _conditioning(system, scale, zero, options):
-    """The conditioning of one system, or a capacity refusal: a kappa_eq that is not proved is never used."""
+    """The conditioning of one system, or a refusal: a kappa_eq that is not proved is never used (interface 17.1)."""
     item = Conditioning(system.matrix, system.rhs, scale, zero, **_capacity(options))
     if item.kappa is None:
-        raise CapacityRefusal(item.refusal)
+        raise CapacityRefusal(item.refusal, {"n_rows": item.total_rows, "n_unknowns": item.total_unknowns, "nnz": item.nnz})
     return item
 
 
@@ -1129,7 +1228,13 @@ def project(matrix, rhs, scale, x, zero, conditioning):
         for _ in range(5):
             residual = (rhs - matrix @ x)[conditioning.rows] / conditioning.row_max
             trial = x.copy()
-            trial[conditioning.cols] += conditioning.scale * conditioning.minimum_norm(residual)
+            try:
+                trial[conditioning.cols] += conditioning.scale * conditioning.minimum_norm(residual)
+            except (MemoryError, RuntimeError) as error:
+                raise CapacityRefusal({"kind": "capacity", "stage": "projection",
+                                       "detail": f"the minimum-norm correction failed: {type(error).__name__}"},
+                                      {"n_rows": conditioning.total_rows, "n_unknowns": conditioning.total_unknowns,
+                                       "nnz": conditioning.nnz}) from error
             trial_omega = backward_error(matrix, rhs, trial, scale)
             if not trial_omega < omega:
                 break
@@ -1187,7 +1292,7 @@ class UpperState:
         self.theta, self.enorm, self.dnorm = principal_rates(model, self.field)
         frictional = model.alpha > 0.0
         self.flow = np.where(frictional[:, None], 3.0 * math.sqrt(2.0) * model.alpha[:, None] * self.enorm - self.theta, -math.inf)
-        self.d_scale = float(np.max(self.dnorm, initial=0.0))
+        self.d_scale_vol, self.d_scale_jump = float(np.max(self.dnorm, initial=0.0)), 0.0
         self.jump = np.zeros((0, 6))
         self.coefficients = None
         if system.broken and len(model.int_minus):
@@ -1197,11 +1302,13 @@ class UpperState:
             self.opening, self.slip = jump_parts(model, self.coefficients)
             self.tau = 3.0 * alpha / np.sqrt(1.0 - 12.0 * alpha ** 2)
             self.jump = np.where((alpha > 0.0)[:, None], self.tau[:, None] * self.slip - self.opening, -math.inf)
-            self.d_scale = max(self.d_scale, float(np.max(np.linalg.norm(self.coefficients, axis=2), initial=0.0)))
+            self.d_scale_jump = float(np.max(np.linalg.norm(self.coefficients, axis=2), initial=0.0))
         self.signed = np.concatenate([self.flow.reshape(-1), self.jump.reshape(-1)])
-        scale = self.d_scale if self.d_scale > 0.0 else 1.0
-        self.rho_flow = max(0.0, float(np.max(self.flow, initial=-math.inf))) / scale
-        self.rho_jump = max(0.0, float(np.max(self.jump, initial=-math.inf))) / scale
+        # A strain rate and a velocity are never scaled together. A ratio whose scale is zero is 0.
+        self.kind_scale = np.concatenate([np.full(self.flow.size, self.d_scale_vol), np.full(self.jump.size, self.d_scale_jump)])
+        self.is_jump = np.concatenate([np.zeros(self.flow.size, dtype=bool), np.ones(self.jump.size, dtype=bool)])
+        self.rho_flow = max(0.0, float(np.max(self.flow, initial=-math.inf))) / self.d_scale_vol if self.d_scale_vol > 0.0 else 0.0
+        self.rho_jump = max(0.0, float(np.max(self.jump, initial=-math.inf))) / self.d_scale_jump if self.d_scale_jump > 0.0 else 0.0
 
         # Dissipation by the value formulas of interface 4.3 and 12.2, with no test of the domain.
         alpha, k = model.alpha[:, None], model.k[:, None]
@@ -1243,13 +1350,15 @@ def work_rate(model, field, footing, body, traction, load):
 class Outcome:
     """What one run of the checker gives.
 
-    ``check`` gives a certificate in the frozen format and its method report. ``final_check`` gives a verdict only:
-    ``passed`` is True or False, an estimate certificate carries the code when it is False, and there is never a
-    certified bound.
+    ``check`` gives a certificate in the frozen format with its method report, or, when the checker cannot prove a
+    conditioning bound or lacks the capacity, a ``refusal`` record and no certificate. ``final_check`` gives a
+    verdict only: ``passed`` is True or False, an estimate certificate carries the code when it is False, and there
+    is never a certified bound.
     """
 
-    def __init__(self, certificate, method, report, fields=None, passed=None):
-        self.certificate, self.method, self.report, self.fields, self.passed = certificate, method, report, fields or {}, passed
+    def __init__(self, certificate, method, report, fields=None, passed=None, refusal=None):
+        self.certificate, self.method, self.report, self.fields = certificate, method, report, fields or {}
+        self.passed, self.refusal = passed, refusal
 
     @property
     def certified(self):
@@ -1260,62 +1369,148 @@ class Outcome:
         return [] if self.certificate is None else list(self.certificate["reasons"])
 
 
-def method_report(certificate, report):
-    """The record kept beside a certificate: how kappa_eq was obtained and which interior field repaired the bound.
+def certificate_hash(certificate):
+    """certificate_sha256 of interface 15.9: the 15.1 hash of the whole certificate document, with no arrays."""
+    return document_hash(certificate, {}, "certificate_sha256")
 
-    The frozen certificate has no key for these. The record is bound to its certificate by a hash of the whole
-    certificate, so a method cannot be moved to another certificate.
-    """
-    def whole(key):
-        value = report.get(key)
-        return None if value is None else int(value)
 
+def interior_array_names(bound, formulation):
+    if bound == "lower":
+        return ["interior_sigma"]
+    return sorted(["interior_element_velocity" if formulation == JUMP_ID else "interior_velocity", "interior_footing_velocity"])
+
+
+def interior_field_sha256(bound, formulation, arrays):
+    """Identity of the interior field (interface 15.9): the 15.1 hash of {} with the bound's interior arrays."""
+    return document_hash({}, {name: arrays[name] for name in interior_array_names(bound, formulation)}, None)
+
+
+def method_report(certificate, item, interior, arrays):
+    """The method report of interface 15.9 for one certificate: how kappa_eq was proved, which rows were skipped
+    and by what proof, and which interior field repaired the bound. Bound to the certificate by its hash."""
+    sha = interior_field_sha256(certificate["bound"], certificate["formulation"], arrays) if interior == "result" else None
     return {
         "format": FORMAT_METHOD, "format_version": FORMAT_VERSION,
         "problem_sha256": certificate["problem_sha256"], "result_sha256": certificate["result_sha256"],
-        "certificate_sha256": document_hash(certificate, {}, ""), "checker": dict(certificate["checker"]),
-        "query_form": report.get("query_form"),
-        "kappa_eq": certificate["checks"]["kappa_eq"], "kappa_estimate": _clean(report.get("kappa_estimate")),
-        "kappa_method": report.get("kappa_method"), "kappa_proof": report.get("kappa_proof"),
-        "rows": whole("rows"), "unknowns": whole("unknowns"), "literal_zeros": whole("literal_zeros"),
-        "reduced_rows": whole("reduced_rows"), "reduced_unknowns": whole("reduced_unknowns"), "rank": whole("rank"),
-        "dependent_rows_skipped": whole("dependent_rows_skipped"), "ritz_residual": _clean(report.get("ritz_residual")),
-        "sigma_max": _clean(report.get("sigma_max")), "sigma_min": _clean(report.get("sigma_min")),
-        "refinement_sweeps": whole("refinement_sweeps"), "interior_field": report.get("interior_field", "none"),
+        "certificate_sha256": certificate_hash(certificate), "query_id": certificate["query_id"],
+        "bound": certificate["bound"], "formulation": certificate["formulation"], "checker": dict(certificate["checker"]),
+        "kappa": {"method": item.method, "sigma_max_upper": float(item.sigma_max_upper), "sigma_min_lower": float(item.sigma_min_lower),
+                  "kappa_upper": float(item.kappa), "perturbation_bound": float(item.perturbation),
+                  "residual": None if item.residual is None else float(item.residual),
+                  "completeness": None if item.completeness is None else dict(item.completeness)},
+        "dependent_rows": {"n_rows": int(item.total_rows), "n_unknowns": int(item.total_unknowns), "rank": int(item.rank),
+                           "proofs": [dict(proof) for proof in item.proofs]},
+        "rows_skipped": int(item.rows_skipped),
+        "interior_field": {"source": interior, "sha256": sha},
+        "tolerances": dict(TOLERANCES),
     }
 
 
-def method_failures(certificate, method):
-    """Why a method report does not support its certificate at a gate. Empty means it does."""
+def method_failures(certificate, method, result_arrays=None):
+    """Why a method report does not support its certificate (interface 15.9). Empty means it does.
+
+    This is the checker's own reading of the frozen rules; the test file holds it against the contract's validator.
+    """
+    keys = {"format", "format_version", "problem_sha256", "result_sha256", "certificate_sha256", "query_id", "bound",
+            "formulation", "checker", "kappa", "dependent_rows", "rows_skipped", "interior_field", "tolerances"}
     if not isinstance(method, dict) or method.get("format") != FORMAT_METHOD or method.get("format_version") != FORMAT_VERSION:
-        return ["certificate_method_missing"]
+        return ["method_report_missing"]
+    if set(method) != keys:
+        return ["method_keys"]
     failures = []
-    if method.get("certificate_sha256") != document_hash(certificate, {}, ""):
-        failures.append("certificate_sha256")
-    for key in ("problem_sha256", "result_sha256", "checker"):
-        if method.get(key) != certificate.get(key):
-            failures.append(key)
-    if method.get("query_form") not in ("ray", "fixed_components", "support"):
-        failures.append("query_form")
-    kappa_method = method.get("kappa_method")
-    if not isinstance(kappa_method, str) or not kappa_method or kappa_method == "unavailable":
-        failures.append("kappa_method")
-    if not isinstance(method.get("kappa_proof"), str) or not method.get("kappa_proof"):
-        failures.append("kappa_proof")
-    if method.get("kappa_eq") != certificate["checks"].get("kappa_eq"):
-        failures.append("kappa_eq")
-    counts = [method.get(key) for key in ("reduced_rows", "rank", "dependent_rows_skipped")]
-    if not all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in counts) or counts[0] - counts[1] != counts[2]:
-        failures.append("dependent_rows_skipped")
-    if "ritz_residual" not in method or (method["ritz_residual"] is not None and not _number(method["ritz_residual"])):
-        failures.append("ritz_residual")
-    elif isinstance(kappa_method, str) and kappa_method.startswith("shift-invert") and method["ritz_residual"] is None:
-        failures.append("ritz_residual")
-    interior = method.get("interior_field")
-    repaired = _number(certificate["checks"].get("repair_mu")) and certificate["checks"]["repair_mu"] > 0.0
-    if interior not in INTERIOR_FIELDS or (repaired and interior == "none"):
-        failures.append("interior_field")
+    if method["certificate_sha256"] != certificate_hash(certificate):
+        failures.append("method_certificate_hash")
+    if any(method[key] != certificate.get(key) for key in ("problem_sha256", "result_sha256", "query_id", "bound", "formulation", "checker")):
+        failures.append("method_identity")
+    if method["tolerances"] != TOLERANCES:
+        failures.append("tolerances")
+
+    def count(value, minimum=0):
+        return isinstance(value, int) and not isinstance(value, bool) and value >= minimum
+
+    kappa, rows, interior = method["kappa"], method["dependent_rows"], method["interior_field"]
+    kappa_keys = {"method", "sigma_max_upper", "sigma_min_lower", "kappa_upper", "perturbation_bound", "residual", "completeness"}
+    if not isinstance(kappa, dict) or set(kappa) != kappa_keys or kappa["method"] not in KAPPA_SVD_METHODS + KAPPA_EIGEN_METHODS \
+            or not all(_number(kappa[key]) for key in ("sigma_max_upper", "sigma_min_lower", "kappa_upper", "perturbation_bound")):
+        return failures + ["method_kappa"]
+    eigen = kappa["method"] in KAPPA_EIGEN_METHODS
+    if not (kappa["sigma_min_lower"] > 0.0 and kappa["perturbation_bound"] >= 0.0 and kappa["sigma_max_upper"] >= kappa["sigma_min_lower"]):
+        return failures + ["method_kappa"]
+    if eigen and not (_number(kappa["residual"]) and kappa["residual"] >= 0.0):
+        return failures + ["method_kappa"]
+    if not eigen and not (kappa["residual"] is None and kappa["completeness"] is None):
+        failures.append("method_kappa")
+    if not kappa["kappa_upper"] >= kappa["sigma_max_upper"] / kappa["sigma_min_lower"]:
+        failures.append("method_kappa_not_proved")
+    if certificate["checks"].get("kappa_eq") != kappa["kappa_upper"]:
+        failures.append("method_kappa_mismatch")
+
+    if not isinstance(rows, dict) or set(rows) != {"n_rows", "n_unknowns", "rank", "proofs"} or not isinstance(rows["proofs"], list) \
+            or not all(count(rows[key]) for key in ("n_rows", "n_unknowns", "rank")):
+        return failures + ["method_dependent_rows"]
+    threshold = TOLERANCES["TOL_RANK"] * kappa["sigma_max_upper"]
+    proved = 0
+    for proof in rows["proofs"]:
+        if not isinstance(proof, dict) or set(proof) != {"route", "count", "residual_bound"} or proof["route"] not in DEPENDENT_ROUTES \
+                or not count(proof["count"], 1):
+            return failures + ["method_dependent_rows"]
+        bound = proof["residual_bound"]
+        if proof["route"] == "shape_forced_zeros":
+            good = bound is None
+        else:
+            good = _number(bound) and 0.0 <= bound <= threshold
+            if good and proof["route"] == "dense_svd_blocks":
+                good = kappa["sigma_min_lower"] > threshold + bound        # the kept values are separated from the skipped ones
+        if not good:
+            failures.append("method_dependent_rows")
+        proved += proof["count"]
+    if not count(method["rows_skipped"]) or method["rows_skipped"] != proved or rows["rank"] != rows["n_rows"] - proved:
+        failures.append("method_rows_skipped")          # a row skipped without a proof
+    if rows["rank"] > rows["n_unknowns"]:
+        failures.append("method_dependent_rows")
+    if eigen:
+        complete = kappa["completeness"]
+        if not isinstance(complete, dict) or set(complete) != {"route", "shift", "count_below"} \
+                or complete["route"] not in ("full_spectrum", "inertia") or not _number(complete["shift"]) or not count(complete["count_below"]):
+            failures.append("method_kappa_completeness")
+        else:
+            zeros = proved if kappa["method"] == "eigen_normal_rows" else rows["n_unknowns"] - rows["rank"]
+            if complete["count_below"] != zeros or not complete["shift"] > kappa["residual"]:
+                failures.append("method_kappa_completeness")
+            elif not kappa["sigma_min_lower"] ** 2 <= complete["shift"] - kappa["residual"]:
+                failures.append("method_kappa_not_proved")
+
+    repair = certificate["checks"].get("repair_mu")
+    if not isinstance(interior, dict) or set(interior) != {"source", "sha256"} or interior["source"] not in INTERIOR_SOURCES:
+        return failures + ["method_interior"]
+    if interior["source"] == "none":
+        good = interior["sha256"] is None and repair in (None, 0, 0.0)
+    elif interior["source"] == "zero":
+        good = interior["sha256"] is None and method["bound"] == "lower"
+    else:
+        sha = interior["sha256"]
+        good = isinstance(sha, str) and len(sha) == 64 and all(c in "0123456789abcdef" for c in sha)
+        if good and result_arrays is not None:
+            names = interior_array_names(method["bound"], method["formulation"])
+            good = all(name in result_arrays for name in names) and \
+                sha == interior_field_sha256(method["bound"], method["formulation"], result_arrays)
+    if not good:
+        failures.append("method_interior")
     return failures
+
+
+def refusal_record(problem, result, kind, stage, detail, resources):
+    """The refusal of interface 15.8, written instead of a certificate. It carries no value and no classification."""
+    _require(kind in REFUSAL_KINDS and stage in REFUSAL_STAGES and isinstance(detail, str) and detail, "refusal_record")
+    own = isinstance(result.get("producer"), dict) and result["producer"].get("name") in (CHECKER_NAME, PROCEDURE_DEMO_CHECKER)
+    return {
+        "format": FORMAT_REFUSAL, "format_version": FORMAT_VERSION, "problem_sha256": problem["problem_sha256"],
+        "result_sha256": result["result_sha256"], "query_id": result["query_id"], "bound": result["bound"],
+        "formulation": result["formulation"], "kind": kind, "stage": stage, "detail": detail,
+        "resources": {key: int(resources[key]) for key in ("n_rows", "n_unknowns", "nnz")},
+        "checker": {"name": PROCEDURE_DEMO_CHECKER if own else CHECKER_NAME, "version": CHECKER_VERSION},
+        "tolerances": dict(TOLERANCES),
+    }
 
 
 def _clean(value):
@@ -1337,9 +1532,11 @@ class _Run:
         self.value_certified = None
         self.fields = {}
         self.final_only = False
+        self.item, self.interior, self.interior_candidate, self.result_arrays = None, "none", "none", {}
 
     def passed(self):
         """A final check that found nothing: a verdict, with no certificate."""
+        self.report["interior_field"] = self.interior
         return Outcome(None, None, self.report, self.fields, passed=True)
 
     def stop(self, code):
@@ -1378,19 +1575,24 @@ class _Run:
             "checker": {"name": name, "version": CHECKER_VERSION},
             "tolerances": dict(TOLERANCES),
         }
-        method = method_report(document, self.report)
+        # A method report exists as soon as a conditioning bound was proved; an estimate that stopped earlier has none.
+        self.report["interior_field"] = self.interior
+        method = None
+        if self.item is not None and document["checks"]["kappa_eq"] == self.item.kappa:
+            method = method_report(document, self.item, self.interior, self.result_arrays)
         if certified:
-            failures = certified_check_failures(document, self.report.get("query_form")) + method_failures(document, method)
+            failures = certified_check_failures(document, self.report.get("query_form")) + method_failures(document, method, self.result_arrays)
             _require(not failures, "checker_internal", f"a certified bound must show {failures}")
         return Outcome(document, method, self.report, self.fields, passed=False if self.final_only else None)
 
     def conditioning(self, system, scale, zero):
         item = _conditioning(system, scale, zero, self.options)
+        self.item = item
         self.checks["kappa_eq"] = item.kappa
-        self.report.update(kappa_method=item.method, kappa_proof=item.proof, kappa_estimate=item.kappa_estimate, rank=item.rank,
-                           reduced_rows=item.n_rows, reduced_unknowns=item.n_cols, rows=int(system.matrix.shape[0]),
-                           unknowns=int(system.n), literal_zeros=int(zero.sum()), sigma_max=item.sigma_max,
-                           sigma_min=item.sigma_min, ritz_residual=item.ritz_residual, dependent_rows_skipped=item.skipped)
+        self.report.update(kappa_method=item.method, kappa_route=item.text, kappa_estimate=item.estimate, rank=item.rank,
+                           rows_with_entries=item.n_rows, unknowns_in_rows=item.n_cols, rows=int(system.matrix.shape[0]),
+                           unknowns=int(system.n), literal_zeros=int(zero.sum()), ritz_residual=item.ritz_residual,
+                           rows_skipped=item.rows_skipped)
         return item
 
     def recheck_equalities(self, system, x, scale, zero, conditioning):
@@ -1403,7 +1605,7 @@ class _Run:
             return "equality_residual_above_floor"
         kappa = conditioning.kappa
         if kappa is None:
-            raise CapacityRefusal("kappa_eq is not available")
+            raise CapacityRefusal({"kind": "conditioning", "stage": "kappa_bound", "detail": "no kappa_eq bound is available"})
         self.checks["kappa_eq"] = kappa
         if not kappa <= TOLERANCES["TOL_KAPPA_CAP"] or not kappa * omega <= TOLERANCES["TOL_FLOOR_MAX"]:
             return "equality_ill_conditioned"
@@ -1448,16 +1650,16 @@ def certified_check_failures(document, query_form):
     return failures
 
 
-def gate_admissible(record, method=None):
-    """Only this checker's certified bound with its method report, or its feasible verdict with a witness, can
-    satisfy a gate. A certificate without the report that says how kappa_eq was obtained is rejected."""
-    if record["checker"]["name"] != CHECKER_NAME:
+def gate_admissible(record, query_form="ray", method=None):
+    """Only a real checker's certified bound with a valid method report, or its feasible verdict with a witness, can
+    satisfy a gate (interface 15.6). A certificate without the report that proves its kappa_eq is rejected."""
+    if record["checker"]["name"] in (SCHEMA_FIXTURE_CHECKER, PROCEDURE_DEMO_CHECKER):
         return False
     if record.get("format") == FORMAT_FEASIBILITY:
         return record["status"] == "formulation_feasible" and record["witness_result_sha256"] is not None
-    if record["classification"] != "certified_bound" or method_failures(record, method):
+    if record["classification"] != "certified_bound" or certified_check_failures(record, query_form):
         return False
-    return not certified_check_failures(record, method["query_form"])
+    return method is not None and not method_failures(record, method)
 
 
 def _identity(problem, arrays, result, result_arrays):
@@ -1547,15 +1749,22 @@ def _run(problem, arrays, result, result_arrays, requested_claim, final_only, op
     _capacity(options)
     reason, model, query = _identity(problem, arrays, result, result_arrays)
     run = _Run(problem, result, model, result["bound"], requested_claim, options)
-    run.final_only = final_only
+    run.final_only, run.result_arrays = final_only, result_arrays
     if model is not None and not model.degenerate:
         run.checks["straightness_max"] = model.straightness
     if reason is not None:
         return run.stop(reason)
     run.report["query_form"] = query.form
-    if result["bound"] == "lower":
-        return _check_lower(run, model, query, result, result_arrays, final_only)
-    return _check_upper(run, model, query, result, result_arrays, final_only)
+    try:
+        if result["bound"] == "lower":
+            return _check_lower(run, model, query, result, result_arrays, final_only)
+        return _check_upper(run, model, query, result, result_arrays, final_only)
+    except CapacityRefusal as error:
+        if final_only:
+            raise
+        # Interface 15.8: a refusal instead of a certificate. Not an estimate, and not a missing certificate.
+        record = refusal_record(problem, result, error.kind, error.stage, error.detail_text, error.resources)
+        return Outcome(None, None, run.report, refusal=record)
 
 
 def _reference_stress(model, query, value, sigma, resultant):
@@ -1647,6 +1856,7 @@ def _check_lower(run, model, query, result, arrays, final_check):
             need = g > -margin
             mu = max(0.0, float(np.max((g[need] + margin) / (g[need] - g_int[need]))))
             checks["repair_mu"] = mu
+            run.interior = run.interior_candidate
             if mu > t["TOL_REPAIR_MAX"]:
                 return run.stop("repair_too_large")
             x = (1.0 - mu) * x + mu * interior
@@ -1673,11 +1883,11 @@ def _lower_interior(run, model, query, system, zero, conditioning, result, array
     t = TOLERANCES
     homogeneous = not np.any(model.region_b0) and not np.any(model.t0) and not np.any(query.f0)
     if homogeneous and np.all(model.region_k > 0.0):
-        run.report["interior_field"] = "zero"
+        run.interior_candidate = "zero"
         return np.zeros(system.n)
     if "interior_sigma" not in arrays:
         return "no_interior_field"
-    run.report["interior_field"] = "supplied"
+    run.interior_candidate = "result"
     sigma = np.asarray(arrays["interior_sigma"], dtype=float)
     value = result.get("interior_value")
     if sigma.shape != (model.n_elements, 4, 6) or not np.all(np.isfinite(sigma)) or not _number(value):
@@ -1728,12 +1938,13 @@ def _check_upper(run, model, query, result, arrays, final_check):
             return run.stop("projection_move_too_large")
         # Step 3: the signed conditions with the checker's own operators.
         state = UpperState(model, system, query, x)
+        run.fields = {name: (state.field if system.broken else x[: system.nv].reshape(-1, 3)).copy(), "footing_velocity": state.footing.copy()}
         checks["rho_flow"], checks["rho_jump_cone"] = state.rho_flow, (state.rho_jump if system.broken else None)
         if state.rho_flow > t["TOL_FLOW_ACCEPT"] or state.rho_jump > t["TOL_FLOW_ACCEPT"]:
             return run.stop("flow_violation_too_large")
         # Step 4: repair only by an admissible construction.
         checks["repair_mu"] = 0.0
-        repair = state.signed > t["TOL_CONE_MARGIN"] * state.d_scale
+        repair = state.signed > t["TOL_CONE_MARGIN"] * state.kind_scale
         if np.any(repair):
             interior = _upper_interior(run, model, query, system, zero, arrays, name, shape, repair)
             if isinstance(interior, str):
@@ -1741,10 +1952,13 @@ def _check_upper(run, model, query, result, arrays, final_check):
             x_int, signed_int = interior
             mu = float(np.max(state.signed[repair] / (state.signed[repair] - signed_int[repair])))
             checks["repair_mu"] = mu
+            run.interior = "result"
             if mu > t["TOL_REPAIR_MAX"]:
                 return run.stop("repair_too_large")
             x = (1.0 - mu) * x + mu * x_int
         state = UpperState(model, system, query, x)
+        # The projected, and where needed repaired, field: the witness field of interface 11.1.
+        run.fields = {name: (state.field if system.broken else x[: system.nv].reshape(-1, 3)).copy(), "footing_velocity": state.footing.copy()}
 
     # Step 5: reference work.
     if query.is_ray:
@@ -1762,7 +1976,7 @@ def _check_upper(run, model, query, result, arrays, final_check):
     if state.rho_flow > t["TOL_CONE_MARGIN"] or state.rho_jump > t["TOL_CONE_MARGIN"]:
         return run.stop("flow_violation_too_large")
     run.value_certified = state.value
-    run.report.update(d_scale=state.d_scale, dissipation=state.dissipation, work_fixed=state.w0)
+    run.report.update(d_scale_vol=state.d_scale_vol, d_scale_jump=state.d_scale_jump, dissipation=state.dissipation, work_fixed=state.w0)
     run.fields = {name: (state.field if system.broken else x[: system.nv].reshape(-1, 3)).copy(), "footing_velocity": state.footing.copy()}
     return run.passed() if final_check else run.finish([])
 
@@ -1785,13 +1999,13 @@ def _upper_interior(run, model, query, system, zero, arrays, name, shape, repair
     if move > t["TOL_PROJECTION_MOVE"] or not omega <= TAU_EQ:
         return "interior_field_invalid"
     state = UpperState(model, system, query, x)
-    if not state.d_scale > 0.0:
+    for jump, scale in ((False, state.d_scale_vol), (True, state.d_scale_jump)):
+        if np.any(repair & (state.is_jump == jump)) and not scale > 0.0:
+            return "interior_field_invalid"         # D_scale_int > 0 for each kind that has a condition to repair
+    if np.any(state.signed > t["TOL_CONE_MARGIN"] * state.kind_scale):
         return "interior_field_invalid"
-    if np.any(state.signed > t["TOL_CONE_MARGIN"] * state.d_scale):
+    if np.any(state.signed[repair] > -t["TOL_INTERIOR_MIN"] * state.kind_scale[repair]):
         return "interior_field_invalid"
-    if np.any(state.signed[repair] > -t["TOL_INTERIOR_MIN"] * state.d_scale):
-        return "interior_field_invalid"
-    run.report["interior_field"] = "supplied"
     return x, state.signed
 
 
@@ -1799,15 +2013,20 @@ def _upper_interior(run, model, query, system, zero, arrays, name, shape, repair
 # Brackets (interface 15.6 and 17.9)
 # ---------------------------------------------------------------------------------------------
 
-def bracket(lower, upper, lower_method=None, upper_method=None):
+def bracket(lower, upper, lower_method=None, upper_method=None, query_form="ray"):
     """The bracket record of two gate-admissible bounds of one problem and query.
 
     Each certificate comes with its method report: an estimate, a certificate under a reserved checker name, or one
-    without its report forms no bracket.
+    without a valid report forms no bracket. ``query_form`` is the form of the query both bounds answer.
     """
     _require(lower["bound"] == "lower" and upper["bound"] == "upper", "bracket_labels")
     _require(lower["classification"] == upper["classification"] == "certified_bound", "bracket_uncertified")
-    _require(gate_admissible(lower, lower_method) and gate_admissible(upper, upper_method), "bracket_not_gate_admissible")
+    for certificate, method in ((lower, lower_method), (upper, upper_method)):
+        _require(certificate["checker"]["name"] not in (SCHEMA_FIXTURE_CHECKER, PROCEDURE_DEMO_CHECKER), "bracket_not_gate_admissible")
+        _require(method is not None, "method_report_missing", str(certificate.get("result_sha256")))
+        failures = method_failures(certificate, method)
+        _require(not failures, failures[0] if failures else "")
+        _require(gate_admissible(certificate, query_form, method), "bracket_not_gate_admissible")
     _require(lower["problem_sha256"] == upper["problem_sha256"], "hash_mismatch")
     _require(lower["query_id"] == upper["query_id"], "query_mismatch")
     low, high = lower["value_certified"], upper["value_certified"]
@@ -1825,12 +2044,19 @@ def bracket(lower, upper, lower_method=None, upper_method=None):
     }
 
 
-def write_certificate(directory, result, outcome):
-    """Write ``<stem>.certificate.json`` (frozen format) and ``<stem>.certificate.method.json`` beside it."""
-    _require(outcome.certificate is not None and outcome.method is not None, "no_certificate", "a final check writes nothing")
-    path = Path(directory) / f"{record_stem(result)}.certificate.json"
+def write_outcome(directory, result, outcome):
+    """Write what ``check`` returned: ``<stem>.certificate.json`` with ``<stem>.certificate.method.json`` beside it
+    when a method report exists, or ``<stem>.refusal.json`` instead of both (interface 15.6, 15.8, 15.9)."""
+    stem = Path(directory) / record_stem(result)
+    if outcome.refusal is not None:
+        path = stem.with_name(stem.name + ".refusal.json")
+        write_document(path, outcome.refusal)
+        return path
+    _require(outcome.certificate is not None, "no_certificate", "a final check writes nothing")
+    path = stem.with_name(stem.name + ".certificate.json")
     write_document(path, outcome.certificate)
-    write_document(path.with_name(f"{record_stem(result)}.certificate.method.json"), outcome.method)
+    if outcome.method is not None:
+        write_document(stem.with_name(stem.name + ".certificate.method.json"), outcome.method)
     return path
 
 
@@ -1842,13 +2068,15 @@ def read_certificate(path):
     return certificate, (load_document(beside)[0] if beside.exists() else None)
 
 
-def read_gate_certificate(path):
-    """A certificate for a gate: refused unless it is certified, real, and comes with a matching method report."""
+def read_gate_certificate(path, query_form="ray"):
+    """A certificate for a gate: refused unless it is certified, real, and comes with a valid method report."""
+    path = Path(path)
+    _require(not path.with_name(path.name[: -len(".certificate.json")] + ".refusal.json").exists(), "refusal_conflict", path.name)
     certificate, method = read_certificate(path)
-    _require(method is not None, "certificate_method_missing", Path(path).name)
+    _require(method is not None, "method_report_missing", path.name)
     failures = method_failures(certificate, method)
-    _require(not failures, "certificate_method_invalid", str(failures))
-    _require(gate_admissible(certificate, method), "certificate_not_gate_admissible", Path(path).name)
+    _require(not failures, failures[0] if failures else "")
+    _require(gate_admissible(certificate, query_form, method), "certificate_not_gate_admissible", path.name)
     return certificate, method
 
 
@@ -2056,14 +2284,17 @@ def feasibility(problem, arrays, witness, witness_arrays, **options):
     Returns (record, report). The record is in the frozen format. Readings this implementation had to choose,
     each reported to the contract owner:
 
-    * the witness residual is evaluated on the field the certificate procedure ends with, and only when that
-      procedure certifies the result; the stored field's own residual goes into the report;
+    * the witness residual is evaluated on the projected field of interface 11.1 (amendment 1): the stored field after
+      the projection of 17.4 step 2 and the blend of step 4. The stored field's own residual goes into the report;
     * ``rank`` is that of the equality rows E of interface 11.1, without the query normalisation rows, with each
       row divided by its largest entry and rotations scaled by the length scale;
     * ``rho_feas`` is not below the true ratio: its numerator is an explicit admissible point and its denominator a
       bound from below. ``formulation_infeasible`` is given only when the opposite pair, a numerator from below
       over a denominator at an explicit point, is locked too. LSMR stop statuses and residuals go into ``method``;
-    * ``footing_modes`` is ``null`` for a problem without footings, where the count does not apply.
+    * ``footing_modes`` is ``null`` for a problem without footings (11.1), and with footings it is computed with
+      ``rank`` and ``nullity`` or all three are ``null``.
+
+    A refusal of the certificate procedure (15.8) gives no feasibility record: ``CapacityRefusal`` is raised.
     """
     _capacity(options)
     reason, model, query = _identity(problem, arrays, witness, witness_arrays)
@@ -2081,17 +2312,24 @@ def feasibility(problem, arrays, witness, witness_arrays, **options):
     if reason is None:
         name = "element_velocity" if system.broken else "velocity"
         outcome = check(problem, arrays, witness, witness_arrays, **options)
+        if outcome.refusal is not None:
+            raise CapacityRefusal(outcome.refusal, outcome.refusal["resources"])
         report["witness_reasons"] = outcome.reasons
         stored = system.pack(witness_arrays[name], witness_arrays["footing_velocity"])
         stored_parts = kinematic_residual(model, system, UpperState(model, system, query, stored))
         report["stored_field_residual"] = stored_parts[0] / stored_parts[1] if stored_parts[1] > 0.0 else None
-        if outcome.certified:
+        if outcome.fields:
+            # The witness field of interface 11.1: the stored field after the projection of 17.4 step 2 and, when a
+            # repair is made, the blend of step 4. It exists once the projection is accepted; the raw arrays never are it.
             x = system.pack(outcome.fields[name], outcome.fields["footing_velocity"])
             state = UpperState(model, system, query, x)
-            witness_parts = kinematic_residual(model, system, state)
             witness_work = state.w1 if query.is_ray else 1.0
-            if witness_parts[1] > 0.0:
-                witness_rho, sha = witness_parts[0] / witness_parts[1], witness["result_sha256"]
+            if witness_work > 0.0:                      # with W1 <= 0 the field cannot meet the query normalisation
+                witness_parts = kinematic_residual(model, system, state)
+                if witness_parts[1] > 0.0:
+                    witness_rho, sha = witness_parts[0] / witness_parts[1], witness["result_sha256"]
+                else:
+                    witness_parts = None
 
     rank = nullity = modes = None
     equality = system.matrix[np.nonzero(system.kinds != "support")[0]]       # E of 11.1: the normalisation is not in it
@@ -2198,11 +2436,15 @@ def conditioning_report(problem, arrays, query_id, formulation, **options):
         scale = system.scales(np.zeros(system.n))
     zero = literal_zeros(system.matrix, system.rhs)
     item = Conditioning(system.matrix, system.rhs, scale, zero, **_capacity(options))
-    return {"formulation": formulation, "elements": model.n_elements, "unknowns": int(system.n), "rows": int(system.matrix.shape[0]),
-            "literal_zeros": int(zero.sum()), "reduced_rows": item.n_rows, "reduced_unknowns": item.n_cols, "rank": item.rank,
-            "kappa_eq": item.kappa, "kappa_estimate": item.kappa_estimate, "sigma_max": item.sigma_max, "sigma_min": item.sigma_min,
-            "method": item.method, "proof": item.proof, "ritz_residual": item.ritz_residual,
-            "dependent_rows_skipped": item.skipped, "capacity_refusal": item.refusal}
+    proved = item.kappa is not None
+    return {"formulation": formulation, "elements": model.n_elements, "unknowns": int(system.n), "literal_zeros": int(zero.sum()),
+            "n_rows": item.total_rows, "n_unknowns": item.total_unknowns, "nnz": item.nnz, "rows_with_entries": item.n_rows,
+            "rank": item.rank, "rows_skipped": item.rows_skipped if proved else None, "proofs": item.proofs if proved else None,
+            "kappa_eq": item.kappa, "kappa_estimate": item.estimate if proved else None, "method": item.method if proved else None,
+            "sigma_max_upper": item.sigma_max_upper if proved else None, "sigma_min_lower": item.sigma_min_lower if proved else None,
+            "perturbation_bound": item.perturbation if proved else None, "residual": item.residual if proved else None,
+            "completeness": item.completeness if proved else None, "route": item.text if proved else None,
+            "refusal": item.refusal}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -2216,9 +2458,11 @@ def conditioning_table(case_names=None, meshes=None, out=None, echo=None, **opti
     """kappa_eq at nominal scales for every binding formulation of the gate cases, on every listed mesh.
 
     The cases are built by the contract's own case builder. A system beyond the checker's capacity is recorded with
-    its ``capacity_refusal`` and no number. Returns the document, and writes it to ``out`` after every system.
+    the kind, stage and detail of its ``refusal`` (interface 15.8) and no number. Returns the document, and writes it to
+    ``out`` after every system.
     """
     import datetime
+    import gc
     import time
     import test_limit_contract as contract      # the frozen case parser and builder; nothing else is taken from it
 
@@ -2241,12 +2485,14 @@ def conditioning_table(case_names=None, meshes=None, out=None, echo=None, **opti
                 try:
                     row = conditioning_report(problem, arrays, case["queries"][0]["id"], formulation, **options)
                 except MemoryError:
-                    row = {"formulation": formulation, "kappa_eq": None, "capacity_refusal": "out of memory while assembling the system"}
+                    row = {"formulation": formulation, "kappa_eq": None, "rank": None,
+                           "refusal": {"kind": "capacity", "stage": "kappa_bound", "detail": "out of memory while assembling the system"}}
                 row.update(case=name, mesh=int(mesh), problem_sha256=problem["problem_sha256"], seconds=round(time.time() - started, 1))
+                gc.collect()                # factorisations sit in reference cycles; release them before the next system
                 document["rows"].append({key: row[key] for key in sorted(row)})
                 if echo:
                     echo(f"{name} m{mesh} {formulation}: kappa_eq {row.get('kappa_eq')} rank {row.get('rank')} "
-                         f"{row.get('capacity_refusal') or row.get('proof')} ({row['seconds']} s)")
+                         f"{row.get('refusal') or row.get('route')} ({row['seconds']} s)")
                 if out:
                     write_document(out, document)
     return document
@@ -2259,7 +2505,7 @@ def main(argv=None):
 
     parser = argparse.ArgumentParser(description="Limit-analysis certificate checker (WP-237c).")
     commands = parser.add_subparsers(dest="command", required=True)
-    table = commands.add_parser("conditioning", help="kappa_eq at nominal scales on the gate meshes, with capacity refusals")
+    table = commands.add_parser("conditioning", help="kappa_eq at nominal scales on the gate meshes, or the refusal")
     table.add_argument("--out", required=True, help="JSON file to write")
     table.add_argument("--cases", help="comma-separated case names; default: the eight true-3D cases and the strips")
     table.add_argument("--meshes", help="comma-separated mesh indices; default: every listed mesh")
@@ -2272,7 +2518,7 @@ def main(argv=None):
         meshes=[int(item) for item in args.meshes.split(",")] if args.meshes else None, out=args.out,
         echo=lambda line: print(line, flush=True), dense_entries_max=args.dense_entries_max, sparse_rows_max=args.sparse_rows_max)
     refused = sum(1 for row in document["rows"] if row["kappa_eq"] is None)
-    print(f"{len(document['rows'])} systems, {refused} capacity refusals, written to {args.out}", flush=True)
+    print(f"{len(document['rows'])} systems, {refused} refusals, written to {args.out}", flush=True)
     return 0
 
 
