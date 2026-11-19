@@ -1560,6 +1560,13 @@ quoted from them.
   before T0 runs: the (i) dump's format and its DOF and support-node order; whether K is from the
   trial state; the GIMP weights after `renormalize`; M⁻¹'s fixed-component rule in route S; the
   first-step re-seed values. The oracle is written from §1 and §7a, never from the C++.
+- **Two route-S points §1/§7a left open (ruled 2026-11-18, before T0 (iii) ran; binding on the
+  C++ and the oracle alike).** (1) In mode F a node is **p-active iff it is mass-active (above the
+  mode-F cutoff) and some two-phase particle has S^p > 0 there**. A sub-cutoff node, such as a ghost
+  row with a weight of about 1e-7, is outside the pressure system, and its p does not enter G2P.
+  This is the mode-F analogue of mode A's `renormalize` drop. (2) Under `kinematics small` in
+  mode F, Δε = sym(Δt Σ_a v**_a ⊗ ∇S_a), with v** the conditioned second-projection velocity (the
+  one MUSL builds L from). V stays V₀, σ′ is the material's at ε_n + Δε, and x moves with v₁.
 
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
