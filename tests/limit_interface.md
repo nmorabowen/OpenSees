@@ -491,7 +491,11 @@ verdicts for P0. By owner decision OD2, after the box correction above:
   Upper beyond the floors) stops the program;
 - at **any** angle, an item whose certificate was replaced by a **capacity or conditioning refusal** (section 15.8)
   keeps P0 open. A refusal is **not** a missing certificate under OD2: it says that the checker could not prove the
-  bound, not that no candidate was offered (amendment 1, item 7; orchestrator ruling of 2026-11-19);
+  bound, not that no candidate was offered (amendment 1, item 7; orchestrator ruling R12, pending owner confirmation);
+- **"missing" means that no result document was offered** for that mesh and formulation (amendment 1, fix round B1).
+  Three other absences keep P0 open at any angle and are never withheld: `unchecked`, a result document with neither a
+  certificate nor a refusal; `unproved`, a gate certificate without a valid method report (15.9); and `ill_conditioned`,
+  an estimate whose reasons include `equality_ill_conditioned`. An ordinary estimate keeps the cause `estimate`;
 - a miss at `phi = 0, 10, 20` degrees is a P0 failure that keeps P0 open (ADR 18.3), and no candidate passing
   triggers K2;
 - a failure of an exact formulation case (`exact_on_mesh`, `exact_lower_on_mesh`) or of the thin-slab strip still
@@ -893,6 +897,12 @@ formulation have a refusal from a gate checker, and no gate-admissible certifica
 that cause is never withholdable, so it keeps P0 open at every angle (section 11.3). `evaluate_program` lists the cases
 with refused items.
 
+**Absence without a refusal (fix round B1).** Without a gate-admissible certificate or a refusal, the cause is, in order:
+`unproved` when a gate certificate is present but its method report is absent or invalid; `ill_conditioned` when an
+estimate gives `equality_ill_conditioned`; `estimate` for any other certificate; `unchecked` when a result document was
+offered and nobody answered it; and `missing` only when no result document was offered. `refused`, `unproved`,
+`ill_conditioned` and `unchecked` are never withholdable under OD2.
+
 ### 15.9 Method report: `<stem>.<query>.<formulation-id>.certificate.method.json` (amendment 1, item 5)
 
 Written by the checker beside every certificate, and **required** for a gate certificate (15.6). Keys: `format` =
@@ -902,8 +912,8 @@ Written by the checker beside every certificate, and **required** for a gate cer
 | Key | Content and rule |
 |---|---|
 | identity | `problem_sha256`, `result_sha256`, `query_id`, `bound`, `formulation` and `checker` equal the certificate's. `certificate_sha256` is the section 15.1 hash of the certificate document |
-| `kappa` | `{method, sigma_max_upper, sigma_min_lower, kappa_upper, perturbation_bound, residual}`. `method` is `dense_svd`, `dense_svd_blocks`, `eigen_normal_rows` (`A_hat A_hat^T`) or `eigen_normal_columns` (`A_hat^T A_hat`). `sigma_max_upper` is a proved upper bound on `sigma_max(A_hat)`; `sigma_min_lower > 0` a proved lower bound on the smallest kept singular value; `perturbation_bound >= 0` the stated bound used for them. `residual` is the Ritz or eigenvalue residual bound, required for the two eigenvalue methods and `null` for the two singular-value methods. `kappa_upper` equals the certificate's `checks.kappa_eq` and is at least `sigma_max_upper / sigma_min_lower` |
-| `dependent_rows` | `{n_rows, n_unknowns, rank, proofs}` of the reduced system. `proofs` is a list of `{route, count, residual_bound}`: `route` is `shape_forced_zeros`, `dense_svd_blocks` or `null_space_basis`; `count >= 1`. `residual_bound` is `null` for `shape_forced_zeros`, the stated factorisation perturbation bound for `dense_svd_blocks`, and the bound on the null-space basis residual for `null_space_basis`, which must not exceed `TOL_RANK * sigma_max_upper`. `rank = n_rows - rows_skipped` |
+| `kappa` | `{method, sigma_max_upper, sigma_min_lower, kappa_upper, perturbation_bound, residual, completeness}`. `method` is `dense_svd`, `dense_svd_blocks`, `eigen_normal_rows` (`A_hat A_hat^T`) or `eigen_normal_columns` (`A_hat^T A_hat`). `sigma_max_upper` is a proved upper bound on `sigma_max(A_hat)`; `sigma_min_lower > 0` a proved lower bound on the smallest kept singular value; `perturbation_bound >= 0` the stated bound used for them. `residual` is the Ritz or eigenvalue residual bound, required for the two eigenvalue methods and `null` for the two singular-value methods. `kappa_upper` equals the certificate's `checks.kappa_eq` and is at least `sigma_max_upper / sigma_min_lower`. `completeness` is `null` for the singular-value methods and, for the eigenvalue methods, `{route, shift, count_below}` with `route` `full_spectrum` or `inertia`: exactly `count_below` eigenvalues of the normal matrix lie below `shift`, `count_below` equals the zero eigenvalues skipped (`rows_skipped` for `eigen_normal_rows`, `n_unknowns - rank` for `eigen_normal_columns`), `shift > residual`, and `sigma_min_lower^2 <= shift - residual` (fix round M1) |
+| `dependent_rows` | `{n_rows, n_unknowns, rank, proofs}` of the reduced system. `proofs` is a list of `{route, count, residual_bound}`: `route` is `shape_forced_zeros`, `dense_svd_blocks` or `null_space_basis`; `count >= 1`. `residual_bound` is `null` for `shape_forced_zeros`, the stated factorisation perturbation bound for `dense_svd_blocks`, and the bound on the null-space basis residual for `null_space_basis`, which must not exceed `TOL_RANK * sigma_max_upper`. For `dense_svd_blocks`, also `residual_bound <= TOL_RANK * sigma_max_upper` and `sigma_min_lower > TOL_RANK * sigma_max_upper + residual_bound` (fix round M1). `rank = n_rows - rows_skipped` |
 | `rows_skipped` | the number of rows whose zero singular values were skipped. It equals the sum of the proof counts: **no row is skipped without a proof** |
 | `interior_field` | `{source, sha256}`. `source` is `none` (no repair; requires `checks.repair_mu = 0`), `zero` (Lower only, under 17.3 step 5), or `result` (the result's interior arrays). `sha256` is `null` unless `source` is `result`; then it is the section 15.1 hash of the empty document `{}` with the interior arrays of the bound (`interior_sigma`; or `interior_velocity` or `interior_element_velocity`, with `interior_footing_velocity`) |
 | `tolerances` | the table of section 17.8 |
@@ -1068,8 +1078,10 @@ tolerances. It always runs **affine projection, then inequality repair, then a f
   - *Eigenvalue routes.* `A_hat A_hat^T` and `A_hat^T A_hat` are both allowed. Their non-zero eigenvalues are the
     `sigma_i^2`. `A_hat A_hat^T` has `n_dep` zero eigenvalues and `A_hat^T A_hat` has `n_unknowns - r`; a skipped count
     must match. A Ritz or eigenvalue residual gives `sigma_min_lower` only together with a proof that no unskipped
-    eigenvalue lies below it, such as the full spectrum of a dense block or a counted inertia; the residual is reported.
-    A shift used on these singular matrices is **positive**.
+    eigenvalue lies below it: the full spectrum of a dense block, or a counted inertia of the shifted normal matrix. The
+    report states the route, the shift `s > 0` and the count below it, which must equal the zeros skipped, and the bound
+    must satisfy `sigma_min_lower^2 <= s - residual` with `s > residual` (fix round M1). A shift used on these singular
+    matrices is **positive**.
   - *No proof, no number.* When no route proves `n_dep`, or no lower bound on `sigma_r` is proved within the checker's
     capacity, the checker writes a **capacity or conditioning refusal** (section 15.8) and no certificate. It never
     reports an estimated `kappa_eq`, and it never skips a row it has not proved dependent.
@@ -1311,8 +1323,8 @@ arguments.
 - For `gap_le`, status `order_within_floor` counts as gap 0 **only in an `exact_on_mesh` case**, where both exact fields lie
   in the discrete spaces; elsewhere it fails the item. `contradiction` fails the case and sets `stop_program`.
 - Floors are not added to one-sided assertions: `TOL_CASE_ONE_SIDED` is the allowance for them.
-- Each failed item carries a cause (`missing`, `estimate`, `refused`, `violated`, `order_within_floor`, `no_gap`,
-  `contradiction`). The verdict sets `claim_withheld` when every failure is withholdable under OD2 (section 11.3), and
+- Each failed item carries a cause (`missing`, `unchecked`, `unproved`, `ill_conditioned`, `estimate`, `refused`,
+  `violated`, `order_within_floor`, `no_gap`, `contradiction`), with the meanings of 11.3 and 15.8. The verdict sets `claim_withheld` when every failure is withholdable under OD2 (section 11.3), and
   `p0_blocking` otherwise. `evaluate_program(verdicts, required)` reports `stop_program`, `p0_open`, the blocking and
   missing cases, the cases with refused items, and the withheld claims.
 
@@ -1350,7 +1362,7 @@ owner decisions.**
 | R9 | The Upper work normalisation is not a projection row, unlike ADR 11.2 step 3: the value is `(D - W0) / W1`, so no exact normalisation is needed, and a row would only move the field | Section 17.4 |
 | R10 | Equality acceptance is row-normwise with literal zeros, `tau_eq` carries no `kappa` factor, and `TOL_KAPPA_CAP` replaces the ADR's `TOL_EQ_CAP` | Sections 17.1, 17.2 |
 | R11 | Per-angle Drucker-Prager boxes; a certified Upper at every size with the gap trend recorded; kinematic verdicts written by the checker from a witness | Section 11 |
-| R12 | A checker capacity or conditioning failure is not an OD2 miss; it keeps P0 open. Recorded 2026-11-19, entered by amendment 1 | Sections 11.3, 15.8 |
+| R12 | A checker capacity or conditioning failure is not an OD2 miss; it keeps P0 open. Orchestrator ruling of 2026-11-19, **pending owner confirmation**; not an owner decision | Sections 11.3, 15.8 |
 
 ### 18.3 Evidence notes and chronology
 
@@ -1493,7 +1505,7 @@ without reading the reference or checker code.
 | 4 | Problem `name` of a case problem: `<case>:<nx>x<ny>x<nz>` or `<case>:<stem>+<r>`, with the other derived values | 15.2 | `build_case_problem`, `test_case_problem_name_rule` |
 | 5 | Method report `<stem>.<query>.<formulation-id>.certificate.method.json`, bound by `certificate_sha256`, recording the kappa method, dependent-row proofs, rows skipped, Ritz or eigenvalue residual and interior-field identity; required for every gate certificate | 15.1, 15.6, 15.9, 17.9 | `validate_method_report`; `gate_admissible(..., method=)`, `validate_bracket(..., lower_method=, upper_method=)`, `evaluate_case(..., methods)` |
 | 6 | Conditioning: dependent rows only by shape-forced zeros, dense singular values on disjoint row blocks, or an explicit null-space basis with a residual bound; `kappa_eq` a proved upper bound; `A_hat^T A_hat` allowed; no proof gives a refusal. Replaces the frozen rule, which accepted an estimate within a factor 2 and skipped eigenvalues below a threshold without proof | 17.1, 17.2 | method-report rules |
-| 7 | Capacity-refusal record; cause `refused`; not a missing certificate under OD2; keeps P0 open; ruling R12 | 11.3, 15.8, 17.9, 18.2 | `validate_refusal`, `evaluate_case(..., refusals=)`, `evaluate_program` |
+| 7 | Capacity-refusal record; cause `refused`; not a missing certificate under OD2; keeps P0 open; ruling R12, pending owner confirmation | 11.3, 15.8, 17.9, 18.2 | `validate_refusal`, `evaluate_case(..., refusals=)`, `evaluate_program` |
 | 8 | Mesh-5 conditioning route: present capacity insufficient for mesh-5 Lower (all 3D cases) and von Mises jump Upper; WP-237d must identify an open, proved route; gates unchanged | 11.2 | none; gates unchanged |
 | 9 | Fixtures: `normal_jump_one_node` replaced by `normal_jump_isochoric`; `vm_jump_opening` and `restrained_footing_component` added, with the fixture problem `vm_plate_shear_restrained` | 17.6 | `negative_fixtures.json`, `apply_negative` |
 | 10 | Feasibility witness field is the certified projected field; `footing_modes` is `null` without a footing; `D_scale` split into `D_scale_vol` (1/time) and `D_scale_jump` (velocity) | 11.1, 15.5, 17.4, 17.5 | `validate_feasibility`; text |
@@ -1503,3 +1515,13 @@ method report beside every certificate, a refusal instead of a certificate when 
 witness residual at the projected field, and two flow scales. A caller of `evaluate_case` passes method reports as the
 fifth positional argument and brackets and refusals by keyword. Every fixture certificate and result was regenerated; no
 case value, limit, mesh, tolerance or gate line changed, and every `problem_sha256` is unchanged.
+
+**Fix round, 2026-11-19** (review of the first amendment-1 commit, `22401d877`; hashes, cases, limits and gates
+unchanged).
+
+| Finding | Change | Sections | Executable form |
+|---|---|---|---|
+| B1 | `missing` only when no result document was offered; new non-withholdable causes `unchecked`, `unproved`, `ill_conditioned` | 11.3, 15.8, 17.9 | `certified`, `NON_WITHHOLDABLE_CAUSES`; three 30-degree mesh-5 tests |
+| M1 | Eigenvalue routes carry `kappa.completeness` (`full_spectrum` or `inertia`, shift, count below) with `sigma_min_lower^2 <= shift - residual`; `dense_svd_blocks` proofs need `residual_bound <= TOL_RANK sigma_max_upper` and `sigma_min_lower > TOL_RANK sigma_max_upper + residual_bound` | 15.9, 17.1 | `validate_method_report`; the unproved eigenvalue report is now refused |
+| R12 | Recorded as an orchestrator ruling pending owner confirmation | 18.2 | text |
+| m1-m3, m5-m8 | The review's text for these items did not reach this author; logged for amendment 2 | none | none |

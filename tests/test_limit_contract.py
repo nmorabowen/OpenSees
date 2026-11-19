@@ -120,6 +120,7 @@ NON_GATE_CHECKERS = {SCHEMA_FIXTURE_CHECKER, PROCEDURE_DEMO_CHECKER}
 # Amendment 1: method reports (15.9) and capacity refusals (15.8).
 KAPPA_SVD_METHODS = {"dense_svd", "dense_svd_blocks"}
 KAPPA_EIGEN_METHODS = {"eigen_normal_rows", "eigen_normal_columns"}
+COMPLETENESS_ROUTES = {"full_spectrum", "inertia"}
 DEPENDENT_ROUTES = {"shape_forced_zeros", "dense_svd_blocks", "null_space_basis"}
 INTERIOR_SOURCES = {"none", "zero", "result"}
 REFUSAL_KINDS = {"capacity", "conditioning"}
@@ -1316,8 +1317,8 @@ def validate_method_report(doc, certificate, problem=None, result=None, result_a
 
     kappa = doc["kappa"]
     require(isinstance(kappa, dict), "method_kappa")
-    _keys(kappa, {"method", "sigma_max_upper", "sigma_min_lower", "kappa_upper", "perturbation_bound", "residual"},
-          code="method_kappa")
+    _keys(kappa, {"method", "sigma_max_upper", "sigma_min_lower", "kappa_upper", "perturbation_bound", "residual",
+                  "completeness"}, code="method_kappa")
     method = kappa["method"]
     require(method in KAPPA_SVD_METHODS | KAPPA_EIGEN_METHODS, "method_kappa", repr(method))
     for key in ("sigma_max_upper", "sigma_min_lower", "kappa_upper", "perturbation_bound"):
@@ -1328,7 +1329,8 @@ def validate_method_report(doc, certificate, problem=None, result=None, result_a
         _finite_number(kappa["residual"], "method_kappa")
         require(kappa["residual"] >= 0.0, "method_kappa", "an eigenvalue route reports its residual")
     else:
-        require(kappa["residual"] is None, "method_kappa", "no residual for a singular-value route")
+        require(kappa["residual"] is None and kappa["completeness"] is None, "method_kappa",
+                "no residual or completeness record for a singular-value route")
     require(kappa["kappa_upper"] >= kappa["sigma_max_upper"] / kappa["sigma_min_lower"], "method_kappa_not_proved")
     require(certificate["checks"].get("kappa_eq") == kappa["kappa_upper"], "method_kappa_mismatch")
 
@@ -1350,14 +1352,33 @@ def validate_method_report(doc, certificate, problem=None, result=None, result_a
         else:
             _finite_number(bound, "method_dependent_rows")
             require(bound >= 0.0, "method_dependent_rows")
+            threshold = TOLERANCES["TOL_RANK"] * kappa["sigma_max_upper"]
             if proof["route"] == "null_space_basis":
-                require(bound <= TOLERANCES["TOL_RANK"] * kappa["sigma_max_upper"], "method_dependent_rows",
-                        "null-space residual above the rank threshold")
+                require(bound <= threshold, "method_dependent_rows", "null-space residual above the rank threshold")
+            else:  # dense_svd_blocks: the factorisation error cannot move a value across the split (17.1, M1)
+                require(bound <= threshold, "method_dependent_rows", "block perturbation above the rank threshold")
+                require(kappa["sigma_min_lower"] > threshold + bound, "method_dependent_rows",
+                        "kept values not separated from the skipped ones")
         proved += proof["count"]
     _count(doc["rows_skipped"], "method_rows_skipped")
     require(doc["rows_skipped"] == proved, "method_rows_skipped", "a row skipped without a proof")
     require(rows["rank"] == rows["n_rows"] - doc["rows_skipped"], "method_rows_skipped")
     require(rows["rank"] <= rows["n_unknowns"], "method_dependent_rows")
+    if method in KAPPA_EIGEN_METHODS:
+        # M1: a Ritz value bounds sigma_min only with a proof that no unskipped eigenvalue lies below it (17.1):
+        # count_below eigenvalues of the normal matrix lie below `shift`, exactly the zeros skipped, and
+        # sigma_min_lower^2 <= shift - residual.
+        complete = kappa["completeness"]
+        require(isinstance(complete, dict), "method_kappa_completeness", "an eigenvalue route proves completeness")
+        _keys(complete, {"route", "shift", "count_below"}, code="method_kappa_completeness")
+        require(complete["route"] in COMPLETENESS_ROUTES, "method_kappa_completeness", repr(complete["route"]))
+        _finite_number(complete["shift"], "method_kappa_completeness")
+        _count(complete["count_below"], "method_kappa_completeness")
+        zeros = doc["rows_skipped"] if method == "eigen_normal_rows" else rows["n_unknowns"] - rows["rank"]
+        require(complete["count_below"] == zeros, "method_kappa_completeness", "count below the shift != zeros skipped")
+        require(complete["shift"] > kappa["residual"], "method_kappa_completeness", "shift not above the residual")
+        require(kappa["sigma_min_lower"] ** 2 <= complete["shift"] - kappa["residual"], "method_kappa_not_proved",
+                "sigma_min_lower^2 > shift - residual")
 
     interior = doc["interior_field"]
     require(isinstance(interior, dict), "method_interior")
@@ -1509,12 +1530,15 @@ def case_problem_cached(case, mesh):
     return _PROBLEM_CACHE[key]
 
 
-WITHHOLDABLE_CAUSES = {"missing", "estimate"}  # "refused" is never withholdable (amendment 1, item 7)
+WITHHOLDABLE_CAUSES = {"missing", "estimate"}
+# Amendment 1: a refusal, a result nobody checked, a gate certificate without a valid method report, and an estimate
+# refused for conditioning say nothing about whether a certificate could exist, so OD2 never withholds them.
+NON_WITHHOLDABLE_CAUSES = {"contradiction", "refused", "unchecked", "unproved", "ill_conditioned"}
 
 
 def _withholdable(case, item):
     """Owner decision OD2 (interface 11.3): only the gap limit and missing certificates of the 30-degree cases."""
-    if case["class"] != "upper_gate_3d" or case.get("phi_deg") != 30.0 or item["cause"] in ("contradiction", "refused"):
+    if case["class"] != "upper_gate_3d" or case.get("phi_deg") != 30.0 or item["cause"] in NON_WITHHOLDABLE_CAUSES:
         return False
     if item["kind"] == "gap_le":
         return True
@@ -1543,6 +1567,8 @@ def evaluate_case(case, certificates=(), results=(), feasibility=(), methods=(),
     lowers = [f for f in case["formulation"] if f in FORMULATIONS["lower"]]
     uppers = [f for f in case["formulation"] if f in FORMULATIONS["upper"]]
     by_result = {doc["result_sha256"]: doc for doc in results}
+    offered = {(mesh_of[doc["problem_sha256"]], doc["formulation"]) for doc in results
+               if doc.get("problem_sha256") in mesh_of}
     verdict = {"case": case["name"], "passed": False, "stop_program": False, "claim_withheld": False,
                "p0_blocking": True, "items": [], "records": [], "foreign_records": [], "invalid_records": []}
 
@@ -1626,13 +1652,20 @@ def evaluate_case(case, certificates=(), results=(), feasibility=(), methods=(),
                                  "detail": detail})
 
     def certified(mesh, formulation):
+        """A gate-admissible certificate, or the cause of its absence (interface 11.3, 17.9; amendment 1)."""
         docs = by_key.get((mesh, formulation), [])
         good = [doc for doc in docs if gate_admissible(doc, method=gate_method.get(id(doc)))]
         if good:
             return good[0], ""
         if (mesh, formulation) in refused:
             return None, "refused"
-        return None, "estimate" if docs else "missing"
+        if any(is_gate_checker(doc) and doc["classification"] == "certified_bound" for doc in docs):
+            return None, "unproved"  # a gate certificate without a valid method report
+        if any(doc["classification"] == "estimate" and "equality_ill_conditioned" in doc["reasons"] for doc in docs):
+            return None, "ill_conditioned"
+        if docs:
+            return None, "estimate"
+        return None, "unchecked" if (mesh, formulation) in offered else "missing"
 
     def pair(mesh, lower, upper):
         """Status and gap recomputed from two gate-admissible certificates (interface 17.9)."""
@@ -1968,7 +2001,7 @@ def _method_report(certificate, n_rows=4, n_unknowns=10):
         "bound": certificate["bound"], "formulation": certificate["formulation"],
         "checker": copy.deepcopy(certificate["checker"]),
         "kappa": {"method": "dense_svd", "sigma_max_upper": kappa, "sigma_min_lower": 1.0, "kappa_upper": kappa,
-                  "perturbation_bound": 0.0, "residual": None},
+                  "perturbation_bound": 0.0, "residual": None, "completeness": None},
         "dependent_rows": {"n_rows": n_rows, "n_unknowns": n_unknowns, "rank": n_rows, "proofs": []},
         "rows_skipped": 0,
         "interior_field": {"source": "none", "sha256": None},
@@ -4142,7 +4175,8 @@ def synthetic_pair(case, mesh, bound, formulation, value, checker="independent-c
     method report (amendment 1)."""
     problem, arrays = case_problem_cached(case, mesh)
     result = {"result_sha256": hashlib.sha256(f"{case['name']}|{mesh}|{bound}|{formulation}|{value!r}".encode()).hexdigest(),
-              "query_id": "q", "bound": bound, "formulation": formulation, "value": value}
+              "problem_sha256": problem["problem_sha256"], "query_id": "q", "bound": bound, "formulation": formulation,
+              "value": value}
     certificate = _certificate(problem, arrays, result)
     certificate["checker"] = {"name": checker, "version": "1"}
     return result, certificate, _method_report(certificate)
@@ -4328,6 +4362,7 @@ def test_thirty_degree_missing_certificate_withholds_the_claim():
     certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
     mesh2 = load_problem_hashes()[PHI30]["m2"]
     certificates = [doc for doc in certificates if doc["problem_sha256"] != mesh2]
+    results = [doc for doc in results if doc["problem_sha256"] != mesh2]  # no result offered: truly missing
     verdict = evaluate_case(case, certificates, results, feasibility, methods)
     assert failed(verdict) == {("certified_upper", "missing")}
     assert verdict["claim_withheld"] and not verdict["p0_blocking"]
@@ -4468,6 +4503,8 @@ METHOD_MUTATIONS = [
     ("zero_lower_bound", _kappa(sigma_min_lower=0.0), "method_kappa"),
     ("unknown_method", _kappa(method="lanczos_estimate"), "method_kappa"),
     ("eigen_without_residual", _kappa(method="eigen_normal_columns"), "method_kappa"),
+    ("svd_with_completeness", _kappa(completeness={"route": "inertia", "shift": 1.0, "count_below": 0}),
+     "method_kappa"),
     ("svd_with_residual", _kappa(residual=1e-14), "method_kappa"),
     ("skipped_without_proof", _proofs([], 2), "method_rows_skipped"),
     ("proof_count_mismatch", _proofs([{"route": "shape_forced_zeros", "count": 1, "residual_bound": None}], 2),
@@ -4497,7 +4534,8 @@ def test_malformed_method_report_is_refused(label, mutate, code):
         assert not gate_admissible(certificate, method=method)
 
 
-def test_proved_dependent_rows_and_an_eigenvalue_route_are_accepted():
+def proved_eigen_case():
+    """Three proved dependent rows and an eigenvalue route with a counted inertia below the shift."""
     s, certificate, method = method_case()
     method["dependent_rows"]["proofs"] = [
         {"route": "shape_forced_zeros", "count": 1, "residual_bound": None},
@@ -4506,9 +4544,66 @@ def test_proved_dependent_rows_and_an_eigenvalue_route_are_accepted():
     ]
     method["rows_skipped"] = 3
     method["dependent_rows"]["rank"] = 1
-    method["kappa"].update(method="eigen_normal_columns", residual=1e-15)
+    # A_hat^T A_hat has n_unknowns - rank = 9 zero eigenvalues; nine lie below the shift 1.0, and 1.0^2 <= 1.0 - 0.
+    method["kappa"].update(method="eigen_normal_columns", residual=1e-15, sigma_min_lower=0.999,
+                           kappa_upper=certificate["checks"]["kappa_eq"],
+                           completeness={"route": "inertia", "shift": 1.0, "count_below": 9})
+    method["kappa"]["sigma_max_upper"] = method["kappa"]["kappa_upper"] * method["kappa"]["sigma_min_lower"]
+    return s, certificate, method
+
+
+def test_unproved_eigenvalue_report_is_refused():
+    """M1: a Ritz value with a residual but no completeness proof bounds nothing."""
+    s, certificate, method = proved_eigen_case()
+    method["kappa"]["completeness"] = None
+    with pytest.raises(ContractError) as error:
+        validate_method_report(method, certificate, s["problem"], s["upper"], s["upper_arrays"], s["arrays"])
+    assert error.value.code == "method_kappa_completeness"
+    assert not gate_admissible(certificate, method=method)
+
+
+def test_proved_dependent_rows_and_an_eigenvalue_route_are_accepted():
+    s, certificate, method = proved_eigen_case()
     validate_method_report(method, certificate, s["problem"], s["upper"], s["upper_arrays"], s["arrays"])
     assert gate_admissible(certificate, method=method)
+    method["kappa"]["completeness"]["route"] = "full_spectrum"
+    validate_method_report(method, certificate)
+
+
+def _completeness(**changes):
+    def mutate(method, certificate):
+        method["kappa"]["completeness"].update(changes)
+    return mutate
+
+
+@pytest.mark.parametrize("mutate,code", [
+    (_completeness(route="lanczos"), "method_kappa_completeness"),
+    (_completeness(count_below=8), "method_kappa_completeness"),
+    (_completeness(shift=1e-16), "method_kappa_completeness"),
+    (_completeness(shift=0.5), "method_kappa_not_proved"),
+], ids=["unknown_route", "count_not_the_zeros", "shift_below_residual", "lower_bound_above_shift"])
+def test_eigenvalue_completeness_must_prove_the_bound(mutate, code):
+    s, certificate, method = proved_eigen_case()
+    mutate(method, certificate)
+    with pytest.raises(ContractError) as error:
+        validate_method_report(method, certificate)
+    assert error.value.code == code
+
+
+@pytest.mark.parametrize("kappa,sigma_min,bound", [(1.0, 1.0, 1e-9), (3e10, 5e-11, 1e-11)],
+                         ids=["perturbation_above_threshold", "kept_value_not_separated"])
+def test_dense_block_dependent_rows_need_a_separated_split(kappa, sigma_min, bound):
+    """M1: residual_bound <= TOL_RANK sigma_max_upper and sigma_min_lower > TOL_RANK sigma_max_upper + residual_bound."""
+    s, certificate, method = method_case()
+    certificate["checks"]["kappa_eq"] = kappa
+    method["certificate_sha256"] = certificate_hash(certificate)
+    method["kappa"].update(sigma_max_upper=1.0, sigma_min_lower=sigma_min, kappa_upper=kappa)
+    method["dependent_rows"]["proofs"] = [{"route": "dense_svd_blocks", "count": 1, "residual_bound": bound}]
+    method["rows_skipped"] = 1
+    method["dependent_rows"]["rank"] = method["dependent_rows"]["n_rows"] - 1
+    with pytest.raises(ContractError) as error:
+        validate_method_report(method, certificate)
+    assert error.value.code == "method_dependent_rows"
 
 
 def test_result_interior_field_is_identified_by_hash():
@@ -4555,7 +4650,7 @@ def test_evaluator_needs_a_valid_method_report_for_every_gate_certificate():
     case = ALL_CASES[STRIP]
     certificates, results, feasibility, methods = synthetic_records(case, 5.05, 5.25)
     verdict = evaluate_case(case, certificates, results, feasibility)
-    assert not verdict["passed"] and ("certified_bracket", "estimate") in failed(verdict)
+    assert not verdict["passed"] and ("certified_bracket", "unproved") in failed(verdict)
     methods[0]["kappa"]["kappa_upper"] = 0.5  # an estimate below the ratio it should bound
     verdict = evaluate_case(case, certificates, results, feasibility, methods)
     assert {"kind": "method", "id": methods[0]["result_sha256"], "code": "method_kappa_not_proved"} in verdict["invalid_records"]
@@ -4570,6 +4665,10 @@ def refused_records(name, mesh, bound="lower"):
     gone = next(doc for doc in certificates if doc["problem_sha256"] == sha and doc["bound"] == bound)
     result = next(doc for doc in results if doc["result_sha256"] == gone["result_sha256"])
     return case, keep, results, feasibility, methods, synthetic_refusal(case, mesh, result), gone
+
+
+def without_result(results, certificate):
+    return [doc for doc in results if doc["result_sha256"] != certificate["result_sha256"]]
 
 
 def test_refusal_record_validates_and_is_not_a_certificate():
@@ -4594,9 +4693,9 @@ def test_refusal_record_validates_and_is_not_a_certificate():
 
 def test_thirty_degree_refusal_is_not_a_missing_certificate():
     """Amendment 1, item 7: a capacity refusal on mesh 5 keeps P0 open, where a missing certificate would withhold."""
-    case, certificates, results, feasibility, methods, refusal, _ = refused_records(PHI30, 5)
-    missing = evaluate_case(case, certificates, results, feasibility, methods)
-    assert missing["claim_withheld"] and not missing["p0_blocking"], "without the refusal OD2 withholds"
+    case, certificates, results, feasibility, methods, refusal, gone = refused_records(PHI30, 5)
+    missing = evaluate_case(case, certificates, without_result(results, gone), feasibility, methods)
+    assert missing["claim_withheld"] and not missing["p0_blocking"], "with no result offered OD2 withholds"
     verdict = evaluate_case(case, certificates, results, feasibility, methods, refusals=[refusal])
     causes = failed(verdict)
     assert ("certified_bracket", "refused") in causes and ("lower_nondecrease", "refused") in causes
@@ -4611,7 +4710,8 @@ def test_refusal_from_a_reserved_checker_or_beside_a_certificate_does_not_count(
     demo = copy.deepcopy(refusal)
     demo["checker"]["name"] = PROCEDURE_DEMO_CHECKER
     verdict = evaluate_case(case, certificates, results, feasibility, methods, refusals=[demo])
-    assert verdict["claim_withheld"], "a demonstration refusal is not the checker's"
+    assert ("certified_bracket", "unchecked") in failed(verdict), "a demonstration refusal is not the checker's"
+    assert not verdict["claim_withheld"] and verdict["p0_blocking"]
     verdict = evaluate_case(case, certificates + [gone], results, feasibility, methods, refusals=[refusal])
     assert [item["code"] for item in verdict["invalid_records"]] == ["refusal_conflict"] and not verdict["passed"]
 
@@ -4623,6 +4723,47 @@ def test_von_mises_mesh_five_refusal_blocks_the_upper_gate():
     kinds = {kind for kind, cause in failed(verdict) if cause == "refused"}
     assert {"certified_upper", "certified_bracket", "gap_le", "upper_nonincrease"} <= kinds
     assert verdict["p0_blocking"]
+
+
+def test_thirty_degree_mesh_five_result_without_certificate_or_refusal_is_unchecked():
+    """B1: an offered result that no checker answered is not a missing certificate."""
+    case, certificates, results, feasibility, methods, _, gone = refused_records(PHI30, 5)
+    verdict = evaluate_case(case, certificates, results, feasibility, methods)
+    causes = failed(verdict)
+    assert ("certified_bracket", "unchecked") in causes and ("gap_le", "unchecked") in causes
+    assert not any(cause == "missing" for _, cause in causes)
+    assert not verdict["claim_withheld"] and verdict["p0_blocking"]
+    missing = evaluate_case(case, certificates, without_result(results, gone), feasibility, methods)
+    assert ("certified_bracket", "missing") in failed(missing) and missing["claim_withheld"]
+
+
+def test_thirty_degree_gate_certificate_without_method_report_is_unproved():
+    """B1: a gate certificate whose method report is absent or invalid is unproved, never withheld."""
+    case = ALL_CASES[PHI30]
+    certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    sha = load_problem_hashes()[PHI30]["m5"]
+    lower = next(doc for doc in certificates if doc["problem_sha256"] == sha and doc["bound"] == "lower")
+    kept = [m for m in methods if m["certificate_sha256"] != certificate_hash(lower)]
+    verdict = evaluate_case(case, certificates, results, feasibility, kept)
+    causes = failed(verdict)
+    assert ("certified_bracket", "unproved") in causes and ("lower_nondecrease", "unproved") in causes
+    assert not verdict["claim_withheld"] and verdict["p0_blocking"]
+
+
+def test_thirty_degree_ill_conditioned_estimate_is_not_withheld():
+    """B1: an estimate refused for conditioning keeps P0 open; another estimate at 30 degrees is withheld."""
+    case = ALL_CASES[PHI30]
+    certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    sha = load_problem_hashes()[PHI30]["m5"]
+    lower = next(doc for doc in certificates if doc["problem_sha256"] == sha and doc["bound"] == "lower")
+    for reason, cause, withheld in (("equality_ill_conditioned", "ill_conditioned", False),
+                                    ("no_interior_field", "estimate", True)):
+        changed = copy.deepcopy(certificates)
+        target = next(doc for doc in changed if doc["result_sha256"] == lower["result_sha256"])
+        target.update(classification="estimate", reasons=[reason], value_certified=None, floor=None)
+        verdict = evaluate_case(case, changed, results, feasibility, methods)
+        assert ("certified_bracket", cause) in failed(verdict), reason
+        assert verdict["claim_withheld"] is withheld and verdict["p0_blocking"] is not withheld, reason
 
 
 def test_feasibility_without_a_footing_has_no_footing_modes():

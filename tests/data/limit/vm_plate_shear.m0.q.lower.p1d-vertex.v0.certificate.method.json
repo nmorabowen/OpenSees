@@ -19,6 +19,7 @@
   "source": "none"
  },
  "kappa": {
+  "completeness": null,
   "kappa_upper": 1.0,
   "method": "dense_svd",
   "perturbation_bound": 0.0,
