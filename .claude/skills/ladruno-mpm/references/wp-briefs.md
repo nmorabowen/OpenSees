@@ -1764,6 +1764,29 @@ projection's right side).
 - **No-p-fold design:** kept in reserve. 232l-C argues that it meets the same motion residual and
   enforces zero flux only weakly.
 
+**Build `0fc5a3f13` (records `af2a0ff7d`): the fix-2 patch check misses a third time, but the
+invariant holds.** At steady state (step 128) the base is 1.24e-3 γ_w H against 1e-10. The q + π
+bookkeeping holds (≤ 4.6e-14; π_c = π exactly). Controls: π = 0 twin 2.2e-9, E 1e6 5.7e-8, rigid
+5.7e-11. **The cause is an implementation contradicting frozen text, verified by the orchestrator in
+`LadrunoMPMTwoPhase.cpp:456-477`.** The u-side `renormalize` pass rescales every component of
+each kept entry, the p component (`c = nd`) and fix 2's affine coefficients included. The fix-3
+rule (P4 amended, and the folded-face ruling `d06695367`) renormalises S^p only when a p-active
+node is dropped by the p rule. After settlement, the y = 10.5 ghost row's u weight (0.0133) falls
+below the cutoff. The p weights are then divided by 0.98660, and linear reproduction at the
+drained face is lost (dp/dy = −0.957 γ_w).
+- **Fix (implementation, frozen text unchanged):**
+  - The u-side pass rescales only the u components.
+  - The p weights and `aff` follow the fix-3 p rule alone.
+  - Fix 3 runs on the raw weights.
+  - Re-check T10.
+- **The fresh-worker rule, applied by its intent rather than its letter (a recorded deviation).**
+  The three misses were three distinct defects, each diagnosed precisely and verified in-tree. The
+  reserve design (no p fold on impervious faces) keeps the odd image at the drained face, so it
+  meets this same defect. So 232l-C applies this fix, and **a fresh critic from the other family
+  (Fable · high) audits the whole carrier against §7b and every 232l ruling now**, in parallel and
+  read-only. Any remaining contradiction then surfaces in one pass rather than one build at a time.
+  The audit is not the ready-flip review of record, which still runs.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
