@@ -1876,6 +1876,34 @@ renormalisation's form changed, by ≤ 9.7e-16.
      The orchestrator brings the diagnosis with the options.
   The T7 pencil-limit change and any fix that follows go into one batch, after the diagnosis.
 
+**T6 Mandel diagnosis (records `8dcead316`, build `4b74bd335`, no code change), and decisions
+(2026-11-18/19).**
+- **bspline2: a linear instability of route S.** ρ = 1.00093 per step at Δt 0.005 (0.30 × the drained
+  pencil); 1.0000067 at 0.0025; the single-phase twin is at 0.9999997. The mode is the x-velocity of
+  the particle column beside the drained free face. The plate is not involved, and no node falls
+  below 5e-2.
+  - Mechanism (232l-C, a hypothesis that fits every control): the skeleton strain uses MUSL's
+    re-projected particle velocity v**, while the fluid balance uses the grid velocity v₁. The
+    difference is O(Δt) null-space content, so part of the undrained coupling acts explicitly, with
+    a lag.
+- **gimp: the light-node correction. The orchestrator's ruling at `3d3699a50` was wrong** ("do not
+  drop the correction on light u components"). gimp is linearly stable (ρ = 0.999997). With light u
+  nodes dropped (`mpm massCutoff 5e-2` in mode F), gimp Mandel passes both stabs: 0.0139/0.0214 and
+  0.0150/0.0227, peaks 1.0945 and 1.0925.
+- **Owner decision (asked directly): the consistency fix.** Route S computes the skeleton strain from
+  the grid velocity v₁, the velocity the fluid balance sees (USL for the skeleton in two-phase
+  bodies). That is the assumption the IMEX argument makes. Bands are unchanged. If T6 Mandel still
+  misses, it returns to the owner as a miss.
+- **The orchestrator corrects its own ruling:** in route S, a u node with mass ≤ c_m · m_max
+  (pressureCutoff's c_m, default 5e-2) is dropped whole for two-phase bodies: no momentum, force or
+  correction. This matches the `massCutoff` probe. The single-phase mode-F path keeps 1e-10 (T10).
+- **T7:** the pencil-based run-time limit, decided earlier, goes into the same batch.
+- **Order:**
+  1. 232l-C writes the amended text (§7c).
+  2. 232l-V re-derives T0 (iii) from it.
+  3. One build.
+  4. T0 (iii), T7, T6 (all legs), T5 route S, T10 and the route-E zone_a set.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
