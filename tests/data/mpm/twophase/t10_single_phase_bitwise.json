@@ -1,0 +1,33 @@
+{
+ "leg": "t10_single_phase_bitwise",
+ "baseline_build": "cfe47825407f2918081eb8083d5865206ddbfd69",
+ "build": "7b7cdc9cfa462f49f2e5c5ade9f368d0b3adea70",
+ "note": "single-phase decks (mode explicit/implicit/quasiStatic x gimp/bspline2 x ElasticIsotropic/DruckerPrager x antiLocking off/fbar): particle x, v, sig after the run (tests/mpm_twophase_t10_single.py); baseline = the 232k merge cfe478254, the binary the fd81cbdd3 build replaced being gone",
+ "cases": [
+  "explicit_gimp_elastic_off",
+  "explicit_gimp_elastic_fbar",
+  "explicit_gimp_dp_off",
+  "explicit_gimp_dp_fbar",
+  "explicit_bspline2_elastic_off",
+  "explicit_bspline2_elastic_fbar",
+  "explicit_bspline2_dp_off",
+  "explicit_bspline2_dp_fbar",
+  "implicit_gimp_elastic_off",
+  "implicit_gimp_elastic_fbar",
+  "implicit_gimp_dp_off",
+  "implicit_gimp_dp_fbar",
+  "implicit_bspline2_elastic_off",
+  "implicit_bspline2_elastic_fbar",
+  "implicit_bspline2_dp_off",
+  "implicit_bspline2_dp_fbar",
+  "quasiStatic_gimp_elastic_off",
+  "quasiStatic_gimp_elastic_fbar",
+  "quasiStatic_gimp_dp_off",
+  "quasiStatic_gimp_dp_fbar",
+  "quasiStatic_bspline2_elastic_off",
+  "quasiStatic_bspline2_elastic_fbar",
+  "quasiStatic_bspline2_dp_off",
+  "quasiStatic_bspline2_dp_fbar"
+ ],
+ "differ": []
+}

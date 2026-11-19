@@ -425,6 +425,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--bin", required=True)
     ap.add_argument("legs", nargs="+")
+    ap.add_argument("--out", default=str(OUT))
     a = ap.parse_args(argv)
     if hasattr(os, "add_dll_directory"):
         os.add_dll_directory(a.bin)
@@ -432,7 +433,8 @@ def main(argv=None):
     import opensees as ops  # noqa: E402
     import tempfile
     build_id = ops.ladrunoBuild()
-    res = json.loads(OUT.read_text()) if OUT.exists() else {}
+    out = Path(a.out)
+    res = json.loads(out.read_text()) if out.exists() else {}
     AUTO = ["auto", 0.25]
     for leg in a.legs:
         t0 = time.time()
@@ -463,7 +465,7 @@ def main(argv=None):
             raise SystemExit("unknown leg " + leg)
         res[leg] = {"build": build_id, "date": time.strftime("%Y-%m-%d %H:%M"), "wall_s": time.time() - t0,
                     "results": r}
-        OUT.write_text(json.dumps(res, indent=1))
+        out.write_text(json.dumps(res, indent=1))
         print(json.dumps({leg: r}, indent=1))
     return 0
 
