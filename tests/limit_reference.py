@@ -14,29 +14,35 @@ Written from ``tests/limit_interface.md``, ``tests/limit_cases.txt`` and the exe
 * an optional open-solver path through Clarabel, imported lazily, so assembly needs only numpy and scipy;
   tests that solve are gated on Clarabel being installed. It also builds the optional interior fields of
   interface 15.3: a strictly admissible Lower field, and a relative-interior Upper field for every problem
-  with ``alpha > 0`` (interface 17.4 step 4).
+  with ``alpha > 0`` (interface 17.4 step 4);
+* the declared apex face ``Z`` of amendment 2 (interface 19.2.1): :func:`find_apex_zero` finds the Upper
+  conditions forced onto their cone's apex by the cones together with the rows, the result carries them
+  as the hashed array ``apex_zero``, and the Upper interior field is built on that face.
 
 Every problem is checked with the contract's ``validate_problem`` before assembly and export, and refusals
 carry the contract validator's error codes.
 
 Every value this module produces is an **estimate**. Certification belongs to the independent checker
-(interface 17); nothing here writes a certificate, a feasibility record or a bracket.
+(interface 17); nothing here writes a certificate, a method report, a feasibility record (with its witness
+keys), a refusal (with its budget) or a bracket. Amendment 2 asks of a producer only the result arrays
+``apex_zero`` and, optionally, ``apex_zero_dual``; this module does not compute the dual.
 
 Program identity. The exported matrix is canonical CSC: duplicate entries summed, explicit zeros removed,
 row indices sorted within each column. Operators use the four vertex coordinates only; mid-edge nodes
 sit at ``0.5 * (x_a + x_b)`` of their element's vertices (interface 3.1). Symmetry rows use the set's
-normal ``n_S``, the normal of the set's first facet in ``facets`` order, in both bounds (interface 5,
-amendment 1, item 3).
+normal ``n_S`` in both bounds (interface 5, amendment 1, item 3), evaluated by the contract's
+``symmetry_set_normal``, the exact formula and order of amendment 2 (m6).
 
 Result values (interface 15.3, amendment 1, item 2). ``objective`` is ``c^T x``. A Lower ``value`` is ``objective_sign * c^T x``: ``lambda``, or
 ``d^T R(sigma)`` for ``support``. An Upper ``value`` is the theorem's value of the stored field, ``(D - W0) /
-W1`` or ``D - W0`` with the formulas of interface 4.3 and 12.2 (17.4 steps 1 and 6). Up to equality
-residuals it does not exceed the objective, and differs from it by the solver's cone slack.
+W1`` or ``D - W0`` with the formulas of interface 4.3 and 12.2 (17.4 steps 1 and 6), the terms of a
+declared face charged as ``max(0, pi)`` (19.2.1 item 8). Up to equality residuals it does not exceed the
+objective, and differs from it by the solver's cone slack.
 
 Command line::
 
     python tests/limit_reference.py <case> <mesh> <formulation> [<formulation> ...] --out DIR
-                                    [--solve] [--interior]
+                                    [--solve] [--interior] [--no-apex-face]
 """
 import argparse
 import json
@@ -314,11 +320,13 @@ class Geometry:
                 fail("boundary_kind_reserved" if kind == "interface" else "boundary_kind", repr(kind))
         self.boundary_normal = self.facet_normal[facets[:, 0], facets[:, 1]]
         self.boundary_area = self.facet_area[facets[:, 0], facets[:, 1]]
+        # n_S of interface 5 by the exact formula of amendment 2 (m6): the contract's own evaluation order, so
+        # independent assemblies write the same symmetry rows bit for bit, also on a tilted plane.
         self.set_normal = {}
-        for row, index in enumerate(self.facet_set):
+        for index in np.unique(self.facet_set):
             index = int(index)
-            if self.kinds[index] == "symmetry" and index not in self.set_normal:
-                self.set_normal[index] = self.boundary_normal[row]
+            if self.kinds[index] == "symmetry":
+                self.set_normal[index] = contract.symmetry_set_normal(problem, arrays, index)
 
     # Strain rate operator (interface 3.3, 10) ------------------------------------------------------
 
@@ -824,18 +832,23 @@ def work_vectors(geo, f0, f1, broken, include_f0=True):
 # Field values, independent of the program (producer-side check of the theorem's value)
 # ---------------------------------------------------------------------------------------------------
 
-def upper_field_value(problem, arrays, query_id, velocity, footing_velocity, geometry=None):
+def upper_field_value(problem, arrays, query_id, velocity, footing_velocity, geometry=None, apex_zero=None):
     """``(U, D, W0, W1)`` of an Upper field by the formulas of interface 4.3, 12.2 and 17.4 step 6.
 
-    ``velocity`` is continuous ``(N, 3)`` or broken ``(E, 10, 3)``. The domain is not tested.
+    ``velocity`` is continuous ``(N, 3)`` or broken ``(E, 10, 3)``. The domain is not tested. The terms of
+    the conditions of a declared apex face ``apex_zero`` (interface 19.2.1 item 8) are charged as
+    ``max(0, pi)``: their argument is zero up to rounding, and a negative charge is never credited.
     """
     geo = geometry or Geometry(problem, arrays)
     query = query_by_id(problem, query_id)
     form, f0, f1, direction, mask = query_tables(problem, query)
     velocity = np.asarray(velocity, dtype=float)
     field = velocity if velocity.ndim == 3 else velocity[geo.tets]
+    flow_z, jump_z = apex_zero_masks(geo, apex_zero)
     d = geo.strain_rates(field)
-    dissipation = float(np.sum(geo.volume[:, None] / 4.0 * support_value(d, geo.k[:, None], geo.alpha[:, None])))
+    pi = support_value(d, geo.k[:, None], geo.alpha[:, None])
+    pi = np.where(flow_z, np.maximum(pi, 0.0), pi)
+    dissipation = float(np.sum(geo.volume[:, None] / 4.0 * pi))
     if velocity.ndim == 3 and geo.F:
         coeff = jump_coefficients(geo, field)
         n = geo.interior_normal[:, None, :]
@@ -843,6 +856,7 @@ def upper_field_value(problem, arrays, query_id, velocity, footing_velocity, geo
         slip = np.linalg.norm(coeff - opening[..., None] * n, axis=2)
         k, alpha = geo.k[geo.e_minus][:, None], geo.alpha[geo.e_minus][:, None]
         density = np.where(alpha > 0.0, k * opening / (3.0 * np.where(alpha > 0, alpha, 1.0)), k * slip)
+        density = np.where(jump_z, np.maximum(density, 0.0), density)
         dissipation += float(np.sum(geo.interior_area[:, None] / 6.0 * density))
     ray = form != "support"
     w = []
@@ -936,15 +950,26 @@ def export_program(directory, program):
     return write_document(directory, f"{stem}.program", doc, arrays)
 
 
-def result_document(program, solver_status, x=None, solver=None, wall_time_s=None, interior=None):
+def result_document(program, solver_status, x=None, solver=None, wall_time_s=None, interior=None, apex_zero=None,
+                    apex_zero_dual=None):
     """The result document and arrays of a solved program (interface 15.3). Values are estimates.
 
     A ray-form Upper field whose reference work ``W1`` is not positive gives no number: it is recorded as
     ``numerical_error`` with null ``value`` and ``objective`` and no arrays (interface 13, ``W1 > 0``).
+
+    ``apex_zero`` is the declared apex face ``Z`` of interface 19.2.1 (from :func:`find_apex_zero`), written as
+    the result array ``apex_zero`` before hashing, so ``result_sha256`` covers it; ``None`` or an empty face
+    writes no array (an empty array is refused). ``apex_zero_dual`` is the optional ``(n_Z, 6)`` dual of item 11.
+    A face is refused on a Lower (``apex_zero_lower``) and dropped from a result without a field (item 1).
     """
     problem, query = program.problem, program.query
     stem = record_stem(problem, query["id"], program.formulation)
     has_value = solver_status in contract.SOLVER_STATUS_WITH_VALUE and x is not None
+    face = None if apex_zero is None or len(apex_zero) == 0 else apex_zero_array(apex_zero)
+    if face is None and apex_zero_dual is not None:
+        fail("apex_zero_invalid", "a dual without a declared face")
+    if face is not None and program.bound == "lower":
+        fail("apex_zero_lower", "a Lower result declares no apex face")
     value, arrays = None, {}
     if has_value:
         x = np.asarray(x, dtype=float)
@@ -958,7 +983,7 @@ def result_document(program, solver_status, x=None, solver=None, wall_time_s=Non
             velocity = arrays["element_velocity"] if program.layout["broken"] else arrays["velocity"]
             geo = program.layout["geometry"]
             value, _, _, w1 = upper_field_value(problem, geo.arrays, query["id"], velocity, arrays["footing_velocity"],
-                                                geo)
+                                                geo, apex_zero=face)
             if query["form"] != "support" and not w1 > 0.0:
                 solver_status, has_value, value = "numerical_error", False, None
     arrays = arrays if has_value else {}
@@ -980,6 +1005,14 @@ def result_document(program, solver_status, x=None, solver=None, wall_time_s=Non
                 name = "interior_element_velocity" if program.layout["broken"] else "interior_velocity"
                 arrays[name] = np.asarray(interior[0], dtype="<f8")
                 arrays["interior_footing_velocity"] = np.asarray(interior[1], dtype="<f8")
+        if face is not None:
+            arrays["apex_zero"] = face
+            if apex_zero_dual is not None:
+                dual = np.asarray(apex_zero_dual, dtype="<f8")
+                if dual.shape != (len(face), 6):
+                    fail("apex_zero_invalid", f"dual shape {dual.shape}")
+                arrays["apex_zero_dual"] = dual
+            contract.validate_apex_zero(doc, arrays, problem, program.layout["geometry"].arrays)
     doc["result_sha256"] = contract.document_hash(doc, arrays, "result_sha256")
     return doc, arrays
 
@@ -1133,20 +1166,23 @@ def upper_conditions(geo, velocity):
     return c_vertex, c_jump, scale_vol, scale_jump
 
 
-def repair_preview(geo, velocity, interior_velocity):
+def repair_preview(geo, velocity, interior_velocity, apex_zero=None):
     """What the repair of interface 17.4 step 4 would need, evaluated WITHOUT the checker's projection.
 
     Each kind of condition (volume, jump) uses its own scale (amendment 1, item 10). ``P`` is the set of
     conditions above ``TOL_CONE_MARGIN`` times their kind's ``D_scale``. Returns the size of ``P``, the
     interior field's worst clearance on ``P`` and worst condition overall, each relative to its kind's
     ``D_scale_int``, ``mu`` and whether every requirement of step 4 holds. A preview, never a certificate.
+    The conditions of a declared apex face ``apex_zero`` leave ``P`` and the clearance tests (19.2.1 item 7);
+    the scales still run over every condition of their kind (item 6).
     """
     tol = contract.TOLERANCES
     cv, cj, vol, jump = upper_conditions(geo, velocity)
     iv, ij, vol_int, jump_int = upper_conditions(geo, interior_velocity)
+    flow_z, jump_z = apex_zero_masks(geo, apex_zero)
     cand, inter, scale, scale_int = [], [], [], []
-    for c, i, s, s_int in ((cv, iv, vol, vol_int), (cj, ij, jump, jump_int)):
-        live = np.isfinite(c)
+    for c, i, s, s_int, z in ((cv, iv, vol, vol_int, flow_z), (cj, ij, jump, jump_int, jump_z)):
+        live = np.isfinite(c) & ~z
         cand.append(c[live])
         inter.append(i[live])
         scale.append(np.full(live.sum(), s))
@@ -1159,12 +1195,384 @@ def repair_preview(geo, velocity, interior_velocity):
     ready = (bool(np.all(scale_int[in_p] > 0.0)) and bool(np.all(inter <= tol["TOL_CONE_MARGIN"] * scale_int))
              and bool(np.all(rel[in_p] <= -tol["TOL_INTERIOR_MIN"])) and mu <= tol["TOL_REPAIR_MAX"])
     return {
-        "n_conditions": int(len(cand)), "n_repaired": int(in_p.sum()),
+        "n_conditions": int(len(cand)), "n_repaired": int(in_p.sum()), "n_apex_zero": int(flow_z.sum() + jump_z.sum()),
         "d_scale_vol_int": vol_int, "d_scale_jump_int": jump_int,
         "worst_clearance_on_P": float(np.max(rel[in_p], initial=-math.inf)),
         "worst_condition": float(np.max(rel, initial=-math.inf)),
         "mu": mu, "ready": ready,
     }
+
+
+# ---------------------------------------------------------------------------------------------------
+# Declared apex face Z (interface 19.2.1, amendment 2 item A)
+# ---------------------------------------------------------------------------------------------------
+
+def apex_zero_array(rows):
+    """``Z`` as the result array of 19.2.1 item 1: ``<i8`` ``(n_Z, 2)`` rows ``(kind, index)``, sorted, unique."""
+    rows = np.asarray(rows, dtype=np.int64).reshape(-1, 2)
+    unique = np.unique(rows, axis=0)                     # lexicographic order of (kind, index)
+    if len(unique) != len(rows):
+        fail("apex_zero_invalid", "rows are not unique")
+    return np.ascontiguousarray(unique, dtype="<i8")
+
+
+def apex_zero_masks(geo, apex_zero):
+    """Boolean masks ``(E, 4)`` of the flow entries and ``(F, 6)`` of the jump entries of ``Z``."""
+    flow, jump = np.zeros((geo.E, 4), dtype=bool), np.zeros((geo.F, 6), dtype=bool)
+    if apex_zero is not None and len(apex_zero):
+        rows = np.asarray(apex_zero, dtype=np.int64).reshape(-1, 2)
+        size = np.where(rows[:, 0] == 0, flow.size, np.where(rows[:, 0] == 1, jump.size, 0))
+        if np.any((rows[:, 1] < 0) | (rows[:, 1] >= size)):
+            fail("apex_zero_invalid", "kind or index out of range")
+        flow.reshape(-1)[rows[rows[:, 0] == 0, 1]] = True
+        jump.reshape(-1)[rows[rows[:, 0] == 1, 1]] = True
+    return flow, jump
+
+
+def upper_inequality_conditions(geo, broken):
+    """Every Upper inequality condition of 17.4 step 3, in the order and encoding of 19.2.1 item 1.
+
+    ``key`` ``(n, 2)``: ``(0, 4 e + i)`` for the flow condition at a vertex with ``alpha_e > 0``, then
+    ``(1, 6 F + B)`` for the jump condition at a coefficient with ``tau > 0`` (jump formulation only); the
+    rows come out sorted. ``cone_row`` is the first row of the condition's cone inside the program's cone
+    block, ``head`` the coefficient that turns a clearance ``s`` into a shift of the cone head
+    (``(r - s / (3 sqrt2 alpha), z)`` in ``SOC6``, ``(rho - s / tau, y)`` in ``SOC3``), and ``natural`` the
+    natural size of the clearance per unit velocity: ``1 / h_e`` for a strain rate, ``1`` for a jump.
+    """
+    E = geo.E
+    elements, vertices = np.nonzero(np.repeat(geo.alpha[:, None] > 0.0, 4, axis=1))
+    flat = 4 * elements + vertices
+    key = [np.stack([np.zeros_like(flat), flat], axis=1)]
+    cone_row = [6 * flat]
+    head = [1.0 / (3.0 * S2 * geo.alpha[elements])]
+    natural = [1.0 / geo.h[elements]]
+    if broken and geo.F:
+        tau, _ = jump_constants(geo.alpha[geo.e_minus])
+        facets = np.nonzero(tau > 0.0)[0]
+        f_idx, b_idx = np.repeat(facets, 6), np.tile(np.arange(6), len(facets))
+        flat = 6 * f_idx + b_idx
+        key.append(np.stack([np.ones_like(flat), flat], axis=1))
+        cone_row.append(24 * E + 3 * flat)
+        head.append(1.0 / tau[f_idx])
+        natural.append(np.ones(len(flat)))
+    return {"key": np.concatenate(key).astype(np.int64), "cone_row": np.concatenate(cone_row),
+            "head": np.concatenate(head), "natural": np.concatenate(natural)}
+
+
+def apex_zero_cone_rows(program, apex_zero):
+    """Exact homogeneous rows that put every ``Z`` condition at its cone's apex, over the program variables.
+
+    Flow entry ``(e, i)``: ``(r_ei, z_ei) = 0`` (six rows); with the flow row ``B_ei v = sqrt2 alpha r one +
+    Q^T z`` this is ``d_ei = 0``. Jump entry ``(F, B)``: ``(rho, y1, y2)_FB = 0`` (three rows); with the
+    jump rows ``[n, T1, T2] c_B = (tau rho, y1, y2)`` and ``tau > 0`` this is ``c_B = 0``. The same face as
+    the velocity rows of 19.2.1 item 4 (:func:`face_rows`); here in the variables the solver sees.
+    """
+    layout = program.layout
+    rows = apex_zero_array(apex_zero) if apex_zero is not None and len(apex_zero) else np.zeros((0, 2), np.int64)
+    cols = []
+    for kind, index in rows:
+        if kind == 0:
+            cols.append(layout["rz"] + 6 * index + np.arange(6))
+        else:
+            if not layout["broken"]:
+                fail("apex_zero_invalid", "jump entries exist in the jump formulation only")
+            cols.append(layout["jump"] + 3 * index + np.arange(3))
+    cols = np.concatenate(cols) if cols else np.zeros(0, np.int64)
+    return sp.csr_matrix((np.ones(len(cols)), (np.arange(len(cols)), cols)), shape=(len(cols), program.A.shape[1]))
+
+
+def face_rows(program, apex_zero=None):
+    """The projection rows of 17.4 step 2 over ``(v, V)``, augmented by ``Z`` (19.2.1 item 4): ``(M, g)``.
+
+    Fixed, symmetry, footing and restrained rows and, for ``support``, ``V = d``, taken from the program
+    without the work row (R9); isochory ``one^T B_ei v = 0`` where ``alpha = 0``; ``n . c_B = 0`` where
+    ``tau = 0``; then six rows ``B_ei v`` per flow entry and three rows ``[n, T1, T2] c_B`` per jump entry
+    of ``Z``, in ``Z`` order. Producer tooling for :func:`face_projection`; the checker builds its own.
+    """
+    layout, geo = program.layout, program.layout["geometry"]
+    E, F, broken = geo.E, geo.F, layout["broken"]
+    a = program.A.tocsr()[:, : layout["rz"]]
+    jump_rows = 18 * F if broken else 0
+    boundary = np.arange(24 * E + jump_rows, program.n_zero)
+    if layout["work_row"] is not None:
+        boundary = boundary[boundary != layout["work_row"]]
+    blocks, rhs = [a[boundary]], [program.b[boundary]]
+    vm = np.nonzero(geo.alpha <= 0.0)[0]
+    if len(vm):
+        flow = (24 * vm[:, None, None] + 6 * np.arange(4)[None, :, None] + np.arange(3)[None, None, :]).reshape(-1, 3)
+        summing = sp.csr_matrix((np.ones(flow.size), (np.repeat(np.arange(len(flow)), 3), flow.reshape(-1))),
+                                shape=(len(flow), program.A.shape[0]))
+        blocks.append(summing @ program.A.tocsr()[:, : layout["rz"]])
+        rhs.append(np.zeros(len(flow)))
+    if broken and F:
+        tau, _ = jump_constants(geo.alpha[geo.e_minus])
+        facets = np.nonzero(tau <= 0.0)[0]
+        normal_rows = (24 * E + 18 * facets[:, None] + 3 * np.arange(6)[None, :]).reshape(-1)
+        blocks.append(a[normal_rows])
+        rhs.append(np.zeros(len(normal_rows)))
+    if apex_zero is not None and len(apex_zero):
+        z_rows = []
+        for kind, index in apex_zero_array(apex_zero):
+            if kind == 0:
+                z_rows.append(24 * (index // 4) + 6 * (index % 4) + np.arange(6))
+            else:
+                z_rows.append(24 * E + 3 * index + np.arange(3))
+        z_rows = np.concatenate(z_rows)
+        blocks.append(a[z_rows])
+        rhs.append(np.zeros(len(z_rows)))
+    return sp.vstack(blocks).tocsr(), np.concatenate(rhs)
+
+
+def face_projection(program, velocity, footing_velocity, apex_zero=None):
+    """Minimum-norm correction of a field onto :func:`face_rows` (unscaled least squares, LSQR).
+
+    Returns ``(velocity, footing_velocity, move)`` with ``move`` the largest correction relative to the
+    field's largest entry. Producer tooling: the checker's projection (17.1) uses its own scales.
+    """
+    from scipy.sparse.linalg import lsqr
+    layout = program.layout
+    n_f = len(program.problem["footings"])
+    x = np.concatenate([np.asarray(velocity, float).reshape(-1), np.asarray(footing_velocity, float).reshape(-1)])
+    matrix, g = face_rows(program, apex_zero)
+    correction = lsqr(matrix, g - matrix @ x, atol=1e-15, btol=1e-15, iter_lim=50 * matrix.shape[1])[0]
+    y = x + correction
+    move = float(np.abs(correction).max(initial=0.0) / max(np.abs(x).max(initial=0.0), np.finfo(float).tiny))
+    n_v = layout["V"]
+    return y[:n_v].reshape(np.shape(velocity)), y[n_v: n_v + 6 * n_f].reshape(n_f, 6), move
+
+
+class _ClearanceProgram:
+    """The capped clearance program shared by :func:`find_apex_zero` and :func:`upper_interior_field`.
+
+    Over the projection rows of 17.4 step 2 (every zero row except the work normalisation, R9), plus the
+    exact rows of a declared face ``Z``, one bounded clearance ``s`` per inequality condition outside ``Z``
+    and not forced to zero by the rows alone (:func:`row_forced_conditions`) enters its cone, so the
+    condition reads ``c~ <= -s`` (the head shift of
+    :func:`upper_inequality_conditions`). Velocities are boxed by ``v_box`` (and the footing rotations by
+    ``v_box / length_scale``) unless ``V = d`` fixes them; a clearance's natural bound is ``natural * v_box``.
+    :meth:`solve` maximises the weighted sum of ``s / s_max`` with ``held <= s <= cap``.
+    """
+
+    def __init__(self, program, apex_zero=None):
+        layout, geo = program.layout, program.layout["geometry"]
+        broken, n_f = layout["broken"], len(program.problem["footings"])
+        self.program, self.n_var = program, program.A.shape[1]
+        conditions = upper_inequality_conditions(geo, broken)
+        face = apex_zero_array(apex_zero) if apex_zero is not None and len(apex_zero) else np.zeros((0, 2), np.int64)
+        on_face = np.zeros(len(conditions["key"]), dtype=bool)
+        if len(face):
+            lookup = {tuple(row): j for j, row in enumerate(conditions["key"].tolist())}
+            for row in face.tolist():
+                if tuple(row) not in lookup:
+                    fail("apex_zero_invalid", f"{row} is not an inequality condition (alpha > 0, tau > 0)")
+                on_face[lookup[tuple(row)]] = True
+        # Conditions the rows force to zero cannot be raised by any field: they get no clearance.
+        by_rows = row_forced_conditions(program, conditions["key"]) & ~on_face
+        self.row_forced_key = conditions["key"][by_rows]
+        raised = ~on_face & ~by_rows
+        self.key = conditions["key"][raised]
+        n_s = len(self.key)
+        self.n_s = n_s
+        a_csr = program.A.tocsr()
+        keep = np.ones(program.n_zero, dtype=bool)
+        if layout["work_row"] is not None:
+            keep[layout["work_row"]] = False
+        a_eq = sp.vstack([a_csr[: program.n_zero][keep], apex_zero_cone_rows(program, face)]).tocsr()
+        b_eq = np.concatenate([program.b[: program.n_zero][keep], np.zeros(a_eq.shape[0] - int(keep.sum()))])
+        a_cone, b_cone = a_csr[program.n_zero:], program.b[program.n_zero:]
+        ell = float(program.problem["length_scale"])
+        v_box = 1.0
+        if layout["form"] == "support":
+            d = layout["direction"]
+            v_box = max(1.0, float(np.abs(d[:, :3]).max(initial=0.0)), ell * float(np.abs(d[:, 3:]).max(initial=0.0)))
+        self.v_box = v_box
+        self.s_max = conditions["natural"][raised] * v_box
+        slack_block = sp.csr_matrix((conditions["head"][raised], (conditions["cone_row"][raised], np.arange(n_s))),
+                                    shape=(a_cone.shape[0], n_s))
+        n_v = 30 * geo.E if broken else 3 * geo.N
+        boxed, bounds = list(range(n_v)), [v_box] * n_v
+        if layout["form"] != "support":
+            for fi in range(n_f):
+                boxed += [layout["V"] + 6 * fi + c for c in range(6)]
+                bounds += [v_box] * 3 + [v_box / ell] * 3
+        boxed, self.bounds = np.asarray(boxed), np.asarray(bounds)
+        n_box = len(boxed)
+        box = sp.csr_matrix((np.concatenate([np.ones(n_box), -np.ones(n_box)]),
+                             (np.arange(2 * n_box), np.concatenate([boxed, boxed]))), shape=(2 * n_box, self.n_var + n_s))
+        upper_s = sp.csr_matrix((np.ones(n_s), (np.arange(n_s), self.n_var + np.arange(n_s))),
+                                shape=(n_s, self.n_var + n_s))
+        self.matrix = sp.vstack([
+            sp.hstack([a_eq, sp.csr_matrix((a_eq.shape[0], n_s))]),
+            sp.hstack([a_cone, slack_block]),
+            box, upper_s, -upper_s,
+        ]).tocsc()
+        self.b_eq, self.b_cone = b_eq, b_cone
+        self.n_eq, self.n_box = a_eq.shape[0], n_box
+
+    def solve(self, cap, held, weight, time_limit):
+        import clarabel
+        cones = _clarabel_cones(clarabel, self.n_eq, self.program.cones, extra_nonneg=2 * self.n_box + 2 * self.n_s)
+        b = np.concatenate([self.b_eq, self.b_cone, self.bounds, self.bounds, cap, -held])
+        c = np.zeros(self.n_var + self.n_s)
+        c[self.n_var:] = -weight / self.s_max
+        status, x, _, _ = _clarabel_solve(self.matrix, b, c, cones, time_limit)
+        return status, x
+
+    def field(self, x):
+        fields = extract_fields(self.program, x[: self.n_var])
+        velocity = fields["element_velocity"] if self.program.layout["broken"] else fields["velocity"]
+        return velocity, fields["footing_velocity"]
+
+
+# Apex-face finder (19.2.1; the evidence of 18.3). First the conditions that the step-2 rows force to zero on
+# their own are set aside (row_forced_conditions): the checker already keeps them out of P, and Z rows for
+# them would only be dependent rows of the augmented system (19.2.1 item 5). Then one solve of the clearance
+# program, every other clearance capped at Z_CAP_FRACTION of its natural bound and the plain sum of
+# s / s_max maximised. The admissible set without the work row is a convex cone (an affine set for support
+# or fixed components) and every condition is sublinear, so the average of the one-condition maximisers
+# raises every raisable condition at once: at the optimum a raisable condition sits at its cap. A condition
+# left below Z_SLACK_FRACTION of its cap could not be raised by any admissible field; it is in Z when its
+# FULL cone argument (|d_ei|_F, or |c_B|) is at most Z_APEX_ARGUMENT_REL of its kind's scale at that field
+# (the 17.4 step 3 scales of the same field), so it sits at the apex and not on a ray of the cone boundary.
+# A stuck condition off the apex is counted in info["stuck_off_apex"] and is not declared: Z cannot express
+# it. So Z holds exactly the conditions forced onto the apex by the cones together with the rows.
+#
+# Calibration (producer settings, not certificate tolerances; a wrong Z only costs bound quality, never
+# soundness, 19.2.1 item 10). upper3d_fixed_phi30 mesh 0 (323 tets), jump Upper, Clarabel 0.11.1 at its
+# defaults, 2026-11-19, scratch probe of this finder (the same run the slow test
+# test_apex_face_on_fixed_phi30_mesh_0 repeats):
+# - the row probe found 230 row-forced conditions at <= 3.6e-16 of their kind's scale against >= 2.3e-3
+#   for every other condition: Z_ROW_FORCED_REL = 1e-10 sits in a gap of twelve decades. Two seeded probes
+#   guard against a probe that is small at one condition by chance;
+# - of the other 4,278 clearances, 3,973 reached > 0.99 of their cap and 305 stayed below 7.7e-11 of their
+#   natural bound, none in between: Z_SLACK_FRACTION (1e-6 of the cap, 1e-9 of the natural bound) sits in a
+#   gap of more than six decades;
+# - the stuck conditions' full arguments were at most 2.4e-9 of their kind's scale (the rows hold only to
+#   the solver's tolerances), the smallest raised condition's argument 2.5e-3 of it: Z_APEX_ARGUMENT_REL =
+#   1e-6 sits between, more than two decades from each. (The 18.3 diagnosis eliminated the rows exactly and
+#   saw about 1e-11; this program keeps them as solver rows.)
+# Z = 305 conditions (26 flow, 279 jump), the count of the 18.3 diagnosis.
+Z_CAP_FRACTION = 1e-3
+Z_SLACK_FRACTION = 1e-6
+Z_APEX_ARGUMENT_REL = 1e-6
+Z_ROW_FORCED_REL = 1e-10
+Z_ROW_PROBES = 2
+Z_ROW_PROBE_SEED = 237
+
+
+def condition_arguments(geo, velocity):
+    """Full cone arguments of every condition and the kind scales of 17.4 step 3.
+
+    Returns ``(flow (E, 4), jump (F, 6), D_scale_vol, D_scale_jump)``: ``|d_ei|_F`` (tensor Frobenius norm,
+    engineering shear halved) and ``|c_B|``. A continuous field has no jump arguments.
+    """
+    velocity = np.asarray(velocity, dtype=float)
+    broken = velocity.ndim == 3
+    field = velocity if broken else velocity[geo.tets]
+    d = geo.strain_rates(field)
+    flow = np.sqrt(np.sum(d[..., :3] ** 2, axis=-1) + 0.5 * np.sum(d[..., 3:] ** 2, axis=-1))
+    jump = np.zeros((geo.F, 6))
+    if broken and geo.F:
+        jump = np.linalg.norm(jump_coefficients(geo, field), axis=2)
+    return flow, jump, float(flow.max(initial=0.0)), float(jump.max(initial=0.0))
+
+
+def rho_apex(geo, velocity, apex_zero):
+    """``rho_apex`` of 19.2.1 item 6 at a field, or ``None`` without a face. Producer-side preview."""
+    if apex_zero is None or not len(apex_zero):
+        return None
+    flow, jump, vol, jmp = condition_arguments(geo, velocity)
+    flow_z, jump_z = apex_zero_masks(geo, apex_zero)
+    parts = []
+    if flow_z.any():
+        parts.append(float(flow[flow_z].max()) / vol if vol > 0.0 else 0.0)
+    if jump_z.any():
+        parts.append(float(jump[jump_z].max()) / jmp if jmp > 0.0 else 0.0)
+    return max(parts)
+
+
+def find_apex_zero(program, time_limit=CLARABEL_TIME_LIMIT_S):
+    """The conditions of an Upper program forced onto their cone's apex: the face ``Z`` of 19.2.1.
+
+    Method and constants above :data:`Z_CAP_FRACTION`. Returns ``(apex_zero, info)``: ``apex_zero`` the
+    ``<i8`` ``(n_Z, 2)`` array of :func:`apex_zero_array`, or ``None`` when no condition is forced (or the
+    problem has no inequality condition). ``info`` counts the conditions, the row-forced ones set aside, the
+    stuck ones and those stuck off the apex, with the relative arguments that bracket Z_APEX_ARGUMENT_REL.
+    Refuses a Lower program (``apex_zero_lower``) and an unsolved clearance program (``no_interior_field``).
+    """
+    if program.bound != "upper":
+        fail("apex_zero_lower", "a Lower program has no apex face")
+    geo = program.layout["geometry"]
+    clear = _ClearanceProgram(program)
+    info = {"n_conditions": clear.n_s + len(clear.row_forced_key), "n_row_forced": len(clear.row_forced_key),
+            "n_raisable_checked": clear.n_s, "n_stuck": 0, "n_apex_zero": 0, "stuck_off_apex": 0,
+            "v_box": clear.v_box}
+    if clear.n_s == 0:
+        return None, info
+    cap = Z_CAP_FRACTION * clear.s_max
+    status, x = clear.solve(cap, np.zeros(clear.n_s), np.ones(clear.n_s), time_limit)
+    info["status"] = status
+    if status not in contract.SOLVER_STATUS_WITH_VALUE:
+        fail("no_interior_field", f"apex-face clearance program not solved ({status})")
+    s = x[clear.n_var:]
+    stuck = s < Z_SLACK_FRACTION * cap
+    at_cap = s > 0.99 * cap
+    velocity, _ = clear.field(x)
+    flow, jump, vol, jmp = condition_arguments(geo, velocity)
+    key = clear.key
+    flow_rows, jump_rows = key[:, 0] == 0, key[:, 0] == 1
+    relative = np.zeros(len(key))
+    if vol > 0.0:
+        relative[flow_rows] = flow.reshape(-1)[key[flow_rows, 1]] / vol
+    if jmp > 0.0:
+        relative[jump_rows] = jump.reshape(-1)[key[jump_rows, 1]] / jmp
+    apex = stuck & (relative <= Z_APEX_ARGUMENT_REL)
+    off = stuck & ~apex
+
+    def extreme(fn, values):
+        return float(fn(values)) if len(values) else None
+
+    info.update(n_at_cap=int(at_cap.sum()), n_partial=int(np.sum(~at_cap & ~stuck)), n_stuck=int(stuck.sum()),
+                n_apex_zero=int(apex.sum()), stuck_off_apex=int(off.sum()),
+                max_clearance_stuck=extreme(np.max, s[stuck] / clear.s_max[stuck]),
+                max_argument_in_z=extreme(np.max, relative[apex]),
+                min_argument_raised=extreme(np.min, relative[~stuck]),
+                min_argument_stuck_off_apex=extreme(np.min, relative[off]))
+    if not apex.any():
+        return None, info
+    return apex_zero_array(key[apex]), info
+
+
+def row_forced_conditions(program, key, probes=Z_ROW_PROBES, seed=Z_ROW_PROBE_SEED):
+    """Which conditions ``key`` the projection rows of 17.4 step 2 force to zero on their own.
+
+    Such a condition has a zero argument on every field satisfying the homogeneous rows of
+    :func:`face_rows` (without ``Z``), so the checker already keeps it out of ``P`` (17.4 step 4) and a
+    ``Z`` row for it would only add dependent rows to the augmented system (19.2.1 item 5). Probe: a
+    seeded Gaussian vector minus its minimum-norm LSQR correction onto those rows, ``probes`` times; a
+    condition is row-forced when its full argument stays at or below ``Z_ROW_FORCED_REL`` of its kind's
+    scale in every probe. Returns a boolean mask over ``key``.
+    """
+    from scipy.sparse.linalg import lsqr
+    layout, geo = program.layout, program.layout["geometry"]
+    matrix, _ = face_rows(program, None)
+    rng = np.random.default_rng(seed)
+    forced = np.ones(len(key), dtype=bool)
+    flat = key[:, 1]
+    flow_rows, jump_rows = key[:, 0] == 0, key[:, 0] == 1
+    for _ in range(probes):
+        r = rng.standard_normal(matrix.shape[1])
+        x = r - lsqr(matrix, matrix @ r, atol=1e-16, btol=1e-16, iter_lim=20 * matrix.shape[1])[0]
+        n_v = layout["V"]
+        velocity = x[:n_v].reshape(geo.E, 10, 3) if layout["broken"] else x[:n_v].reshape(geo.N, 3)
+        flow, jump, vol, jmp = condition_arguments(geo, velocity)
+        relative = np.zeros(len(key))           # a kind whose scale is zero is zero everywhere: forced
+        if vol > 0.0:
+            relative[flow_rows] = flow.reshape(-1)[flat[flow_rows]] / vol
+        if jmp > 0.0:
+            relative[jump_rows] = jump.reshape(-1)[flat[jump_rows]] / jmp
+        forced &= relative <= Z_ROW_FORCED_REL
+    return forced
 
 
 # Relative-interior construction of 17.4 step 4. Each slack is capped at a small fraction of its natural
@@ -1179,94 +1587,42 @@ INTERIOR_CAP_SHRINK = 0.1
 INTERIOR_ROUNDS = 4
 
 
-def upper_interior_field(program, time_limit=CLARABEL_TIME_LIMIT_S, weights=None):
+def upper_interior_field(program, time_limit=CLARABEL_TIME_LIMIT_S, weights=None, apex_zero=None):
     """A relative-interior Upper field for the checker's repair (interface 17.4 step 4).
 
     It satisfies the projection rows of 17.4 step 2: every zero row of the program except the work
     normalisation (R9), so fixed, roller, footing, restrained, ``V = d`` for ``support``, the flow rows
-    (isochory where ``alpha = 0``) and the jump rows (``n . c_B = 0`` where ``tau = 0``). One bounded slack
-    ``s`` per inequality condition enters its cone, so the condition reads ``c~ <= -s``: ``(r - s / (3 sqrt2
-    alpha), z)`` in ``SOC6`` at a vertex with ``alpha > 0`` and ``(rho - s / tau, y)`` in ``SOC3`` at a
-    coefficient with ``tau > 0``. Velocities are boxed by ``v_box``; a slack's natural bound is ``v_box / h_e``
-    at a vertex (a strain rate) and ``v_box`` on a jump coefficient (a velocity), and it is capped at
-    ``INTERIOR_CAP_FRACTION`` of that. The sum of scaled slacks is maximised; slacks that did not reach their
-    cap are re-raised with smaller caps while the others are held (the producer route of 17.4 step 4) until
-    none moves. Conditions the rows force to zero stay at zero and are never in ``P``. ``weights``
-    (one per slack, vertex slacks first) is a diagnostic override of the objective.
+    (isochory where ``alpha = 0``) and the jump rows (``n . c_B = 0`` where ``tau = 0``). With a declared
+    face ``apex_zero`` (19.2.1 item 7) it also satisfies the exact ``Z`` rows (:func:`apex_zero_cone_rows`),
+    so it lies on that face, and only the conditions outside ``Z`` are raised. The clearance program is
+    :class:`_ClearanceProgram`; its slacks are capped at ``INTERIOR_CAP_FRACTION`` of their natural bound.
+    The sum of scaled slacks is maximised; slacks that did not reach their cap are re-raised with smaller
+    caps while the others are held (the producer route of 17.4 step 4) until none moves. Conditions the rows
+    force to zero stay at zero; on a problem with an implicit face (18.3) they are the ones
+    :func:`find_apex_zero` declares. ``weights`` (one per raised slack, flow first, in
+    :func:`upper_inequality_conditions` order without ``Z``) is a diagnostic override of the objective.
 
     Returns ``(velocity, footing_velocity, info)`` with ``velocity`` shaped as the result's field. Refuses
     with ``no_interior_field`` when the problem has no inequality condition (every ``alpha = 0``).
     """
-    import clarabel
-    layout, geo = program.layout, program.layout["geometry"]
+    geo = program.layout["geometry"]
     if program.bound != "upper":
         fail("no_interior_field", "upper_interior_field needs an Upper program")
     if not np.any(geo.alpha > 0.0):
         fail("no_interior_field", "every alpha = 0: no inequality condition exists, so no repair is needed")
-    broken, n_f = layout["broken"], len(program.problem["footings"])
-    E, F = geo.E, geo.F
-    n_var = program.A.shape[1]
-    a_csr = program.A.tocsr()
-    keep = np.ones(program.n_zero, dtype=bool)
-    if layout["work_row"] is not None:
-        keep[layout["work_row"]] = False
-    a_eq, b_eq = a_csr[: program.n_zero][keep], program.b[: program.n_zero][keep]
-    a_cone, b_cone = a_csr[program.n_zero:], program.b[program.n_zero:]
-    # Slack columns in the cones.
-    elements, vertices = np.nonzero(np.repeat(geo.alpha[:, None] > 0.0, 4, axis=1))
-    slack_rows = [6 * (4 * elements + vertices)]
-    slack_coef = [1.0 / (3.0 * S2 * geo.alpha[elements])]
-    slack_max = [1.0 / geo.h[elements]]
-    if broken and F:
-        tau, _ = jump_constants(geo.alpha[geo.e_minus])
-        facets = np.nonzero(tau > 0.0)[0]
-        f_idx, b_idx = np.repeat(facets, 6), np.tile(np.arange(6), len(facets))
-        slack_rows.append(24 * E + 3 * (6 * f_idx + b_idx))
-        slack_coef.append(1.0 / tau[f_idx])
-        slack_max.append(np.ones(len(f_idx)))          # a jump condition is a velocity, not a strain rate
-    slack_rows, slack_coef = np.concatenate(slack_rows), np.concatenate(slack_coef)
-    n_s = len(slack_rows)
+    clear = _ClearanceProgram(program, apex_zero)
+    n_s, s_max = clear.n_s, clear.s_max
     weight = np.ones(n_s) if weights is None else np.asarray(weights, dtype=float)
-    ell = float(program.problem["length_scale"])
-    v_box = 1.0
-    if layout["form"] == "support":
-        d = layout["direction"]
-        v_box = max(1.0, float(np.abs(d[:, :3]).max(initial=0.0)), ell * float(np.abs(d[:, 3:]).max(initial=0.0)))
-    s_max = np.concatenate(slack_max) * v_box
-    slack_block = sp.csr_matrix((slack_coef, (slack_rows, np.arange(n_s))), shape=(a_cone.shape[0], n_s))
-    # Velocity box: every velocity entry, and footing components unless V = d fixes them.
-    n_v = 30 * E if broken else 3 * geo.N
-    boxed = list(range(n_v))
-    bounds = [v_box] * n_v
-    if layout["form"] != "support":
-        for fi in range(n_f):
-            boxed += [layout["V"] + 6 * fi + c for c in range(6)]
-            bounds += [v_box] * 3 + [v_box / ell] * 3
-    boxed, bounds = np.asarray(boxed), np.asarray(bounds)
-    n_box = len(boxed)
-    box = sp.csr_matrix((np.concatenate([np.ones(n_box), -np.ones(n_box)]),
-                         (np.arange(2 * n_box), np.concatenate([boxed, boxed]))), shape=(2 * n_box, n_var + n_s))
-    upper_s = sp.csr_matrix((np.ones(n_s), (np.arange(n_s), n_var + np.arange(n_s))), shape=(n_s, n_var + n_s))
-    lower_s = -upper_s
-    matrix = sp.vstack([
-        sp.hstack([a_eq, sp.csr_matrix((a_eq.shape[0], n_s))]),
-        sp.hstack([a_cone, slack_block]),
-        box, upper_s, lower_s,
-    ]).tocsc()
-    cones = _clarabel_cones(clarabel, a_eq.shape[0], program.cones, extra_nonneg=2 * n_box + 2 * n_s)
     cap = INTERIOR_CAP_FRACTION * s_max
     held = np.zeros(n_s)
     active = weight > 0.0
     best, rounds, status = None, 0, "not_run"
     for rounds in range(1, INTERIOR_ROUNDS + 1):
-        b = np.concatenate([b_eq, b_cone, np.concatenate([bounds, bounds]), cap, -held])
-        c = np.zeros(n_var + n_s)
-        c[n_var:][active] = -weight[active] / s_max[active]
-        status, x, _, _ = _clarabel_solve(matrix, b, c, cones, time_limit)
+        status, x = clear.solve(cap, held, np.where(active, weight, 0.0), time_limit)
         if status not in contract.SOLVER_STATUS_WITH_VALUE:
             break
         best = x
-        s = x[n_var:]
+        s = x[clear.n_var:]
         reached = s >= INTERIOR_REACHED_FRACTION * cap
         held = np.where(reached | ~active, INTERIOR_HOLD_FRACTION * s, 0.0)
         if not np.any(active & reached) and rounds > 1:
@@ -1277,11 +1633,11 @@ def upper_interior_field(program, time_limit=CLARABEL_TIME_LIMIT_S, weights=None
         cap = np.where(active, INTERIOR_CAP_SHRINK * cap, cap)
     if best is None:
         fail("no_interior_field", f"interior program not solved ({status})")
-    fields = extract_fields(program, best[:n_var])
-    velocity = fields["element_velocity"] if broken else fields["velocity"]
-    s = best[n_var:]
-    info = {"rounds": rounds, "n_conditions": n_s, "n_unraised": int(np.sum(s < 1e-6 * s_max)), "v_box": v_box}
-    return velocity, fields["footing_velocity"], info
+    velocity, footing = clear.field(best)
+    s = best[clear.n_var:]
+    info = {"rounds": rounds, "n_conditions": n_s, "n_unraised": int(np.sum(s < 1e-6 * s_max)), "v_box": clear.v_box,
+            "n_apex_zero": 0 if apex_zero is None else int(len(apex_zero))}
+    return velocity, footing, info
 
 
 def _footing_areas(geo):
@@ -1304,12 +1660,14 @@ def case_problem(name, mesh_index=0):
 
 
 def run_case(name, mesh_index, formulations, directory=None, solve_it=False, interior=False,
-             time_limit=CLARABEL_TIME_LIMIT_S):
+             time_limit=CLARABEL_TIME_LIMIT_S, apex_face=True):
     """Build, validate, assemble, optionally solve and export one case. Returns ``{formulation: (program, result)}``.
 
     Upper solves of a problem with any ``alpha > 0`` always carry an interior field
-    (:func:`upper_interior_field`). ``interior=True`` adds the Lower interior field; it refuses an Upper
-    formulation on a problem with every ``alpha = 0``, which has no inequality to repair.
+    (:func:`upper_interior_field`). With ``apex_face`` (the default) they first look for the conditions
+    forced onto the apex (:func:`find_apex_zero`), declare them as ``apex_zero`` and build the interior
+    field on that face (interface 19.2.1). ``interior=True`` adds the Lower interior field; it refuses an
+    Upper formulation on a problem with every ``alpha = 0``, which has no inequality to repair.
     """
     problem, arrays = case_problem(name, mesh_index)
     validate(problem, arrays)
@@ -1329,15 +1687,17 @@ def run_case(name, mesh_index, formulations, directory=None, solve_it=False, int
         result = None
         if solve_it:
             status, x, wall, record = solve(program, time_limit)
-            extra = None
+            extra, face = None, None
             solved_ok = status in contract.SOLVER_STATUS_WITH_VALUE
             if interior and program.bound == "lower" and solved_ok:
                 found = lower_interior_field(program, time_limit)
                 extra = None if found is None else found[:2]
             if program.bound == "upper" and frictional and solved_ok:
-                extra = upper_interior_field(program, time_limit)[:2]
-            result = (result_document(program, status, x, record, wall, extra) if directory is None
-                      else export_result(directory, program, status, x, record, wall, extra))
+                if apex_face:
+                    face = find_apex_zero(program, time_limit)[0]
+                extra = upper_interior_field(program, time_limit, apex_zero=face)[:2]
+            result = (result_document(program, status, x, record, wall, extra, face) if directory is None
+                      else export_result(directory, program, status, x, record, wall, extra, face))
         out[formulation] = (program, result)
     return out
 
@@ -1351,8 +1711,10 @@ def main(argv=None):
     parser.add_argument("--solve", action="store_true")
     parser.add_argument("--interior", action="store_true")
     parser.add_argument("--time-limit", type=float, default=CLARABEL_TIME_LIMIT_S)
+    parser.add_argument("--no-apex-face", action="store_true", help="do not look for or declare an apex face Z")
     args = parser.parse_args(argv)
-    runs = run_case(args.case, args.mesh, args.formulations, args.out, args.solve, args.interior, args.time_limit)
+    runs = run_case(args.case, args.mesh, args.formulations, args.out, args.solve, args.interior, args.time_limit,
+                    not args.no_apex_face)
     for formulation, (program, result) in runs.items():
         line = f"{args.case} m{args.mesh} {formulation}: n_var={program.A.shape[1]} n_rows={program.A.shape[0]}"
         if result is not None:
