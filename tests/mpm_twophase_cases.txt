@@ -271,6 +271,14 @@ end
 # the ghost row j = -1 (m_a 1.3e-8 to 2.6e-8 m_p from step 3) is dropped: 25 p-active nodes at
 # every step. Under the earlier literal rule it was p-active with p up to 4.4e4 kPa, moving the
 # particles by 1.2e-3 (p), 3.6e-3 (v), 5.2e-3 (sigma').
+# Re-validated against the rulings after daac8a49d (wp-briefs "232l", Freeze of P5a onward;
+# 2d891fbe9): GIMP grid, so pi = 0 everywhere -- fix 2, the q + pi invariant, A' and "pi at the
+# step's drive" do not apply (the q + pi ruling names T0 as unaffected). The probe guard is the
+# C++ solver's; the oracle's dense solve sees M SPD (min eigenvalue 0.00867). p-activity is
+# pressureCutoff 5e-2 AND S^p > 0 (unchanged). Renormalisation: now literally "only when a node
+# with S^p > 0 is dropped", over the raw unsigned mode-F weights (no folds on GIMP); the record
+# moved by <= 9.7e-16 relative. massCutoff (u side) and pressureCutoff (p side) are separate knobs
+# in mode F; the mode-A refusal massCutoff > pressureCutoff does not apply here.
 case t0_routeS
 kind reference
 ndm 2

@@ -1422,7 +1422,10 @@ def routeS_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
     spr = []
     for k in range(N):
         kept = [(nid[i], S, dS) for i, S, dS in sups[k] if nid[i] in pidx]
-        sg = sum(S for _, S, _ in kept)
+        if not any(S > 0.0 and nid[i] not in pidx for i, S, _ in sups[k]):
+            spr.append(kept)        # nothing with S^p > 0 dropped: no renormalisation (§7b fix 3)
+            continue
+        sg = sum(S for _, S, _ in kept)          # unsigned raw weights (GIMP: W = S)
         gm = sum(dS for _, _, dS in kept)
         spr.append([(a, S / sg, (dS - (S / sg) * gm) / sg) for a, S, dS in kept])
     # P5a: p^ is the consistent L2 projection over the p-active nodes (pinned ones included)
