@@ -1,5 +1,14 @@
 {
+ "data": "C:/Users/nmora/limit_study_237d/diag",
+ "date": "2026-11-19",
+ "failed_jobs": [
+  "dp_prandtl_cohesion_thin_slab.m1.q.upper.p2c-vertex.v0.clarabel-faer.base: incomplete",
+  "dp_prandtl_cohesion_thin_slab.m1.q.upper.p2c-vertex.v0.clarabel-qdldl.base: incomplete",
+  "dp_prandtl_cohesion_thin_slab.m1.q.upper.p2d-jump-bernstein.v0.clarabel-faer.base: memory_guard",
+  "dp_prandtl_cohesion_thin_slab.m1.q.upper.p2d-jump-bernstein.v0.clarabel-qdldl.base: memory_guard"
+ ],
  "format": "ladruno-limit-solver-study-diagnostics",
+ "reference_checker_base": "reference c7b047674 + checker 94593291e (branch head 0a1ed41a0)",
  "rows": [
   {
    "bound": "lower",
@@ -126,6 +135,10 @@
   {
    "bound": "upper",
    "case": "dp_prandtl_cohesion_thin_slab",
+   "certificate": {
+    "classification": "no_value",
+    "note": "supervisor record missing"
+   },
    "format": "ladruno-limit-solver-study-row",
    "format_version": 0,
    "formulation": "upper.p2c-vertex.v0",
@@ -135,6 +148,7 @@
    "n_vars": 179637,
    "n_zero": 153305,
    "nnz": 1198072,
+   "outcome": "incomplete",
    "overrides": {},
    "peak_gb": {
     "assemble": 0.404,
@@ -150,6 +164,10 @@
   {
    "bound": "upper",
    "case": "dp_prandtl_cohesion_thin_slab",
+   "certificate": {
+    "classification": "no_value",
+    "note": "supervisor record missing"
+   },
    "format": "ladruno-limit-solver-study-row",
    "format_version": 0,
    "formulation": "upper.p2c-vertex.v0",
@@ -159,6 +177,7 @@
    "n_vars": 179637,
    "n_zero": 153305,
    "nnz": 1198072,
+   "outcome": "incomplete",
    "overrides": {},
    "peak_gb": {
     "assemble": 0.403,

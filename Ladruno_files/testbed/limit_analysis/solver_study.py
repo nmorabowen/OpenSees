@@ -300,46 +300,16 @@ def worker(case, mesh, formulation, solver, data, time_limit, overrides=None, ta
 
         t = time.perf_counter()
         stem_ref = ref.record_stem(problem, "q", formulation)
-        # The checker reads the files the reference wrote, as an independent consumer would.
-        cproblem, carrays = lc.load_document(data / f"{ref.problem_stem(problem)}.problem.json")
-        cresult, cfields = lc.load_document(data / f"{stem_ref}.result.json")
-        try:
-            outcome = lc.check(cproblem, carrays, cresult, cfields)
-        except lc.CapacityRefusal as error:
-            row["certificate"] = {"classification": "capacity_refusal", "note": str(error)[:400]}
-            phase("check", t)
-            return
-        except lc.Refusal as error:
-            row["certificate"] = {"classification": "refusal", "note": f"{error}"[:400]}
-            phase("check", t)
-            return
-        phase("check", t)
-        cert = outcome.certificate
-        row["certificate"] = {
-            "classification": cert["classification"], "reasons": list(cert["reasons"]),
-            "value_certified": cert["value_certified"], "floor": cert["floor"],
-            "domain_claim": cert["domain_claim"], "checks": cert["checks"],
-        }
-        row["kappa_eq"] = cert["checks"]["kappa_eq"]
-        row["repair_mu"] = cert["checks"]["repair_mu"]
         # One file name per solver so that solvers on one problem do not overwrite each other.
         directory = data / "certs" / (solver + (f".{tag}" if tag else ""))
         directory.mkdir(parents=True, exist_ok=True)
-        if outcome.certificate is not None and outcome.method is not None:
-            path = lc.write_certificate(directory, cresult, outcome)
-            row["certificate_file"] = str(Path("certs") / directory.name / path.name)
-            try:
-                gate_cert, gate_method = lc.read_gate_certificate(path)
-                row["gate_admissible"] = True
-                row["interior_field"] = gate_method["interior_field"]
-                row["kappa_method"] = gate_method["kappa_method"]
-            except lc.Refusal as error:
-                row["gate_admissible"] = False
-                row["gate_refusal"] = str(error)[:300]
-        # The result files are large; keep only the certificate directory for the gate record.
+        # The result files are large; keep them only in the certificate directory, beside the gate record.
         (data / f"{stem_ref}.result.json").replace(directory / f"{stem_ref}.result.json")
         (data / f"{stem_ref}.result.npz").replace(directory / f"{stem_ref}.result.npz")
-        row["peak_gb"]["final"] = round(peak_gb(), 3)
+        # The checker reads the files the reference wrote, as an independent consumer would.
+        certify(row, data / f"{ref.problem_stem(problem)}.problem.json", directory / f"{stem_ref}.result.json",
+                directory, data)
+        phase("check", t)
     except MemoryError as error:
         row["error"] = {"type": "MemoryError", "message": str(error)[:300], "trace": traceback.format_exc()[-1500:]}
     except Exception as error:
@@ -349,21 +319,85 @@ def worker(case, mesh, formulation, solver, data, time_limit, overrides=None, ta
         save()
 
 
+def certify(row, problem_path, result_path, directory, data):
+    """Run the independent checker on one stored problem and result and write what it returns.
+
+    ``write_outcome`` writes ``<stem>.certificate.json`` with its ``.certificate.method.json`` beside it, or a
+    ``<stem>.refusal.json`` instead (interface 15.6, 15.8, 15.9). Gate admissibility is decided only by
+    ``read_gate_certificate`` on the written file; the method report is also checked once more against the result
+    arrays, so that its interior-field hash is bound to the field actually stored.
+    """
+    import limit_certificate as lc
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    for stale in ("certificate_file", "gate_admissible", "gate_refusal", "interior_field", "kappa_method",
+                  "kappa_eq", "repair_mu", "method_failures_with_arrays"):
+        row.pop(stale, None)
+    cproblem, carrays = lc.load_document(problem_path)
+    cresult, cfields = lc.load_document(result_path)
+    try:
+        outcome = lc.check(cproblem, carrays, cresult, cfields)
+    except lc.Refusal as error:      # malformed documents: nothing is written
+        row["certificate"] = {"classification": "refusal", "code": error.code, "note": f"{error}"[:400]}
+        return None
+    path = lc.write_outcome(directory, cresult, outcome)
+    row["certificate_file"] = str(path.relative_to(data))
+    if outcome.refusal is not None:
+        refusal = outcome.refusal
+        row["certificate"] = {"classification": "capacity_refusal", "kind": refusal["kind"], "stage": refusal["stage"],
+                              "note": refusal["detail"][:400]}
+        row["gate_admissible"] = False
+        return path
+    cert = outcome.certificate
+    row["certificate"] = {
+        "classification": cert["classification"], "reasons": list(cert["reasons"]),
+        "value_candidate": cert["value_candidate"], "value_certified": cert["value_certified"], "floor": cert["floor"],
+        "domain_claim": cert["domain_claim"], "criteria": cert["criteria"], "flow_rule": cert["flow_rule"],
+        "interface_laws": cert["interface_laws"], "checks": cert["checks"],
+        "method_report": outcome.method is not None,
+    }
+    row["kappa_eq"] = cert["checks"]["kappa_eq"]
+    row["repair_mu"] = cert["checks"]["repair_mu"]
+    if outcome.method is not None:
+        row["interior_field"] = outcome.method["interior_field"]
+        row["kappa_method"] = outcome.method["kappa"]["method"]
+        row["method_failures_with_arrays"] = lc.method_failures(cert, outcome.method, cfields)
+    try:
+        lc.read_gate_certificate(path)
+        row["gate_admissible"] = not row.get("method_failures_with_arrays")
+        if not row["gate_admissible"]:
+            row["gate_refusal"] = row["method_failures_with_arrays"][0]
+    except lc.Refusal as error:
+        row["gate_admissible"] = False
+        row["gate_refusal"] = str(error)[:300]
+    return path
+
+
+def normalise_outcome(row):
+    """A job counts as completed only when the supervisor saw a clean exit and the worker raised nothing.
+
+    A worker exception (for example ``ModuleNotFoundError``) is caught and stored in ``error`` with exit code 0;
+    that row is an ``error``, never ``completed``. A row that the supervisor never finished is ``incomplete``.
+    """
+    if row.get("error"):
+        row["outcome"] = "error"
+        row.setdefault("certificate", {"classification": "no_value", "note": f"error {row['error'].get('type')}"})
+    elif row.get("outcome") is None:
+        row["outcome"] = "incomplete"
+        row.setdefault("certificate", {"classification": "no_value", "note": "supervisor record missing"})
+    return row
+
+
+FAILED_OUTCOMES = ("error", "crash", "incomplete", "memory_guard", "timeout")
+
+
 # ---------------------------------------------------------------------------------------------------
 # Supervisor
 # ---------------------------------------------------------------------------------------------------
 
-def supervise(case, mesh, formulation, solver, data, time_limit=TIME_LIMIT_S, mem_gb=MEMORY_GUARD_GB, overrides=None, tag="", solve_only=False):
+def run_guarded(command, wall_limit, mem_gb):
+    """Run one child process under the wall-clock limit and the resident-memory guard."""
     import psutil
-    data = Path(data)
-    data.mkdir(parents=True, exist_ok=True)
-    stem = stem_of(case, mesh, formulation, solver, tag)
-    row_path = data / f"{stem}.row.json"
-    if row_path.exists():
-        row_path.unlink()
-    command = [sys.executable, str(Path(__file__).resolve()), "worker", "--case", case, "--mesh", str(mesh),
-               "--formulation", formulation, "--solver", solver, "--data", str(data), "--time-limit", str(time_limit),
-               "--overrides", json.dumps(overrides or {}), "--tag", tag] + (["--solve-only"] if solve_only else [])
     env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1", APEGMSH_QUIET="1", PYTHONUNBUFFERED="1")
     start = time.perf_counter()
     process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -379,7 +413,7 @@ def supervise(case, mesh, formulation, solver, data, time_limit=TIME_LIMIT_S, me
             outcome = "memory_guard"
             process.kill()
             break
-        if time.perf_counter() - start > time_limit + SUPERVISOR_SLACK_S:
+        if time.perf_counter() - start > wall_limit:
             outcome = "timeout"
             process.kill()
             break
@@ -388,17 +422,32 @@ def supervise(case, mesh, formulation, solver, data, time_limit=TIME_LIMIT_S, me
         tail = process.communicate(timeout=30)[0][-600:]
     except Exception:
         tail = ""
-    wall = time.perf_counter() - start
+    return outcome, time.perf_counter() - start, peak, process.returncode, tail
+
+
+def supervise(case, mesh, formulation, solver, data, time_limit=TIME_LIMIT_S, mem_gb=MEMORY_GUARD_GB, overrides=None, tag="", solve_only=False):
+    import psutil
+    data = Path(data)
+    data.mkdir(parents=True, exist_ok=True)
+    stem = stem_of(case, mesh, formulation, solver, tag)
+    row_path = data / f"{stem}.row.json"
+    if row_path.exists():
+        row_path.unlink()
+    command = [sys.executable, str(Path(__file__).resolve()), "worker", "--case", case, "--mesh", str(mesh),
+               "--formulation", formulation, "--solver", solver, "--data", str(data), "--time-limit", str(time_limit),
+               "--overrides", json.dumps(overrides or {}), "--tag", tag] + (["--solve-only"] if solve_only else [])
+    outcome, wall, peak, returncode, tail = run_guarded(command, time_limit + SUPERVISOR_SLACK_S, mem_gb)
     row = json.loads(row_path.read_text(encoding="utf-8")) if row_path.exists() else {
         "format": ROW_FORMAT, "format_version": ROW_VERSION, "case": case, "mesh": mesh,
         "formulation": formulation, "solver": solver, "phases": {}, "peak_gb": {}}
     row.update(outcome=outcome, supervisor_wall_s=round(wall, 2), supervisor_peak_rss_gb=round(peak, 3),
-               exit_code=process.returncode, memory_guard_gb=mem_gb)
-    if outcome == "completed" and process.returncode not in (0, None):
+               exit_code=returncode, memory_guard_gb=mem_gb)
+    if outcome == "completed" and returncode not in (0, None):
         row["outcome"] = "crash"
         row["crash_tail"] = tail
     if outcome != "completed":
         row.setdefault("certificate", {"classification": "no_value", "note": outcome})
+    normalise_outcome(row)
     row_path.write_text(json.dumps(row, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     cert = row.get("certificate", {})
     print(f"{case} m{mesh} {formulation} {solver} {tag}: {row['outcome']} status={row.get('solver_status')} "
@@ -416,25 +465,216 @@ def queue(path, data, time_limit, mem_gb):
 
 
 # ---------------------------------------------------------------------------------------------------
+# Recheck: stored results under an amended checker, without solving again
+# ---------------------------------------------------------------------------------------------------
+
+RECHECK_TIME_LIMIT_S = 1800.0   # one checker run; the slowest stored check took about 50 s
+
+
+def stored_result(old, row):
+    """The stored result of one row in the old data directory, or None.
+
+    A certified or estimated row names its certificate; the result sits beside it. A row stopped after the result
+    was written and before the checker ran leaves the result in the top directory; it is taken only when its solver
+    record names the row's solver path and option overrides.
+    """
+    file = row.get("certificate_file")
+    if file:
+        path = old / Path(file.replace("\\", "/"))
+        result = path.with_name(path.name[: -len(".certificate.json")] + ".result.json")
+        return result if result.exists() else None
+    stem = f"{row['case']}.m{row['mesh']}.q.{row['formulation']}"
+    path = old / f"{stem}.result.json"
+    if not path.exists():
+        return None
+    record = json.loads(path.read_text(encoding="utf-8")).get("solver", {})
+    settings = record.get("settings", {})
+    if row["solver"].startswith("clarabel"):
+        same = record.get("name") == "clarabel" and settings.get("direct_solve_method") == row["solver"].split("-")[1] \
+            and settings.get("overrides", {}) == row.get("overrides", {})
+    else:
+        same = record.get("name") == row["solver"]
+    return path if same else None
+
+
+def recheck_one(old, new, row_name):
+    """Worker of ``recheck``: the amended checker on one stored problem and result. Writes the new row."""
+    old, new = Path(old), Path(new)
+    row = normalise_outcome(json.loads((old / row_name).read_text(encoding="utf-8")))
+    previous = row.get("certificate", {})
+    row["old_certificate"] = {"classification": previous.get("classification"),
+                              "value_certified": previous.get("value_certified"),
+                              "reasons": previous.get("reasons"), "file": row.get("certificate_file")}
+    result = stored_result(old, row)
+    row["recheck"] = {"result_file": None if result is None else str(result)}
+    start = time.perf_counter()
+    try:
+        if result is None:
+            row.pop("certificate_file", None)
+            row["certificate"] = dict(previous) if previous.get("classification") == "no_value" else \
+                {"classification": "no_value", "note": "no stored result"}
+        else:
+            label = row["solver"] + (f".{row['tag']}" if row.get("tag") else "")
+            problem = old / f"{row['case']}.m{row['mesh']}.problem.json"
+            certify(row, problem, result, new / "certs" / label, new)
+    except Exception as error:
+        row["recheck"]["error"] = {"type": type(error).__name__, "message": str(error)[:300],
+                                   "trace": traceback.format_exc()[-1500:]}
+        row["certificate"] = {"classification": "no_check", "note": f"recheck error {type(error).__name__}"}
+    row["recheck"]["wall_s"] = round(time.perf_counter() - start, 3)
+    row["recheck"]["peak_gb"] = round(peak_gb(), 3)
+    (new / row_name).write_text(json.dumps(row, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def recheck(old, new, mem_gb=MEMORY_GUARD_GB, only=None):
+    """Every stored row of ``old`` through the current checker into ``new``; ``old`` is only read."""
+    old, new = Path(old), Path(new)
+    new.mkdir(parents=True, exist_ok=True)
+    names = sorted(p.name for p in old.glob("*.row.json"))
+    for name in names:
+        if only and only not in name:
+            continue
+        target = new / name
+        if target.exists():
+            target.unlink()
+        command = [sys.executable, str(Path(__file__).resolve()), "recheck-one", "--old", str(old), "--new", str(new),
+                   "--row", name]
+        outcome, wall, peak, code, tail = run_guarded(command, RECHECK_TIME_LIMIT_S, mem_gb)
+        if target.exists():
+            row = json.loads(target.read_text(encoding="utf-8"))
+        else:   # the guard stopped the checker: the old row, with no certificate
+            row = normalise_outcome(json.loads((old / name).read_text(encoding="utf-8")))
+            previous = row.get("certificate", {})
+            row["old_certificate"] = {"classification": previous.get("classification"),
+                                      "value_certified": previous.get("value_certified"),
+                                      "reasons": previous.get("reasons"), "file": row.pop("certificate_file", None)}
+            row["certificate"] = {"classification": "no_check", "note": f"recheck {outcome} exit {code}"}
+            row["recheck"] = {"tail": tail}
+        row["recheck"].update(outcome=outcome if code in (0, None) or outcome != "completed" else "crash",
+                              supervisor_wall_s=round(wall, 2), supervisor_peak_rss_gb=round(peak, 3), exit_code=code)
+        target.write_text(json.dumps(row, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+        old_c, new_c = row["old_certificate"]["classification"], row["certificate"].get("classification")
+        print(f"{name}: {row['recheck']['outcome']} {old_c} -> {new_c} wall={wall:.1f}s peak={peak:.2f}GB "
+              f"{row.get('gate_refusal', '')}", flush=True)
+
+
+# ---------------------------------------------------------------------------------------------------
 # Table and sizes
 # ---------------------------------------------------------------------------------------------------
 
-def table(data, out, md=None):
-    """Summary of every row, with the best certified bracket per (case, mesh).
+def _midpoint_gap(low, high):
+    """The skill's gap: (U - L) / ((U + L) / 2), only for a certified pair with 0 < L <= U."""
+    return (high - low) / (0.5 * (high + low)) if low is not None and high is not None and 0.0 < low <= high else None
+
+
+def gate_records(data, rows, case):
+    """The checker records of one case for the frozen contract evaluator (interface 17.9).
+
+    Per (mesh, formulation) the best gate-admissible certificate is offered (largest Lower, smallest Upper), with its
+    result document and method report; where none is admissible, every estimate certificate and refusal is offered
+    so that the evaluator names the cause. Result documents are read from the stored result files.
+    """
+    import limit_certificate as lc
+    chosen, others = {}, {}
+    for row in rows:
+        if row["case"] != case or not row.get("certificate_file") or not row.get("recheck", {}).get("result_file"):
+            continue
+        key = (row["mesh"], row["formulation"])
+        if row.get("gate_value") is not None:
+            current = chosen.get(key)
+            value = row["gate_value"]
+            if current is None or (value > current["gate_value"] if row["bound"] == "lower" else value < current["gate_value"]):
+                chosen[key] = row
+        else:
+            others.setdefault(key, []).append(row)
+    offered = list(chosen.values()) + [row for key, items in others.items() if key not in chosen for row in items]
+    certificates, results, methods, refusals = [], [], [], []
+    for row in offered:
+        path = data / row["certificate_file"]
+        results.append(json.loads(Path(row["recheck"]["result_file"]).read_text(encoding="utf-8")))
+        if path.name.endswith(".refusal.json"):
+            refusals.append(lc.load_document(path)[0])
+            continue
+        certificate, method = lc.read_certificate(path)
+        certificates.append(certificate)
+        if method is not None:
+            methods.append(method)
+    return certificates, results, methods, refusals, chosen
+
+
+def gate_verdicts(data, rows):
+    """Every active case with a frozen gap gate, judged by the contract's own evaluator on the rechecked records."""
+    import test_limit_contract as contract
+    out = []
+    for name in contract.ACTIVE:
+        case = contract.ALL_CASES[name]
+        gap_gates = [tokens for tokens in case["gate"] if tokens[0] == "gap_le"]
+        if not gap_gates:
+            continue
+        limit_name, gate_mesh = gap_gates[0][1], int(gap_gates[0][3])
+        certificates, results, methods, refusals, chosen = gate_records(data, rows, name)
+        verdict = contract.evaluate_case(case, certificates, results, (), methods, refusals=refusals)
+        lowers = [f for f in case["formulation"] if f.startswith("lower")]
+        uppers = [f for f in case["formulation"] if f.startswith("upper")] + list(case.get("control") or [])
+        mine = [row for row in rows if row["case"] == name]
+        meshes_run = sorted({row["mesh"] for row in mine})
+        per_mesh = []
+        for mesh in range(len(case["mesh"])):
+            entry = {"mesh": mesh, "run": mesh in meshes_run}
+            low = chosen.get((mesh, lowers[0]))
+            entry["lower"] = None if low is None else {"value": low["gate_value"], "run": low["label"]}
+            if low is None:
+                estimates = [r["value_estimate"] for r in mine if r["mesh"] == mesh and r["formulation"] == lowers[0]
+                             and r.get("value_estimate") is not None]
+                if estimates:
+                    entry["lower_estimate"] = max(estimates)
+            for upper in uppers:
+                kind = "jump" if "jump" in upper else "control"
+                up = chosen.get((mesh, upper))
+                entry[f"upper_{kind}"] = None if up is None else {"value": up["gate_value"], "run": up["label"]}
+                entry[f"gap_{kind}"] = _midpoint_gap(None if low is None else low["gate_value"],
+                                                     None if up is None else up["gate_value"])
+                if up is None:
+                    estimates = [r["value_estimate"] for r in mine if r["mesh"] == mesh and r["formulation"] == upper
+                                 and r.get("value_estimate") is not None]
+                    if estimates:
+                        entry[f"upper_{kind}_estimate"] = min(estimates)
+            per_mesh.append(entry)
+        gap_items = [item for item in verdict["items"] if item["kind"] == "gap_le"]
+        out.append({
+            "case": name, "class": case["class"], "gap_limit": limit_name,
+            "gap_limit_value": contract.TOLERANCES[limit_name], "gate_mesh": gate_mesh,
+            "gate_mesh_run": gate_mesh in meshes_run, "meshes_run": meshes_run, "gap_gate_items": gap_items,
+            "gap_gate_passed": bool(gap_items) and all(item["status"] == "pass" for item in gap_items),
+            "case_passed": verdict["passed"], "claim_withheld": verdict["claim_withheld"],
+            "p0_blocking": verdict["p0_blocking"], "stop_program": verdict["stop_program"],
+            "invalid_records": verdict["invalid_records"],
+            "failed_items": [[item["kind"], item["mesh"], item["formulation"], item["cause"]] for item in verdict["items"]
+                             if item["status"] == "fail"],
+            "per_mesh": per_mesh,
+        })
+    return out
+
+
+def table(data, out, md=None, base=""):
+    """Summary of every row, with the best certified bracket per (case, mesh) and the frozen gap gates.
 
     Certified values are read only through ``read_gate_certificate``. The best Lower is the largest certified Lower
     of any solver run, the best Upper the smallest certified Upper of one formulation; each is a certified bound on
-    its own, so the pair is a bracket as the checker's ``bracket`` decides, never as arithmetic here.
+    its own, so the pair is a bracket as the checker's ``bracket`` decides, never as arithmetic here. Gate verdicts
+    come from the contract's own ``evaluate_case``. A row whose job raised, crashed, ran out of memory or time, or
+    never finished counts as a failed job, whatever its certificate says.
     """
+    import datetime
     import limit_certificate as lc
     data = Path(data)
-    rows = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(data.glob("*.row.json"))]
+    rows = [normalise_outcome(json.loads(p.read_text(encoding="utf-8"))) for p in sorted(data.glob("*.row.json"))]
     gate = {}
     for index, row in enumerate(rows):
         row["label"] = row["solver"] + (f".{row['tag']}" if row.get("tag") else "")
         file = row.get("certificate_file")
         row["gate_value"] = None
-        if file:
+        if file and file.endswith(".certificate.json") and not row.get("method_failures_with_arrays"):
             try:
                 certificate, method = lc.read_gate_certificate(data / file)
                 row["gate_value"], row["gate_floor"] = certificate["value_certified"], certificate["floor"]
@@ -467,21 +707,95 @@ def table(data, out, md=None):
         for kind in ("lower", "jump", "control"):
             if kind in entry and not any(b["case"] == case and b["mesh"] == mesh for b in brackets):
                 brackets.append({"case": case, "mesh": mesh, "single": kind, "value": entry[kind][0], "run": entry[kind][3]})
-    summary = {"format": "ladruno-limit-solver-study-summary", "format_version": 0, "rows": rows, "brackets": brackets}
+    changes = []
+    for row in rows:
+        old = row.get("old_certificate")
+        if old is None:
+            continue
+        before, after = old.get("classification"), row.get("certificate", {}).get("classification")
+        if before != after or (before == "certified_bound") != (row["gate_value"] is not None):
+            changes.append({"row": stem_of(row["case"], row["mesh"], row["formulation"], row["solver"], row.get("tag", "")),
+                            "old": before, "new": after, "gate_admissible": row["gate_value"] is not None,
+                            "old_value": old.get("value_certified"), "new_value": row["gate_value"],
+                            "reasons": row.get("certificate", {}).get("reasons"), "refusal": row.get("gate_refusal"),
+                            "note": row.get("certificate", {}).get("note")})
+    failures = [stem_of(r["case"], r["mesh"], r["formulation"], r["solver"], r.get("tag", "")) + f": {r['outcome']}"
+                for r in rows if r["outcome"] in FAILED_OUTCOMES]
+    recheck_failures = [stem_of(r["case"], r["mesh"], r["formulation"], r["solver"], r.get("tag", ""))
+                        + f": recheck {r['recheck'].get('outcome')}" for r in rows
+                        if r.get("recheck") and r["recheck"].get("outcome") not in (None, "completed")]
+    gates = gate_verdicts(data, rows)
+    summary = {"format": "ladruno-limit-solver-study-summary", "format_version": 1,
+               "date": datetime.date.today().isoformat(), "reference_checker_base": base, "data": str(data),
+               "driver": "Ladruno_files/testbed/limit_analysis/solver_study.py",
+               "counts": {"rows": len(rows), "failed_jobs": len(failures), "failed_rechecks": len(recheck_failures),
+                          "certified_gate_admissible": sum(r["gate_value"] is not None for r in rows),
+                          "classification_changes": len(changes)},
+               "failed_jobs": failures, "failed_rechecks": recheck_failures, "classification_changes": changes,
+               "gates": gates, "rows": rows, "brackets": brackets}
     Path(out).write_text(json.dumps(summary, indent=1, sort_keys=True) + chr(10), encoding="utf-8")
     if md:
-        lines = ["| case | m | formulation | solver | outcome | status | it | solve s | peak GB | cert | value | kappa_eq |",
-                 "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        def fmt(value):
+            return "-" if value is None else f"{value:.6g}"
+        lines = ["# WP-237d solver study, rechecked under the amended checker", "",
+                 f"Base: {base}. Driver: `Ladruno_files/testbed/limit_analysis/solver_study.py` (`table`). "
+                 f"Data: `{data}`. Date: {summary['date']}. Rows {len(rows)}; failed jobs {len(failures)}; failed "
+                 f"rechecks {len(recheck_failures)}; gate-admissible certificates "
+                 f"{summary['counts']['certified_gate_admissible']}; classification changes {len(changes)}.", "",
+                 "Every value below is a certified bound read through `read_gate_certificate`, unless it is in the "
+                 "estimates column. Gap = (U - L) / ((U + L) / 2), computed only for a certified pair on one mesh.", "",
+                 "## Frozen gap gates (contract `evaluate_case`)", "",
+                 "| case | gate | limit | gate mesh run | meshes run | gap gate | case passed | withheld | P0 blocking |",
+                 "|---|---|---|---|---|---|---|---|---|"]
+        for g in gates:
+            causes = sorted({item["cause"] for item in g["gap_gate_items"] if item["status"] == "fail"})
+            lines.append(f"| {g['case']} | {g['gap_limit']} m{g['gate_mesh']} | {g['gap_limit_value']} | "
+                         f"{g['gate_mesh_run']} | {g['meshes_run']} | "
+                         f"{'pass' if g['gap_gate_passed'] else 'fail: ' + ', '.join(causes)} | {g['case_passed']} | "
+                         f"{g['claim_withheld']} | {g['p0_blocking']} |")
+        lines += ["", "## Best certified bounds per mesh", "",
+                  "| case | m | Lower | Upper jump | gap jump | Upper P2c | gap P2c | estimates (no certificate) |",
+                  "|---|---|---|---|---|---|---|---|"]
+        for g in gates:
+            for e in g["per_mesh"]:
+                if not e["run"]:
+                    continue
+                est = [f"{key.replace('_estimate', '')}={e[key]:.6g}" for key in
+                       ("lower_estimate", "upper_jump_estimate", "upper_control_estimate") if key in e]
+                lines.append(f"| {g['case']} | {e['mesh']} | {fmt((e['lower'] or {}).get('value'))} | "
+                             f"{fmt((e.get('upper_jump') or {}).get('value'))} | {fmt(e.get('gap_jump'))} | "
+                             f"{fmt((e.get('upper_control') or {}).get('value'))} | {fmt(e.get('gap_control'))} | "
+                             f"{'; '.join(est)} |")
+        lines += ["", "## Classification changes under the amended checker", ""]
+        lines += [f"- `{c['row']}`: {c['old']} -> {c['new']}, gate admissible {c['gate_admissible']}, reasons "
+                  f"{c['reasons']} {c['refusal'] or ''} {c['note'] or ''}".rstrip() for c in changes] or ["- none"]
+        lines += ["", "## Failed jobs (error, crash, incomplete, memory guard, timeout)", ""]
+        lines += [f"- `{f}`" for f in failures + recheck_failures] or ["- none"]
+        lines += ["", "## Rows", "",
+                  "| case | m | formulation | solver | outcome | status | it | solve s | peak GB | old cert | cert | value | kappa_eq |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for r in rows:
             info = r.get("solver_info", {})
-            lines.append("| {case} | {mesh} | {f} | {solver} | {o} | {s} | {it} | {w} | {pk} | {c} | {v} | {k} |".format(
+            lines.append("| {case} | {mesh} | {f} | {solver} | {o} | {s} | {it} | {w} | {pk} | {oc} | {c} | {v} | {k} |".format(
                 case=r["case"], mesh=r["mesh"], f=r["formulation"].split(".")[1], solver=r["label"],
                 o=r.get("outcome"), s=r.get("solver_status"), it=info.get("iterations"),
                 w=r.get("solver_wall_s"), pk=r.get("supervisor_peak_rss_gb"),
+                oc=(r.get("old_certificate") or {}).get("classification"),
                 c=r.get("certificate", {}).get("classification"),
                 v=None if r.get("gate_value") is None else f"{r['gate_value']:.6g}", k=r.get("kappa_eq")))
         Path(md).write_text(chr(10).join(lines) + chr(10), encoding="utf-8")
     return summary
+
+
+def diagnostics(data, out, base=""):
+    """The solve-only diagnostic rows (no certificate is attempted), with job outcomes normalised."""
+    import datetime
+    rows = [normalise_outcome(json.loads(p.read_text(encoding="utf-8"))) for p in sorted(Path(data).glob("*.row.json"))]
+    failures = [stem_of(r["case"], r["mesh"], r["formulation"], r["solver"], r.get("tag", "")) + f": {r['outcome']}"
+                for r in rows if r["outcome"] in FAILED_OUTCOMES]
+    doc = {"format": "ladruno-limit-solver-study-diagnostics", "date": datetime.date.today().isoformat(),
+           "reference_checker_base": base, "data": str(data), "failed_jobs": failures, "rows": rows}
+    Path(out).write_text(json.dumps(doc, indent=1, sort_keys=True) + chr(10), encoding="utf-8")
 
 
 def sizes(out, cases=None, meshes=None):
@@ -521,6 +835,18 @@ def main(argv=None):
     p.add_argument("--data", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--md")
+    p.add_argument("--base", default="", help="reference and checker commits the certificates were made under")
+    p.add_argument("--diag", help="directory of solve-only diagnostic rows")
+    p.add_argument("--diag-out")
+    p = sub.add_parser("recheck")
+    p.add_argument("--old", required=True, help="data directory holding the stored rows and results (read only)")
+    p.add_argument("--new", required=True, help="new data directory for rows, certificates and method reports")
+    p.add_argument("--mem-gb", type=float, default=MEMORY_GUARD_GB)
+    p.add_argument("--only", help="substring of the row names to recheck")
+    p = sub.add_parser("recheck-one")
+    p.add_argument("--old", required=True)
+    p.add_argument("--new", required=True)
+    p.add_argument("--row", required=True)
     args = parser.parse_args(argv)
     if args.command == "worker":
         worker(args.case, args.mesh, args.formulation, args.solver, args.data, args.time_limit, json.loads(args.overrides), args.tag, args.solve_only)
@@ -529,7 +855,13 @@ def main(argv=None):
     elif args.command == "queue":
         queue(args.file, args.data, args.time_limit, args.mem_gb)
     elif args.command == "table":
-        table(args.data, args.out, args.md)
+        table(args.data, args.out, args.md, args.base)
+        if args.diag:
+            diagnostics(args.diag, args.diag_out, args.base)
+    elif args.command == "recheck":
+        recheck(args.old, args.new, args.mem_gb, args.only)
+    elif args.command == "recheck-one":
+        recheck_one(args.old, args.new, args.row)
 
 
 if __name__ == "__main__":
