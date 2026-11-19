@@ -1,0 +1,23 @@
+{
+ "arrays": "dp_free_hydrostatic.m0.q.upper.p2d-jump-bernstein.v0.result.npz",
+ "bound": "upper",
+ "format": "ladruno-limit-result",
+ "format_version": 0,
+ "formulation": "upper.p2d-jump-bernstein.v0",
+ "objective": 1.6666666666666663,
+ "problem_sha256": "f452190c706c7ed2ede464168011490ee029bbcac545c50f286fcb012ee2e56a",
+ "producer": {
+  "name": "analytic-fixture",
+  "version": "0"
+ },
+ "query_id": "q",
+ "result_sha256": "fc3ddd7d25a55465fc085da67583df9af08b6bd9934aa30633b6d00e33bf39dd",
+ "solver": {
+  "name": "none",
+  "settings": {},
+  "version": "0"
+ },
+ "solver_status": "solved",
+ "value": 1.6666666666666663,
+ "wall_time_s": null
+}

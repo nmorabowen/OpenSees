@@ -1,8 +1,8 @@
 """WP-237a: the limit-analysis contract, executable part.
 
 Schema validators for the version-0 JSON + NPZ formats, the parser and mesh builder for
-``tests/limit_cases.txt``, convention checks and fixtures. The mathematics is decided in
-``tests/limit_interface.md``. Nothing here assembles a conic program or certifies a bound.
+``tests/limit_cases.txt``, convention checks, fixtures and the case evaluator. The mathematics is
+decided in ``tests/limit_interface.md``. Nothing here assembles a conic program or certifies a bound.
 
 Uses only the standard library, numpy and pytest. Regenerate the fixtures with
 ``python tests/test_limit_contract.py --write-fixtures``.
@@ -28,6 +28,9 @@ INTERFACE = HERE / "limit_interface.md"
 CASES = HERE / "limit_cases.txt"
 PROBE_OUTPUT = HERE.parent / "Ladruno_files" / "testbed" / "limit_analysis" / "p2_isochory_probe_output.txt"
 PROBE_SCRIPT = PROBE_OUTPUT.with_name("p2_isochory_probe.py")
+DEMO_SCRIPT = PROBE_OUTPUT.with_name("certificate_demo.py")
+DEMO_RECORD = PROBE_OUTPUT.with_name("certificate_demo_record.json")
+MESH_SCRIPT = PROBE_OUTPUT.with_name("make_gate_meshes.py")
 
 FORMAT_VERSION = 0
 FORMAT_PROBLEM = "ladruno-limit-problem"
@@ -56,6 +59,7 @@ TOLERANCES = {
     "TOL_RANK": 1e-10,
     "TOL_EQ_ROUNDING_FACTOR": 64.0,
     "TOL_FLOOR_MAX": 1e-6,
+    "TOL_KAPPA_CAP": 1e8,
     "TOL_PROJECTION_MOVE": 1e-6,
     "TOL_VALUE_MATCH": 1e-6,
     "TOL_CONE_ACCEPT": 1e-6,
@@ -109,6 +113,8 @@ CHECK_KEYS = {
 }
 FEASIBILITY_STATUS = {"formulation_feasible", "formulation_infeasible", "inconclusive"}
 SCHEMA_FIXTURE_CHECKER = "schema-fixture"
+PROCEDURE_DEMO_CHECKER = "procedure-demo"
+NON_GATE_CHECKERS = {SCHEMA_FIXTURE_CHECKER, PROCEDURE_DEMO_CHECKER}
 
 EDGES = ((0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3))
 FACET_VERTICES = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
@@ -160,7 +166,7 @@ def canonical_encode(obj):
     if obj is False:
         return b"f"
     if isinstance(obj, (int, float)):
-        return b"d" + struct.pack("<d", float(obj))
+        return b"d" + struct.pack("<d", float(obj) + 0.0)  # -0.0 hashes as 0.0
     if isinstance(obj, str):
         raw = obj.encode("utf-8")
         return b"s" + _u64(len(raw)) + raw
@@ -178,6 +184,8 @@ def document_hash(doc, arrays, hash_key):
     digest.update(canonical_encode({key: value for key, value in doc.items() if key != hash_key}))
     for name in sorted(arrays):
         array = np.asarray(arrays[name])
+        if array.dtype.kind == "f":
+            array = array + 0.0  # -0.0 hashes as 0.0
         digest.update(b"a" + canonical_encode(name) + canonical_encode(array.dtype.str))
         digest.update(_u64(array.ndim) + b"".join(_u64(dim) for dim in array.shape))
         digest.update(array.tobytes(order="C"))
@@ -187,7 +195,16 @@ def document_hash(doc, arrays, hash_key):
 def strict_json_loads(text):
     def refuse(token):
         fail("json_non_finite", token)
-    return json.loads(text, parse_constant=refuse)
+
+    def finite_float(token):
+        value = float(token)
+        require(math.isfinite(value), "json_non_finite", token)
+        return value
+
+    def finite_int(token):
+        require(math.isfinite(float(token)), "json_non_finite", token)
+        return int(token)
+    return json.loads(text, parse_constant=refuse, parse_float=finite_float, parse_int=finite_int)
 
 
 def load_document(path):
@@ -302,13 +319,23 @@ def support_function(d, k, alpha=0.0, tol=1e-12):
     return math.inf
 
 
-def equality_floor(kappa):
-    """The conditioning-aware final equality threshold (interface 17.2)."""
-    return TOLERANCES["TOL_EQ_ROUNDING_FACTOR"] * UNIT_ROUNDOFF * max(1.0, kappa)
+def tau_eq():
+    """The equality acceptance level of interface 17.2: a rounding level, with no conditioning factor."""
+    return TOLERANCES["TOL_EQ_ROUNDING_FACTOR"] * UNIT_ROUNDOFF
+
+
+def row_backward_error(matrix, rhs, x, scale):
+    """omega of interface 17.1: max_i |a_i x - g_i| / (sum_j |a_ij| scale_j + |g_i|)."""
+    matrix, rhs, x, scale = (np.asarray(item, dtype=float) for item in (matrix, rhs, x, scale))
+    residual = np.abs(matrix @ x - rhs)
+    denominator = np.abs(matrix) @ scale + np.abs(rhs)
+    require(not np.any((denominator == 0.0) & (residual != 0.0)), "equality_residual_above_floor")
+    active = denominator > 0.0
+    return float(np.max(residual[active] / denominator[active], initial=0.0))
 
 
 def jump_constants(alpha):
-    """tau (dilation per unit slip) and k_J of interface section 12."""
+    """tau (dilation per unit slip) and root = sqrt(1 - 12 alpha^2) of interface 12.2; k_J = k / root."""
     require(alpha * alpha * 12.0 < 1.0, "formulation_not_applicable", "alpha >= 1/sqrt(12)")
     root = math.sqrt(1.0 - 12.0 * alpha * alpha)
     return 3.0 * alpha / root, root
@@ -469,8 +496,12 @@ def parse_key_values(tokens):
 
 
 def parse_cases(path=CASES):
+    return parse_case_text(Path(path).read_text(encoding="ascii"))
+
+
+def parse_case_text(text):
     cases, current = {}, None
-    for raw in Path(path).read_text(encoding="ascii").splitlines():
+    for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -544,7 +575,7 @@ def _digest_case(raw):
     case = {
         "name": raw["name"], "source": [], "checked": [], "mesh": [], "formulation": [], "control": [],
         "regions": [], "footings": [], "boundaries": [], "queries": [], "F0": {}, "F1": {}, "restrained": [],
-        "assert": [], "gate": [], "nested": [],
+        "assert": [], "gate": [], "record": [], "nested": [],
     }
     for key, rest in raw["lines"]:
         tokens = rest.split()
@@ -595,9 +626,24 @@ def _digest_case(raw):
             case["assert"].append(tokens)
         elif key == "gate":
             case["gate"].append(tokens)
+        elif key == "record":
+            case["record"].append(tokens)
         else:
             fail("case_format", f"unknown key {key}")
     return case
+
+
+def case_stem(name, mesh_index=0):
+    """File stem of one case on one of its meshes (interface 15.2)."""
+    return f"{name}.m{mesh_index}"
+
+
+def record_stem(name, formulation, mesh_index=0, query="q"):
+    return f"{case_stem(name, mesh_index)}.{query}.{formulation}"
+
+
+def bracket_stem(name, lower_formulation, upper_formulation, mesh_index=0, query="q"):
+    return f"{case_stem(name, mesh_index)}.{query}.{lower_formulation}__{upper_formulation}"
 
 
 def build_case_problem(case, mesh_index=0):
@@ -651,10 +697,11 @@ def build_case_problem(case, mesh_index=0):
         mesh_label = f"{mesh_entry[1].split('.')[0]}+{mesh_entry[2]}"
     doc = {
         "format": FORMAT_PROBLEM, "format_version": FORMAT_VERSION,
-        "arrays": f"{case['name']}.problem.npz", "name": f"{case['name']}:{mesh_label}",
+        "arrays": f"{case_stem(case['name'], mesh_index)}.problem.npz", "name": f"{case['name']}:{mesh_label}",
         "units": {"length": units["length"], "force": units["force"]},
         "conventions": copy.deepcopy(CONVENTIONS),
-        "domain": {"target": "box", "truncation_sets": [], "exterior_load_free": True},
+        "domain": {"target": "box", "truncation_sets": [], "symmetry_sets": [], "ground": None,
+                   "exterior_load_free": True},
         "length_scale": float(np.max(hi - lo)),
         "regions": copy.deepcopy(case["regions"]), "boundary_sets": sets,
         "footings": copy.deepcopy(case["footings"]), "queries": queries,
@@ -815,14 +862,23 @@ def validate_problem(doc, arrays):
     require(footing_seen == set(range(len(footings))), "footing_without_set")
 
     domain = doc["domain"]
-    _keys(domain, {"target", "truncation_sets", "exterior_load_free"})
+    _keys(domain, {"target", "truncation_sets", "symmetry_sets", "ground", "exterior_load_free"})
     require(domain["target"] in ("box", "halfspace"), "domain_target", repr(domain["target"]))
     require(isinstance(domain["exterior_load_free"], bool), "domain_target")
     require(set(domain["truncation_sets"]) <= set(names), "domain_truncation", "unknown set")
+    require(set(domain["symmetry_sets"]) <= set(names), "domain_symmetry", "unknown set")
+    kind_of = {item["name"]: item["kind"] for item in sets}
+    require(all(kind_of[name] == "symmetry" for name in domain["symmetry_sets"]), "domain_symmetry", "not a symmetry set")
     if domain["target"] == "box":
-        require(not domain["truncation_sets"], "domain_truncation", "box has no truncation sets")
+        require(not domain["truncation_sets"] and not domain["symmetry_sets"] and domain["ground"] is None,
+                "domain_truncation", "a box has no truncation sets, symmetry sets or ground plane")
     else:
         require(domain["truncation_sets"], "domain_truncation", "halfspace needs truncation sets")
+        ground = domain["ground"]
+        require(isinstance(ground, dict), "domain_ground", "halfspace needs a ground plane")
+        _keys(ground, {"axis", "coordinate"})
+        require(ground["axis"] in AXES, "domain_ground", repr(ground["axis"]))
+        _finite_number(ground["coordinate"], "domain_ground")
 
     _validate_problem_arrays(doc, arrays)
 
@@ -1041,11 +1097,12 @@ def validate_feasibility(doc, problem):
     _keys(doc, {
         "format", "format_version", "problem_sha256", "query_id", "formulation", "status", "rho_feas",
         "numerator", "denominator", "n_unknowns", "n_rows", "rank", "nullity", "footing_modes", "method",
-        "witness_checked", "producer", "tolerances",
+        "witness_result_sha256", "witness_residual", "checker", "tolerances",
     })
     require(doc["problem_sha256"] == problem["problem_sha256"], "hash_mismatch")
     query_by_id(problem, doc["query_id"])
     validate_formulation("upper", doc["formulation"], problem)
+    _keys(doc["checker"], {"name", "version"})
     require(doc["status"] in FEASIBILITY_STATUS, "feasibility_status", repr(doc["status"]))
     require(doc["tolerances"] == TOLERANCES, "tolerances")
     for key in ("rho_feas", "numerator", "denominator"):
@@ -1055,15 +1112,43 @@ def validate_feasibility(doc, problem):
     require(abs(rho - doc["numerator"] / doc["denominator"]) <= 1e-12 * max(1.0, abs(rho)), "feasibility_ratio")
     if doc["rank"] is not None:
         require(doc["nullity"] == doc["n_unknowns"] - doc["rank"], "feasibility_rank")
+    witness, residual = doc["witness_result_sha256"], doc["witness_residual"]
+    require((witness is None) == (residual is None), "feasibility_witness")
+    if residual is not None:
+        _finite_number(residual, "feasibility_witness")
+        require(isinstance(witness, str) and re.fullmatch("[0-9a-f]{64}", witness) is not None, "feasibility_witness")
+    frictional = any(region.get("alpha", 0.0) > 0.0 for region in problem["regions"])
+    ok, locked = TOLERANCES["TOL_FEAS_OK"], TOLERANCES["TOL_FEAS_LOCKED"]
+    witness_passes = residual is not None and residual <= ok
+    if frictional:
+        # The minimisation is conic here, so the verdict rests on the witness alone (interface 11.1).
+        require(residual is None or math.isclose(rho, residual, rel_tol=1e-12, abs_tol=1e-300), "feasibility_ratio")
     if doc["status"] == "formulation_feasible":
-        require(rho <= TOLERANCES["TOL_FEAS_OK"] and doc["witness_checked"] is True, "feasibility_verdict")
-        require(doc["nullity"] is None or doc["nullity"] >= 1, "feasibility_rank")
+        require(rho <= ok and witness_passes, "feasibility_verdict")
         require(doc["footing_modes"] is None or doc["footing_modes"] >= 1, "feasibility_rank")
     elif doc["status"] == "formulation_infeasible":
-        require(rho >= TOLERANCES["TOL_FEAS_LOCKED"], "feasibility_verdict")
+        require(not frictional, "feasibility_verdict", "no infeasibility verdict without a linear minimisation")
+        require(rho >= locked, "feasibility_verdict")
     else:
-        require(rho > TOLERANCES["TOL_FEAS_OK"] or doc["witness_checked"] is not True, "feasibility_verdict")
-        require(rho < TOLERANCES["TOL_FEAS_LOCKED"], "feasibility_verdict")
+        require(not (rho <= ok and witness_passes), "feasibility_verdict")
+        require(frictional or rho < locked, "feasibility_verdict")
+
+
+def halfspace_boundary_is_covered(problem, arrays):
+    """Every exterior facet is on the ground plane, in a truncation set or in a declared symmetry set."""
+    domain = problem["domain"]
+    axis, coordinate = AXES[domain["ground"]["axis"]], domain["ground"]["coordinate"]
+    nodes, tets = arrays["nodes"], arrays["tets"]
+    tol = TOLERANCES["TOL_GEOM_PLANE"] * float(np.linalg.norm(nodes.max(axis=0) - nodes.min(axis=0)))
+    covered = set(domain["truncation_sets"]) | set(domain["symmetry_sets"])
+    for (e, f), index in zip(arrays["facets"], arrays["facet_set"]):
+        item = problem["boundary_sets"][int(index)]
+        on_ground = bool(np.all(np.abs(nodes[tets[e][list(FACET_VERTICES[int(f)])], axis] - coordinate) <= tol))
+        if on_ground:
+            continue
+        if item["kind"] in ("traction", "footing") or item["name"] not in covered:
+            return False
+    return True
 
 
 def supported_domain_claim(problem, arrays, bound):
@@ -1071,6 +1156,8 @@ def supported_domain_claim(problem, arrays, bound):
     domain = problem["domain"]
     if domain["target"] == "box":
         return "box_stated"
+    if not halfspace_boundary_is_covered(problem, arrays):
+        return "unverified"
     kinds = {item["name"]: item["kind"] for item in problem["boundary_sets"]}
     walls = [kinds[name] for name in domain["truncation_sets"]]
     if bound == "upper":
@@ -1079,6 +1166,52 @@ def supported_domain_claim(problem, arrays, bound):
     if all(kind == "free" for kind in walls) and weightless and domain["exterior_load_free"]:
         return "halfspace_by_zero_extension"
     return "unverified"
+
+
+def _check_number(checks, key):
+    value = checks.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def certified_check_failures(doc, query_form=None):
+    """Which numeric conditions of interface 17 a certified_bound does not show. Empty means all shown."""
+    checks, t = doc["checks"], TOLERANCES
+    numbers = {key: _check_number(checks, key) for key in CHECK_KEYS}
+    required = ["omega_eq", "kappa_eq", "tau_eq", "projection_move", "repair_mu", "straightness_max"]
+    if doc["bound"] == "lower":
+        required.append("rho_cone")
+    else:
+        required.append("rho_flow")
+        if doc["formulation"] == JUMP_ID:
+            required.append("rho_jump_cone")
+        if query_form in ("ray", "fixed_components"):
+            required.append("work_reference")
+    failures = [key for key in required if numbers[key] is None]
+    if failures:
+        return failures
+    omega, kappa = numbers["omega_eq"], numbers["kappa_eq"]
+    limits = [
+        ("omega_eq", omega <= numbers["tau_eq"]), ("tau_eq", numbers["tau_eq"] == tau_eq()),
+        ("kappa_eq", 1.0 <= kappa <= t["TOL_KAPPA_CAP"] and kappa * omega <= t["TOL_FLOOR_MAX"]),
+        ("projection_move", 0.0 <= numbers["projection_move"] <= t["TOL_PROJECTION_MOVE"]),
+        ("repair_mu", 0.0 <= numbers["repair_mu"] <= t["TOL_REPAIR_MAX"]),
+        ("straightness_max", numbers["straightness_max"] <= t["TOL_GEOM_STRAIGHT"]),
+    ]
+    if doc["bound"] == "lower":
+        limits.append(("rho_cone", numbers["rho_cone"] <= 0.0))
+    else:
+        limits.append(("rho_flow", numbers["rho_flow"] <= t["TOL_CONE_MARGIN"]))
+        if doc["formulation"] == JUMP_ID:
+            limits.append(("rho_jump_cone", numbers["rho_jump_cone"] <= t["TOL_CONE_MARGIN"]))
+        if numbers["work_reference"] is not None or query_form in ("ray", "fixed_components"):
+            limits.append(("work_reference", (numbers["work_reference"] or 0.0) > 0.0))
+    failures = [key for key, passed in limits if not passed]
+    expected = max(t["FLOOR_MIN_REL"], kappa * omega) * abs(doc["value_certified"])
+    if not math.isclose(doc["floor"], expected, rel_tol=1e-9, abs_tol=1e-300):
+        failures.append("floor")
+    return failures
 
 
 def validate_certificate(doc, problem, problem_arrays, result):
@@ -1116,14 +1249,21 @@ def validate_certificate(doc, problem, problem_arrays, result):
         _finite_number(doc["floor"], "certificate_value")
         require(doc["floor"] >= 0.0, "certificate_value")
         require(result["value"] is not None, "certificate_without_candidate")
+        form = query_by_id(problem, doc["query_id"])["form"]
+        failures = certified_check_failures(doc, form)
+        require(not failures, "certificate_checks", str(failures))
     else:
         require(doc["reasons"], "certificate_reason", "estimate needs a reason")
         require(doc["value_certified"] is None and doc["floor"] is None, "certificate_value")
 
 
-def gate_admissible(certificate):
-    """Only a real checker's certified bound can satisfy a gate."""
-    return certificate["classification"] == "certified_bound" and certificate["checker"]["name"] != SCHEMA_FIXTURE_CHECKER
+def gate_admissible(record, query_form="ray"):
+    """Only a real checker's certified bound or feasibility verdict can satisfy a gate. Every case query is a ray."""
+    if record["checker"]["name"] in NON_GATE_CHECKERS:
+        return False
+    if record.get("format") == FORMAT_FEASIBILITY:
+        return record["status"] == "formulation_feasible" and record["witness_result_sha256"] is not None
+    return record["classification"] == "certified_bound" and not certified_check_failures(record, query_form)
 
 
 def bracket_claim(lower_claim, upper_claim):
@@ -1136,11 +1276,13 @@ def validate_bracket(doc, lower, upper):
     require(doc.get("format") == FORMAT_BRACKET, "format", repr(doc.get("format")))
     require(doc.get("format_version") == FORMAT_VERSION, "format_version")
     _keys(doc, {
-        "format", "format_version", "problem_sha256", "query_id", "lower_result_sha256",
-        "upper_result_sha256", "lower", "upper", "floor_lower", "floor_upper", "status", "gap",
-        "domain_claim", "lower_domain_claim", "upper_domain_claim",
+        "format", "format_version", "problem_sha256", "query_id", "lower_formulation", "upper_formulation",
+        "lower_result_sha256", "upper_result_sha256", "lower", "upper", "floor_lower", "floor_upper", "status",
+        "gap", "domain_claim", "lower_domain_claim", "upper_domain_claim",
     })
     require(lower["bound"] == "lower" and upper["bound"] == "upper", "bracket_labels")
+    require(doc["lower_formulation"] == lower["formulation"], "bracket_formulation")
+    require(doc["upper_formulation"] == upper["formulation"], "bracket_formulation")
     require(lower["classification"] == upper["classification"] == "certified_bound", "bracket_uncertified")
     require(lower["problem_sha256"] == upper["problem_sha256"] == doc["problem_sha256"], "hash_mismatch")
     require(lower["query_id"] == upper["query_id"] == doc["query_id"], "query_mismatch")
@@ -1163,10 +1305,188 @@ def validate_bracket(doc, lower, upper):
 
 
 # ---------------------------------------------------------------------------------------------
+# Case evaluator: the executable meaning of `assert`, `gate` and `record` lines (interface 17.9)
+# ---------------------------------------------------------------------------------------------
+
+def load_problem_hashes():
+    return strict_json_loads((DATA / "problem_hashes.json").read_text(encoding="utf-8"))
+
+
+def _formula_value(case, mesh, name, params):
+    if name in TARGET_FORMULAS:
+        return TARGET_FORMULAS[name](params)
+    return band_formula(name, params, first_layer(case, mesh, params))
+
+
+def _one_sided(kind, value, limit, tol):
+    if kind.endswith("_le"):
+        return value <= limit + tol * abs(limit)
+    return value >= limit - tol * abs(limit)
+
+
+def evaluate_case(case, certificates=(), brackets=(), feasibility=(), hashes=None):
+    """Verdict of one case from checker records. Records are matched to meshes by problem hash.
+
+    Every `formulation` line binds: a Lower assertion must hold for each Lower formulation, an Upper
+    assertion or gate for each Upper formulation, and a pair item for each (Lower, Upper) pair. `control`
+    lines bind nothing. Assertions hold on every listed mesh. Only gate-admissible records count.
+    """
+    table = (load_problem_hashes() if hashes is None else hashes)[case["name"]]
+    mesh_of = {sha: int(key[1:]) for key, sha in table.items()}
+    meshes = range(len(case["mesh"]))
+    lowers = [f for f in case["formulation"] if f in FORMULATIONS["lower"]]
+    uppers = [f for f in case["formulation"] if f in FORMULATIONS["upper"]]
+    by_key, kinematic, pairs, foreign = {}, {}, {}, []
+    for doc in certificates:
+        mesh = mesh_of.get(doc["problem_sha256"])
+        if mesh is None:
+            foreign.append(doc["problem_sha256"])
+        else:
+            by_key.setdefault((mesh, doc["formulation"]), []).append(doc)
+    for doc in feasibility:
+        mesh = mesh_of.get(doc["problem_sha256"])
+        if mesh is None:
+            foreign.append(doc["problem_sha256"])
+        else:
+            kinematic.setdefault((mesh, doc["formulation"]), []).append(doc)
+    for doc in brackets:
+        mesh = mesh_of.get(doc["problem_sha256"])
+        if mesh is None:
+            foreign.append(doc["problem_sha256"])
+        else:
+            pairs.setdefault((mesh, doc["lower_formulation"], doc["upper_formulation"]), []).append(doc)
+    admitted = {doc["result_sha256"] for docs in by_key.values() for doc in docs if gate_admissible(doc)}
+    verdict = {"case": case["name"], "passed": False, "stop_program": False, "items": [], "records": [],
+               "foreign_records": foreign}
+
+    def add(kind, mesh, formulation, passed, detail=""):
+        verdict["items"].append({"kind": kind, "mesh": mesh, "formulation": formulation,
+                                 "status": "pass" if passed else "fail", "detail": detail})
+
+    def certified(mesh, formulation):
+        docs = by_key.get((mesh, formulation), [])
+        good = [doc for doc in docs if gate_admissible(doc)]
+        if good:
+            return good[0]["value_certified"], ""
+        return None, "estimate" if docs else "missing"
+
+    def gap_of(mesh, lower, upper):
+        docs = pairs.get((mesh, lower, upper), [])
+        good = [d for d in docs if d["lower_result_sha256"] in admitted and d["upper_result_sha256"] in admitted]
+        if not good:
+            return None, "estimate" if docs else "missing"
+        doc = good[0]
+        if doc["status"] == "contradiction":
+            verdict["stop_program"] = True
+            return None, "contradiction"
+        if doc["status"] == "order_within_floor":
+            return 0.0, ""
+        return doc["gap"], "" if doc["gap"] is not None else "no_gap"
+
+    def gap_item(kind, mesh, limit):
+        for lower, upper in itertools.product(lowers, uppers):
+            gap, why = gap_of(mesh, lower, upper)
+            add(kind, mesh, f"{lower}__{upper}", gap is not None and gap <= limit, why or f"gap {gap!r}")
+
+    side = {"lower_le_target": ("lower", "_le"), "upper_ge_target": ("upper", "_ge"), "lower_ge_target": ("lower", "_ge"),
+            "lower_ge_formula": ("lower", "_ge"), "lower_le_formula": ("lower", "_le"),
+            "upper_le_formula": ("upper", "_le"), "upper_ge_formula": ("upper", "_ge")}
+    for tokens in case["assert"]:
+        kind = tokens[0]
+        if kind == "gravity_work_eq":
+            continue  # an L0 operator check, tested directly
+        for mesh in meshes:
+            if kind == "gap_le":
+                gap_item(kind, mesh, float(tokens[1]))
+                continue
+            bound, direction = side[kind]
+            if kind.endswith("_target"):
+                limit, tol = case["target"], float(tokens[1])
+            else:
+                limit = _formula_value(case, mesh, tokens[1], parse_key_values(tokens[2:]))
+                tol = TOLERANCES["TOL_CASE_ONE_SIDED"]
+            for formulation in (lowers if bound == "lower" else uppers):
+                value, why = certified(mesh, formulation)
+                passed = value is not None and _one_sided(direction, value, limit, tol)
+                add(kind, mesh, formulation, passed, why or f"value {value!r} limit {limit!r}")
+    for tokens in case["gate"]:
+        kind = tokens[0]
+        if kind == "kinematic_status":
+            for mesh, upper in itertools.product(meshes, uppers):
+                docs = [d for d in kinematic.get((mesh, upper), []) if d["status"] == tokens[1] and gate_admissible(d)]
+                add(kind, mesh, upper, bool(docs), "" if docs else "missing or inadmissible")
+        elif kind == "certified_upper":
+            mesh = int(tokens[2])
+            for upper in uppers:
+                value, why = certified(mesh, upper)
+                add(kind, mesh, upper, value is not None, why)
+        elif kind == "certified_bracket":
+            mesh = int(tokens[2])
+            for lower, upper in itertools.product(lowers, uppers):
+                gap, why = gap_of(mesh, lower, upper)
+                add(kind, mesh, f"{lower}__{upper}", why in ("", "no_gap"), why)
+        elif kind == "gap_le":
+            gap_item(kind, int(tokens[3]), TOLERANCES[tokens[1]])
+        elif kind in ("upper_nonincrease", "lower_nondecrease"):
+            coarse, fine = int(tokens[1]), int(tokens[2])
+            for formulation in (uppers if kind == "upper_nonincrease" else lowers):
+                first, why_first = certified(coarse, formulation)
+                second, why_second = certified(fine, formulation)
+                if first is None or second is None:
+                    add(kind, fine, formulation, False, why_first or why_second)
+                    continue
+                allowance = TOLERANCES["TOL_MONOTONE"] * abs(first)
+                passed = second <= first + allowance if kind == "upper_nonincrease" else second >= first - allowance
+                add(kind, fine, formulation, passed, f"coarse {first!r} fine {second!r}")
+        else:
+            fail("case_format", kind)
+    for tokens in case["record"]:
+        require(tokens[0] == "gap" and tokens[1] == "mesh", "case_format", str(tokens))
+        mesh = int(tokens[2])
+        for lower, upper in itertools.product(lowers, uppers):
+            gap, why = gap_of(mesh, lower, upper)
+            verdict["records"].append({"kind": "gap", "mesh": mesh, "formulation": f"{lower}__{upper}",
+                                       "gap": gap, "detail": why})
+    verdict["passed"] = (bool(verdict["items"]) and not verdict["stop_program"]
+                         and all(item["status"] == "pass" for item in verdict["items"]))
+    return verdict
+
+
+# ---------------------------------------------------------------------------------------------
 # Fixtures: exact fields on the smallest meshes. No solver is involved.
 # ---------------------------------------------------------------------------------------------
 
-KAPPA_PLATE_LOWER = 51.88  # sigma_max / sigma_min of the row-equilibrated Lower equalities, 6-tet plate
+GROUND_PATCH_CASE = """
+case vm_ground_patch_halfspace
+units       length m; force kN; stress kPa
+box         -1 -1 -1 1 1 0
+mesh        2 2 1
+region      soil von_mises k 1.0
+boundary    xmin fixed plane x -1
+boundary    xmax fixed plane x 1
+boundary    ymin fixed plane y -1
+boundary    ymax fixed plane y 1
+boundary    base fixed plane z -1
+boundary    ground traction plane z 0 t1 -1 0 0
+query       q ray
+end
+"""
+
+FREE_APEX_CASE = """
+case dp_free_hydrostatic
+units       length m; force kN; stress kPa
+box         0 0 0 1 1 1
+mesh        1 1 1
+region      soil drucker_prager k 1.0 alpha 0.2
+boundary    x0 traction plane x 0 t1 -1 0 0
+boundary    x1 traction plane x 1 t1 1 0 0
+boundary    y0 traction plane y 0 t1 0 -1 0
+boundary    y1 traction plane y 1 t1 0 1 0
+boundary    z0 traction plane z 0 t1 0 0 -1
+boundary    z1 traction plane z 1 t1 0 0 1
+query       q ray
+end
+"""
 
 
 def facet_work_table(area):
@@ -1179,28 +1499,59 @@ def facet_work_table(area):
     return table
 
 
+def dissipation_density(d, k, alpha):
+    """The value formulas of interface 4.3, evaluated without testing the domain (17.4 step 1)."""
+    theta, enorm = strain_split(d)
+    return S2 * k * enorm if alpha == 0.0 else k * theta / (3.0 * alpha)
+
+
+def element_velocities(arrays, velocity):
+    return velocity if velocity.ndim == 3 else velocity[arrays["tets"]]
+
+
+def facet_nodal_jump(tets, element_velocity, e1, f1, e2):
+    """v(e+) - v(e-) at the six facet nodes, in the facet-node order of e-."""
+    local1 = list(FACET_NODES[f1])
+    order = [int(v) for v in tets[e2]]
+    local2 = [order.index(int(tets[e1][a])) for a in local1]
+    return element_velocity[e2][local2] - element_velocity[e1][local1]
+
+
 def fixture_upper_value(problem, arrays, velocity, footing_velocity, quadrature="vertex", body="exact"):
-    """Value of a continuous P2 fixture field. Fixture tooling only; it is not the checker."""
+    """Value of a P2 fixture field, continuous (N,3) or broken (E,10,3). Fixture tooling, not the checker."""
     nodes, tets = arrays["nodes"], arrays["tets"]
     query = problem["queries"][0]
+    field = element_velocities(arrays, velocity)
     dissipation, w0, w1 = 0.0, 0.0, 0.0
     for e, tet in enumerate(tets):
         region = problem["regions"][int(arrays["element_region"][e])]
         k, alpha = region["k"], region.get("alpha", 0.0)
         _, volume = tet_gradients(nodes[tet[:4]])
-        rates = [strain_rate_at_vertex(nodes[tet], velocity[tet], m) for m in range(4)]
+        rates = [strain_rate_at_vertex(nodes[tet], field[e], m) for m in range(4)]
         if quadrature == "vertex":
-            dissipation += sum(volume / 4.0 * support_function(d, k, alpha, tol=1e-9) for d in rates)
+            dissipation += sum(volume / 4.0 * dissipation_density(d, k, alpha) for d in rates)
         else:
-            dissipation += volume * support_function(np.mean(rates, axis=0), k, alpha, tol=1e-9)
+            dissipation += volume * dissipation_density(np.mean(rates, axis=0), k, alpha)
         weights = volume * (np.array([-0.05] * 4 + [0.2] * 6) if body == "exact" else np.array([0.25] * 4 + [0.0] * 6))
-        moment = weights @ velocity[tet]
+        moment = weights @ field[e]
         w0 += np.dot(region["b0"], moment)
         w1 += np.dot(region["b1"], moment)
+    if velocity.ndim == 3:
+        for (e1, f1), (e2, _) in mesh_facets(tets)[0]:
+            region = problem["regions"][int(arrays["element_region"][e1])]
+            k, alpha = region["k"], region.get("alpha", 0.0)
+            normal, area = facet_geometry(nodes[tets[e1][:4]], f1)
+            coefficients = bernstein_from_nodal(facet_nodal_jump(tets, field, e1, f1, e2))
+            opening = coefficients @ normal
+            if alpha > 0.0:
+                dissipation += area / 6.0 * k / (3.0 * alpha) * float(np.sum(opening))
+            else:
+                slip = coefficients - np.outer(opening, normal)
+                dissipation += area / 6.0 * k * float(np.sum(np.linalg.norm(slip, axis=1)))
     for row, (e, f) in enumerate(arrays["facets"]):
         _, area = facet_geometry(nodes[tets[e][:4]], int(f))
         table = facet_work_table(area)
-        facet_velocity = velocity[tets[e][list(FACET_NODES[int(f)])]]
+        facet_velocity = field[e][list(FACET_NODES[int(f)])]
         w0 += float(np.sum(arrays["t0"][row] * (table @ facet_velocity)))
         w1 += float(np.sum(arrays["t1"][row] * (table @ facet_velocity)))
     w0 += float(np.sum(np.array(query["F0"]).reshape(-1, 6) * footing_velocity))
@@ -1208,11 +1559,63 @@ def fixture_upper_value(problem, arrays, velocity, footing_velocity, quadrature=
     return (dissipation - w0) / w1
 
 
-def _result(stem, problem, bound, value, arrays, formulation=None, label=None):
+def fixture_resultant(problem, arrays, sigma):
+    """Footing resultants of a stress field (interface 6). Fixture tooling, not the checker."""
+    nodes, tets = arrays["nodes"], arrays["tets"]
+    out = np.zeros((len(problem["footings"]), 6))
+    for (e, f), index in zip(arrays["facets"], arrays["facet_set"]):
+        item = problem["boundary_sets"][int(index)]
+        if item["kind"] != "footing":
+            continue
+        normal, area = facet_geometry(nodes[tets[e][:4]], int(f))
+        vertices = FACET_VERTICES[int(f)]
+        x = nodes[tets[e][list(vertices)]] - np.array(problem["footings"][item["footing"]]["x_ref"])
+        traction = [voigt_n(normal) @ sigma[e, a] for a in vertices]
+        for b in range(3):
+            out[item["footing"], :3] += area / 3.0 * traction[b]
+            for a in range(3):
+                out[item["footing"], 3:] += (area / 6.0 if a == b else area / 12.0) * np.cross(x[a], traction[b])
+    return out
+
+
+def signed_flow_conditions(problem, arrays, velocity):
+    """c~ of interface 17.4 at every (e, i), -inf where alpha = 0, and the largest |D|_F."""
+    nodes, tets = arrays["nodes"], arrays["tets"]
+    field = element_velocities(arrays, velocity)
+    out, size = np.full((len(tets), 4), -math.inf), 0.0
+    for e, tet in enumerate(tets):
+        alpha = problem["regions"][int(arrays["element_region"][e])].get("alpha", 0.0)
+        for m in range(4):
+            d = strain_rate_at_vertex(nodes[tet], field[e], m)
+            theta, enorm = strain_split(d)
+            size = max(size, math.sqrt(float(d[:3] @ d[:3]) + 0.5 * float(d[3:] @ d[3:])))
+            if alpha > 0.0:
+                out[e, m] = 3.0 * S2 * alpha * enorm - theta
+    return out, size
+
+
+def signed_jump_conditions(problem, arrays, element_velocity):
+    """Per interior facet: tau |c_t| - n.c at the six nodal jumps and at the six Bernstein coefficients."""
+    nodes, tets = arrays["nodes"], arrays["tets"]
+    alpha = problem["regions"][0].get("alpha", 0.0)
+    tau, _ = jump_constants(alpha)
+    rows = []
+    for (e1, f1), (e2, _) in mesh_facets(tets)[0]:
+        normal, _ = facet_geometry(nodes[tets[e1][:4]], f1)
+        nodal = facet_nodal_jump(tets, element_velocity, e1, f1, e2)
+
+        def signed(values):
+            opening = values @ normal
+            return tau * np.linalg.norm(values - np.outer(opening, normal), axis=1) - opening
+        rows.append((signed(nodal), signed(bernstein_from_nodal(nodal))))
+    return rows
+
+
+def _result(name, problem, bound, value, arrays, formulation=None, mesh=0):
     formulation = formulation or (LOWER_ID if bound == "lower" else CONTROL_ID)
     doc = {
         "format": FORMAT_RESULT, "format_version": FORMAT_VERSION,
-        "arrays": f"{stem}.q.{label or bound}.result.npz", "problem_sha256": problem["problem_sha256"],
+        "arrays": f"{record_stem(name, formulation, mesh)}.result.npz", "problem_sha256": problem["problem_sha256"],
         "query_id": "q", "bound": bound, "formulation": formulation,
         "producer": {"name": "analytic-fixture", "version": "0"},
         "solver": {"name": "none", "version": "0", "settings": {}},
@@ -1221,6 +1624,19 @@ def _result(stem, problem, bound, value, arrays, formulation=None, label=None):
     }
     doc["result_sha256"] = document_hash(doc, arrays, "result_sha256")
     return doc
+
+
+def fixture_checks(bound, formulation):
+    """Hand-written metrics of an exact fixture. The checker name keeps them away from every gate."""
+    checks = {key: None for key in sorted(CHECK_KEYS)}
+    checks.update(omega_eq=0.0, kappa_eq=1.0, tau_eq=tau_eq(), projection_move=0.0, repair_mu=0.0, straightness_max=0.0)
+    if bound == "lower":
+        checks["rho_cone"] = 0.0
+    else:
+        checks.update(rho_flow=0.0, work_reference=1.0)
+        if formulation == JUMP_ID:
+            checks["rho_jump_cone"] = 0.0
+    return checks
 
 
 def _certificate(problem, arrays, result):
@@ -1234,7 +1650,7 @@ def _certificate(problem, arrays, result):
         "criteria": sorted({region["criterion"] for region in problem["regions"]}),
         "flow_rule": "associated",
         "interface_laws": sorted({item["interface_law"] for item in problem["footings"]}),
-        "checks": {key: None for key in sorted(CHECK_KEYS)},
+        "checks": fixture_checks(result["bound"], result["formulation"]),
         "checker": {"name": SCHEMA_FIXTURE_CHECKER, "version": "0"},
         "tolerances": dict(TOLERANCES),
     }
@@ -1245,6 +1661,7 @@ def _bracket(lower, upper):
     return {
         "format": FORMAT_BRACKET, "format_version": FORMAT_VERSION,
         "problem_sha256": lower["problem_sha256"], "query_id": lower["query_id"],
+        "lower_formulation": lower["formulation"], "upper_formulation": upper["formulation"],
         "lower_result_sha256": lower["result_sha256"], "upper_result_sha256": upper["result_sha256"],
         "lower": low, "upper": high, "floor_lower": lower["floor"], "floor_upper": upper["floor"],
         "status": "bracket", "gap": (high - low) / (0.5 * (high + low)),
@@ -1253,14 +1670,15 @@ def _bracket(lower, upper):
     }
 
 
-def _feasibility(problem):
+def _feasibility(problem, witness):
     return {
         "format": FORMAT_FEASIBILITY, "format_version": FORMAT_VERSION,
-        "problem_sha256": problem["problem_sha256"], "query_id": "q", "formulation": CONTROL_ID,
+        "problem_sha256": problem["problem_sha256"], "query_id": "q", "formulation": witness["formulation"],
         "status": "formulation_feasible", "rho_feas": 0.0, "numerator": 0.0, "denominator": 1.0,
         "n_unknowns": 10, "n_rows": 4, "rank": 4, "nullity": 6, "footing_modes": None,
-        "method": "analytic witness; counts and denominator are schema-only", "witness_checked": True,
-        "producer": {"name": SCHEMA_FIXTURE_CHECKER, "version": "0"}, "tolerances": dict(TOLERANCES),
+        "method": "analytic witness; counts and denominator are schema-only",
+        "witness_result_sha256": witness["result_sha256"], "witness_residual": 0.0,
+        "checker": {"name": SCHEMA_FIXTURE_CHECKER, "version": "0"}, "tolerances": dict(TOLERANCES),
     }
 
 
@@ -1287,54 +1705,132 @@ def _with_hash(doc, arrays):
     return doc
 
 
+def _store_result(documents, name, problem, bound, value, arrays, formulation=None):
+    result = _result(name, problem, bound, value, arrays, formulation)
+    documents[f"{record_stem(name, result['formulation'])}.result"] = (result, arrays)
+    return result
+
+
+def _store_problem(documents, name, problem, arrays):
+    documents[f"{case_stem(name)}.problem"] = (problem, arrays)
+
+
 def _add_exact_set(documents, name, problem, arrays):
     value, sigma, resultant, velocity, footing_velocity = _exact_fields(name, arrays)
-    lower_arrays = _float_arrays(sigma=sigma, resultant=resultant)
-    upper_arrays = _float_arrays(velocity=velocity, footing_velocity=footing_velocity)
-    jump_arrays = _float_arrays(element_velocity=velocity[arrays["tets"]], footing_velocity=footing_velocity)
-    lower = _result(name, problem, "lower", value, lower_arrays)
-    upper = _result(name, problem, "upper", value, upper_arrays)
-    jump = _result(name, problem, "upper", value, jump_arrays, JUMP_ID, "upper-jump")
+    _store_problem(documents, name, problem, arrays)
+    lower = _store_result(documents, name, problem, "lower", value, _float_arrays(sigma=sigma, resultant=resultant))
+    upper = _store_result(documents, name, problem, "upper", value,
+                          _float_arrays(velocity=velocity, footing_velocity=footing_velocity))
+    _store_result(documents, name, problem, "upper", value,
+                  _float_arrays(element_velocity=velocity[arrays["tets"]], footing_velocity=footing_velocity), JUMP_ID)
     lower_cert = _certificate(problem, arrays, lower)
     upper_cert = _certificate(problem, arrays, upper)
-    documents[f"{name}.problem"] = (problem, arrays)
-    documents[f"{name}.q.lower.result"] = (lower, lower_arrays)
-    documents[f"{name}.q.upper.result"] = (upper, upper_arrays)
-    documents[f"{name}.q.upper-jump.result"] = (jump, jump_arrays)
-    documents[f"{name}.q.lower.certificate"] = (lower_cert, None)
-    documents[f"{name}.q.upper.certificate"] = (upper_cert, None)
-    documents[f"{name}.q.bracket"] = (_bracket(lower_cert, upper_cert), None)
-    documents[f"{name}.q.feasibility"] = (_feasibility(problem), None)
+    documents[f"{record_stem(name, LOWER_ID)}.certificate"] = (lower_cert, None)
+    documents[f"{record_stem(name, CONTROL_ID)}.certificate"] = (upper_cert, None)
+    documents[f"{bracket_stem(name, LOWER_ID, CONTROL_ID)}.bracket"] = (_bracket(lower_cert, upper_cert), None)
+    documents[f"{record_stem(name, CONTROL_ID)}.feasibility"] = (_feasibility(problem, upper), None)
+
+
+def ground_patch_field(arrays):
+    """v = curl(h^3 e_y) with h the hat function of the centre ground vertex.
+
+    Quadratic per element, divergence free, with continuous normal component because the tangential trace
+    of the potential is continuous. It vanishes on the link of the vertex, so on every wall and the base.
+    """
+    nodes, tets = arrays["nodes"], arrays["tets"]
+    vertices = np.unique(tets[:, :4])
+    centre = int(vertices[np.argmin(np.linalg.norm(nodes[vertices], axis=1))])
+    field = np.zeros((len(tets), 10, 3))
+    for e, tet in enumerate(tets):
+        where = np.nonzero(tet[:4] == centre)[0]
+        if len(where) == 0:
+            continue
+        i = int(where[0])
+        grads, _ = tet_gradients(nodes[tet[:4]])
+        hat = np.zeros(10)
+        hat[i] = 1.0
+        for q, (a, b) in enumerate(EDGES):
+            if i in (a, b):
+                hat[4 + q] = 0.5
+        field[e] = 3.0 * (hat ** 2)[:, None] * np.cross(grads[i], [0.0, 1.0, 0.0])
+    return field
+
+
+def _first_violating_direction(problem, arrays, base, node, amount):
+    for component in range(3):
+        trial = base.copy()
+        trial[node, component] += amount
+        conditions, size = signed_flow_conditions(problem, arrays, trial)
+        if conditions.max() / size > 0.1 * amount:
+            return component
+    fail("negative_fixture", "no violating direction")
 
 
 def build_negative_fixtures(documents):
-    plate = documents["vm_plate_shear.problem"][1]
+    P = case_stem("vm_plate_shear")
+    D = case_stem("dp_uniaxial_tension")
+    G = case_stem("vm_dead_gravity_shear_layer")
+    H = case_stem("vm_ground_patch_halfspace")
+    A = case_stem("dp_free_hydrostatic")
+    L = f"{record_stem('vm_plate_shear', LOWER_ID)}.result"
+    U = f"{record_stem('vm_plate_shear', CONTROL_ID)}.result"
+    J = f"{record_stem('vm_plate_shear', JUMP_ID)}.result"
+    GL = f"{record_stem('vm_dead_gravity_shear_layer', LOWER_ID)}.result"
+    GU = f"{record_stem('vm_dead_gravity_shear_layer', CONTROL_ID)}.result"
+    DU = f"{record_stem('dp_uniaxial_tension', CONTROL_ID)}.result"
+    HU = f"{record_stem('vm_ground_patch_halfspace', JUMP_ID)}.result"
+    AU = f"{record_stem('dp_free_hydrostatic', JUMP_ID)}.result"
+
+    plate, plate_doc = documents[f"{P}.problem"][1], documents[f"{P}.problem"][0]
     nodes, tets = plate["nodes"], plate["tets"]
     centre = int(np.argmin(np.linalg.norm(nodes - 0.5, axis=1)))
     footprint = int(np.nonzero((np.abs(nodes[:, 1] - 1.0) < 1e-12) & (np.abs(nodes[:, 0]) < 1e-12))[0][0])
-    wall = int(np.nonzero((np.abs(nodes[:, 1]) < 1e-12) & (np.abs(nodes[:, 0] - 1.0) < 1e-12))[0][0])
+    base_node = int(np.nonzero((np.abs(nodes[:, 1]) < 1e-12) & (np.abs(nodes[:, 0] - 1.0) < 1e-12))[0][0])
     grads, _ = tet_gradients(nodes[tets[0][:4]])
     vertex = int(np.argmax(np.abs(grads[:, 0])))
-    row_scale = float(np.sum(np.abs(grads[:, 1])))
-    amount = 3.0 * equality_floor(KAPPA_PLATE_LOWER) * row_scale / abs(grads[vertex, 0])
-    dp_tets = documents["dp_uniaxial_tension.problem"][1]["tets"]
-    interior, _ = mesh_facets(dp_tets)
-    (e1, f1), (e2, _) = interior[0]
-    shared = int(dp_tets[e1][FACET_VERTICES[f1][0]])
-    local2 = [int(v) for v in dp_tets[e2]].index(shared)
-    P, L, U = "vm_plate_shear", "vm_plate_shear.q.lower.result", "vm_plate_shear.q.upper.result"
-    G = "vm_dead_gravity_shear_layer"
-    H = "vm_plate_shear_halfspace"
+    amount = 3.0 * tau_eq() * float(np.sum(np.abs(grads))) / abs(grads[vertex, 0])
+
+    # A mid-edge node of an interior facet, off the fixed base and the footing.
+    normal_jump = None
+    for (e1, f1), (e2, _) in mesh_facets(tets)[0]:
+        for a in FACET_NODES[f1][3:]:
+            node = int(tets[e1][a])
+            if 1e-9 < nodes[node, 1] < 1.0 - 1e-9:
+                normal_jump = {"kind": "node_normal", "element": e2, "local_node": [int(v) for v in tets[e2]].index(node),
+                               "facet": [e1, f1], "amount": 1e-3}
+                break
+        if normal_jump:
+            break
+
+    # The interior body diagonal of the Drucker-Prager cube: no boundary row touches its mid node.
+    dp_problem, dp_arrays = documents[f"{D}.problem"]
+    dp_velocity = documents[DU][1]["velocity"]
+    diagonal = int(np.argmin(np.linalg.norm(dp_arrays["nodes"] - 0.5, axis=1)))
+    strong = _first_violating_direction(dp_problem, dp_arrays, dp_velocity, diagonal, 1e-3)
+
+    h_problem, h_arrays = documents[f"{H}.problem"]
+    xmin = [item["name"] for item in h_problem["boundary_sets"]].index("xmin")
+    row = int(np.nonzero(h_arrays["facet_set"] == xmin)[0][0])
+    wall_e, wall_f = (int(v) for v in h_arrays["facets"][row])
+    wall_node = FACET_NODES[wall_f][0]
+
+    a_arrays = documents[f"{A}.problem"][1]
+    a_centroids = a_arrays["nodes"][a_arrays["tets"][:, :4]].mean(axis=1)
+    side = [int(e) for e in np.nonzero(a_centroids[:, 1] > a_centroids[:, 0])[0]]
+    opening = [-1.0 / S2, 1.0 / S2, 0.0]
+
     entries = [
         ("perturbed_stress_component", "one perturbed stress component", P, L, "checker",
          {"kind": "perturb_sigma", "element": 0, "vertex": 0, "component": 0, "amount": 1e-3},
-         ["projection_move_too_large"]),
+         "projection_move_too_large"),
         ("stress_scaled_1p01", "stress scaled by 1.01", P, L, "checker",
-         {"kind": "scale_lower", "factor": 1.01}, ["repair_too_large", "cone_violation_too_large"]),
+         {"kind": "scale_lower", "factor": 1.01}, "cone_violation_too_large"),
         ("facet_traction_jump", "a facet traction jump", P, L, "checker",
-         {"kind": "element_offset", "element": 0, "component": 0, "amount": 1e-2}, ["projection_move_too_large"]),
+         {"kind": "element_offset", "element": 0, "component": 0, "amount": 1e-2}, "projection_move_too_large"),
+        ("wrong_lower_value", "a Lower value that is not the multiplier of its field", P, L, "checker",
+         {"kind": "scale_value", "factor": 1.01}, "projection_move_too_large"),
         ("wrong_load_normalisation", "a wrong load normalisation", P, U, "checker",
-         {"kind": "scale_value", "factor": 1.1}, ["value_mismatch"]),
+         {"kind": "scale_value", "factor": 1.1}, "value_mismatch"),
         ("swapped_bound_labels", "swapped LB and UB labels", P, L, "schema",
          {"kind": "relabel_upper"}, "result_wrong_bound_arrays"),
         ("curved_tetrahedron", "a curved tetrahedron", P, None, "schema",
@@ -1343,25 +1839,40 @@ def build_negative_fixtures(documents):
          {"kind": "problem_hash"}, "hash_mismatch"),
         ("unsupported_domain_claim", "an unsupported domain_claim", P, U, "schema",
          {"kind": "certificate_claim", "claim": "halfspace_by_zero_extension"}, "unsupported_domain_claim"),
+        ("unlisted_side_face", "a side face outside every declared set under a zero-extension claim", H, HU, "schema",
+         {"kind": "drop_truncation_set", "name": "xmin"}, "unsupported_domain_claim"),
+        ("wrong_gravity_in_equilibrium", "wrong gravity in equilibrium", G, GL, "checker",
+         {"kind": "zero_gravity_lower"}, "projection_move_too_large"),
         ("isochory_one_vertex", "tr(D) != 0 at one vertex of an isochoric Upper field", P, U, "checker",
-         {"kind": "perturb_velocity", "node": centre, "component": 0, "amount": 1e-3}, ["projection_move_too_large"]),
+         {"kind": "perturb_velocity", "node": centre, "component": 0, "amount": 1e-3}, "projection_move_too_large"),
+        ("dp_flow_cone_one_vertex", "Drucker-Prager flow-cone violation at one vertex", D, DU, "checker",
+         {"kind": "perturb_velocity", "node": diagonal, "component": strong, "amount": 1e-3},
+         "flow_violation_too_large"),
         ("footprint_off_rigid", "a footprint node off the rigid motion", P, U, "checker",
-         {"kind": "perturb_velocity", "node": footprint, "component": 1, "amount": 1e-3}, ["projection_move_too_large"]),
-        ("wall_velocity_zero_extension", "nonzero wall velocity under a zero-extension claim", H,
-         f"{H}.q.upper.result", "checker",
-         {"kind": "perturb_velocity", "node": wall, "component": 0, "amount": 1e-3}, ["projection_move_too_large"]),
-        ("jump_between_nodes", "a jump admissible at facet nodes but not across the facet", "dp_uniaxial_tension",
-         "dp_uniaxial_tension.q.upper-jump.result", "checker",
-         {"kind": "node_jump", "element": e2, "local_node": local2, "facet": [e1, f1], "amount": 1e-3},
-         ["flow_violation_too_large", "no_admissible_correction"]),
-        ("wrong_gravity_work", "wrong gravity work or wrong dissipation quadrature", G, f"{G}.q.upper.result", "checker",
-         {"kind": "value_rule", "body": "lumped", "quadrature": "vertex"}, ["value_mismatch"]),
-        ("wrong_dissipation_quadrature", "wrong gravity work or wrong dissipation quadrature", G, f"{G}.q.upper.result",
-         "checker", {"kind": "value_rule", "body": "exact", "quadrature": "centroid"}, ["value_mismatch"]),
+         {"kind": "perturb_velocity", "node": footprint, "component": 1, "amount": 1e-3}, "projection_move_too_large"),
+        ("support_velocity_nonzero", "non-zero support velocity on a box target", P, U, "checker",
+         {"kind": "perturb_velocity", "node": base_node, "component": 0, "amount": 1e-3}, "projection_move_too_large"),
+        ("wall_velocity_zero_extension", "nonzero wall velocity under a zero-extension claim", H, HU, "checker",
+         {"kind": "perturb_element_velocity", "element": wall_e, "local_node": wall_node, "component": 0, "amount": 1e-3},
+         "projection_move_too_large"),
+        ("normal_jump_one_node", "non-zero normal jump at one facet node under isochoric flow", P, J, "checker",
+         normal_jump, "projection_move_too_large"),
+        ("jump_between_nodes", "a jump admissible at facet nodes but not across the facet", A, AU, "checker",
+         {"kind": "side_opening", "elements": side, "normal": opening, "amount": 1e-3}, "flow_violation_too_large"),
+        ("wrong_gravity_work", "wrong gravity work or wrong dissipation quadrature", G, GU, "checker",
+         {"kind": "value_rule", "body": "lumped", "quadrature": "vertex"}, "value_mismatch"),
+        ("wrong_dissipation_quadrature", "wrong gravity work or wrong dissipation quadrature", G, GU,
+         "checker", {"kind": "value_rule", "body": "exact", "quadrature": "centroid"}, "value_mismatch"),
+        ("nonpositive_reference_work", "a non-positive reference work rate", P, U, "checker",
+         {"kind": "negate_velocity"}, "work_nonpositive"),
+        ("dissipation_charge_as_repair", "a finite dissipation charge offered as repair", D, DU, "checker",
+         {"kind": "dissipation_charge", "node": diagonal, "component": strong, "amount": 1e-8, "charge": 1.0},
+         "no_admissible_correction"),
         ("equality_just_above_floor", "an equality residual just above the floor", P, L, "final_check",
          {"kind": "perturb_sigma", "element": 0, "vertex": vertex, "component": 0, "amount": amount,
-          "kappa_reference": KAPPA_PLATE_LOWER, "floor_multiple": 3.0}, ["equality_residual_above_floor"]),
+          "tau_multiple": 3.0}, "equality_residual_above_floor"),
     ]
+    assert plate_doc["format"] == FORMAT_PROBLEM
     return {
         "format": "ladruno-limit-negative-fixtures", "format_version": FORMAT_VERSION,
         "fixtures": [
@@ -1379,18 +1890,21 @@ def build_fixture_set():
         problem, arrays = build_case_problem(cases[name], 0)
         _add_exact_set(documents, name, problem, arrays)
 
-    # The same plate as a half-space target, with the fixed base as the truncation boundary.
-    problem, arrays = build_case_problem(cases["vm_plate_shear"], 0)
-    name = "vm_plate_shear_halfspace"
-    problem["arrays"], problem["name"] = f"{name}.problem.npz", name
-    problem["domain"] = {"target": "halfspace", "truncation_sets": ["base"], "exterior_load_free": True}
+    # A half-space target whose whole exterior off the ground is fixed, with an admissible compact field.
+    name = "vm_ground_patch_halfspace"
+    case = parse_case_text(GROUND_PATCH_CASE)[name]
+    problem, arrays = build_case_problem(case, 0)
+    problem["domain"] = {"target": "halfspace", "truncation_sets": ["xmin", "xmax", "ymin", "ymax", "base"],
+                         "symmetry_sets": [], "ground": {"axis": "z", "coordinate": 0.0}, "exterior_load_free": True}
     _with_hash(problem, arrays)
-    value, _, _, velocity, footing_velocity = _exact_fields("vm_plate_shear", arrays)
-    upper_arrays = _float_arrays(velocity=velocity, footing_velocity=footing_velocity)
-    documents[f"{name}.problem"] = (problem, arrays)
-    documents[f"{name}.q.upper.result"] = (_result(name, problem, "upper", value, upper_arrays), upper_arrays)
+    footing = np.zeros((0, 6))
+    field = ground_patch_field(arrays)
+    _store_problem(documents, name, problem, arrays)
+    upper = _store_result(documents, name, problem, "upper", fixture_upper_value(problem, arrays, field, footing),
+                          _float_arrays(element_velocity=field, footing_velocity=footing), JUMP_ID)
+    documents[f"{record_stem(name, JUMP_ID)}.certificate"] = (_certificate(problem, arrays, upper), None)
 
-    # Drucker-Prager tension with the broken velocity space: the exact field has no jumps.
+    # Drucker-Prager tension: the exact field, continuous and in the broken space.
     name = "dp_uniaxial_tension"
     problem, arrays = build_case_problem(cases[name], 0)
     alpha, k = problem["regions"][0]["alpha"], problem["regions"][0]["k"]
@@ -1398,11 +1912,18 @@ def build_fixture_set():
     x = arrays["nodes"]
     velocity = np.column_stack([x[:, 0], c / a * x[:, 1], c / a * x[:, 2]])
     value = k / a
-    footing = np.zeros((0, 6))
-    jump_arrays = _float_arrays(element_velocity=velocity[arrays["tets"]], footing_velocity=footing)
-    documents[f"{name}.problem"] = (problem, arrays)
-    documents[f"{name}.q.upper-jump.result"] = (
-        _result(name, problem, "upper", value, jump_arrays, JUMP_ID, "upper-jump"), jump_arrays)
+    _store_problem(documents, name, problem, arrays)
+    _store_result(documents, name, problem, "upper", value, _float_arrays(velocity=velocity, footing_velocity=footing))
+    _store_result(documents, name, problem, "upper", value,
+                  _float_arrays(element_velocity=velocity[arrays["tets"]], footing_velocity=footing), JUMP_ID)
+
+    # Free cube at the apex: v = x is strictly inside the flow cone and no equality row exists.
+    name = "dp_free_hydrostatic"
+    problem, arrays = build_case_problem(parse_case_text(FREE_APEX_CASE)[name], 0)
+    field = arrays["nodes"][arrays["tets"]]
+    _store_problem(documents, name, problem, arrays)
+    _store_result(documents, name, problem, "upper", fixture_upper_value(problem, arrays, field, footing),
+                  _float_arrays(element_velocity=field, footing_velocity=footing), JUMP_ID)
 
     # Dead gravity: the exact Lower field, and an admissible quadratic Upper field whose work and
     # dissipation are sensitive to the quadrature rule.
@@ -1413,24 +1934,35 @@ def build_fixture_set():
     sigma[..., 5] = target + gamma * (height - arrays["nodes"][arrays["tets"][:, :4], 2])
     z = arrays["nodes"][:, 2]
     velocity = np.column_stack([z * z - 0.5 * z, np.zeros_like(z), np.zeros_like(z)])
-    footing = np.zeros((0, 6))
-    value = fixture_upper_value(problem, arrays, velocity, footing)
-    lower_arrays = _float_arrays(sigma=sigma, resultant=footing)
-    upper_arrays = _float_arrays(velocity=velocity, footing_velocity=footing)
-    documents[f"{name}.problem"] = (problem, arrays)
-    documents[f"{name}.q.lower.result"] = (_result(name, problem, "lower", target, lower_arrays), lower_arrays)
-    documents[f"{name}.q.upper.result"] = (_result(name, problem, "upper", value, upper_arrays), upper_arrays)
+    _store_problem(documents, name, problem, arrays)
+    _store_result(documents, name, problem, "lower", target, _float_arrays(sigma=sigma, resultant=footing))
+    _store_result(documents, name, problem, "upper", fixture_upper_value(problem, arrays, velocity, footing),
+                  _float_arrays(velocity=velocity, footing_velocity=footing))
 
     documents["negative_fixtures"] = (build_negative_fixtures(documents), None)
     return documents
 
 
+def build_problem_hashes():
+    """problem_sha256 of every active case on every listed mesh (interface 15.1)."""
+    table = {}
+    for name, case in parse_cases().items():
+        if case["status"] == "active" and case["boundaries"]:
+            table[name] = {f"m{i}": build_case_problem(case, i)[0]["problem_sha256"] for i in range(len(case["mesh"]))}
+    return table
+
+
 def write_fixtures():
     DATA.mkdir(parents=True, exist_ok=True)
+    for path in DATA.iterdir():
+        if not path.name.endswith(".mesh.npz"):
+            path.unlink()
     for stem, (doc, arrays) in build_fixture_set().items():
         (DATA / f"{stem}.json").write_text(json.dumps(doc, indent=1, sort_keys=True) + "\n", encoding="utf-8")
         if arrays is not None:
             np.savez(DATA / doc["arrays"], **arrays)
+    (DATA / "problem_hashes.json").write_text(json.dumps(build_problem_hashes(), indent=0, sort_keys=True) + "\n",
+                                              encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1707,12 +2239,13 @@ def test_jump_support_uses_the_same_cone_map():
 
 def test_jump_constants_match_the_coulomb_form():
     for phi in (0.0, 10.0, 20.0, 30.0):
-        k, alpha = plane_strain_match(1.0, phi)
+        c = 1.7
+        k, alpha = plane_strain_match(c, phi)
         tau, root = jump_constants(alpha)
         assert tau == pytest.approx(math.tan(math.radians(phi)), abs=1e-14)
+        assert k / root == pytest.approx(c), "k_J is the cohesion under the plane-strain match"
         if phi > 0.0:
-            assert k / root * (1.0 / tau) * tau == pytest.approx(k / root)
-            assert k / (3.0 * alpha) * tau == pytest.approx(1.0)  # slip dissipation is c = 1
+            assert k / (3.0 * alpha) * tau == pytest.approx(c), "slip with o = s tan(phi) dissipates c s"
     with pytest.raises(ContractError):
         jump_constants(0.3)
 
@@ -1729,11 +2262,25 @@ def test_bernstein_map_reproduces_the_quadratic_trace():
         np.testing.assert_allclose(np.array(shape) @ nodal, np.array(basis) @ coefficients)
 
 
-def test_equality_floor_grows_with_conditioning():
-    base = TOLERANCES["TOL_EQ_ROUNDING_FACTOR"] * UNIT_ROUNDOFF
-    assert equality_floor(0.5) == base
-    assert equality_floor(1e4) == pytest.approx(1e4 * base)
-    assert 1e4 * equality_floor(1e4) < TOLERANCES["TOL_FLOOR_MAX"]
+def test_equality_level_carries_no_conditioning_factor():
+    assert tau_eq() == 64.0 * 2.0 ** -53
+    assert TOLERANCES["TOL_KAPPA_CAP"] * tau_eq() <= TOLERANCES["TOL_FLOOR_MAX"]
+
+
+def test_row_backward_error_accepts_a_homogeneous_row_of_negligible_entries():
+    # Componentwise, this row has residual equal to its denominator (omega = 1). Row-normwise it is rounding.
+    matrix = np.array([[1.0, -1.0], [1.0, 1.0]])
+    rhs = np.array([0.0, 2.0])
+    x = np.array([1.0, 1.0])
+    assert row_backward_error(matrix, rhs, x, np.ones(2)) == 0.0
+    tiny = np.array([1e-30, 3e-30])
+    row = matrix[:1]
+    componentwise = abs(row @ tiny)[0] / (np.abs(row) @ np.abs(tiny))[0]
+    assert componentwise == pytest.approx(0.5)
+    assert row_backward_error(row, [0.0], tiny, np.ones(2)) < tau_eq()
+    assert row_backward_error(row, [0.0], [1.0, 1.0 + 1e-9], np.ones(2)) > tau_eq()
+    with pytest.raises(ContractError):
+        row_backward_error([[1.0]], [0.0], [1.0], [0.0])
 
 
 def test_level_ground_von_mises_superposition_is_blind_to_gravity():
@@ -1758,6 +2305,22 @@ def test_level_ground_von_mises_superposition_is_blind_to_gravity():
 # ---------------------------------------------------------------------------------------------
 # Tests: hash and meshes
 # ---------------------------------------------------------------------------------------------
+
+def test_hash_treats_negative_zero_as_zero_and_has_the_published_digest():
+    arrays = {"v": np.array([0.5, 0.0])}
+    doc = {"b": [1, None, True], "a": "x"}
+    digest = document_hash(doc, arrays, "h")
+    assert digest == document_hash({"a": "x", "b": [1.0, None, True]}, {"v": np.array([0.5, -0.0])}, "h")
+    assert document_hash({"z": -0.0}, {}, "h") == document_hash({"z": 0.0}, {}, "h")
+    assert re.search(r"Worked digest.*?hashes to `([0-9a-f]{64})`", interface_text(), re.S).group(1) == digest
+
+
+@pytest.mark.parametrize("text", ['{"a": 1e999}', '{"a": -1e999}', '{"a": NaN}', '{"a": Infinity}'])
+def test_non_finite_json_is_refused(text):
+    with pytest.raises(ContractError) as error:
+        strict_json_loads(text)
+    assert error.value.code == "json_non_finite"
+
 
 def test_canonical_encoding_is_stable():
     assert canonical_encode(1) == canonical_encode(1.0)
@@ -1889,45 +2452,71 @@ def test_strip_cases_satisfy_the_lemma_conditions(name):
     assert {"certified_bracket", "gap_le", "upper_nonincrease", "lower_nondecrease"} <= gates
 
 
+def gate_mesh_stems(phi):
+    prefix = "upper3d" if phi == 0.0 else f"upper3d_phi{int(phi):02d}"
+    return [f"{prefix}_{letter}" for letter in "abcd"]
+
+
 @pytest.mark.parametrize("name", GATE_3D)
 def test_true_3d_gate_cases_are_complete(name):
     case = ALL_CASES[name]
+    phi = case["phi_deg"]
     assert case["target"] is None
     assert JUMP_ID in case["formulation"] and case["control"] == [CONTROL_ID]
     gates = [tokens[0] for tokens in case["gate"]]
-    for required in ("kinematic_status", "certified_bracket", "gap_le", "upper_nonincrease", "lower_nondecrease"):
+    for required in ("kinematic_status", "certified_upper", "certified_bracket", "gap_le", "upper_nonincrease",
+                     "lower_nondecrease"):
         assert required in gates, "feasibility alone must not pass"
     limit = next(tokens[1] for tokens in case["gate"] if tokens[0] == "gap_le")
-    assert limit == ("MAX_GAP_3D_VM" if case["phi_deg"] == 0.0 else "MAX_GAP_3D_DP")
-    files = [entry for entry in case["mesh"] if entry[2] == 0]
-    assert len(files) == 4 and all(entry[0] == "file" for entry in case["mesh"])
+    assert limit == ("MAX_GAP_3D_VM" if phi == 0.0 else "MAX_GAP_3D_DP")
+    assert [int(t[2]) for t in case["gate"] if t[0] == "certified_upper"] == list(range(6)), "ADR 10.1: every size"
+    assert case["record"] == [["gap", "mesh", str(i)] for i in range(6)], "the gap trend is recorded"
+    stems = gate_mesh_stems(phi)
+    assert case["mesh"] == [("file", f"{stem}.mesh.npz", 0) for stem in stems] + [
+        ("file", f"{stems[0]}.mesh.npz", 1), ("file", f"{stems[3]}.mesh.npz", 1)]
     assert case["nested"] == [(0, 4), (3, 5)]
     region = case["regions"][0]
-    if case["phi_deg"] == 0.0:
+    if phi == 0.0:
         assert region["criterion"] == "von_mises"
     else:
-        k, alpha = plane_strain_match(1.0, case["phi_deg"])
+        k, alpha = plane_strain_match(1.0, phi)
         assert (region["k"], region["alpha"]) == (pytest.approx(k, rel=1e-14), pytest.approx(alpha, rel=1e-14))
     wall = "fixed" if "fixed" in name else "symmetry"
     kinds = {item["name"]: item["kind"] for item in case["boundaries"]}
     assert all(kinds[key] == wall for key in ("xmin", "xmax", "ymin", "ymax", "base"))
 
 
-@pytest.mark.parametrize("file_name,count", [("upper3d_a", 243), ("upper3d_b", 463), ("upper3d_c", 949), ("upper3d_d", 2840)])
-def test_gate_meshes_are_unstructured_with_a_conformal_footprint(file_name, count):
+@pytest.mark.parametrize("name", [n for n in GATE_3D if ALL_CASES[n]["phi_deg"] > 0.0])
+def test_friction_gate_box_holds_the_mechanism_scale(name):
+    case = ALL_CASES[name]
+    x_extent, depth = prandtl_extent(0.5, case["phi_deg"])
+    x0, y0, z0, x1, y1, z1 = case["box"]
+    assert x1 == -x0 and y1 == -y0 and x1 == y1 and z1 == 0.0
+    assert x1 >= x_extent and -z0 >= depth
+    planes = {item["name"]: item["plane"] for item in case["boundaries"]}
+    assert planes["xmax"] == (0, x1) and planes["ymin"] == (1, y0) and planes["base"] == (2, z0)
+
+
+def committed_gate_meshes():
+    return [(name, phi) for phi in (0.0, 10.0, 20.0, 30.0) for name in gate_mesh_stems(phi)]
+
+
+@pytest.mark.parametrize("file_name,phi", committed_gate_meshes())
+def test_gate_meshes_are_unstructured_with_a_conformal_footprint(file_name, phi):
     with np.load(DATA / f"{file_name}.mesh.npz", allow_pickle=False) as npz:
+        assert set(npz.files) == {"nodes", "tets"}
         vertices, tets = npz["nodes"], npz["tets"]
-    assert vertices.dtype.str == "<f8" and tets.dtype.str == "<i8" and tets.shape == (count, 4)
+    assert vertices.dtype.str == "<f8" and tets.dtype.str == "<i8" and tets.shape[1] == 4
     assert all(np.linalg.det(vertices[t[1:]] - vertices[t[0]]) > 0.0 for t in tets)
-    lo, hi = np.array([-2.0, -2.0, -2.0]), np.array([2.0, 2.0, 0.0])
+    case = next(ALL_CASES[n] for n in GATE_3D if ALL_CASES[n]["phi_deg"] == phi)
+    lo, hi = np.array(case["box"][:3]), np.array(case["box"][3:])
     assert np.all(vertices >= lo) and np.all(vertices <= hi)
     interior = np.all((vertices > lo + 1e-9) & (vertices < hi - 1e-9), axis=1)
     assert interior.sum() >= 5
     assert len(np.unique(np.round(vertices[interior, 0], 9))) > 0.5 * interior.sum(), "not a lattice"
     valence = np.bincount(tets.ravel())
     assert len(np.unique(valence[interior])) >= 3, "interior vertex valence varies"
-    case = ALL_CASES["upper3d_fixed_phi00"]
-    index = [i for i, entry in enumerate(case["mesh"]) if entry[1].startswith(file_name) and entry[2] == 0][0]
+    index = [i for i, entry in enumerate(case["mesh"]) if entry[1].startswith(file_name + ".") and entry[2] == 0][0]
     doc, arrays = build_case_problem(case, index)
     validate_problem(doc, arrays)
     names = [item["name"] for item in doc["boundary_sets"]]
@@ -1936,13 +2525,46 @@ def test_gate_meshes_are_unstructured_with_a_conformal_footprint(file_name, coun
     assert area == pytest.approx(1.0, abs=1e-12), "the footprint is exactly the conforming unit square"
 
 
+def test_gate_mesh_sizes_increase_within_each_box():
+    for phi in (0.0, 10.0, 20.0, 30.0):
+        counts = []
+        for stem in gate_mesh_stems(phi):
+            with np.load(DATA / f"{stem}.mesh.npz", allow_pickle=False) as npz:
+                counts.append(len(npz["tets"]))
+        assert counts == sorted(counts) and len(set(counts)) == 4
+
+
+def test_gate_mesh_files_match_their_published_digests():
+    table = dict(re.findall(r"^\| `(upper3d[a-z0-9_]*\.mesh\.npz)` \| `([0-9a-f]{64})` \|", interface_text(), re.M))
+    files = sorted(path.name for path in DATA.glob("*.mesh.npz"))
+    assert sorted(table) == files and len(files) == 16
+    for name, digest in table.items():
+        assert hashlib.sha256((DATA / name).read_bytes()).hexdigest() == digest, name
+
+
 def test_gate_refined_mesh_is_a_valid_problem():
     case = ALL_CASES["upper3d_roller_phi20"]
-    assert case["mesh"][4] == ("file", "upper3d_a.mesh.npz", 1)
-    assert case["mesh"][5] == ("file", "upper3d_d.mesh.npz", 1)
+    assert case["mesh"][4] == ("file", "upper3d_phi20_a.mesh.npz", 1)
+    assert case["mesh"][5] == ("file", "upper3d_phi20_d.mesh.npz", 1)
     doc, arrays = build_case_problem(case, 4)
     validate_problem(doc, arrays)
-    assert len(arrays["tets"]) == 8 * 243
+    with np.load(DATA / "upper3d_phi20_a.mesh.npz", allow_pickle=False) as npz:
+        assert len(arrays["tets"]) == 8 * len(npz["tets"])
+
+
+def test_committed_problem_hashes_match_the_cases():
+    table = load_problem_hashes()
+    assert set(table) == set(ACTIVE) - set(OPERATOR)
+    checked = 0
+    for name in table:
+        case = ALL_CASES[name]
+        assert set(table[name]) == {f"m{i}" for i in range(len(case["mesh"]))}
+        for i, entry in enumerate(case["mesh"]):
+            if entry[0] == "kuhn" and 6 * np.prod(entry[1]) > 800 or entry[0] == "file" and (entry[2] or "_a" not in entry[1]):
+                continue
+            assert build_case_problem(case, i)[0]["problem_sha256"] == table[name][f"m{i}"], (name, i)
+            checked += 1
+    assert checked >= len(table)
 
 
 @pytest.mark.parametrize("name", TODO)
@@ -2082,13 +2704,14 @@ FIXTURE_NAMES = ("vm_uniaxial_tension", "vm_plate_shear")
 
 
 def load_set(name):
-    problem, arrays = load_document(DATA / f"{name}.problem.json")
-    lower, lower_arrays = load_document(DATA / f"{name}.q.lower.result.json")
-    upper, upper_arrays = load_document(DATA / f"{name}.q.upper.result.json")
-    lower_cert, _ = load_document(DATA / f"{name}.q.lower.certificate.json")
-    upper_cert, _ = load_document(DATA / f"{name}.q.upper.certificate.json")
-    bracket, _ = load_document(DATA / f"{name}.q.bracket.json")
-    feasibility, _ = load_document(DATA / f"{name}.q.feasibility.json")
+    stem = case_stem(name)
+    problem, arrays = load_document(DATA / f"{stem}.problem.json")
+    lower, lower_arrays = load_document(DATA / f"{record_stem(name, LOWER_ID)}.result.json")
+    upper, upper_arrays = load_document(DATA / f"{record_stem(name, CONTROL_ID)}.result.json")
+    lower_cert, _ = load_document(DATA / f"{record_stem(name, LOWER_ID)}.certificate.json")
+    upper_cert, _ = load_document(DATA / f"{record_stem(name, CONTROL_ID)}.certificate.json")
+    bracket, _ = load_document(DATA / f"{bracket_stem(name, LOWER_ID, CONTROL_ID)}.bracket.json")
+    feasibility, _ = load_document(DATA / f"{record_stem(name, CONTROL_ID)}.feasibility.json")
     return {
         "problem": problem, "arrays": arrays, "lower": lower, "lower_arrays": lower_arrays,
         "upper": upper, "upper_arrays": upper_arrays, "lower_cert": lower_cert,
@@ -2118,7 +2741,7 @@ def test_fixture_set_validates(name):
     validate_problem(s["problem"], s["arrays"])
     validate_result(s["lower"], s["lower_arrays"], s["problem"], s["arrays"])
     validate_result(s["upper"], s["upper_arrays"], s["problem"], s["arrays"])
-    jump, jump_arrays = load_document(DATA / f"{name}.q.upper-jump.result.json")
+    jump, jump_arrays = load_document(DATA / f"{record_stem(name, JUMP_ID)}.result.json")
     validate_result(jump, jump_arrays, s["problem"], s["arrays"])
     assert jump["formulation"] == JUMP_ID and "velocity" not in jump_arrays
     validate_certificate(s["lower_cert"], s["problem"], s["arrays"], s["lower"])
@@ -2126,6 +2749,7 @@ def test_fixture_set_validates(name):
     validate_bracket(s["bracket"], s["lower_cert"], s["upper_cert"])
     validate_feasibility(s["feasibility"], s["problem"])
     assert not gate_admissible(s["lower_cert"]) and not gate_admissible(s["upper_cert"])
+    assert not gate_admissible(s["feasibility"]), "a schema fixture never passes the kinematic gate"
 
 
 @pytest.mark.parametrize("name", FIXTURE_NAMES)
@@ -2305,6 +2929,19 @@ def test_malformed_problem_is_refused(label, mutate, code):
     problem_mutation(mutate)(code)
 
 
+def test_halfspace_needs_a_ground_plane():
+    def mutate(doc, arrays):
+        doc["domain"].update(target="halfspace", truncation_sets=["base"])
+    problem_mutation(mutate)("domain_ground")
+
+
+def test_declared_symmetry_set_must_be_a_symmetry_set():
+    def mutate(doc, arrays):
+        doc["domain"].update(target="halfspace", truncation_sets=["base"], symmetry_sets=["z0"],
+                             ground={"axis": "y", "coordinate": 1.0})
+    problem_mutation(mutate)("domain_symmetry")
+
+
 def test_problem_hash_mismatch_is_refused():
     s = load_set("vm_plate_shear")
     s["arrays"]["t1"][0, 0, 1] += 1e-3
@@ -2372,7 +3009,7 @@ def test_jump_result_needs_broken_velocity_and_an_applicable_criterion():
     s, doc, arrays = result_case("upper")
     doc["formulation"] = JUMP_ID
     check_result(s, doc, arrays, "result_wrong_bound_arrays")
-    jump, jump_arrays = load_document(DATA / "vm_plate_shear.q.upper-jump.result.json")
+    jump, jump_arrays = load_document(DATA / f"{record_stem('vm_plate_shear', JUMP_ID)}.result.json")
     problem = copy.deepcopy(s["problem"])
     problem["regions"][0] = {**problem["regions"][0], "criterion": "drucker_prager", "alpha": 0.3}
     jump["problem_sha256"] = problem["problem_sha256"]
@@ -2438,31 +3075,91 @@ def test_estimate_certificate_needs_a_reason_and_no_value():
     assert not gate_admissible(doc)
 
 
-def test_gate_refuses_schema_fixture_and_accepts_a_real_checker_name():
+def test_gate_refuses_reserved_checker_names_and_accepts_a_real_one():
     _, doc = certificate_case()
+    assert not gate_admissible(doc)
+    doc["checker"]["name"] = PROCEDURE_DEMO_CHECKER
     assert not gate_admissible(doc)
     doc["checker"]["name"] = "independent-checker"
     assert gate_admissible(doc)
 
 
-@pytest.mark.parametrize("target,walls,kind,weight,free,bound,expected", [
-    ("box", [], "fixed", False, True, "upper", "box_stated"),
-    ("box", [], "free", False, True, "lower", "box_stated"),
-    ("halfspace", ["wall"], "fixed", False, True, "upper", "halfspace_by_zero_extension"),
-    ("halfspace", ["wall"], "symmetry", False, True, "upper", "unverified"),
-    ("halfspace", ["wall"], "fixed", False, True, "lower", "unverified"),
-    ("halfspace", ["wall"], "free", False, True, "lower", "halfspace_by_zero_extension"),
-    ("halfspace", ["wall"], "free", True, True, "lower", "unverified"),
-    ("halfspace", ["wall"], "free", False, False, "lower", "unverified"),
-    ("halfspace", ["wall"], "free", True, True, "upper", "unverified"),
+@pytest.mark.parametrize("bound,key,value", [
+    ("lower", "omega_eq", None), ("lower", "omega_eq", 1e-13), ("lower", "kappa_eq", None), ("lower", "kappa_eq", 2e8),
+    ("lower", "tau_eq", 1e-9), ("lower", "projection_move", None), ("lower", "projection_move", 1e-5),
+    ("lower", "rho_cone", None), ("lower", "rho_cone", 1e-9), ("lower", "repair_mu", None), ("lower", "repair_mu", 0.01),
+    ("lower", "straightness_max", None), ("upper", "rho_flow", None), ("upper", "rho_flow", 1e-9),
+    ("upper", "work_reference", None), ("upper", "work_reference", 0.0), ("upper", "work_reference", -1.0),
 ])
-def test_domain_claim_is_per_bound(target, walls, kind, weight, free, bound, expected):
-    problem = {
-        "domain": {"target": target, "truncation_sets": walls, "exterior_load_free": free},
-        "boundary_sets": [{"name": "wall", "kind": kind}],
-        "regions": [{"b0": [0.0, -1.0 if weight else 0.0, 0.0], "b1": [0.0, 0.0, 0.0]}],
-    }
-    assert supported_domain_claim(problem, {}, bound) == expected
+def test_certified_bound_must_show_its_numbers(bound, key, value):
+    s, doc = certificate_case(bound)
+    doc["checks"][key] = value
+    doc["checker"]["name"] = "independent-checker"
+    check_certificate(s, doc, "certificate_checks", bound)
+    assert not gate_admissible(doc)
+
+
+def test_certified_jump_bound_must_show_the_jump_cone():
+    s, doc = certificate_case("upper")
+    doc["formulation"] = JUMP_ID
+    assert "rho_jump_cone" in certified_check_failures(doc, "ray")
+
+
+def test_certified_floor_must_follow_its_rule():
+    s, doc = certificate_case()
+    doc["floor"] *= 2.0
+    check_certificate(s, doc, "certificate_checks")
+    s, doc = certificate_case()
+    doc["checks"].update(omega_eq=1e-15, kappa_eq=1e4)
+    check_certificate(s, doc, "certificate_checks")
+    doc["floor"] = 1e-11 * abs(doc["value_certified"])
+    validate_certificate(doc, s["problem"], s["arrays"], s["lower"])
+
+
+def halfspace_problem():
+    name = "vm_ground_patch_halfspace"
+    return load_document(DATA / f"{case_stem(name)}.problem.json")
+
+
+@pytest.mark.parametrize("target,kind,weight,free,bound,expected", [
+    ("box", "fixed", False, True, "upper", "box_stated"),
+    ("box", "free", False, True, "lower", "box_stated"),
+    ("halfspace", "fixed", False, True, "upper", "halfspace_by_zero_extension"),
+    ("halfspace", "symmetry", False, True, "upper", "unverified"),
+    ("halfspace", "fixed", False, True, "lower", "unverified"),
+    ("halfspace", "free", False, True, "lower", "halfspace_by_zero_extension"),
+    ("halfspace", "free", True, True, "lower", "unverified"),
+    ("halfspace", "free", False, False, "lower", "unverified"),
+    ("halfspace", "free", True, True, "upper", "unverified"),
+])
+def test_domain_claim_is_per_bound(target, kind, weight, free, bound, expected):
+    problem, arrays = halfspace_problem()
+    walls = problem["domain"]["truncation_sets"]
+    for item in problem["boundary_sets"]:
+        if item["name"] in walls:
+            item["kind"] = kind
+    problem["regions"][0]["b0"] = [0.0, -1.0 if weight else 0.0, 0.0]
+    problem["domain"]["exterior_load_free"] = free
+    if target == "box":
+        problem["domain"].update(target="box", truncation_sets=[], ground=None)
+    assert supported_domain_claim(problem, arrays, bound) == expected
+
+
+def test_zero_extension_needs_every_face_off_the_ground_accounted_for():
+    problem, arrays = halfspace_problem()
+    assert supported_domain_claim(problem, arrays, "upper") == "halfspace_by_zero_extension"
+    problem["domain"]["truncation_sets"].remove("xmin")
+    assert supported_domain_claim(problem, arrays, "upper") == "unverified", "a listed-walls rule alone is not enough"
+    problem["domain"]["truncation_sets"].append("xmin")
+    problem["domain"]["ground"]["coordinate"] = -1.0
+    assert supported_domain_claim(problem, arrays, "upper") == "unverified", "a load off the ground plane"
+
+
+def test_old_plate_field_cannot_claim_a_halfspace():
+    s = load_set("vm_plate_shear")
+    problem = copy.deepcopy(s["problem"])
+    problem["domain"].update(target="halfspace", truncation_sets=["base"], ground={"axis": "y", "coordinate": 1.0})
+    assert supported_domain_claim(problem, s["arrays"], "upper") == "unverified"
 
 
 def test_bracket_claim_is_what_both_bounds_support():
@@ -2492,6 +3189,12 @@ def test_bracket_refuses_swapped_labels_and_estimates():
     expect_bracket("bracket_uncertified", doc, low, high)
 
 
+def test_bracket_names_its_formulations():
+    doc, low, high = bracket_set()
+    doc["upper_formulation"] = JUMP_ID
+    expect_bracket("bracket_formulation", doc, low, high)
+
+
 def test_bracket_reports_a_contradiction():
     doc, low, high = bracket_set()
     low["value_certified"] = doc["lower"] = 1.5
@@ -2518,20 +3221,31 @@ def feasibility_doc(**changes):
 
 def test_feasibility_failure_is_a_recordable_result():
     problem, doc = feasibility_doc(status="formulation_infeasible", numerator=0.1, denominator=1.0,
-                                   rho_feas=0.1, witness_checked=False)
+                                   rho_feas=0.1, witness_result_sha256=None, witness_residual=None)
     validate_feasibility(doc, problem)
+    assert not gate_admissible(doc)
+
+
+def test_feasibility_from_a_real_checker_is_gate_admissible():
+    problem, doc = feasibility_doc(checker={"name": "independent-checker", "version": "1"})
+    validate_feasibility(doc, problem)
+    assert gate_admissible(doc)
+    doc["status"] = "inconclusive"
+    assert not gate_admissible(doc)
 
 
 @pytest.mark.parametrize("changes,code", [
     ({"status": "formulation_feasible", "numerator": 0.1, "denominator": 1.0, "rho_feas": 0.1}, "feasibility_verdict"),
-    ({"status": "formulation_feasible", "witness_checked": False}, "feasibility_verdict"),
+    ({"witness_result_sha256": None, "witness_residual": None}, "feasibility_verdict"),
+    ({"witness_residual": 1e-3}, "feasibility_verdict"),
+    ({"witness_residual": None}, "feasibility_witness"),
+    ({"witness_result_sha256": "abc"}, "feasibility_witness"),
     ({"status": "formulation_infeasible"}, "feasibility_verdict"),
     ({"status": "inconclusive", "numerator": 1.0, "denominator": 1.0, "rho_feas": 1.0}, "feasibility_verdict"),
     ({"status": "solver_said_ok"}, "feasibility_status"),
     ({"rho_feas": 0.5}, "feasibility_ratio"),
     ({"formulation": "upper.p2d-jump-bernstein.v1"}, "formulation_not_admitted"),
     ({"denominator": 0.0}, "feasibility_number"),
-    ({"nullity": 0, "rank": 10}, "feasibility_rank"),
     ({"nullity": 3}, "feasibility_rank"),
     ({"footing_modes": 0}, "feasibility_rank"),
 ])
@@ -2540,6 +3254,162 @@ def test_feasibility_record_cannot_hide_a_failure(changes, code):
     with pytest.raises(ContractError) as error:
         validate_feasibility(doc, problem)
     assert error.value.code == code
+
+
+def test_nullity_does_not_decide_feasibility():
+    problem, doc = feasibility_doc(rank=10, nullity=0)
+    validate_feasibility(doc, problem)
+
+
+def test_frictional_feasibility_rests_on_the_witness_alone():
+    problem, doc = feasibility_doc()
+    problem = copy.deepcopy(problem)
+    problem["regions"][0] = {**problem["regions"][0], "criterion": "drucker_prager", "alpha": 0.1}
+    doc.update(rho_feas=2e-11, numerator=2e-11, witness_residual=2e-11)
+    validate_feasibility(doc, problem)
+    doc.update(status="formulation_infeasible", rho_feas=1e-3, numerator=1e-3, witness_residual=1e-3)
+    with pytest.raises(ContractError) as error:
+        validate_feasibility(doc, problem)
+    assert error.value.code == "feasibility_verdict"
+    doc["status"] = "inconclusive"
+    validate_feasibility(doc, problem)
+
+
+# Case evaluator ---------------------------------------------------------------------------------
+
+def synthetic_certificate(case, mesh, bound, formulation, value, checker="independent-checker"):
+    sha = load_problem_hashes()[case["name"]][f"m{mesh}"]
+    return {
+        "format": FORMAT_CERTIFICATE, "problem_sha256": sha, "result_sha256": f"{bound}-{formulation}-{mesh}",
+        "query_id": "q", "bound": bound, "formulation": formulation, "classification": "certified_bound",
+        "value_certified": value, "floor": TOLERANCES["FLOOR_MIN_REL"] * abs(value),
+        "checks": fixture_checks(bound, formulation), "checker": {"name": checker, "version": "1"},
+    }
+
+
+def synthetic_bracket(lower, upper):
+    low, high = lower["value_certified"], upper["value_certified"]
+    floors = lower["floor"] + upper["floor"]
+    status = "bracket" if low <= high else ("order_within_floor" if low <= high + floors else "contradiction")
+    return {
+        "problem_sha256": lower["problem_sha256"], "lower_formulation": lower["formulation"],
+        "upper_formulation": upper["formulation"], "lower_result_sha256": lower["result_sha256"],
+        "upper_result_sha256": upper["result_sha256"], "status": status,
+        "gap": (high - low) / (0.5 * (high + low)) if status == "bracket" and low > 0.0 else None,
+    }
+
+
+def synthetic_records(case, low, high, uppers=None, meshes=None, checker="independent-checker"):
+    uppers = uppers or [f for f in case["formulation"] if f.startswith("upper.")]
+    certificates, brackets = [], []
+    for mesh in (range(len(case["mesh"])) if meshes is None else meshes):
+        lower = synthetic_certificate(case, mesh, "lower", LOWER_ID, low, checker)
+        certificates.append(lower)
+        for formulation in uppers:
+            upper = synthetic_certificate(case, mesh, "upper", formulation, high, checker)
+            certificates.append(upper)
+            brackets.append(synthetic_bracket(lower, upper))
+    return certificates, brackets
+
+
+STRIP = "tresca_strip_vm_thin_slab"
+
+
+def failed_kinds(verdict):
+    return {(item["kind"], item["detail"].split(" ")[0]) for item in verdict["items"] if item["status"] == "fail"}
+
+
+def test_evaluator_passes_a_consistent_certified_strip():
+    case = ALL_CASES[STRIP]
+    verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25))
+    assert verdict["passed"] and not verdict["stop_program"]
+
+
+def test_evaluator_reads_the_named_gap_limit():
+    case = ALL_CASES[STRIP]
+    verdict = evaluate_case(case, *synthetic_records(case, 5.0, 5.3))
+    assert not verdict["passed"] and ("gap_le", "gap") in failed_kinds(verdict)
+
+
+def test_evaluator_refuses_estimates_and_reserved_checkers():
+    case = ALL_CASES[STRIP]
+    certificates, brackets = synthetic_records(case, 5.05, 5.25)
+    for doc in certificates:
+        doc["classification"] = "estimate"
+    verdict = evaluate_case(case, certificates, brackets)
+    assert not verdict["passed"] and ("lower_le_target", "estimate") in failed_kinds(verdict)
+    for checker in sorted(NON_GATE_CHECKERS):
+        verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25, checker=checker))
+        assert not verdict["passed"], checker
+        assert ("certified_bracket", "estimate") in failed_kinds(verdict)
+
+
+def test_evaluator_needs_every_listed_mesh():
+    case = ALL_CASES[STRIP]
+    verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25, meshes=[0, 1, 2]))
+    assert not verdict["passed"] and ("certified_bracket", "missing") in failed_kinds(verdict)
+
+
+def test_evaluator_refuses_records_of_another_case():
+    case = ALL_CASES[STRIP]
+    other = ALL_CASES["tresca_strip_weighted_insensitive"]
+    verdict = evaluate_case(case, *synthetic_records(other, 5.05, 5.25))
+    assert not verdict["passed"] and verdict["foreign_records"]
+
+
+def test_evaluator_binds_every_formulation_line():
+    case = ALL_CASES[STRIP]
+    verdict = evaluate_case(case, *synthetic_records(case, 5.05, 5.25, uppers=[CONTROL_ID]))
+    assert not verdict["passed"], "a control-only record set does not satisfy the jump formulation"
+    assert any(item["formulation"] == JUMP_ID and item["status"] == "fail" for item in verdict["items"])
+
+
+def test_evaluator_gate_case_ignores_the_control_and_needs_the_jump_formulation():
+    case = ALL_CASES["upper3d_fixed_phi00"]
+    certificates, brackets = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    feasibility = []
+    for mesh in range(len(case["mesh"])):
+        feasibility.append({"format": FORMAT_FEASIBILITY, "problem_sha256": certificates[2 * mesh]["problem_sha256"],
+                            "formulation": JUMP_ID, "status": "formulation_feasible", "witness_result_sha256": "0" * 64,
+                            "checker": {"name": "independent-checker", "version": "1"}})
+    verdict = evaluate_case(case, certificates, brackets, feasibility)
+    assert verdict["passed"]
+    assert len(verdict["records"]) == 6 and all(item["gap"] is not None for item in verdict["records"])
+    control_only = evaluate_case(case, *synthetic_records(case, 4.0, 4.5, uppers=[CONTROL_ID]), feasibility)
+    assert not control_only["passed"]
+    no_kinematic = evaluate_case(case, certificates, brackets)
+    assert not no_kinematic["passed"] and ("kinematic_status", "missing") in failed_kinds(no_kinematic)
+
+
+def test_evaluator_monotonicity_uses_the_nested_pairs():
+    case = ALL_CASES[STRIP]
+    certificates, brackets = synthetic_records(case, 5.05, 5.25)
+    for doc in certificates:
+        if doc["bound"] == "upper" and doc["problem_sha256"] == load_problem_hashes()[STRIP]["m1"]:
+            doc["value_certified"] = 5.3
+            doc["floor"] = TOLERANCES["FLOOR_MIN_REL"] * 5.3
+    verdict = evaluate_case(case, certificates, brackets)
+    assert ("upper_nonincrease", "coarse") in failed_kinds(verdict)
+
+
+def test_order_within_floor_counts_as_zero_gap():
+    case = ALL_CASES["vm_plate_shear"]
+    target = case["target"]
+    verdict = evaluate_case(case, *synthetic_records(case, target * (1.0 + 5e-13), target))
+    assert verdict["passed"], failed_kinds(verdict)
+
+
+def test_contradiction_stops_the_program():
+    case = ALL_CASES[STRIP]
+    verdict = evaluate_case(case, *synthetic_records(case, 5.2, 5.1))
+    assert verdict["stop_program"] and not verdict["passed"]
+
+
+def test_column_sandwich_kills_a_zero_gravity_lower_mutant():
+    case = ALL_CASES["vm_weighted_column_sandwich"]
+    verdict = evaluate_case(case, *synthetic_records(case, S3, 1.45))
+    assert not verdict["passed"] and ("lower_le_formula", "value") in failed_kinds(verdict)
+    assert evaluate_case(case, *synthetic_records(case, 1.36, 1.3835))["passed"]
 
 
 def schema_program(s, bound, formulation=None):
@@ -2633,9 +3503,12 @@ def test_interface_separates_owner_amendments_from_orchestrator_rulings():
     assert owner < rulings
     for item in ("A1", "A2", "A3", "A4"):
         assert f"| {item} |" in text[owner:rulings]
-    for item in ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"):
+    for item in ("O1", "O2"):
+        assert f"| {item} |" in text[owner:rulings]
+    for item in ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11"):
         assert f"| {item} |" in text[rulings:]
     assert "not frozen" in text[:600]
+    assert "pending" not in text[text.index("### 18.3"):text.index("## 19.")].lower(), "the owner has ruled"
 
 
 # Negative fixtures -----------------------------------------------------------------------------
@@ -2650,6 +3523,32 @@ HARNESS_ITEMS = {
     "a jump admissible at facet nodes but not across the facet",
     "wrong gravity work or wrong dissipation quadrature", "an equality residual just above the floor",
 }
+# ADR 237 section 11.5, row by row, and the fixture that discharges each row.
+ADR_11_5 = {
+    "wrong load normalisation": ["wrong_load_normalisation", "wrong_lower_value"],
+    "swapped Lower and Upper labels": ["swapped_bound_labels"],
+    "curved tetrahedron": ["curved_tetrahedron"],
+    "mismatched problem hash": ["mismatched_problem_hash"],
+    "unsupported domain_claim": ["unsupported_domain_claim", "unlisted_side_face"],
+    "equality residual just above the threshold": ["equality_just_above_floor"],
+    "one perturbed stress component": ["perturbed_stress_component"],
+    "stress scaled by 1.01": ["stress_scaled_1p01"],
+    "facet traction jump": ["facet_traction_jump"],
+    "wrong gravity in equilibrium": ["wrong_gravity_in_equilibrium"],
+    "tr(D) != 0 at one vertex of an isochoric field": ["isochory_one_vertex"],
+    "Drucker-Prager flow-cone violation at one vertex": ["dp_flow_cone_one_vertex"],
+    "footprint node off the rigid motion": ["footprint_off_rigid"],
+    "non-zero support velocity": ["support_velocity_nonzero"],
+    "non-zero wall velocity under a zero-extension claim": ["wall_velocity_zero_extension"],
+    "non-zero normal jump at one facet node under isochoric flow": ["normal_jump_one_node"],
+    "jump admissible at all six facet nodes but not across the facet": ["jump_between_nodes"],
+    "wrong gravity work": ["wrong_gravity_work"],
+    "wrong dissipation quadrature": ["wrong_dissipation_quadrature"],
+    "non-positive reference work rate": ["nonpositive_reference_work"],
+    "a finite dissipation charge offered in place of restoring a violated cone": ["dissipation_charge_as_repair"],
+}
+RECOMPUTED_VALUE = {"perturb_velocity", "perturb_element_velocity", "node_normal", "side_opening", "negate_velocity",
+                    "dissipation_charge"}
 
 
 def apply_negative(entry):
@@ -2667,6 +3566,9 @@ def apply_negative(entry):
         result["objective"] *= m["factor"]
     elif kind == "element_offset":
         arrays["sigma"][m["element"], :, m["component"]] += m["amount"]
+    elif kind == "zero_gravity_lower":
+        arrays["sigma"][:] = 0.0
+        arrays["sigma"][..., 5] = result["value"]
     elif kind == "scale_value":
         result["value"] *= m["factor"]
         result["objective"] *= m["factor"]
@@ -2678,34 +3580,64 @@ def apply_negative(entry):
     elif kind == "problem_hash":
         result["problem_sha256"] = "0" * 64
     elif kind == "certificate_claim":
-        certificate = load_document(DATA / f"{entry['problem']}.q.upper.certificate.json")[0]
+        certificate = load_document(DATA / f"{entry['result'].replace('.result', '.certificate')}.json")[0]
         certificate["domain_claim"] = m["claim"]
+    elif kind == "drop_truncation_set":
+        certificate = load_document(DATA / f"{entry['result'].replace('.result', '.certificate')}.json")[0]
+        problem["domain"]["truncation_sets"].remove(m["name"])
+        problem["problem_sha256"] = document_hash(problem, problem_arrays, "problem_sha256")
+        result["problem_sha256"] = certificate["problem_sha256"] = problem["problem_sha256"]
     elif kind == "perturb_velocity":
         arrays["velocity"][m["node"], m["component"]] += m["amount"]
-    elif kind == "node_jump":
+    elif kind == "perturb_element_velocity":
+        arrays["element_velocity"][m["element"], m["local_node"], m["component"]] += m["amount"]
+    elif kind == "node_normal":
         e1, f1 = m["facet"]
         normal, _ = facet_geometry(problem_arrays["nodes"][problem_arrays["tets"][e1][:4]], f1)
         arrays["element_velocity"][m["element"], m["local_node"]] += m["amount"] * normal
+    elif kind == "side_opening":
+        arrays["element_velocity"][np.array(m["elements"]), :4] += m["amount"] * np.array(m["normal"])
+    elif kind == "negate_velocity":
+        arrays["velocity"] *= -1.0
+        arrays["footing_velocity"] *= -1.0
+    elif kind == "dissipation_charge":
+        arrays["velocity"][m["node"], m["component"]] += m["amount"]
+        conditions, _ = signed_flow_conditions(problem, problem_arrays, arrays["velocity"])
+        arrays["dissipation"] = np.where(conditions > 0.0, m["charge"], 0.0).astype("<f8")
     elif kind == "value_rule":
         value = fixture_upper_value(problem, problem_arrays, arrays["velocity"], arrays["footing_velocity"],
                                     quadrature=m["quadrature"], body=m["body"])
         result["value"] = result["objective"] = value
     else:
         fail("negative_fixture", kind)
+    if kind in RECOMPUTED_VALUE:
+        name = "element_velocity" if "element_velocity" in arrays else "velocity"
+        result["value"] = result["objective"] = fixture_upper_value(problem, problem_arrays, arrays[name],
+                                                                    arrays["footing_velocity"])
+    if "sigma" in arrays and kind in ("perturb_sigma", "element_offset", "zero_gravity_lower"):
+        arrays["resultant"] = fixture_resultant(problem, problem_arrays, arrays["sigma"]).astype("<f8")
     if result is not None and kind != "problem_hash":
         result["result_sha256"] = document_hash(result, arrays, "result_sha256")
+        if certificate is not None:
+            certificate["result_sha256"] = result["result_sha256"]
     return problem, problem_arrays, result, arrays, certificate
 
 
-def test_negative_fixtures_cover_every_harness_item():
-    assert {entry["harness_item"] for entry in NEGATIVE} == HARNESS_ITEMS
-    assert len({entry["id"] for entry in NEGATIVE}) == len(NEGATIVE)
+def test_negative_fixtures_cover_the_harness_and_every_adr_row():
+    items = {entry["harness_item"] for entry in NEGATIVE}
+    assert HARNESS_ITEMS <= items
+    ids = [entry["id"] for entry in NEGATIVE]
+    assert len(set(ids)) == len(ids)
+    for row, names in ADR_11_5.items():
+        assert names and set(names) <= set(ids), row
+    assert len(ADR_11_5) == 21
     for entry in NEGATIVE:
+        assert isinstance(entry["expect"], str), "one expected code per fixture"
         if entry["stage"] == "schema":
             assert entry["expect"] in ("result_wrong_bound_arrays", "element_curved", "hash_mismatch",
                                        "unsupported_domain_claim")
         else:
-            assert set(entry["expect"]) <= REASON_CODES and entry["expect"]
+            assert entry["expect"] in REASON_CODES
 
 
 @pytest.mark.parametrize("entry", [e for e in NEGATIVE if e["stage"] == "schema"], ids=lambda e: e["id"])
@@ -2721,27 +3653,43 @@ def test_schema_negative_fixture_is_refused(entry):
     assert error.value.code == entry["expect"]
 
 
+def _plate_vertex_row_error(entry, problem_arrays, arrays):
+    m = entry["mutation"]
+    grads, _ = tet_gradients(problem_arrays["nodes"][problem_arrays["tets"][m["element"]][:4]])
+    return abs(grads[m["vertex"], 0] * m["amount"]) / float(np.sum(np.abs(grads)))
+
+
 @pytest.mark.parametrize("entry", [e for e in NEGATIVE if e["stage"] != "schema"], ids=lambda e: e["id"])
 def test_checker_negative_fixture_is_well_formed_and_live(entry):
+    """The named defect is present and every earlier stage of the procedure passes, so one code is expected."""
     problem, problem_arrays, result, arrays, _ = apply_negative(entry)
     validate_result(result, arrays, problem, problem_arrays)
     base, base_arrays = load_document(DATA / f"{entry['result']}.json")
     m = entry["mutation"]
     nodes, tets = problem_arrays["nodes"], problem_arrays["tets"]
-    kind = m["kind"]
-    if kind == "perturb_sigma" and entry["stage"] == "checker":
-        assert m["amount"] > TOLERANCES["TOL_PROJECTION_MOVE"] * np.max(np.abs(base_arrays["sigma"]))
-    elif kind == "perturb_sigma":
-        grads, _ = tet_gradients(nodes[tets[m["element"]][:4]])
-        residual = abs(grads[m["vertex"], 0] * m["amount"])
-        scale = residual + float(np.sum(np.abs(grads[:, 1]) * np.abs(base_arrays["sigma"][m["element"], :, 3])))
-        floor = equality_floor(m["kappa_reference"])
-        assert 2.9 * floor <= residual / scale <= 3.1 * floor
-        assert (residual / scale) * m["kappa_reference"] < TOLERANCES["TOL_FLOOR_MAX"]
-    elif kind == "scale_lower":
+    fixture = entry["id"]
+    move = TOLERANCES["TOL_PROJECTION_MOVE"]
+    velocity_name = "element_velocity" if "element_velocity" in arrays else "velocity"
+    if result["bound"] == "upper":
+        true_value = fixture_upper_value(problem, problem_arrays, arrays[velocity_name], arrays["footing_velocity"])
+        if entry["expect"] == "value_mismatch":
+            assert abs(result["value"] - true_value) > TOLERANCES["TOL_VALUE_MATCH"] * abs(true_value)
+            assert true_value == pytest.approx(base["value"], rel=1e-12)
+        else:
+            assert result["value"] == pytest.approx(true_value, rel=1e-14), "the value is that of the mutated field"
+    else:
+        np.testing.assert_allclose(arrays["resultant"], fixture_resultant(problem, problem_arrays, arrays["sigma"]),
+                                   atol=1e-12, err_msg="the stored resultant is that of the mutated field")
+    if fixture == "perturbed_stress_component":
+        assert m["amount"] > move * np.max(np.abs(base_arrays["sigma"]))
+    elif fixture == "equality_just_above_floor":
+        assert 2.9 * tau_eq() <= _plate_vertex_row_error(entry, problem_arrays, arrays) <= 3.1 * tau_eq()
+        assert m["tau_multiple"] == 3.0
+    elif fixture == "stress_scaled_1p01":
         k = problem["regions"][0]["k"]
-        assert max(yield_from_principal(s, k) for s in arrays["sigma"].reshape(-1, 6)) > TOLERANCES["TOL_CONE_ACCEPT"]
-    elif kind == "element_offset":
+        s_ref = float(np.max(np.abs(arrays["sigma"])))
+        assert max(yield_from_principal(s, k) for s in arrays["sigma"].reshape(-1, 6)) / s_ref > TOLERANCES["TOL_CONE_ACCEPT"]
+    elif fixture == "facet_traction_jump":
         interior, _ = mesh_facets(tets)
         worst = 0.0
         for (e1, f1), (e2, _) in interior:
@@ -2751,53 +3699,88 @@ def test_checker_negative_fixture_is_well_formed_and_live(entry):
                 vertex2 = [int(v) for v in tets[e2]].index(int(tets[e1][vertex1]))
                 jump = voigt_n(normal) @ (arrays["sigma"][e1, vertex1] - arrays["sigma"][e2, vertex2])
                 worst = max(worst, float(np.max(np.abs(jump))))
-        assert worst > TOLERANCES["TOL_PROJECTION_MOVE"]
-    elif kind in ("scale_value", "value_rule"):
-        true_value = fixture_upper_value(problem, problem_arrays, arrays["velocity"], arrays["footing_velocity"])
-        assert abs(result["value"] - true_value) > TOLERANCES["TOL_VALUE_MATCH"] * abs(true_value)
-        assert true_value == pytest.approx(base["value"], rel=1e-12)
-    elif kind == "perturb_velocity":
-        node, changed = m["node"], arrays["velocity"] - base_arrays["velocity"]
-        assert np.count_nonzero(changed) == 1 and m["amount"] > TOLERANCES["TOL_PROJECTION_MOVE"]
-        x = nodes[node]
-        if entry["id"] == "isochory_one_vertex":
-            theta = []
-            for tet in tets:
-                if node in tet:
-                    theta += [strain_split(strain_rate_at_vertex(nodes[tet], arrays["velocity"][tet], v))[0]
-                              for v in range(4)]
-            assert max(abs(t) for t in theta) > TOLERANCES["TOL_FLOW_ACCEPT"]
-        elif entry["id"] == "footprint_off_rigid":
-            assert x[1] == 1.0
-            rigid = base_arrays["footing_velocity"][0, :3]
-            assert np.linalg.norm(arrays["velocity"][node] - rigid) == pytest.approx(m["amount"])
-        else:
-            assert x[1] == 0.0 and problem["domain"]["target"] == "halfspace"
-            assert supported_domain_claim(problem, problem_arrays, "upper") == "halfspace_by_zero_extension"
-            assert np.linalg.norm(arrays["velocity"][node]) == pytest.approx(m["amount"])
-    elif kind == "node_jump":
+        assert worst > move
+    elif fixture == "wrong_lower_value":
+        np.testing.assert_array_equal(arrays["sigma"], base_arrays["sigma"])
+        assert abs(result["value"] - base["value"]) > move * abs(base["value"])
+    elif fixture == "wrong_gravity_in_equilibrium":
+        body = np.array(problem["regions"][0]["b0"])
+        for e, tet in enumerate(tets):
+            grads, _ = tet_gradients(nodes[tet[:4]])
+            divergence = sum(voigt_n(grads[i]) @ arrays["sigma"][e, i] for i in range(4))
+            np.testing.assert_allclose(divergence, 0.0, atol=1e-12)
+        assert np.max(np.abs(body)) > move
+    elif fixture in ("wrong_load_normalisation", "wrong_gravity_work", "wrong_dissipation_quadrature"):
+        pass  # covered by the value comparison above
+    elif fixture == "isochory_one_vertex":
+        theta = [strain_split(strain_rate_at_vertex(nodes[tet], arrays["velocity"][tet], v))[0]
+                 for tet in tets if m["node"] in tet for v in range(4)]
+        assert max(abs(t) for t in theta) > TOLERANCES["TOL_FLOW_ACCEPT"]
+    elif fixture == "footprint_off_rigid":
+        assert nodes[m["node"], 1] == 1.0
+        rigid = base_arrays["footing_velocity"][0, :3]
+        assert np.linalg.norm(arrays["velocity"][m["node"]] - rigid) == pytest.approx(m["amount"])
+    elif fixture == "support_velocity_nonzero":
+        assert nodes[m["node"], 1] == 0.0 and problem["domain"]["target"] == "box"
+        assert np.linalg.norm(arrays["velocity"][m["node"]]) == pytest.approx(m["amount"])
+    elif fixture == "wall_velocity_zero_extension":
+        assert supported_domain_claim(problem, problem_arrays, "upper") == "halfspace_by_zero_extension"
+        assert np.max(np.abs(arrays["element_velocity"][m["element"], m["local_node"]])) == pytest.approx(m["amount"])
+    elif fixture == "normal_jump_one_node":
         e1, f1 = m["facet"]
-        e2 = m["element"]
-        tau, _ = jump_constants(problem["regions"][0]["alpha"])
         normal, _ = facet_geometry(nodes[tets[e1][:4]], f1)
-        tangents = tangent_basis(normal)
-        order2 = [int(v) for v in tets[e2]]
-        minus = arrays["element_velocity"][e1][list(FACET_NODES[f1])]
-        plus = arrays["element_velocity"][e2][[order2.index(int(tets[e1][a])) for a in FACET_NODES[f1]]]
-        nodal = plus - minus
-
-        def admissible(c):
-            return c @ normal >= tau * np.hypot(c @ tangents[0], c @ tangents[1]) - 1e-12 * m["amount"]
-
-        assert all(admissible(c) for c in nodal), "the jump passes at all six facet nodes"
-        assert not all(admissible(c) for c in bernstein_from_nodal(nodal)), "and fails across the facet"
+        nodal = facet_nodal_jump(tets, arrays["element_velocity"], e1, f1, m["element"])
+        assert np.max(np.abs(bernstein_from_nodal(nodal) @ normal)) > move
+    elif fixture == "nonpositive_reference_work":
+        assert result["value"] == pytest.approx(-base["value"]), "W1 = -1 with unchanged dissipation"
+    elif fixture == "dp_flow_cone_one_vertex":
+        conditions, size = signed_flow_conditions(problem, problem_arrays, arrays["velocity"])
+        assert conditions.max() / size > TOLERANCES["TOL_FLOW_ACCEPT"]
+    elif fixture == "dissipation_charge_as_repair":
+        conditions, size = signed_flow_conditions(problem, problem_arrays, arrays["velocity"])
+        assert TOLERANCES["TOL_CONE_MARGIN"] < conditions.max() / size < TOLERANCES["TOL_FLOW_ACCEPT"]
+        assert np.any(arrays["dissipation"] > 0.0) and "interior_velocity" not in arrays
+    elif fixture == "jump_between_nodes":
+        field = arrays["element_velocity"]
+        conditions, size = signed_flow_conditions(problem, problem_arrays, field)
+        assert conditions.max() < -0.1 * size, "every volume condition stays strictly inside"
+        assert not any(item["kind"] in ("fixed", "symmetry", "footing") for item in problem["boundary_sets"]), "no equality row"
+        rows = signed_jump_conditions(problem, problem_arrays, field)
+        assert max(float(nodal.max()) for nodal, _ in rows) <= 1e-12 * m["amount"], "passes at all six nodes of every facet"
+        assert max(float(coefficient.max()) for _, coefficient in rows) >= 0.9 * m["amount"], "fails across a facet"
     else:
-        fail("negative_fixture", kind)
+        fail("negative_fixture", fixture)
+
+
+def test_good_halfspace_and_apex_fixtures_are_admissible():
+    problem, arrays = halfspace_problem()
+    result, fields = load_document(DATA / f"{record_stem('vm_ground_patch_halfspace', JUMP_ID)}.result.json")
+    validate_problem(problem, arrays)
+    validate_result(result, fields, problem, arrays)
+    field, nodes, tets = fields["element_velocity"], arrays["nodes"], arrays["tets"]
+    assert result["value"] > 0.0
+    for e, tet in enumerate(tets):
+        for m in range(4):
+            assert abs(strain_split(strain_rate_at_vertex(nodes[tet], field[e], m))[0]) < 1e-13
+    for (e1, f1), (e2, _) in mesh_facets(tets)[0]:
+        normal, _ = facet_geometry(nodes[tets[e1][:4]], f1)
+        np.testing.assert_allclose(bernstein_from_nodal(facet_nodal_jump(tets, field, e1, f1, e2)) @ normal, 0.0, atol=1e-13)
+    names = [item["name"] for item in problem["boundary_sets"]]
+    for (e, f), index in zip(arrays["facets"], arrays["facet_set"]):
+        if names[int(index)] != "ground":
+            np.testing.assert_array_equal(field[e][list(FACET_NODES[int(f)])], 0.0)
+    certificate = load_document(DATA / f"{record_stem('vm_ground_patch_halfspace', JUMP_ID)}.certificate.json")[0]
+    validate_certificate(certificate, problem, arrays, result)
+    assert certificate["domain_claim"] == "halfspace_by_zero_extension"
+    apex, apex_arrays = load_document(DATA / f"{case_stem('dp_free_hydrostatic')}.problem.json")
+    upper = load_document(DATA / f"{record_stem('dp_free_hydrostatic', JUMP_ID)}.result.json")[0]
+    assert upper["value"] == pytest.approx(TARGET_FORMULAS["dp_hydrostatic"]({"k": 1.0, "alpha": 0.2}))
+    validate_problem(apex, apex_arrays)
 
 
 def test_correct_gravity_and_dissipation_rules_differ_from_the_wrong_ones():
-    problem, arrays = load_document(DATA / "vm_dead_gravity_shear_layer.problem.json")
-    upper, fields = load_document(DATA / "vm_dead_gravity_shear_layer.q.upper.result.json")
+    problem, arrays = load_document(DATA / f"{case_stem('vm_dead_gravity_shear_layer')}.problem.json")
+    upper, fields = load_document(DATA / f"{record_stem('vm_dead_gravity_shear_layer', CONTROL_ID)}.result.json")
     velocity, footing = fields["velocity"], fields["footing_velocity"]
     good = fixture_upper_value(problem, arrays, velocity, footing)
     assert good == pytest.approx(upper["value"])
@@ -2815,7 +3798,8 @@ def probe_rows():
     return rows
 
 
-def test_tracked_probe_output_is_labelled_and_shows_the_contrast():
+def test_tracked_probe_record_is_labelled_and_shows_the_contrast():
+    """Reads the committed record of the probe. It does not rerun the probe."""
     if not PROBE_OUTPUT.exists():
         pytest.skip("the fork-local testbed folder is not part of this checkout")
     text = PROBE_OUTPUT.read_text(encoding="ascii")
@@ -2830,14 +3814,48 @@ def test_tracked_probe_output_is_labelled_and_shows_the_contrast():
             assert float(rows[(mesh, walls, "jump")][9]) <= TOLERANCES["TOL_FEAS_OK"]
 
 
+def test_certificate_demonstration_record_reached_the_procedure():
+    """Reads the committed record of the demonstration. It proves reachability, not a bound."""
+    if not DEMO_RECORD.exists():
+        pytest.skip("the fork-local testbed folder is not part of this checkout")
+    record = json.loads(DEMO_RECORD.read_text(encoding="ascii"))
+    assert record["title"].startswith("PROCEDURE DEMONSTRATION, NOT A CERTIFIED BOUND")
+    assert "NOT THE INDEPENDENT CHECKER" in DEMO_SCRIPT.read_text(encoding="utf-8")
+    required = {("tresca_strip_vm_thin_slab", 0), ("upper3d_fixed_phi00", 0)}
+    seen = set()
+    for run in record["runs"]:
+        if run["mesh_label"] == "listed":
+            case = ALL_CASES[run["case"]]
+            problem, arrays = build_case_problem(case, run["mesh"])
+            assert problem["problem_sha256"] == run["problem_sha256"] == load_problem_hashes()[run["case"]][f"m{run['mesh']}"]
+            seen.add((run["case"], run["mesh"]))
+            for item in (run["lower"], run["upper"]):
+                result = item["result"]
+                validate_certificate(item["certificate"], problem, arrays, result)
+                assert item["certificate"]["classification"] == "certified_bound"
+                assert item["certificate"]["checker"]["name"] == PROCEDURE_DEMO_CHECKER
+                assert not gate_admissible(item["certificate"]), "the demonstration satisfies no gate"
+        else:
+            for item in (run["lower"], run["upper"]):
+                assert item["certificate"]["classification"] == "certified_bound"
+                assert not certified_check_failures(item["certificate"], "ray")
+                assert not gate_admissible(item["certificate"])
+    assert required <= seen
+    assert any(run["upper"]["certificate"]["checks"]["repair_mu"] > 0.0 for run in record["runs"]), "a repair was exercised"
+
+
 def test_public_files_carry_no_private_material():
     forbidden = ["TI" + "Ms", "Op" + "tum", "Fa" + "ble", "C:" + "\\Users", "nmo" + "ra"]
-    paths = [INTERFACE, CASES, Path(__file__)] + [p for p in (PROBE_SCRIPT, PROBE_OUTPUT) if p.exists()]
+    extra = (PROBE_SCRIPT, PROBE_OUTPUT, DEMO_SCRIPT, DEMO_RECORD, MESH_SCRIPT)
+    paths = [INTERFACE, CASES, Path(__file__)] + [p for p in extra if p.exists()]
     paths += [path for path in DATA.iterdir() if path.suffix == ".json"]
     for path in paths:
         text = path.read_text(encoding="utf-8")
         for word in forbidden:
             assert word not in text, f"{word!r} in {path.name}"
+    for path in DATA.glob("*.npz"):
+        with np.load(path, allow_pickle=False) as npz:
+            assert all(npz[name].dtype.str in ("<f8", "<i8") for name in npz.files), path.name
 
 
 if __name__ == "__main__":

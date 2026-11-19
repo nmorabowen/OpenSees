@@ -1,13 +1,15 @@
 # Limit analysis: the P0 interface (WP-237a)
 
-**Status:** proposed for freeze; **not frozen**. The orchestrator freezes this file. After the freeze a
-change is an amendment logged in section 19, never a silent edit. Section 18 separates accepted owner
-amendments from orchestrator P0 rulings.
+**Status:** proposed for freeze after the 2026-11-19 review-fix round; **not frozen**. The orchestrator
+freezes this file. After the freeze a change is an amendment logged in section 19, never a silent edit.
+Section 18 separates accepted owner decisions from orchestrator P0 rulings.
 
 **Who reads it.** The Python reference author, the independent checker author, the external reference
 author and later the C++ author. Each implements from this file and `tests/limit_cases.txt`, without
 reading the other side's code. `tests/test_limit_contract.py` holds the schema validators and the
-convention checks. It contains no assembler and no checker.
+convention checks, and `evaluate_case`, the executable meaning of the case lines (section 17.9). It contains
+no assembler and no checker. `Ladruno_files/testbed/limit_analysis/certificate_demo.py` contains both, for a
+demonstration only (section 18.3): **the 237b, 237c, 237e and 237f authors do not read it.**
 
 **Scope of version 0.** Associated perfect plasticity on straight tetrahedra; von Mises and
 Drucker-Prager; second-order cones only; bonded rigid footings; one-shot solves on one mesh. Footing cases
@@ -372,11 +374,22 @@ Thin-slab success does not show that an Upper formulation works in 3D, and **fea
 this gate.** Each `upper_gate_3d` case runs one of `phi = 0, 10, 20, 30` degrees with one wall type. That is
 eight cases.
 
-**Frozen set.** The box is `[-2, 2] x [-2, 2] x [-2, 0]`, with a bonded unit-square footing conforming on
-`z = 0`. Walls and base are all `fixed` or all `symmetry` (rollers). The meshes, in case order, are
-`upper3d_a` (243 tets), `upper3d_b` (463), `upper3d_c` (949), `upper3d_d` (2,840, graded toward the footing edge),
-then `upper3d_a` refined once (1,944) and `upper3d_d` refined once (22,720). The first four are independent
-non-structured sizes. The refined meshes form the nested pairs `(0, 4)` and `(3, 5)`.
+**Boxes.** A bonded unit-square footing conforms on `z = 0` at `[-0.5, 0.5]^2`. Walls and base are all `fixed` or
+all `symmetry` (rollers). Each angle has its own box, sized so that the plane-strain Prandtl extent of a footing of
+half-width `b = 0.5` (section 16.4), **taken as a length scale**, fits inside it:
+
+| `phi` | Extent from the centreline, depth | Box | Meshes `a`, `b`, `c`, `d` (tets) | Mesh 5 |
+|---|---|---|---|---|
+| 0 | 1.50, 0.71 | `[-2, 2]^2 x [-2, 0]` | `upper3d_{a,b,c,d}`: 243, 463, 949, 2,840 | 22,720 |
+| 10 | 2.07, 1.03 | `[-2.5, 2.5]^2 x [-2, 0]` | `upper3d_phi10_{a,b,c,d}`: 276, 390, 976, 2,608 | 20,864 |
+| 20 | 3.03, 1.54 | `[-3.5, 3.5]^2 x [-2, 0]` | `upper3d_phi20_{a,b,c,d}`: 291, 429, 951, 2,567 | 20,536 |
+| 30 | 4.79, 2.48 | `[-5, 5]^2 x [-3, 0]` | `upper3d_phi30_{a,b,c,d}`: 323, 494, 1,053, 2,850 | 22,800 |
+
+The mechanism of a square footing in 3D is expected to be smaller than the plane-strain one, so the rule is a
+conservative sizing, not a claim about the 3D mechanism. The gate does **not** intend wall-confined flow. Mesh
+indices are, per case: `a, b, c, d`, then `a` refined once (mesh 4) and `d` refined once (mesh 5). The first four are
+independent non-structured sizes; the refined meshes form the nested pairs `(0, 4)` and `(3, 5)`. Section 15.2 lists
+the files and their digests.
 
 ### 11.1 Kinematic test: rank and residual
 
@@ -384,9 +397,10 @@ Let `E` be the equality rows of the formulation: supports, rollers, rigid footin
 vertices, and zero normal jump on every Bernstein coefficient where `tau = 0`. Let `A` be the set of `(v, V)`
 satisfying the boundary and footing rows and the query normalisation.
 
-- **Rank.** `rank` counts singular values of `E` above `TOL_RANK * sigma_max`. `nullity = n_unknowns - rank`.
-  `footing_modes` is the rank of the kernel restricted to `V`. A dense factorisation may be skipped when too
-  large; then `rank`, `nullity` and `footing_modes` are `null`, and the residual test still applies.
+- **Rank, reported only.** `rank` counts singular values of `E` above `TOL_RANK * sigma_max`.
+  `nullity = n_unknowns - rank`. `footing_modes` is the rank of the kernel restricted to `V`. A dense factorisation
+  may be skipped when too large; then the three are `null`. Nullity does not enter the verdict: the broken space has a
+  large nullity on every mesh, and every `alpha > 0` space has no isochory rows.
 - **Residual.** With `c_ei` the flow violation at element vertices, `c_FB` the jump violation on Bernstein
   coefficients, `w_ei = V_e / 4` and `w_FB = A_F / (6 h_F)`, `h_F` the longest edge of the facet:
 
@@ -395,37 +409,57 @@ c_ei = |theta|                                  alpha = 0
 c_ei = max(0, 3 sqrt2 alpha |e| - theta)        alpha > 0
 c_FB = max(0, tau |c_t| - n . c_B)              tau > 0;   |n . c_B| when tau = 0
 
-rho_feas = min_A sqrt( sum w_ei c_ei^2 + sum w_FB c_FB^2 )
-         / min_A sqrt( sum w_ei |D_ei|_F^2 + sum w_FB |c_B|^2 )
+rho(v, V) = sqrt( sum w_ei c_ei^2 + sum w_FB c_FB^2 ) / sqrt( sum w_ei |D_ei|_F^2 + sum w_FB |c_B|^2 )
+rho_feas  = min_A sqrt( sum w_ei c_ei^2 + sum w_FB c_FB^2 ) / min_A sqrt( sum w_ei |D_ei|_F^2 + sum w_FB |c_B|^2 )
 ```
 
 For the control the facet sums are absent. With every `alpha = 0` both minima are sparse linear least-squares
-problems, so the result does not depend on a conic solver.
+problems, so `rho_feas` does not depend on a conic solver. With `alpha > 0` the minimisation is conic and no method is
+fixed, so `rho_feas` is the witness's own `rho`.
+
+- **Witness.** A result document (section 15.3) of the formulation holding a field `(v, V)` in `A`. A certified Upper
+  of the same problem is a witness. The **checker**, not the producer, recomputes `rho` at the witness from the problem
+  file with its own operators, and writes the record of section 15.5 with the witness's `result_sha256`.
 
 | `status` | Condition |
 |---|---|
-| `formulation_feasible` | `rho_feas <= TOL_FEAS_OK`; a witness in `A` passed `c` recomputed independently of the producer; `nullity` and `footing_modes`, where computed, are at least 1 |
-| `formulation_infeasible` | `rho_feas >= TOL_FEAS_LOCKED` |
+| `formulation_feasible` | `rho_feas <= TOL_FEAS_OK`; the witness has `rho <= TOL_FEAS_OK`; `footing_modes`, where computed, is at least 1 |
+| `formulation_infeasible` | every `alpha = 0`, and `rho_feas >= TOL_FEAS_LOCKED`. Never claimed for `alpha > 0` |
 | `inconclusive` | anything else |
 
 A failure is a **formulation result**, recorded with its numbers per mesh, wall and angle. It may not be hidden
 by relaxing a tolerance, by reading `AlmostSolved` as success, or by quoting a conic value whose flow rule is
 violated. `formulation_infeasible` says this space yields no Upper bound on that mesh. It says nothing against
-the mechanics.
+the mechanics. Only a record from a real checker can satisfy a gate (`gate_admissible`).
 
 ### 11.2 Quality test
 
 For each case and the binding Upper formulation, all of these must hold, using **certified** values only:
 
 1. `kinematic_status` is `formulation_feasible` on every listed mesh;
-2. a certified bracket exists on mesh 5;
-3. its gap is at most `MAX_GAP_3D_VM` for `phi = 0`, or `MAX_GAP_3D_DP` otherwise;
-4. `U_fine <= U_coarse + TOL_MONOTONE |U_coarse|` along each nested pair;
-5. `L_fine >= L_coarse - TOL_MONOTONE |L_coarse|` along each nested pair.
+2. a certified Upper exists on every listed mesh (ADR 10.1, "a certified Upper at every size");
+3. a certified bracket exists on mesh 5;
+4. its gap is at most `MAX_GAP_3D_VM` for `phi = 0`, or `MAX_GAP_3D_DP` otherwise;
+5. `U_fine <= U_coarse + TOL_MONOTONE |U_coarse|` along each nested pair;
+6. `L_fine >= L_coarse - TOL_MONOTONE |L_coarse|` along each nested pair.
 
+The gap on every mesh is recorded (`record gap mesh i`) and gates nothing: it is the gap trend the ADR asks for.
 Section 13 proves the monotonicity for these formulations. A violation therefore signals a defect or an
-unconverged candidate, and is never averaged away. The limits are requirements set in advance. If a formulation
-misses them, the gate fails and the failure is recorded; the limit does not move.
+unconverged candidate, and is never averaged away.
+
+The limits were set late (section 18.3) and the owner accepted them on 2026-11-19 (O1). They are closed from this
+revision: a limit does not move and no gate mesh changes. A miss is a real P0 failure, recorded.
+
+### 11.3 Verdicts
+
+The verdict is per case, so **per angle and wall type**, as `evaluate_case` returns it. By owner decision O2:
+
+- after the box correction above, a Drucker-Prager miss at `phi = 30` degrees **withholds the 3D Drucker-Prager claim
+  at 30 degrees** and is recorded by angle and wall type;
+- a miss at `phi = 0, 10, 20` degrees is a P0 failure that keeps P0 open (ADR 18.3), and no candidate passing
+  triggers K2;
+- a failure of an exact formulation case (`exact_on_mesh`, `exact_lower_on_mesh`) or of the thin-slab strip still
+  stops P0.
 
 ## 12. P0 Upper formulation, `upper.p2d-jump-bernstein.v0`
 
@@ -530,9 +564,11 @@ interface law. For non-associated real soil they are not bounds on the physical 
 
 ## 14. Domain claims
 
-`domain_claim` belongs to **each certified bound**. A problem declares `domain.target`, `box` or
-`halfspace`. With `halfspace` it also lists `truncation_sets`, and `exterior_load_free`, which is true when
-no load acts outside the mesh.
+`domain_claim` belongs to **each certified bound**. A problem declares `domain.target`, `box` or `halfspace`.
+With `halfspace` it also declares `ground` `{axis, coordinate}`, the ground plane; `truncation_sets`, the walls that
+cut the half-space; `symmetry_sets`, symmetry planes of the problem itself, which must be `symmetry` sets; and
+`exterior_load_free`, true when no load acts outside the mesh. A `box` has no truncation sets, no symmetry sets and
+`ground` `null`.
 
 | Value | Meaning |
 |---|---|
@@ -541,7 +577,12 @@ no load acts outside the mesh.
 | `halfspace_by_zero_extension` | The admissible field extends by zero |
 | `halfspace_by_extension_elements` | Reserved. Version 0 refuses it because no extension data exists |
 
-`halfspace_by_zero_extension` is supported only as follows.
+**Coverage, required for any half-space claim.** Every exterior facet lies on the ground plane (within
+`TOL_GEOM_PLANE`), or belongs to a truncation set, or to a declared symmetry set; and no `traction` or `footing` facet
+lies off the ground plane. Otherwise the claim is `unverified`. Without this rule a problem with loaded or free side
+faces could claim a half-space bound because its base alone was listed.
+
+`halfspace_by_zero_extension` is then supported only as follows.
 
 - **Upper:** every truncation set is `fixed`. Zero velocity costs no dissipation and no work outside.
 - **Lower:** every truncation set is `free`, every `b0` and `b1` is zero, and `exterior_load_free` is true.
@@ -549,13 +590,28 @@ no load acts outside the mesh.
 
 Roller walls allow tangential motion and never support the Upper claim. A fixed wall supports no Lower
 extension. **A bracket's claim is the domain both bounds support:** if both certificates carry
-`halfspace_by_zero_extension`, the bracket does. Otherwise it is `box_stated`, and it passes no half-space
-gate.
+`halfspace_by_zero_extension`, the bracket does. Otherwise it is `box_stated`, and it passes no half-space gate.
+In version 0 that first branch **cannot fire**: one problem hash cannot have every truncation set `fixed` (Upper) and
+`free` (Lower). Every version 0 bracket is therefore `box_stated`. The rule is kept for extension elements.
 
 ## 15. Files, version 0
 
-Every document is UTF-8 JSON, with `NaN` and `Infinity` forbidden. Unknown keys are refused. Arrays live in
-one NPZ named by the document's `arrays` key, relative to the JSON file. Arrays are `<f8` or `<i8` only.
+Every document is UTF-8 JSON, with `NaN` and `Infinity` forbidden, and a number that parses to a non-finite value
+(`1e999`) refused after parsing. Unknown keys are refused. Arrays live in one NPZ named by the document's `arrays` key,
+relative to the JSON file. Arrays are `<f8` or `<i8` only.
+
+**Names.** A case on mesh `m` has the stem `<case>.m<m>`. Its files are:
+
+```text
+<case>.m<m>.problem.json                                    and .npz
+<case>.m<m>.<query>.<formulation-id>.result.json            and .npz
+<case>.m<m>.<query>.<formulation-id>.program.json           and .npz
+<case>.m<m>.<query>.<formulation-id>.certificate.json
+<case>.m<m>.<query>.<formulation-id>.feasibility.json
+<case>.m<m>.<query>.<lower-formulation-id>__<upper-formulation-id>.bracket.json
+```
+
+So two Upper formulations, or six meshes, never collide. A fixture that is not a case uses its own name as `<case>`.
 
 ### 15.1 Hash
 
@@ -571,7 +627,16 @@ enc(object) = b"m" + u64(count) + for each key in UTF-8 byte order: enc(key) + e
 ```
 
 `u64` is unsigned little-endian. The `arrays` file name is part of the document. Hash keys are
-`problem_sha256` in a problem and `result_sha256` in a result.
+`problem_sha256` in a problem and `result_sha256` in a result. **Negative zero hashes as zero**: numbers are
+encoded as `float64(x) + 0.0`, and float arrays are hashed as `array + 0.0`.
+
+The Kuhn generator (section 3.5) computes vertex `(i, j, k)` as `lo + (hi - lo) * [i/nx, j/ny, k/nz]` in IEEE double,
+in that order, and refinement midpoints as `0.5 * (x_a + x_b)`. `tests/data/limit/problem_hashes.json` holds the
+expected `problem_sha256` of every active case on every listed mesh, so two builders can compare hashes without
+running each other.
+
+Worked digest: the document `{"b": [1, null, true], "a": "x"}` without hash key, with the single array
+`v = [0.5, -0.0]` of `<f8`, hashes to `bba0e8c06001808c4f198c1956e7d81423a19daf45369b633cfc14b0c9f12a46`.
 
 ### 15.2 Problem: `<stem>.problem.json`, `.npz`
 
@@ -580,7 +645,7 @@ enc(object) = b"m" + u64(count) + for each key in UTF-8 byte order: enc(key) + e
 | `format`, `format_version` | `ladruno-limit-problem`, `0` |
 | `arrays`, `name`, `units` | NPZ file name; free name; `{length, force}` labels |
 | `conventions` | the literal object of section 15.7 |
-| `domain` | `{target, truncation_sets, exterior_load_free}` |
+| `domain` | `{target, truncation_sets, symmetry_sets, ground, exterior_load_free}` (section 14) |
 | `length_scale` | positive number |
 | `regions` | list of `{name, criterion, k, [alpha], b0, b1}` |
 | `boundary_sets` | list of `{name, kind, [footing]}`; `footing` is an index, present only for kind `footing` |
@@ -607,10 +672,30 @@ A `mesh_file` is an NPZ with `nodes (n, 3)` of `<f8` and `tets (E, 4)` of `<i8`,
 sections 3.5 and 3.6 add refinement and mid-edge nodes. The four committed files are unstructured tetrahedral meshes
 of the box `[-2, 2] x [-2, 2] x [-2, 0]`, with the square `[-0.5, 0.5]^2` conforming on `z = 0`, made with gmsh 4.15
 (Delaunay 3D, one thread, seed 1). `a`, `b` and `c` use uniform target sizes 1.0, 0.8 and 0.58. `d` grades from 0.08
-within 0.1 of the footing edge to 1.0 beyond 1.6. Their 243, 463, 949 and 2,840 tetrahedra are data. No test or
-implementation depends on gmsh.
+within 0.1 of the footing edge to 1.0 beyond 1.6. The twelve `upper3d_phi*` files hold the per-angle boxes of section 11,
+made by `Ladruno_files/testbed/limit_analysis/make_gate_meshes.py` with gmsh 4.15. All sixteen are data. No test or
+implementation depends on gmsh. Each NPZ holds only `nodes` and `tets`.
 
-### 15.3 Result: `<stem>.<query>.<bound>.result.json`, `.npz`
+| File | SHA-256 | Tets |
+|---|---|---|
+| `upper3d_a.mesh.npz` | `51e1c06981d00932b7ca585eda00c84215f66c24479a23ba64d8cba20ae4cbf3` | 243 |
+| `upper3d_b.mesh.npz` | `13985a26835df2df74da6e6d202e7790807282ed7b91652281a00b1dffc7bd75` | 463 |
+| `upper3d_c.mesh.npz` | `1e5955642fa0ab339137beef53b66d3ea1bb59dc4099b04085e59c3ec8c8e0af` | 949 |
+| `upper3d_d.mesh.npz` | `fb4cf3d23b4aa74f7abe4a0d6602eeefac21815a8a73b69a345a77d99bb7d76a` | 2840 |
+| `upper3d_phi10_a.mesh.npz` | `567cf6a3cb7200555b2232dbb9228d69d26c65ea2de4a112c87885779358dad6` | 276 |
+| `upper3d_phi10_b.mesh.npz` | `123bc0d36dbd9c8a01f4641359eeaab6feff40c22df1133a090bf18542fe6eb8` | 390 |
+| `upper3d_phi10_c.mesh.npz` | `868be0dec382f44b9c60edb94893a171e472521b24801c77f396ff7b71086cbf` | 976 |
+| `upper3d_phi10_d.mesh.npz` | `d526b7ee0951d424084028fcf3ec5c0cfd13c61fa5e9835cddc2bd0d44186345` | 2608 |
+| `upper3d_phi20_a.mesh.npz` | `f1519598133e4b959a14172b11dd679e1ca4bb61b1aef4913357743e5a59bb4b` | 291 |
+| `upper3d_phi20_b.mesh.npz` | `abd4a662b434123a061a630fbec8132f373facb0f4e6e1456fc13215d9c7db94` | 429 |
+| `upper3d_phi20_c.mesh.npz` | `ee941c6cb422999ef6be683479f5217b1bcea356f4fc4ed02b6887e3acd81297` | 951 |
+| `upper3d_phi20_d.mesh.npz` | `a8e1c3c1b28e8b1705dcd349555eb4384c283d88f42f9a85f439bc182fcf7f80` | 2567 |
+| `upper3d_phi30_a.mesh.npz` | `c0647dcbae45efb3f275d081f069a27d2036855fc9d9ac141f1bdba1e1bf90b8` | 323 |
+| `upper3d_phi30_b.mesh.npz` | `a841fdc95485e79b83cc150791ce5e1d263f938c969df7d2feee1748aed8c697` | 494 |
+| `upper3d_phi30_c.mesh.npz` | `908bdd8bdb6ef761f1d13bbd001b10459ef2ec44a2a8d1b16462c3abadbbb380` | 1053 |
+| `upper3d_phi30_d.mesh.npz` | `72005dc6f9c73c6d5a94ab30ef20a6bf5c41a6a5986d8af972fe0c05a3643812` | 2850 |
+
+### 15.3 Result: `<stem>.<query>.<formulation-id>.result.json`, `.npz`
 
 Keys: `format` = `ladruno-limit-result`, `format_version`, `arrays`, `problem_sha256`, `query_id`, `bound`,
 `formulation`, `producer` `{name, version}`, `solver` `{name, version, settings}`, `solver_status`,
@@ -625,9 +710,10 @@ Keys: `format` = `ladruno-limit-result`, `format_version`, `arrays`, `problem_sh
 `interior_value` is a top-level key, present exactly when `interior_sigma` is. With `solver_status` of
 `solved` or `almost_solved`, `value` and the arrays are required. Otherwise `value` and `objective` are
 `null` and no field arrays are stored: a time limit gives **no number**. A `lower` result carrying velocity
-arrays, or the reverse, is refused.
+arrays, or the reverse, is refused. `strain_rate` and `dissipation` are never trusted: a finite `dissipation` charge at a
+vertex outside the flow cone is not a repair (section 17.4).
 
-### 15.4 Program: `<stem>.<query>.<bound>.program.json`, `.npz`
+### 15.4 Program: `<stem>.<query>.<formulation-id>.program.json`, `.npz`
 
 Canonical form: minimise `c^T x` subject to `A x + s = b`, `s` in `K`. `K` is the zero cone, then the listed
 second-order cones in order. `value = objective_sign * c^T x`.
@@ -672,16 +758,17 @@ interior facets of section 3.4 and `B` in facet-node order. `objective_sign = +1
 6. restrained components, then `W1 = 1` or `V_fc = d_fc`;
 7. cones: `SOC6` per `(e, i)`, then `SOC3` per `(F, B)`. `cones = [{dim: 6, count: 4 E}, {dim: 3, count: 6 F}]`.
 
-### 15.5 Feasibility record: `<stem>.<query>.feasibility.json`
+### 15.5 Feasibility record: `<stem>.<query>.<formulation-id>.feasibility.json`
 
-Keys: `format` = `ladruno-limit-feasibility`, `format_version`, `problem_sha256`, `query_id`, `formulation`,
-`status`, `rho_feas`, `numerator`, `denominator`, `n_unknowns`, `n_rows`, `rank`, `nullity`, `footing_modes`,
-`method`, `witness_checked`, `producer`, `tolerances`. `rho_feas = numerator / denominator` and `status` follows
-section 11.1.
+Written by the checker. Keys: `format` = `ladruno-limit-feasibility`, `format_version`, `problem_sha256`, `query_id`,
+`formulation`, `status`, `rho_feas`, `numerator`, `denominator`, `n_unknowns`, `n_rows`, `rank`, `nullity`,
+`footing_modes`, `method`, `witness_result_sha256`, `witness_residual`, `checker` `{name, version}`, `tolerances`.
+`rho_feas = numerator / denominator`; `witness_residual` is `rho` at the witness, and both witness keys are `null`
+together. For `alpha > 0`, `rho_feas` equals `witness_residual`. `status` follows section 11.1.
 
 ### 15.6 Certificate and bracket
 
-`<stem>.<query>.<bound>.certificate.json`, written by the checker only:
+`<stem>.<query>.<formulation-id>.certificate.json`, written by the checker only:
 
 | Key | Content |
 |---|---|
@@ -691,15 +778,17 @@ section 11.1.
 | `reasons` | codes of section 17.6; empty exactly when certified |
 | `value_candidate`, `value_certified`, `floor` | numbers; the last two are `null` for an estimate |
 | `domain_claim`, `criteria`, `flow_rule`, `interface_laws` | section 14; sorted lists; the literal `associated` |
-| `checks` | metrics of section 17.7 |
+| `checks` | metrics of section 17.7; a `certified_bound` must show the numbers listed there, within their limits |
 | `checker` | `{name, version}` |
 | `tolerances` | the table of section 17.8 |
 
-`<stem>.<query>.bracket.json`: `format` = `ladruno-limit-bracket`, `format_version`, `problem_sha256`,
-`query_id`, `lower_result_sha256`, `upper_result_sha256`, `lower`, `upper`, `floor_lower`, `floor_upper`,
-`status`, `gap`, `domain_claim`, `lower_domain_claim`, `upper_domain_claim`.
+`<stem>.<query>.<lower-id>__<upper-id>.bracket.json`: `format` = `ladruno-limit-bracket`, `format_version`,
+`problem_sha256`, `query_id`, `lower_formulation`, `upper_formulation`, `lower_result_sha256`, `upper_result_sha256`,
+`lower`, `upper`, `floor_lower`, `floor_upper`, `status`, `gap`, `domain_claim`, `lower_domain_claim`,
+`upper_domain_claim`. The two formulation keys must be those of the two certificates.
 
-The checker name `schema-fixture` is reserved for hand-made fixtures. No gate may accept it.
+Two checker names are reserved and no gate accepts them: `schema-fixture`, for hand-made fixtures, and
+`procedure-demo`, for the demonstration of section 18.3.
 
 ### 15.7 Literal conventions object
 
@@ -750,6 +839,12 @@ admissible by convexity. *End.*
 The gate compares box bounds with the half-plane value only under this lemma. Rollers lose the second inequality.
 The Lower assertion uses (b) only, and the Upper assertion uses (a) only.
 
+**Premise (a) is unverified for `phi = 20` degrees.** For Tresca, Bishop (1953) extends the Prandtl field to the
+half-plane. For the frictional strips no source with a complete admissible stress field has been read; Shield (1955),
+J. Mech. Phys. Solids 4, 10-16, is a recalled candidate. `upper_ge_target` on both Drucker-Prager strips therefore
+rests on an unread source, and the case files say so. The Tresca strip cites Prandtl (1920) for the mechanism and
+Prandtl (1921), the ADR's [Pra21], for the value; neither text has been read.
+
 **Extents,** footing half-width `b = B/2`, `beta = pi/4 + phi/2`, measured from the **centreline**:
 `r0 = b / cos(beta)`, `r1 = r0 exp((pi/2) tan(phi))`. The Prandtl mechanism reaches `x = b + 2 r1 cos(pi/4 - phi/2)` and
 depth at most `r1`. For `phi = 0` this is `x = 1.5 B` and depth `B / sqrt2`, the frozen minimum. For `phi = 20 deg`,
@@ -789,6 +884,10 @@ sqrt3 k - gamma H   <=   lambda*   <=   sqrt3 k - gamma H / 2
 - Lower field: `sigma_zz = -lambda - gamma (H - z)` alone. It reaches yield only at the base.
 - Upper field: uniform compression, `v = (x/(2H), y/(2H), -z/H)`.
 
+The case asserts all four sides: `L >= sqrt3 k - gamma H` and `U <= sqrt3 k - gamma H/2` from the explicit fields, and
+`L <= sqrt3 k - gamma H/2` and `U >= sqrt3 k - gamma H` from the sandwich. The third kills a Lower zero-gravity mutant,
+whose value `sqrt3 k = 1.732` passes the first.
+
 **`sqrt3 k - gamma H` is not the collapse load of a finite column.** The material above the base has spare strength, so
 self-equilibrated lateral stress can confine the base: horizontal equilibrium needs only `int sigma_xx dz = 0` on each
 vertical section. A rigid block above a thin plastic layer is not available either, because the layer's lateral flow
@@ -814,79 +913,129 @@ tolerances. It always runs **affine projection, then inequality repair, then a f
 
 ### 17.1 Terms
 
-`A x = g` is the affine system of the bound, with the rows of sections 17.3 and 17.4. `A_hat` is `A` with each row divided
-by its largest absolute entry.
+`A x = g` is the affine system of the bound, with the rows of sections 17.3 and 17.4.
 
-- **Backward error.** `r = A x - g` and `omega = max_i |r_i| / (|A| |x| + |g|)_i`, evaluated in double precision.
-  A row with zero denominator must have `r_i = 0`. By Oettli and Prager, `x` exactly satisfies a system whose entries of
-  `A` and `g` differ relatively by at most `omega`.
+- **Scales.** Each unknown `j` has a scale `d_j >= |x_j|`. Lower: `S_ref` (section 17.7) for every stress component,
+  and `|value|` for `lambda` (1 if the value is zero). Upper: `v_ref`, the largest absolute nodal or element-node
+  velocity and footing translation, for every velocity and translation, and `max(v_ref / ell, max |w|)` for footing
+  rotations. Scaled unknowns `x_j / d_j` make every step below independent of units.
+- **Literal zeros.** A homogeneous row (`g_i = 0`) with one non-zero entry fixes its unknown to zero. Mark that unknown,
+  drop it from the other rows, and repeat until no homogeneous row with one remaining entry is left. The marked unknowns
+  are set to the literal `0.0` before projection and stay zero, so those rows hold exactly. Fixed nodes are the common
+  case.
+- **Reduced system.** The remaining rows and unknowns. `A_hat` is its matrix times `diag(d)`, with each row divided by
+  its largest absolute entry.
+- **Backward error.** `r = A x - g` and
+
+  ```text
+  omega = max_i |r_i| / ( sum_j |a_ij| d_j + |g_i| )
+  ```
+
+  over all rows, evaluated in double precision. A row with zero denominator must have `r_i = 0`. So each row holds up to
+  `omega` times its own natural size: `x` solves exactly a system whose right side `g_i` moves by at most
+  `omega (sum_j |a_ij| d_j + |g_i|)`. A componentwise form, with `|x_j|` in place of `d_j`, is **not** used: a homogeneous
+  row whose entries are all rounding-small has residual equal to its denominator, and no solver field could pass.
 - **Conditioning.** `kappa_eq = sigma_max(A_hat) / sigma_min+(A_hat)`, the smallest singular value above
-  `TOL_RANK sigma_max`, known within a factor 2. Rows may be dependent.
-- **Move.** `projection_move = |x_P - x|_inf / max(|x|_inf, S_ref)`, with `S_ref` replaced by the largest velocity for
-  Upper fields.
+  `TOL_RANK sigma_max`. The value used must be an upper bound on the true ratio or an estimate within a factor 2.
+  Method: a dense singular value decomposition where it fits; otherwise shift-invert Lanczos on `A_hat A_hat^T` for the
+  smallest non-zero eigenvalue, with the Ritz residual reported. The certificate states which method gave the number;
+  an iterative value is an estimate of conditioning. 237c reports `kappa_eq` on every gate mesh before any gate is read.
+- **Move.** `projection_move = max_j |x_P,j - x_j| / d_j`.
 
 ### 17.2 Equality acceptance
 
 ```text
-tau_eq = TOL_EQ_ROUNDING_FACTOR * u * max(1, kappa_eq),     u = 2^-53
+tau_eq = TOL_EQ_ROUNDING_FACTOR * u,     u = 2^-53            (7.1e-15)
 
-accept only if   omega <= tau_eq   and   kappa_eq * omega <= TOL_FLOOR_MAX
+accept only if   omega <= tau_eq,   kappa_eq <= TOL_KAPPA_CAP   and   kappa_eq * omega <= TOL_FLOOR_MAX
 ```
 
-The threshold is a rounding level scaled by the conditioning of this system. It is not a solver tolerance and no solver
-setting enters it. If `kappa_eq * tau_eq > TOL_FLOOR_MAX`, the system cannot support a claim at this precision and the
-result is an estimate with `equality_ill_conditioned`.
+The threshold is a rounding level. Evaluating a row of at most about 60 entries in double precision is accurate to a
+few dozen `u` of its natural size whatever the conditioning, so `tau_eq` carries **no** `kappa` factor. Conditioning
+enters the floor only (section 17.5): `kappa_eq` measures how far a rounding-level residual can move the value. The cap
+is a number: `TOL_KAPPA_CAP = 1e8`, and with `omega <= tau_eq` it implies `kappa_eq * omega <= 7.1e-7`. A system above
+the cap gives an estimate with `equality_ill_conditioned`; one with `omega > tau_eq` gives
+`equality_residual_above_floor`. No solver setting enters either test. The demonstration of section 18.3 reached
+`omega` between 3e-17 and 7e-17 on solver fields.
 
 ### 17.3 Lower procedure
 
-1. Check hashes, query, formulation, straightness and volumes. Recompute the value from the candidate and compare it with
-   the result, within `TOL_VALUE_MATCH`.
+1. Check hashes, query, formulation, straightness and volumes. For ray forms the candidate `lambda` **is** `value`;
+   recompute `resultant` from `sigma` with section 6 and compare it with the stored array within
+   `TOL_VALUE_MATCH * S_ref * A_f` (moments with an extra `ell`). For `support`, recompute `value = d^T R` and compare
+   within `TOL_VALUE_MATCH * |value|`. A mismatch is `value_mismatch`.
 2. **Project.** `x = (lambda, sigma)`, or `sigma` for `support`. Rows: equilibrium, facet continuity, free and traction
-   boundaries, symmetry rows, and unrestrained footing resultants. Use the minimum-norm correction in `A_hat`, with
-   iterative refinement. Require `projection_move <= TOL_PROJECTION_MOVE`.
-3. Evaluate `g_ei = sqrt(J2) + alpha I1 - k` from **principal stresses**. If `max g / S_ref > TOL_CONE_ACCEPT`, stop.
+   boundaries, symmetry rows, and unrestrained footing resultants. Apply the literal zeros, then the minimum-norm
+   correction of the scaled unknowns in `A_hat`, with iterative refinement until `omega` stops decreasing (at most five
+   sweeps). Require `projection_move <= TOL_PROJECTION_MOVE`. An inconsistent system keeps its residual and fails at
+   step 6.
+3. Evaluate `g_ei = sqrt(J2) + alpha I1 - k` from **principal stresses**. If `max g / S_ref > TOL_CONE_ACCEPT`, stop with
+   `cone_violation_too_large`.
 4. **Repair inequalities**, if any `g_ei > -TOL_CONE_MARGIN S_ref`, with a strictly admissible field `(sigma_int, value_int)`
    satisfying the same equalities and `g_int <= -TOL_INTERIOR_MIN S_ref`:
    `mu = max (g + m) / (g - g_int)`, `m = TOL_CONE_MARGIN S_ref`, `sigma_new = (1 - mu) sigma + mu sigma_int`,
    `value_new = (1 - mu) value + mu value_int`. Require `mu <= TOL_REPAIR_MAX`.
 5. `sigma_int = 0`, `value_int = 0` is available only when `b0`, `t0` and `F0` are all zero and every `k > 0`. Otherwise it
-   must be supplied as `interior_sigma` and is itself projected and checked. If none exists, the result stays an estimate
-   with `no_interior_field`.
-6. **Recheck the final field from scratch:** `omega`, every traction and resultant row, and `g_ei <= 0` from principal
-   stresses.
+   must be supplied as `interior_sigma` and is itself projected by step 2 and checked. If none exists, the result stays
+   an estimate with `no_interior_field`; an invalid one gives `interior_field_invalid`.
+6. **Recheck the final field from scratch:** literal zeros, `omega`, `kappa_eq`, every traction and resultant row, and
+   `g_ei <= 0` from principal stresses.
 
 ### 17.4 Upper procedure
 
-1. As Lower step 1, with the value recomputed from the candidate velocity.
-2. **Project.** `x = (v, V)`. Rows: fixed nodes, roller nodes, rigid footprint, restrained components, `V = d` for `support`,
-   `theta = 0` at every `alpha = 0` element vertex, and `n . c_B = 0` on every coefficient where `tau = 0`. Work normalisation
-   is **not** a row. Require `projection_move <= TOL_PROJECTION_MOVE`.
-3. Compute `d_ei` and `c_B` with the checker's own operators. `rho_flow = max c_ei / max |D_ei|_F` and
-   `rho_jump_cone = max c_FB / max |c_B|`, over the remaining inequality conditions. If either exceeds `TOL_FLOW_ACCEPT`,
-   stop with `flow_violation_too_large`.
+1. As Lower step 1. The value is recomputed from the candidate with the formulas of sections 4.3 and 12.2 **without
+   testing the domain**: `sqrt2 k |e|` or `k theta / (3 alpha)` per vertex, `k s` or `k o / (3 alpha)` per Bernstein
+   coefficient. The domain is step 3's business. Stored `strain_rate` and `dissipation` arrays are ignored.
+2. **Project.** `x = (v, V)`. Rows: fixed nodes, roller nodes, rigid footprint, restrained components, `V = d` for
+   `support`, `theta = 0` at every `alpha = 0` element vertex, and `n . c_B = 0` on every coefficient where `tau = 0`.
+   Work normalisation is **not** a row (section 18.2, R9). Literal zeros and the scaled minimum-norm correction as in
+   Lower step 2. Require `projection_move <= TOL_PROJECTION_MOVE`.
+3. Compute `d_ei` and `c_B` with the checker's own operators, and the **signed** conditions
+
+   ```text
+   c~_ei = 3 sqrt2 alpha |e_ei| - theta_ei          each vertex with alpha > 0
+   c~_FB = tau |c_t| - n . c_B                      each coefficient with tau > 0
+   ```
+
+   which are convex and positively homogeneous; admissible means `c~ <= 0`. With `D_scale` the largest `|D_ei|_F` or
+   `|c_B|`, `rho_flow = max(0, max c~_ei) / D_scale` and `rho_jump_cone = max(0, max c~_FB) / D_scale`. If either exceeds
+   `TOL_FLOW_ACCEPT`, stop with `flow_violation_too_large`.
 4. **Repair inequalities** only by an admissible construction. `pi` and `pi_J` are `+infinity` outside their domains, so a
-   finite dissipation charge is not a repair.
-   - von Mises: after projection no inequality remains. **No repair is needed.**
-   - Drucker-Prager: blend with a supplied field `(v_int, V_int)` satisfying the same equalities, the same `V = d` for
-     `support`, and `c < 0` strictly: `v_new = (1 - mu) v + mu v_int`, `mu = max c / (c - c_int)`, `mu <= TOL_REPAIR_MAX`.
-     `c_ei` and `c_FB` are convex and positively homogeneous, so the blend is admissible.
-   - If no construction exists, the result stays an estimate with `no_admissible_correction`.
-5. Require `W1 >= TOL_WORK_MIN * W_scale` for ray forms, with `W_scale` the sum of absolute work terms.
+   finite dissipation charge is not a repair. Let `m = TOL_CONE_MARGIN * D_scale` and `P` the conditions with `c~ > m`.
+   - If `P` is empty, nothing is repaired. This is always the case for von Mises: after projection no inequality remains.
+   - Otherwise blend with a supplied field `(v_int, V_int)` (`interior_element_velocity` or `interior_velocity`, with
+     `interior_footing_velocity`), projected by step 2 with its own scales. It must satisfy `c~_int <= m_int` at every
+     condition and `c~_int <= -TOL_INTERIOR_MIN * D_scale_int` at every condition of `P`, else
+     `interior_field_invalid`. Then `mu = max over P of c~ / (c~ - c~_int)`, `x_new = (1 - mu) x + mu x_int`,
+     `mu <= TOL_REPAIR_MAX`. By convexity each condition of `P` ends at or below 0 and every other one at or below its
+     margin.
+   - Conditions that the rows force to zero, such as a vertex of an element with two fixed facets or a coefficient
+     between two rigidly moving facets, have `c~ = 0` to rounding, are never in `P`, and need no clearance.
+   - A producer can obtain an interior field by maximising one bounded slack per condition, then re-raising the slacks
+     still at zero while holding the others, until none moves: the result lies in the relative interior.
+   - If no interior field is supplied, the result stays an estimate with `no_admissible_correction`.
+5. Require `W1 >= TOL_WORK_MIN * W_scale` and `W1 > 0` for ray forms, with `W_scale` the sum of absolute work terms;
+   otherwise `work_nonpositive`.
 6. `D = sum (V_e/4) pi(d_ei) + sum (A_F/6) pi_J(c_B)`. Ray forms: `U = (D - W0) / W1`, so no exact normalisation is needed.
    `support`: `U = D - W0`.
-7. **Recheck the final field from scratch:** `omega`, all conditions of step 2, `c <= 0` at `alpha > 0` conditions, and `U`.
+7. **Recheck the final field from scratch:** literal zeros, `omega`, `kappa_eq`, all conditions of step 2,
+   `c~ <= TOL_CONE_MARGIN * D_scale` at every `alpha > 0` condition, and `U`.
 
 ### 17.5 What "certified" means
 
 A **certified bound** means all of the following held for the final field `x_c`, as evaluated in double precision by the
 independent checker:
 
-1. `x_c` satisfies every affine condition exactly for a problem whose operator and load entries differ relatively from the
-   stated ones by at most `omega <= tau_eq`;
-2. every inequality passes on the final field, with the margins above: no flow or jump condition is merely charged for;
+1. every affine row holds with residual at most `omega (sum_j |a_ij| d_j + |g_i|)`, `omega <= tau_eq`, and the rows of
+   literal zeros hold exactly;
+2. every inequality passes on the final field: Lower `g <= 0`; Upper `c~ <= TOL_CONE_MARGIN * D_scale`. The margin is a
+   rounding allowance for evaluating the cone, a few thousand `u` of the field's size, and is unrelated to the floor.
+   No flow or jump condition is merely charged for;
 3. the value is the theorem's value for `x_c`, recomputed by the checker;
-4. the reported `floor = max(FLOOR_MIN_REL, kappa_eq * omega) * |value_certified|` estimates, to first order, the effect of
-   that perturbation and of rounding on the value.
+4. the reported `floor = max(FLOOR_MIN_REL, kappa_eq * omega) * |value_certified|` estimates, to first order, how far
+   moving `x_c` onto the exact affine set could move the value. The estimate omits the norm-equivalence factor between the
+   row-wise `omega` and the 2-norm in which `kappa_eq` acts; a rigorous version multiplies it by at most
+   `sqrt(n_rows) * max_i nnz_i`.
 
 It is **not** an interval-arithmetic proof. "Rigorous" means rigorous for the stated idealisation, up to this floor.
 
@@ -897,10 +1046,17 @@ Reason codes: `no_candidate`, `hash_mismatch`, `query_mismatch`, `formulation_no
 `equality_ill_conditioned`, `cone_violation_too_large`, `no_interior_field`, `interior_field_invalid`, `repair_too_large`,
 `flow_violation_too_large`, `no_admissible_correction`, `work_nonpositive`, `value_mismatch`, `unsupported_domain_claim`.
 
-`tests/data/limit/negative_fixtures.json` lists one fixture per false-green item of the harness. `stage` is `schema` (the
-format validators refuse it), `checker` (the full procedure must end as an estimate with one of the `expect` codes) or
-`final_check`. A `final_check` fixture goes straight to the recheck, **without projection**, and must be refused with
-`equality_residual_above_floor`. It sits at three times `tau_eq`, using the recorded `kappa_reference`.
+`tests/data/limit/negative_fixtures.json` lists the fixtures for every false-green item of the harness and every row of
+ADR 11.5 (the test maps each ADR row to its fixtures). `stage` is `schema` (the format validators refuse it), `checker` (the
+full procedure must end as an estimate with the **one** `expect` code) or `final_check`. Each checker fixture is built so
+that every earlier step passes: the stored value or resultant is that of the mutated field unless the defect is the value
+itself, and the contract test asserts that the named defect is present. A `final_check` fixture goes straight to the
+recheck, **without projection**, and must be refused with `equality_residual_above_floor`: one equilibrium row sits at
+three times `tau_eq` in the `omega` of section 17.1, with `S_ref = 1`.
+
+The jump fixture uses the ADR 10.2 pattern on a strictly dilating field with no equality rows: one side of an interior
+plane opens by `delta n` at element vertices only, so every nodal jump is admissible and the edge Bernstein coefficients are
+`-delta n`. A checker that tests jumps only at facet nodes passes it.
 
 ### 17.7 Scaled metrics
 
@@ -913,6 +1069,13 @@ components of `sigma` for Lower and omitting that term for Upper. For `support`,
 `S_ref A_f ell`). Final-field values: `projection_move`, `omega_eq`, `kappa_eq`, `tau_eq`, `rho_cone`, `repair_mu`,
 `straightness_max`, `rho_flow`, `rho_jump_cone`, `work_reference`.
 
+A `certified_bound` must show, as finite numbers within their limits: `omega_eq <= tau_eq`; `tau_eq` equal to section
+17.2's value; `1 <= kappa_eq <= TOL_KAPPA_CAP` with `kappa_eq * omega_eq <= TOL_FLOOR_MAX`;
+`projection_move <= TOL_PROJECTION_MOVE`; `repair_mu <= TOL_REPAIR_MAX`; `straightness_max <= TOL_GEOM_STRAIGHT`. Lower:
+`rho_cone = max g / S_ref <= 0`. Upper: `rho_flow <= TOL_CONE_MARGIN`; for the jump formulation
+`rho_jump_cone <= TOL_CONE_MARGIN`; for ray forms `work_reference = W1 > 0`. And
+`floor == max(FLOOR_MIN_REL, kappa_eq * omega_eq) * |value_certified|`. `certified_check_failures` is the executable form.
+
 ### 17.8 Named tolerances
 
 Values are provisional until 237c and 237d calibrate them on the exact cases. A value changes only by amendment, with
@@ -924,12 +1087,13 @@ evidence, and **never to rescue a run**.
 | `TOL_GEOM_VOLUME` | 1e-10 | `V_e >= tol h_e^3`. A regular tetrahedron has 0.118; below this, gradients amplify rounding by 1e10 |
 | `TOL_GEOM_PLANE` | 1e-9 | Normal deviation and offset, relative to `L_ref` |
 | `TOL_RANK` | 1e-10 | Separates numerical zero singular values of row-scaled operators from the smallest real ones |
-| `TOL_EQ_ROUNDING_FACTOR` | 64 | Multiple of `u` in `tau_eq`. A row has at most about 60 entries, so its evaluation error is about that many `u` |
+| `TOL_EQ_ROUNDING_FACTOR` | 64 | Multiple of `u` in `tau_eq`. A row has at most about 60 entries, so its evaluation error is about that many `u` of its natural size |
 | `TOL_FLOOR_MAX` | 1e-6 | Largest first-order value effect `kappa_eq * omega` a certificate may carry |
+| `TOL_KAPPA_CAP` | 1e8 | Largest `kappa_eq` certified. With `omega <= tau_eq` the floor stays below 7.1e-7. Measured 45 to 190 on the demonstration meshes |
 | `TOL_PROJECTION_MOVE` | 1e-6 | A certificate speaks about this candidate. A larger move means a different field |
 | `TOL_VALUE_MATCH` | 1e-6 | The result's value must be the value of its own field. Catches normalisation and quadrature faults |
 | `TOL_CONE_ACCEPT` | 1e-6 | Largest scaled yield violation worth repairing |
-| `TOL_CONE_MARGIN` | 1e-12 | Clearance over eigenvalue rounding, a few thousand `u` of `S_ref` |
+| `TOL_CONE_MARGIN` | 1e-12 | Clearance over eigenvalue rounding, a few thousand `u` of `S_ref`, or of `D_scale` for Upper conditions. Unrelated to the floor |
 | `TOL_INTERIOR_MIN` | 1e-6 | A strictly admissible field must clear yield by this, so `mu` stays small |
 | `TOL_REPAIR_MAX` | 1e-3 | A repair may not move the value by more than about 0.1% |
 | `TOL_FLOW_ACCEPT` | 1e-6 | Flow-rule and jump-cone analogue of `TOL_CONE_ACCEPT`, for inequality conditions only |
@@ -940,10 +1104,10 @@ evidence, and **never to rescue a run**.
 | `FLOOR_MIN_REL` | 1e-12 | Smallest floating-point floor ever reported |
 | `TOL_CASE_ONE_SIDED` | 1e-6 | Allowance in one-sided case assertions, for floors only |
 | `TOL_CASE_EXACT_GAP` | 1e-6 | Certified gap allowed where both exact fields lie in the discrete spaces |
-| `MAX_GAP_STRIP` | 0.05 | Requirement: resolves `(2 + pi) cu` to about 2.5% either side on the listed finest mesh |
-| `MAX_GAP_PRANDTL` | 0.10 | Requirement for the frictional strips, whose fans are wider and less resolved |
-| `MAX_GAP_3D_VM` | 0.30 | Requirement for true-3D von Mises on the 22,720-tet mesh; useful to judge a 3D result |
-| `MAX_GAP_3D_DP` | 0.50 | Requirement for true-3D Drucker-Prager on the 22,720-tet mesh |
+| `MAX_GAP_STRIP` | 0.05 | Requirement: resolves `(2 + pi) cu` to about 2.5% either side on the listed finest mesh. Owner accepted (O1) |
+| `MAX_GAP_PRANDTL` | 0.10 | Requirement for the frictional strips, whose fans are wider and less resolved. Owner accepted (O1) |
+| `MAX_GAP_3D_VM` | 0.30 | Requirement for true-3D von Mises on mesh 5. A bracket this wide places the collapse load within 15% of its midpoint, the resolution at which a 3D bracket can still check a finite-element capacity. Owner accepted (O1) |
+| `MAX_GAP_3D_DP` | 0.50 | Requirement for true-3D Drucker-Prager on mesh 5 of each angle: within 25% of the midpoint, the coarsest resolution at which a frictional 3D bracket still says whether a capacity is plausible. Owner accepted (O1); a 30-degree miss follows O2 |
 
 ### 17.9 Status terms
 
@@ -960,11 +1124,19 @@ evidence, and **never to rescue a run**.
 bracket. Otherwise write `estimate: L=..., U=...`. Report `domain_claim`, criterion, `flow_rule` and interface law with
 every result.
 
+**Case lines.** `evaluate_case(case, certificates, brackets, feasibility)` in `tests/test_limit_contract.py` is the
+executable meaning of `assert`, `gate` and `record`. Records are matched to meshes through `problem_hashes.json`, so a
+record of another case or mesh counts as missing. Only gate-admissible records count; `schema-fixture` and
+`procedure-demo` never do. Every `formulation` line binds: a Lower item holds for each Lower formulation, an Upper item for
+each Upper formulation, a pair item for each pair, and `control` lines bind nothing. Assertions hold on every listed mesh.
+For `gap_le`, a bracket with status `order_within_floor` counts as gap 0, and `contradiction` fails the case and sets
+`stop_program`. Floors are not added to one-sided assertions: `TOL_CASE_ONE_SIDED` is the allowance for them.
+
 ## 18. Decision record
 
 ### 18.1 Accepted owner amendments
 
-The owner accepted these for ADR 237 on 2026-11-18.
+The owner accepted A1 to A4 for ADR 237 on 2026-11-18, and decided O1 and O2 on 2026-11-19.
 
 | Id | Amendment | In this contract |
 |---|---|---|
@@ -972,41 +1144,122 @@ The owner accepted these for ADR 237 on 2026-11-18.
 | A2 | Whole-facet jump checks. P2 jumps are quadratic | Section 12 |
 | A3 | `domain_claim` per bound. A bracket claims only what both bounds support | Section 14 |
 | A4 | Certificate repair only by an admissible construction | Sections 17.3, 17.4 |
+| O1 | Keep the disclosed gap limits and gate meshes: `MAX_GAP_STRIP` 0.05, `MAX_GAP_PRANDTL` 0.10, `MAX_GAP_3D_VM` 0.30, `MAX_GAP_3D_DP` 0.50. They close from this review-fix revision, with the chronology of section 18.3. A miss is a real P0 failure | Sections 11.2, 16.4, 17.8 |
+| O2 | After the box correction, a 3D Drucker-Prager miss at 30 degrees withholds that 3D claim and is recorded by angle and wall type. Exact-formulation failures still stop P0 | Section 11.3 |
 
 ### 18.2 Orchestrator P0 rulings
 
-These are orchestrator rulings for P0, recorded on 2026-11-18. **They are not owner decisions.**
+These are orchestrator rulings for P0. R1 to R8 were recorded on 2026-11-18, R9 to R11 on 2026-11-19. **They are not
+owner decisions.**
 
 | Id | Ruling | In this contract |
 |---|---|---|
 | R1 | Versioned formulation ids, with cases that do not change meaning | Section 8 |
 | R2 | `upper.p2d-jump-bernstein.v0` is the P0 Upper formulation; `upper.p2c-vertex.v0` stays a control | Sections 8, 12 |
-| R3 | The frozen true-3D set: `phi = 0, 10, 20, 30`, fixed and roller walls, non-structured meshes at three or more sizes, rank, residual and certified quality | Section 11; `upper_gate_3d` cases |
+| R3 | The true-3D set: `phi = 0, 10, 20, 30`, fixed and roller walls, non-structured meshes at three or more sizes, rank, residual and certified quality | Section 11; `upper_gate_3d` cases |
 | R4 | Restrained footing components | Sections 6, 7 |
 | R5 | Strip gate: maximum gap, fixed `x` and `z` walls, extents of at least `1.5 B` and depth `B / sqrt2`, and the box lemma. Here `z` is the depth axis and `1.5 B` is measured from the centreline | Section 16.4 |
 | R6 | Zero extension may also serve a Lower bound when weightless with free walls; zero is an interior Lower field only without fixed loads | Sections 14, 17.3 |
-| R7 | Certificate order: affine projection, inequality repair, full recheck; equality acceptance is rounding-level and scaled by conditioning | Section 17 |
+| R7 | Certificate order: affine projection, inequality repair, full recheck; equality acceptance at rounding level | Section 17 |
 | R8 | Gravity set: exact shear layer as the zero-gravity killer, exact weighted Drucker-Prager column, von Mises column as a two-sided sandwich only | Section 16.5 |
+| R9 | The Upper work normalisation is not a projection row, unlike ADR 11.2 step 3: the value is `(D - W0) / W1`, so no exact normalisation is needed, and a row would only move the field | Section 17.4 |
+| R10 | Equality acceptance is row-normwise with literal zeros, `tau_eq` carries no `kappa` factor, and `TOL_KAPPA_CAP` replaces the ADR's `TOL_EQ_CAP` | Sections 17.1, 17.2 |
+| R11 | Per-angle Drucker-Prager boxes; a certified Upper at every size with the gap trend recorded; kinematic verdicts written by the checker from a witness | Section 11 |
 
-### 18.3 Evidence notes
+### 18.3 Evidence notes and chronology
 
-All values here are **estimates**, from uncommitted checks of 2026-11-18 with Clarabel 0.11.1, unless marked as a probe.
-None is a certified bound.
+All values here are **estimates**, from runs of 2026-11-18 and 2026-11-19 with Clarabel 0.11.1, unless marked as a probe.
+None is a certified bound: the demonstration below is not the independent checker.
+
+**Chronology of the limits and gate meshes (ADR 18.2 item 4).** The ADR asks for each limit before the first solve of its
+case. That did not happen, and the record says so:
+
+| When | Event |
+|---|---|
+| `7909baa4e`, 2026-11-18 | First contract. No gap limit and no `gate` line. The strip meshes had depth along `y` |
+| 2026-11-18, uncommitted | Estimates on the strips and the 3D gate, listed below with mesh indices of the present cases |
+| `32c5a1842`, 2026-11-18 | The four `MAX_GAP_*` limits and every `gate` line first appear, **in the same commit** that records those estimates. The Drucker-Prager strips gained `mesh 64 1 32` as gate mesh 3, while their estimates are on mesh 2 |
+| This revision, 2026-11-19 | Review-fix round. The Drucker-Prager 3D gate meshes are replaced by per-angle boxes (section 11) because the old box did not hold the mechanism scale. No solve has been run on any of the new meshes. The owner accepted the limits and gate meshes as disclosed (O1); they are **closed** from this revision |
+
+**Estimates and where they sit.**
 
 - `Ladruno_files/testbed/limit_analysis/p2_isochory_probe.py` is a tracked **linear-algebra probe, not a bound**. Its output
-  file is the record for the control's locking and for the jump space's mobility.
-- That probe finds the control locked with **fixed** walls (`rho_feas` 1.0e-1, 4.1e-2, 2.1e-2 on 243, 463, 949 tets) but
-  mobile with **roller** walls (`rho_feas` near 1e-11). Roller cases therefore do not discriminate locking. The jump
-  space is mobile for both wall types (`rho_feas` near 1e-11).
-- Half-model strip without restrained components: `estimate: L=1.18, U=2.15` on 192 tets, against 5.14.
-- Tresca strip, 3,072 tets, jump formulation: `estimate: L=5.005, U=5.186`.
-- Prandtl strips, `phi = 20 deg`, 3,072 tets, jump formulation: cohesion `estimate: L=13.39, U=15.40` against 14.83;
-  surcharge `estimate: L=5.873, U=6.604` against 6.399.
-- True 3D, `phi = 0`, fixed walls, jump formulation: `estimate: L=3.348, U=9.244` on 1,944 uniform-refined tets;
-  `estimate: L=4.548, U=6.419` on the 2,840-tet graded mesh. No value on the 22,720-tet gate mesh exists yet.
-- True 3D, `phi = 30 deg`, fixed walls, 1,944 tets: `estimate: L=9.65, U=168.9`. Whether `MAX_GAP_3D_DP` is reachable is
-  **not established**.
+  file is the record for the control's locking and for the jump space's mobility: the control locked with **fixed** walls
+  (`rho_feas` 1.0e-1, 4.1e-2, 2.1e-2 on 243, 463, 949 tets) but mobile with **roller** walls (`rho_feas` near 1e-11). Roller
+  cases therefore do not discriminate locking. The jump space is mobile for both wall types (`rho_feas` near 1e-11).
+- Half-model strip without restrained components, mesh 0 (192 tets): `estimate: L=1.18, U=2.15`, against 5.14.
+- Tresca strip, jump formulation, **mesh 3** (3,072 tets, the gate mesh): `estimate: L=5.005, U=5.186`, gap 0.036 against
+  `MAX_GAP_STRIP` 0.05.
+- Prandtl strips, `phi = 20 deg`, jump formulation, **mesh 2** (3,072 tets; the gate is mesh 3, 12,288 tets, unrun): cohesion
+  `estimate: L=13.39, U=15.40` (gap 0.14) against 14.83; surcharge `estimate: L=5.873, U=6.604` (gap 0.12) against 6.399.
+- True 3D, `phi = 0`, fixed walls, jump formulation: **mesh 4** (1,944 tets) `estimate: L=3.348, U=9.244`; **mesh 3** (2,840
+  tets) `estimate: L=4.548, U=6.419` (gap 0.34). Mesh 5 (22,720 tets) is unrun.
+- True 3D, `phi = 30 deg`, fixed walls, 1,944 tets of the **superseded** `[-2, 2]^2 x [-2, 0]` box: `estimate: L=9.65,
+  U=168.9`. It says nothing about the new box.
+
+**Certificate demonstration, 2026-11-19.** `Ladruno_files/testbed/limit_analysis/certificate_demo.py` assembles the programs of
+section 15.4, solves them with Clarabel 0.11.1 at default settings, and runs sections 17.3 and 17.4 on the solver fields;
+`certificate_demo_record.json` holds the documents. Producer and checker share one author, so the checker name is
+`procedure-demo`, which no gate accepts, and the values are estimates for the program. It shows that the acceptance rule is
+reachable on solver fields:
+
+| Case, mesh | Bound | Solver status | Procedure | Value | `kappa_eq` | `omega_eq` | `repair_mu` |
+|---|---|---|---|---|---|---|---|
+| `tresca_strip_vm_thin_slab`, mesh 0 (192) | Lower | solved | passes | 4.684449 | 52.5 | 6.6e-17 | 0 |
+| same | Upper, jump | solved | passes | 5.328414 | 142 | 6.7e-17 | 0 |
+| `upper3d_fixed_phi00`, mesh 0 (243) | Lower | almost_solved | passes | 2.620562 | 190 | 4.6e-17 | 0 |
+| same | Upper, jump | solved | passes | 12.310834 | 54.9 | 3.1e-17 | 0 |
+| `dp_prandtl_cohesion_thin_slab`, unlisted Kuhn `8 1 4` (192) | Lower | almost_solved | passes | 10.078265 | 45.1 | 5.6e-17 | 0 |
+| same | Upper, jump | solved | passes after repair | 16.751907 | 3.61 | 2.8e-17 | 1.0e-7 |
+
+As estimates: strip `estimate: L=4.684, U=5.328` against 5.142; 3D `phi = 0` `estimate: L=2.621, U=12.311`; Drucker-Prager strip
+`estimate: L=10.08, U=16.75` against 14.83. The Drucker-Prager repair used a relative-interior field (section 17.4 step 4);
+its worst clearance on the repaired conditions was -3.9e-4 of its size. The review's componentwise `omega` had stayed at 1
+on the same kind of fields.
 
 ## 19. Amendment log
 
-None yet.
+The file is not frozen, so the 2026-11-19 review-fix round is recorded here rather than as amendments.
+
+| Finding | Resolution |
+|---|---|
+| B1 | Row-normwise `omega` with scales; `tau_eq` without `kappa`; literal zeros; certification demonstrated on strip mesh 0 and `upper3d_a` (sections 17.1, 17.2, 18.3) |
+| B2 | Signed conditions, the set `P`, the interior-field requirement and `mu` stated; rounding margin `TOL_CONE_MARGIN` on the recheck; forced-zero conditions explained; repair demonstrated on a Drucker-Prager strip (17.4) |
+| B3 | `domain.ground`, `domain.symmetry_sets` and the coverage rule (14); the half-space fixture rebuilt with every side fixed and an admissible compact field; negative fixture `unlisted_side_face` |
+| M1 | File names carry case, mesh and formulation; brackets name both formulations and the validator checks them (15) |
+| M2 | Witness result hash in the feasibility record, written by the checker; nullity out of the verdict; `alpha > 0` from the witness alone and never `formulation_infeasible`; `gate_admissible` covers feasibility records (11.1, 15.5) |
+| M3 | A `certified_bound` must show its numbers within limits, with malformed-certificate tests (17.7) |
+| M4 | The six missing ADR fixtures added; the jump fixture rebuilt on a strictly dilating field; one expected code per fixture; coverage tested against the ADR rows (17.6) |
+| M5 | `TOL_KAPPA_CAP` = 1e8 stated as a number; method named; 237c reports `kappa_eq` before any gate (17.1, 17.2) |
+| M6 | `certified_upper` on meshes 0 to 5 and `record gap` per mesh in all eight 3D cases (11.2) |
+| M7 | `evaluate_case` with synthetic-record tests (17.9) |
+| M8 | Chronology in 18.3; owner decision O1 closes the limits and gate meshes |
+| M9 | Per-angle boxes and meshes, verdicts per angle and wall type, owner decision O2 (11) |
+| m1 | `lower_le_formula` and `upper_ge_formula` added and asserted on the column (16.5) |
+| m2 | Candidate `lambda` is `value`; `resultant` recomputed; scaled unknowns; fixture `wrong_lower_value` (17.3) |
+| m3 | Premise (a) at 20 degrees marked unverified in 16.4 and in both case files; Prandtl 1921 cited beside 1920 |
+| m4 | The bracket rule's first branch cannot fire in version 0; said in 14 |
+| m5 | Worked digest, `-0.0` canonicalised, non-finite refused after parsing, Kuhn arithmetic stated, `problem_hashes.json` (15.1) |
+| m6 | Tautology replaced by `k / root == c`; docstring corrected; the probe test renamed to say it reads a record |
+| m7 | R9 records the query normalisation; 17.5 states the norm-equivalence factor and the margin's role |
+| m8 | Mesh digests in 15.2; the public-file test opens every NPZ |
+
+**ADR 237 changes this contract now requires** (the ADR is not edited here):
+
+1. 11.3: replace the componentwise scaled residual with the row-normwise `omega` and scales of section 17.1, drop the `kappa`
+   factor from `tau_eq`, and replace `TOL_EQ_CAP` by `TOL_KAPPA_CAP` on `kappa_eq` (R10). Add literal zeros.
+2. 11.2 step 3: the Upper projection does not contain the query normalisation (R9).
+3. 11.2 step 4 and 10.4: state the signed Upper conditions, the repaired set `P`, the relative-interior requirement and
+   the rounding margin of section 17.4.
+4. 10.1 gate table: per-angle boxes sized by the plane-strain extent; a certified Upper at every size with the gap trend
+   recorded; verdicts per angle and wall type; the kinematic verdict from a checker-recomputed witness, with nullity
+   reported only and no infeasibility verdict for `alpha > 0`.
+5. 10.1 and 18.3: record O2. A 30-degree Drucker-Prager miss withholds that 3D claim instead of triggering K2; exact
+   formulation failures still stop P0.
+6. 18.2 item 4: record O1 and the chronology of section 18.3, since the limits were not set before the first solve.
+7. 12: the half-space coverage rule with `ground` and `symmetry_sets`; the bracket's half-space branch cannot fire in
+   version 0.
+8. 11.5: no table change; add that each row is discharged by a named fixture with one expected code.
+9. 16.1: the column assertions `L <= S - gamma H/2` and `U >= S - gamma H` are now in the case.
+10. 5 and 6 (file formats): the record names of section 15, the bracket's formulation keys, and the reserved checker name
+    `procedure-demo`.

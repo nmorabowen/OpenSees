@@ -1,0 +1,23 @@
+{
+ "arrays": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result.npz",
+ "bound": "lower",
+ "format": "ladruno-limit-result",
+ "format_version": 0,
+ "formulation": "lower.p1d-vertex.v0",
+ "objective": -1.0,
+ "problem_sha256": "e51dcffa9451e4fdbb720eeab30636c2738833086f697ce20f46abfcc272f913",
+ "producer": {
+  "name": "analytic-fixture",
+  "version": "0"
+ },
+ "query_id": "q",
+ "result_sha256": "6da1612f00b4aa061711453c7028970a9531a2d477607330d55ce207dc519dc0",
+ "solver": {
+  "name": "none",
+  "settings": {},
+  "version": "0"
+ },
+ "solver_status": "solved",
+ "value": 1.0,
+ "wall_time_s": null
+}

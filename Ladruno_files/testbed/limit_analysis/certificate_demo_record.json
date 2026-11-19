@@ -1,0 +1,672 @@
+{
+ "date": "2026-11-19",
+ "driver": "Ladruno_files/testbed/limit_analysis/certificate_demo.py",
+ "numpy": "2.3.5",
+ "runs": [
+  {
+   "case": "tresca_strip_vm_thin_slab",
+   "kuhn": null,
+   "lower": {
+    "certificate": {
+     "bound": "lower",
+     "checker": {
+      "name": "procedure-demo",
+      "version": "0"
+     },
+     "checks": {
+      "kappa_eq": 52.52827240356692,
+      "omega_eq": 6.575038853110296e-17,
+      "projection_move": 3.880926838993482e-14,
+      "repair_mu": 0.0,
+      "rho_bc": null,
+      "rho_cone": -1.0556691726597418e-11,
+      "rho_div": null,
+      "rho_flow": null,
+      "rho_jump": null,
+      "rho_jump_cone": null,
+      "rho_resultant": null,
+      "straightness_max": 0.0,
+      "tau_eq": 7.105427357601002e-15,
+      "work_reference": null
+     },
+     "classification": "certified_bound",
+     "criteria": [
+      "von_mises"
+     ],
+     "domain_claim": "box_stated",
+     "floor": 4.684449275884968e-12,
+     "flow_rule": "associated",
+     "format": "ladruno-limit-certificate",
+     "format_version": 0,
+     "formulation": "lower.p1d-vertex.v0",
+     "interface_laws": [
+      "bonded"
+     ],
+     "problem_sha256": "9b57c9711bfb7f9dca333e9d1cded21bb4efd07b6f522954ef615efb0c432399",
+     "query_id": "q",
+     "reasons": [],
+     "result_sha256": "b8890f7fc44bd02aa5a15c88807232ac9f94c578ff838860e65861c775d9bc26",
+     "tolerances": {
+      "FLOOR_MIN_REL": 1e-12,
+      "MAX_GAP_3D_DP": 0.5,
+      "MAX_GAP_3D_VM": 0.3,
+      "MAX_GAP_PRANDTL": 0.1,
+      "MAX_GAP_STRIP": 0.05,
+      "TOL_CASE_EXACT_GAP": 1e-06,
+      "TOL_CASE_ONE_SIDED": 1e-06,
+      "TOL_CONE_ACCEPT": 1e-06,
+      "TOL_CONE_MARGIN": 1e-12,
+      "TOL_EQ_ROUNDING_FACTOR": 64.0,
+      "TOL_FEAS_LOCKED": 1e-06,
+      "TOL_FEAS_OK": 1e-09,
+      "TOL_FLOOR_MAX": 1e-06,
+      "TOL_FLOW_ACCEPT": 1e-06,
+      "TOL_GEOM_PLANE": 1e-09,
+      "TOL_GEOM_STRAIGHT": 1e-09,
+      "TOL_GEOM_VOLUME": 1e-10,
+      "TOL_INTERIOR_MIN": 1e-06,
+      "TOL_KAPPA_CAP": 100000000.0,
+      "TOL_MONOTONE": 1e-06,
+      "TOL_PROJECTION_MOVE": 1e-06,
+      "TOL_RANK": 1e-10,
+      "TOL_REPAIR_MAX": 0.001,
+      "TOL_VALUE_MATCH": 1e-06,
+      "TOL_WORK_MIN": 1e-12
+     },
+     "value_candidate": 4.684449275884966,
+     "value_certified": 4.684449275884968
+    },
+    "diagnostics": {
+     "cols": 3445,
+     "literal_zero": 1164,
+     "rank": 2732,
+     "rho_before_repair": -1.0556691726597418e-11,
+     "rows": 2836
+    },
+    "result": {
+     "arrays": "tresca_strip_vm_thin_slab.m0.q.lower.p1d-vertex.v0.result.npz",
+     "bound": "lower",
+     "format": "ladruno-limit-result",
+     "format_version": 0,
+     "formulation": "lower.p1d-vertex.v0",
+     "objective": -4.684449275884966,
+     "problem_sha256": "9b57c9711bfb7f9dca333e9d1cded21bb4efd07b6f522954ef615efb0c432399",
+     "producer": {
+      "name": "certificate_demo",
+      "version": "0"
+     },
+     "query_id": "q",
+     "result_sha256": "b8890f7fc44bd02aa5a15c88807232ac9f94c578ff838860e65861c775d9bc26",
+     "solver": {
+      "name": "clarabel",
+      "settings": {
+       "defaults": true
+      },
+      "version": "0.11.1"
+     },
+     "solver_status": "solved",
+     "value": 4.684449275884966,
+     "wall_time_s": null
+    }
+   },
+   "mesh": 0,
+   "mesh_label": "listed",
+   "problem_sha256": "9b57c9711bfb7f9dca333e9d1cded21bb4efd07b6f522954ef615efb0c432399",
+   "tets": 192,
+   "upper": {
+    "certificate": {
+     "bound": "upper",
+     "checker": {
+      "name": "procedure-demo",
+      "version": "0"
+     },
+     "checks": {
+      "kappa_eq": 141.83873456329698,
+      "omega_eq": 6.733102905822197e-17,
+      "projection_move": 1.0436096421280752e-14,
+      "repair_mu": 0.0,
+      "rho_bc": null,
+      "rho_cone": null,
+      "rho_div": null,
+      "rho_flow": 0.0,
+      "rho_jump": null,
+      "rho_jump_cone": 0.0,
+      "rho_resultant": null,
+      "straightness_max": 0.0,
+      "tau_eq": 7.105427357601002e-15,
+      "work_reference": 1.0
+     },
+     "classification": "certified_bound",
+     "criteria": [
+      "von_mises"
+     ],
+     "domain_claim": "box_stated",
+     "floor": 5.328413849172236e-12,
+     "flow_rule": "associated",
+     "format": "ladruno-limit-certificate",
+     "format_version": 0,
+     "formulation": "upper.p2d-jump-bernstein.v0",
+     "interface_laws": [
+      "bonded"
+     ],
+     "problem_sha256": "9b57c9711bfb7f9dca333e9d1cded21bb4efd07b6f522954ef615efb0c432399",
+     "query_id": "q",
+     "reasons": [],
+     "result_sha256": "40f9589be5357fdf6583cad876ce4ba2a01f0900c1c31f57a20aafc60415b7eb",
+     "tolerances": {
+      "FLOOR_MIN_REL": 1e-12,
+      "MAX_GAP_3D_DP": 0.5,
+      "MAX_GAP_3D_VM": 0.3,
+      "MAX_GAP_PRANDTL": 0.1,
+      "MAX_GAP_STRIP": 0.05,
+      "TOL_CASE_EXACT_GAP": 1e-06,
+      "TOL_CASE_ONE_SIDED": 1e-06,
+      "TOL_CONE_ACCEPT": 1e-06,
+      "TOL_CONE_MARGIN": 1e-12,
+      "TOL_EQ_ROUNDING_FACTOR": 64.0,
+      "TOL_FEAS_LOCKED": 1e-06,
+      "TOL_FEAS_OK": 1e-09,
+      "TOL_FLOOR_MAX": 1e-06,
+      "TOL_FLOW_ACCEPT": 1e-06,
+      "TOL_GEOM_PLANE": 1e-09,
+      "TOL_GEOM_STRAIGHT": 1e-09,
+      "TOL_GEOM_VOLUME": 1e-10,
+      "TOL_INTERIOR_MIN": 1e-06,
+      "TOL_KAPPA_CAP": 100000000.0,
+      "TOL_MONOTONE": 1e-06,
+      "TOL_PROJECTION_MOVE": 1e-06,
+      "TOL_RANK": 1e-10,
+      "TOL_REPAIR_MAX": 0.001,
+      "TOL_VALUE_MATCH": 1e-06,
+      "TOL_WORK_MIN": 1e-12
+     },
+     "value_candidate": 5.328413849172236,
+     "value_certified": 5.328413849172236
+    },
+    "diagnostics": {
+     "cols": 4418,
+     "interior_margin": null,
+     "literal_zero": 1348,
+     "rank": 2422,
+     "repaired_conditions": 0,
+     "rho_before_repair": 0.0,
+     "rows": 2422,
+     "value_candidate_recomputed": 5.328413849172236
+    },
+    "interior_solver_status": null,
+    "result": {
+     "arrays": "tresca_strip_vm_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.npz",
+     "bound": "upper",
+     "format": "ladruno-limit-result",
+     "format_version": 0,
+     "formulation": "upper.p2d-jump-bernstein.v0",
+     "objective": 5.328413849172236,
+     "problem_sha256": "9b57c9711bfb7f9dca333e9d1cded21bb4efd07b6f522954ef615efb0c432399",
+     "producer": {
+      "name": "certificate_demo",
+      "version": "0"
+     },
+     "query_id": "q",
+     "result_sha256": "40f9589be5357fdf6583cad876ce4ba2a01f0900c1c31f57a20aafc60415b7eb",
+     "solver": {
+      "name": "clarabel",
+      "settings": {
+       "defaults": true
+      },
+      "version": "0.11.1"
+     },
+     "solver_status": "solved",
+     "value": 5.328413849172236,
+     "wall_time_s": null
+    }
+   }
+  },
+  {
+   "case": "upper3d_fixed_phi00",
+   "kuhn": null,
+   "lower": {
+    "certificate": {
+     "bound": "lower",
+     "checker": {
+      "name": "procedure-demo",
+      "version": "0"
+     },
+     "checks": {
+      "kappa_eq": 190.3057531706745,
+      "omega_eq": 4.6164635839642056e-17,
+      "projection_move": 5.421162083106352e-16,
+      "repair_mu": 0.0,
+      "rho_bc": null,
+      "rho_cone": -2.364636525237568e-08,
+      "rho_div": null,
+      "rho_flow": null,
+      "rho_jump": null,
+      "rho_jump_cone": null,
+      "rho_resultant": null,
+      "straightness_max": 0.0,
+      "tau_eq": 7.105427357601002e-15,
+      "work_reference": null
+     },
+     "classification": "certified_bound",
+     "criteria": [
+      "von_mises"
+     ],
+     "domain_claim": "box_stated",
+     "floor": 2.6205620542368424e-12,
+     "flow_rule": "associated",
+     "format": "ladruno-limit-certificate",
+     "format_version": 0,
+     "formulation": "lower.p1d-vertex.v0",
+     "interface_laws": [
+      "bonded"
+     ],
+     "problem_sha256": "38cc220caeae021575cd17162a19cf9bc1ee86cd8c2bf127c7c1be9745641309",
+     "query_id": "q",
+     "reasons": [],
+     "result_sha256": "af7e81fc3551c1c13fdff501d11df1b9817a505bbd43b709d5c4b30ebf31d825",
+     "tolerances": {
+      "FLOOR_MIN_REL": 1e-12,
+      "MAX_GAP_3D_DP": 0.5,
+      "MAX_GAP_3D_VM": 0.3,
+      "MAX_GAP_PRANDTL": 0.1,
+      "MAX_GAP_STRIP": 0.05,
+      "TOL_CASE_EXACT_GAP": 1e-06,
+      "TOL_CASE_ONE_SIDED": 1e-06,
+      "TOL_CONE_ACCEPT": 1e-06,
+      "TOL_CONE_MARGIN": 1e-12,
+      "TOL_EQ_ROUNDING_FACTOR": 64.0,
+      "TOL_FEAS_LOCKED": 1e-06,
+      "TOL_FEAS_OK": 1e-09,
+      "TOL_FLOOR_MAX": 1e-06,
+      "TOL_FLOW_ACCEPT": 1e-06,
+      "TOL_GEOM_PLANE": 1e-09,
+      "TOL_GEOM_STRAIGHT": 1e-09,
+      "TOL_GEOM_VOLUME": 1e-10,
+      "TOL_INTERIOR_MIN": 1e-06,
+      "TOL_KAPPA_CAP": 100000000.0,
+      "TOL_MONOTONE": 1e-06,
+      "TOL_PROJECTION_MOVE": 1e-06,
+      "TOL_RANK": 1e-10,
+      "TOL_REPAIR_MAX": 0.001,
+      "TOL_VALUE_MATCH": 1e-06,
+      "TOL_WORK_MIN": 1e-12
+     },
+     "value_candidate": 2.620562054236842,
+     "value_certified": 2.6205620542368426
+    },
+    "diagnostics": {
+     "cols": 5419,
+     "literal_zero": 414,
+     "rank": 4230,
+     "rho_before_repair": -2.364636525237568e-08,
+     "rows": 4230
+    },
+    "result": {
+     "arrays": "upper3d_fixed_phi00.m0.q.lower.p1d-vertex.v0.result.npz",
+     "bound": "lower",
+     "format": "ladruno-limit-result",
+     "format_version": 0,
+     "formulation": "lower.p1d-vertex.v0",
+     "objective": -2.620562054236842,
+     "problem_sha256": "38cc220caeae021575cd17162a19cf9bc1ee86cd8c2bf127c7c1be9745641309",
+     "producer": {
+      "name": "certificate_demo",
+      "version": "0"
+     },
+     "query_id": "q",
+     "result_sha256": "af7e81fc3551c1c13fdff501d11df1b9817a505bbd43b709d5c4b30ebf31d825",
+     "solver": {
+      "name": "clarabel",
+      "settings": {
+       "defaults": true
+      },
+      "version": "0.11.1"
+     },
+     "solver_status": "almost_solved",
+     "value": 2.620562054236842,
+     "wall_time_s": null
+    }
+   },
+   "mesh": 0,
+   "mesh_label": "listed",
+   "problem_sha256": "38cc220caeae021575cd17162a19cf9bc1ee86cd8c2bf127c7c1be9745641309",
+   "tets": 243,
+   "upper": {
+    "certificate": {
+     "bound": "upper",
+     "checker": {
+      "name": "procedure-demo",
+      "version": "0"
+     },
+     "checks": {
+      "kappa_eq": 54.85262248734702,
+      "omega_eq": 3.046221916179923e-17,
+      "projection_move": 4.717860407535139e-11,
+      "repair_mu": 0.0,
+      "rho_bc": null,
+      "rho_cone": null,
+      "rho_div": null,
+      "rho_flow": 0.0,
+      "rho_jump": null,
+      "rho_jump_cone": 0.0,
+      "rho_resultant": null,
+      "straightness_max": 0.0,
+      "tau_eq": 7.105427357601002e-15,
+      "work_reference": 1.0000000000001654
+     },
+     "classification": "certified_bound",
+     "criteria": [
+      "von_mises"
+     ],
+     "domain_claim": "box_stated",
+     "floor": 1.2310834286008204e-11,
+     "flow_rule": "associated",
+     "format": "ladruno-limit-certificate",
+     "format_version": 0,
+     "formulation": "upper.p2d-jump-bernstein.v0",
+     "interface_laws": [
+      "bonded"
+     ],
+     "problem_sha256": "38cc220caeae021575cd17162a19cf9bc1ee86cd8c2bf127c7c1be9745641309",
+     "query_id": "q",
+     "reasons": [],
+     "result_sha256": "dfc31c919214b22c3c857a27f881c25fb9d1f9861f4f074155460aead1b55bb2",
+     "tolerances": {
+      "FLOOR_MIN_REL": 1e-12,
+      "MAX_GAP_3D_DP": 0.5,
+      "MAX_GAP_3D_VM": 0.3,
+      "MAX_GAP_PRANDTL": 0.1,
+      "MAX_GAP_STRIP": 0.05,
+      "TOL_CASE_EXACT_GAP": 1e-06,
+      "TOL_CASE_ONE_SIDED": 1e-06,
+      "TOL_CONE_ACCEPT": 1e-06,
+      "TOL_CONE_MARGIN": 1e-12,
+      "TOL_EQ_ROUNDING_FACTOR": 64.0,
+      "TOL_FEAS_LOCKED": 1e-06,
+      "TOL_FEAS_OK": 1e-09,
+      "TOL_FLOOR_MAX": 1e-06,
+      "TOL_FLOW_ACCEPT": 1e-06,
+      "TOL_GEOM_PLANE": 1e-09,
+      "TOL_GEOM_STRAIGHT": 1e-09,
+      "TOL_GEOM_VOLUME": 1e-10,
+      "TOL_INTERIOR_MIN": 1e-06,
+      "TOL_KAPPA_CAP": 100000000.0,
+      "TOL_MONOTONE": 1e-06,
+      "TOL_PROJECTION_MOVE": 1e-06,
+      "TOL_RANK": 1e-10,
+      "TOL_REPAIR_MAX": 0.001,
+      "TOL_VALUE_MATCH": 1e-06,
+      "TOL_WORK_MIN": 1e-12
+     },
+     "value_candidate": 12.3108342860844,
+     "value_certified": 12.310834286008204
+    },
+    "diagnostics": {
+     "cols": 5094,
+     "interior_margin": null,
+     "literal_zero": 2202,
+     "rank": 3146,
+     "repaired_conditions": 0,
+     "rho_before_repair": 0.0,
+     "rows": 3146,
+     "value_candidate_recomputed": 12.3108342860844
+    },
+    "interior_solver_status": null,
+    "result": {
+     "arrays": "upper3d_fixed_phi00.m0.q.upper.p2d-jump-bernstein.v0.result.npz",
+     "bound": "upper",
+     "format": "ladruno-limit-result",
+     "format_version": 0,
+     "formulation": "upper.p2d-jump-bernstein.v0",
+     "objective": 12.3108342860844,
+     "problem_sha256": "38cc220caeae021575cd17162a19cf9bc1ee86cd8c2bf127c7c1be9745641309",
+     "producer": {
+      "name": "certificate_demo",
+      "version": "0"
+     },
+     "query_id": "q",
+     "result_sha256": "dfc31c919214b22c3c857a27f881c25fb9d1f9861f4f074155460aead1b55bb2",
+     "solver": {
+      "name": "clarabel",
+      "settings": {
+       "defaults": true
+      },
+      "version": "0.11.1"
+     },
+     "solver_status": "solved",
+     "value": 12.3108342860844,
+     "wall_time_s": null
+    }
+   }
+  },
+  {
+   "case": "dp_prandtl_cohesion_thin_slab",
+   "kuhn": [
+    8,
+    1,
+    4
+   ],
+   "lower": {
+    "certificate": {
+     "bound": "lower",
+     "checker": {
+      "name": "procedure-demo",
+      "version": "0"
+     },
+     "checks": {
+      "kappa_eq": 45.12689564503491,
+      "omega_eq": 5.585668531981098e-17,
+      "projection_move": 3.620758200953629e-10,
+      "repair_mu": 0.0,
+      "rho_bc": null,
+      "rho_cone": -2.7248741340909006e-12,
+      "rho_div": null,
+      "rho_flow": null,
+      "rho_jump": null,
+      "rho_jump_cone": null,
+      "rho_resultant": null,
+      "straightness_max": 0.0,
+      "tau_eq": 7.105427357601002e-15,
+      "work_reference": null
+     },
+     "classification": "certified_bound",
+     "criteria": [
+      "drucker_prager"
+     ],
+     "domain_claim": "box_stated",
+     "floor": 1.0078265459315562e-11,
+     "flow_rule": "associated",
+     "format": "ladruno-limit-certificate",
+     "format_version": 0,
+     "formulation": "lower.p1d-vertex.v0",
+     "interface_laws": [
+      "bonded"
+     ],
+     "problem_sha256": "e83189ff4278b8f5963dd386c27b2b2fc259ba1c18841aeaa950ed794785d93c",
+     "query_id": "q",
+     "reasons": [],
+     "result_sha256": "169d9ef8c6b60ee33cbe30e3b02b5d4891b07f72722b4ccadfc45e3888e2cede",
+     "tolerances": {
+      "FLOOR_MIN_REL": 1e-12,
+      "MAX_GAP_3D_DP": 0.5,
+      "MAX_GAP_3D_VM": 0.3,
+      "MAX_GAP_PRANDTL": 0.1,
+      "MAX_GAP_STRIP": 0.05,
+      "TOL_CASE_EXACT_GAP": 1e-06,
+      "TOL_CASE_ONE_SIDED": 1e-06,
+      "TOL_CONE_ACCEPT": 1e-06,
+      "TOL_CONE_MARGIN": 1e-12,
+      "TOL_EQ_ROUNDING_FACTOR": 64.0,
+      "TOL_FEAS_LOCKED": 1e-06,
+      "TOL_FEAS_OK": 1e-09,
+      "TOL_FLOOR_MAX": 1e-06,
+      "TOL_FLOW_ACCEPT": 1e-06,
+      "TOL_GEOM_PLANE": 1e-09,
+      "TOL_GEOM_STRAIGHT": 1e-09,
+      "TOL_GEOM_VOLUME": 1e-10,
+      "TOL_INTERIOR_MIN": 1e-06,
+      "TOL_KAPPA_CAP": 100000000.0,
+      "TOL_MONOTONE": 1e-06,
+      "TOL_PROJECTION_MOVE": 1e-06,
+      "TOL_RANK": 1e-10,
+      "TOL_REPAIR_MAX": 0.001,
+      "TOL_VALUE_MATCH": 1e-06,
+      "TOL_WORK_MIN": 1e-12
+     },
+     "value_candidate": 10.07826545931613,
+     "value_certified": 10.078265459315562
+    },
+    "diagnostics": {
+     "cols": 3421,
+     "literal_zero": 1188,
+     "rank": 2722,
+     "rho_before_repair": -2.7248741340909006e-12,
+     "rows": 2826
+    },
+    "result": {
+     "arrays": "dp_prandtl_cohesion_thin_slab.m0.q.lower.p1d-vertex.v0.result.npz",
+     "bound": "lower",
+     "format": "ladruno-limit-result",
+     "format_version": 0,
+     "formulation": "lower.p1d-vertex.v0",
+     "objective": -10.07826545931613,
+     "problem_sha256": "e83189ff4278b8f5963dd386c27b2b2fc259ba1c18841aeaa950ed794785d93c",
+     "producer": {
+      "name": "certificate_demo",
+      "version": "0"
+     },
+     "query_id": "q",
+     "result_sha256": "169d9ef8c6b60ee33cbe30e3b02b5d4891b07f72722b4ccadfc45e3888e2cede",
+     "solver": {
+      "name": "clarabel",
+      "settings": {
+       "defaults": true
+      },
+      "version": "0.11.1"
+     },
+     "solver_status": "almost_solved",
+     "value": 10.07826545931613,
+     "wall_time_s": null
+    }
+   },
+   "mesh": 0,
+   "mesh_label": "coarse-demo",
+   "problem_sha256": "e83189ff4278b8f5963dd386c27b2b2fc259ba1c18841aeaa950ed794785d93c",
+   "tets": 192,
+   "upper": {
+    "certificate": {
+     "bound": "upper",
+     "checker": {
+      "name": "procedure-demo",
+      "version": "0"
+     },
+     "checks": {
+      "kappa_eq": 3.6055512754639913,
+      "omega_eq": 2.839143954226353e-17,
+      "projection_move": 4.61550640261039e-13,
+      "repair_mu": 1.0209694052955769e-07,
+      "rho_bc": null,
+      "rho_cone": null,
+      "rho_div": null,
+      "rho_flow": 0.0,
+      "rho_jump": null,
+      "rho_jump_cone": 0.0,
+      "rho_resultant": null,
+      "straightness_max": 0.0,
+      "tau_eq": 7.105427357601002e-15,
+      "work_reference": 0.9999970849047783
+     },
+     "classification": "certified_bound",
+     "criteria": [
+      "drucker_prager"
+     ],
+     "domain_claim": "box_stated",
+     "floor": 1.67519069170451e-11,
+     "flow_rule": "associated",
+     "format": "ladruno-limit-certificate",
+     "format_version": 0,
+     "formulation": "upper.p2d-jump-bernstein.v0",
+     "interface_laws": [
+      "bonded"
+     ],
+     "problem_sha256": "e83189ff4278b8f5963dd386c27b2b2fc259ba1c18841aeaa950ed794785d93c",
+     "query_id": "q",
+     "reasons": [],
+     "result_sha256": "f671ef6b2dde6158f98e42428f3ea9c3507baa8105f58b320a0c2c449c319845",
+     "tolerances": {
+      "FLOOR_MIN_REL": 1e-12,
+      "MAX_GAP_3D_DP": 0.5,
+      "MAX_GAP_3D_VM": 0.3,
+      "MAX_GAP_PRANDTL": 0.1,
+      "MAX_GAP_STRIP": 0.05,
+      "TOL_CASE_EXACT_GAP": 1e-06,
+      "TOL_CASE_ONE_SIDED": 1e-06,
+      "TOL_CONE_ACCEPT": 1e-06,
+      "TOL_CONE_MARGIN": 1e-12,
+      "TOL_EQ_ROUNDING_FACTOR": 64.0,
+      "TOL_FEAS_LOCKED": 1e-06,
+      "TOL_FEAS_OK": 1e-09,
+      "TOL_FLOOR_MAX": 1e-06,
+      "TOL_FLOW_ACCEPT": 1e-06,
+      "TOL_GEOM_PLANE": 1e-09,
+      "TOL_GEOM_STRAIGHT": 1e-09,
+      "TOL_GEOM_VOLUME": 1e-10,
+      "TOL_INTERIOR_MIN": 1e-06,
+      "TOL_KAPPA_CAP": 100000000.0,
+      "TOL_MONOTONE": 1e-06,
+      "TOL_PROJECTION_MOVE": 1e-06,
+      "TOL_RANK": 1e-10,
+      "TOL_REPAIR_MAX": 0.001,
+      "TOL_VALUE_MATCH": 1e-06,
+      "TOL_WORK_MIN": 1e-12
+     },
+     "value_candidate": 16.751816487810146,
+     "value_certified": 16.7519069170451
+    },
+    "diagnostics": {
+     "cols": 4541,
+     "interior_margin": -0.00038775115449141265,
+     "literal_zero": 1225,
+     "rank": 12,
+     "repaired_conditions": 478,
+     "rho_before_repair": 1.1791621158598856e-09,
+     "rows": 12,
+     "value_candidate_recomputed": 16.751816487810146
+    },
+    "interior_solver_status": "Solved",
+    "result": {
+     "arrays": "dp_prandtl_cohesion_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.npz",
+     "bound": "upper",
+     "format": "ladruno-limit-result",
+     "format_version": 0,
+     "formulation": "upper.p2d-jump-bernstein.v0",
+     "objective": 16.751816487810146,
+     "problem_sha256": "e83189ff4278b8f5963dd386c27b2b2fc259ba1c18841aeaa950ed794785d93c",
+     "producer": {
+      "name": "certificate_demo",
+      "version": "0"
+     },
+     "query_id": "q",
+     "result_sha256": "f671ef6b2dde6158f98e42428f3ea9c3507baa8105f58b320a0c2c449c319845",
+     "solver": {
+      "name": "clarabel",
+      "settings": {
+       "defaults": true
+      },
+      "version": "0.11.1"
+     },
+     "solver_status": "solved",
+     "value": 16.751816487810146,
+     "wall_time_s": null
+    }
+   }
+  }
+ ],
+ "scipy": "1.16.3",
+ "solver": {
+  "name": "clarabel",
+  "settings": "defaults",
+  "version": "0.11.1"
+ },
+ "title": "PROCEDURE DEMONSTRATION, NOT A CERTIFIED BOUND: interface 17.3 and 17.4 on solver fields. Producer and checker share one author, so every value stays an estimate for the program."
+}

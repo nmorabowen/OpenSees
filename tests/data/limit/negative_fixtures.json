@@ -1,9 +1,7 @@
 {
  "fixtures": [
   {
-   "expect": [
-    "projection_move_too_large"
-   ],
+   "expect": "projection_move_too_large",
    "harness_item": "one perturbed stress component",
    "id": "perturbed_stress_component",
    "mutation": {
@@ -13,29 +11,24 @@
     "kind": "perturb_sigma",
     "vertex": 0
    },
-   "problem": "vm_plate_shear",
-   "result": "vm_plate_shear.q.lower.result",
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
    "stage": "checker"
   },
   {
-   "expect": [
-    "repair_too_large",
-    "cone_violation_too_large"
-   ],
+   "expect": "cone_violation_too_large",
    "harness_item": "stress scaled by 1.01",
    "id": "stress_scaled_1p01",
    "mutation": {
     "factor": 1.01,
     "kind": "scale_lower"
    },
-   "problem": "vm_plate_shear",
-   "result": "vm_plate_shear.q.lower.result",
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
    "stage": "checker"
   },
   {
-   "expect": [
-    "projection_move_too_large"
-   ],
+   "expect": "projection_move_too_large",
    "harness_item": "a facet traction jump",
    "id": "facet_traction_jump",
    "mutation": {
@@ -44,22 +37,32 @@
     "element": 0,
     "kind": "element_offset"
    },
-   "problem": "vm_plate_shear",
-   "result": "vm_plate_shear.q.lower.result",
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
    "stage": "checker"
   },
   {
-   "expect": [
-    "value_mismatch"
-   ],
+   "expect": "projection_move_too_large",
+   "harness_item": "a Lower value that is not the multiplier of its field",
+   "id": "wrong_lower_value",
+   "mutation": {
+    "factor": 1.01,
+    "kind": "scale_value"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "value_mismatch",
    "harness_item": "a wrong load normalisation",
    "id": "wrong_load_normalisation",
    "mutation": {
     "factor": 1.1,
     "kind": "scale_value"
    },
-   "problem": "vm_plate_shear",
-   "result": "vm_plate_shear.q.upper.result",
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
    "stage": "checker"
   },
   {
@@ -69,8 +72,8 @@
    "mutation": {
     "kind": "relabel_upper"
    },
-   "problem": "vm_plate_shear",
-   "result": "vm_plate_shear.q.lower.result",
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
    "stage": "schema"
   },
   {
@@ -83,7 +86,7 @@
     "kind": "move_mid_node",
     "local_node": 4
    },
-   "problem": "vm_plate_shear",
+   "problem": "vm_plate_shear.m0",
    "result": null,
    "stage": "schema"
   },
@@ -94,8 +97,8 @@
    "mutation": {
     "kind": "problem_hash"
    },
-   "problem": "vm_plate_shear",
-   "result": "vm_plate_shear.q.upper.result",
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
    "stage": "schema"
   },
   {
@@ -106,14 +109,35 @@
     "claim": "halfspace_by_zero_extension",
     "kind": "certificate_claim"
    },
-   "problem": "vm_plate_shear",
-   "result": "vm_plate_shear.q.upper.result",
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
    "stage": "schema"
   },
   {
-   "expect": [
-    "projection_move_too_large"
-   ],
+   "expect": "unsupported_domain_claim",
+   "harness_item": "a side face outside every declared set under a zero-extension claim",
+   "id": "unlisted_side_face",
+   "mutation": {
+    "kind": "drop_truncation_set",
+    "name": "xmin"
+   },
+   "problem": "vm_ground_patch_halfspace.m0",
+   "result": "vm_ground_patch_halfspace.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "schema"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "wrong gravity in equilibrium",
+   "id": "wrong_gravity_in_equilibrium",
+   "mutation": {
+    "kind": "zero_gravity_lower"
+   },
+   "problem": "vm_dead_gravity_shear_layer.m0",
+   "result": "vm_dead_gravity_shear_layer.m0.q.lower.p1d-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
    "harness_item": "tr(D) != 0 at one vertex of an isochoric Upper field",
    "id": "isochory_one_vertex",
    "mutation": {
@@ -122,14 +146,26 @@
     "kind": "perturb_velocity",
     "node": 14
    },
-   "problem": "vm_plate_shear",
-   "result": "vm_plate_shear.q.upper.result",
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
    "stage": "checker"
   },
   {
-   "expect": [
-    "projection_move_too_large"
-   ],
+   "expect": "flow_violation_too_large",
+   "harness_item": "Drucker-Prager flow-cone violation at one vertex",
+   "id": "dp_flow_cone_one_vertex",
+   "mutation": {
+    "amount": 0.001,
+    "component": 0,
+    "kind": "perturb_velocity",
+    "node": 14
+   },
+   "problem": "dp_uniaxial_tension.m0",
+   "result": "dp_uniaxial_tension.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
    "harness_item": "a footprint node off the rigid motion",
    "id": "footprint_off_rigid",
    "mutation": {
@@ -138,33 +174,43 @@
     "kind": "perturb_velocity",
     "node": 2
    },
-   "problem": "vm_plate_shear",
-   "result": "vm_plate_shear.q.upper.result",
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
    "stage": "checker"
   },
   {
-   "expect": [
-    "projection_move_too_large"
-   ],
-   "harness_item": "nonzero wall velocity under a zero-extension claim",
-   "id": "wall_velocity_zero_extension",
+   "expect": "projection_move_too_large",
+   "harness_item": "non-zero support velocity on a box target",
+   "id": "support_velocity_nonzero",
    "mutation": {
     "amount": 0.001,
     "component": 0,
     "kind": "perturb_velocity",
     "node": 1
    },
-   "problem": "vm_plate_shear_halfspace",
-   "result": "vm_plate_shear_halfspace.q.upper.result",
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
    "stage": "checker"
   },
   {
-   "expect": [
-    "flow_violation_too_large",
-    "no_admissible_correction"
-   ],
-   "harness_item": "a jump admissible at facet nodes but not across the facet",
-   "id": "jump_between_nodes",
+   "expect": "projection_move_too_large",
+   "harness_item": "nonzero wall velocity under a zero-extension claim",
+   "id": "wall_velocity_zero_extension",
+   "mutation": {
+    "amount": 0.001,
+    "component": 0,
+    "element": 3,
+    "kind": "perturb_element_velocity",
+    "local_node": 0
+   },
+   "problem": "vm_ground_patch_halfspace.m0",
+   "result": "vm_ground_patch_halfspace.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "non-zero normal jump at one facet node under isochoric flow",
+   "id": "normal_jump_one_node",
    "mutation": {
     "amount": 0.001,
     "element": 2,
@@ -172,17 +218,37 @@
      0,
      1
     ],
-    "kind": "node_jump",
-    "local_node": 0
+    "kind": "node_normal",
+    "local_node": 6
    },
-   "problem": "dp_uniaxial_tension",
-   "result": "dp_uniaxial_tension.q.upper-jump.result",
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2d-jump-bernstein.v0.result",
    "stage": "checker"
   },
   {
-   "expect": [
-    "value_mismatch"
-   ],
+   "expect": "flow_violation_too_large",
+   "harness_item": "a jump admissible at facet nodes but not across the facet",
+   "id": "jump_between_nodes",
+   "mutation": {
+    "amount": 0.001,
+    "elements": [
+     2,
+     3,
+     5
+    ],
+    "kind": "side_opening",
+    "normal": [
+     -0.7071067811865475,
+     0.7071067811865475,
+     0.0
+    ]
+   },
+   "problem": "dp_free_hydrostatic.m0",
+   "result": "dp_free_hydrostatic.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "value_mismatch",
    "harness_item": "wrong gravity work or wrong dissipation quadrature",
    "id": "wrong_gravity_work",
    "mutation": {
@@ -190,14 +256,12 @@
     "kind": "value_rule",
     "quadrature": "vertex"
    },
-   "problem": "vm_dead_gravity_shear_layer",
-   "result": "vm_dead_gravity_shear_layer.q.upper.result",
+   "problem": "vm_dead_gravity_shear_layer.m0",
+   "result": "vm_dead_gravity_shear_layer.m0.q.upper.p2c-vertex.v0.result",
    "stage": "checker"
   },
   {
-   "expect": [
-    "value_mismatch"
-   ],
+   "expect": "value_mismatch",
    "harness_item": "wrong gravity work or wrong dissipation quadrature",
    "id": "wrong_dissipation_quadrature",
    "mutation": {
@@ -205,27 +269,50 @@
     "kind": "value_rule",
     "quadrature": "centroid"
    },
-   "problem": "vm_dead_gravity_shear_layer",
-   "result": "vm_dead_gravity_shear_layer.q.upper.result",
+   "problem": "vm_dead_gravity_shear_layer.m0",
+   "result": "vm_dead_gravity_shear_layer.m0.q.upper.p2c-vertex.v0.result",
    "stage": "checker"
   },
   {
-   "expect": [
-    "equality_residual_above_floor"
-   ],
+   "expect": "work_nonpositive",
+   "harness_item": "a non-positive reference work rate",
+   "id": "nonpositive_reference_work",
+   "mutation": {
+    "kind": "negate_velocity"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "no_admissible_correction",
+   "harness_item": "a finite dissipation charge offered as repair",
+   "id": "dissipation_charge_as_repair",
+   "mutation": {
+    "amount": 1e-08,
+    "charge": 1.0,
+    "component": 0,
+    "kind": "dissipation_charge",
+    "node": 14
+   },
+   "problem": "dp_uniaxial_tension.m0",
+   "result": "dp_uniaxial_tension.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "equality_residual_above_floor",
    "harness_item": "an equality residual just above the floor",
    "id": "equality_just_above_floor",
    "mutation": {
-    "amount": 2.21177742787404e-12,
+    "amount": 1.2789769243681803e-13,
     "component": 0,
     "element": 0,
-    "floor_multiple": 3.0,
-    "kappa_reference": 51.88,
     "kind": "perturb_sigma",
+    "tau_multiple": 3.0,
     "vertex": 0
    },
-   "problem": "vm_plate_shear",
-   "result": "vm_plate_shear.q.lower.result",
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
    "stage": "final_check"
   }
  ],
