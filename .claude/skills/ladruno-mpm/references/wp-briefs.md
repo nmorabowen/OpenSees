@@ -1723,6 +1723,31 @@ initial field is zero" is false once π ≠ 0.
 - **Harness correction accepted:** the "field at the particles" readout must include π. The earlier
   bspline2 diagnostic numbers that omitted it are annotated, not rewritten.
 
+**Build `89718fdad` (records `802e86c3f`): the fix-2 patch check misses again.** The base particle
+is at 1.2e-3 γ_w H against 1e-10. A′ itself works without motion: near-rigid column 1.9e-11 at the
+base, field exact to 1.4e-15, max |π_⊥| = 0.0578 kPa. The miss is motion. π at a particle depends on
+its position, and G2P adds only π's change from the load factor, never its change from the
+particle's own motion. So A′'s premise ("G2P already adds Δπ in full") fails under motion.
+
+**Ruling (2026-11-18): one invariant, frozen, which every carrier rule must satisfy.** Each
+two-phase particle carries the coefficient-space part q_p, and p_p ≡ q_p + π(x_p, drive),
+evaluated at the particle's current position and drive wherever p is used (output, queries, the
+projection's right side).
+- q is the FLIP-carried state, with P5a in plain space. Projection: c = M⁻¹ Pᵀ V q. G2P:
+  q_p += Σ S^p (c_new − ĉ).
+- At initialisation, q = p_init − (P M⁻¹ Pᵀ V π(0))_p. That is A′ in this form: the user's own
+  invisible content is kept.
+- 232l-C's per-particle π_c bookkeeping is accepted as one implementation of this invariant
+  (p − π_c = q). Either form must hold the invariant exactly under motion, and π_c (or q) joins the
+  restart pack.
+- ṗ and p̈ still neglect π's rate (§7b).
+- Where π = 0 nothing changes: GIMP, T0, T1, the sealed column and T10 are unaffected.
+- The patch gate stays at 1e-10.
+- **Re-brief rule:** this is the second fix round on the fix-2 patch check. If a third round
+  misses it, the orchestrator re-briefs a fresh worker at max effort (skill rule), with the
+  alternative design on the table: no p fold on impervious faces (zero flux as the natural
+  condition), which removes π entirely.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
