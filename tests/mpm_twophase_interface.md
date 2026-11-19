@@ -245,6 +245,131 @@ T4 (to Tv ≈ 2, ≈ 18 000 steps) ~1 min; T5 B4 (≈ 400 particles, 100 steps o
 leg × 3; T6 Terzaghi (≈ 13 400 route-S steps at s = 0.5) ~5 s, Mandel 1–5 min; T7 seconds. The
 whole battery fits under 30 min; the warrant run goes to esmeralda as the brief says.
 
+## 7a. Addendum for the oracle (232l-C, 2026-11-18; answers the orchestrator's five questions)
+
+Nothing in P1–P13 moves. This adds the details §1 left implicit. An oracle written from §1 and
+§7a alone must reproduce T0 to rel 1e-9.
+
+**Q1. The `mpm debug particleBlocks` dump.** The command is `mpm debug particleBlocks <p> <path>
+<s_u> <s_p> <s_v> <s_pd> <s_a> <s_pdd>`, mode A only, with p the 0-based storage index of
+`mpm particleData`. It writes one JSON object to `<path>`:
+`{"particle": p, "id", "ndm", "ndf", "nen", "lambda", "V", "m", "alpha_st", "nodes": [tag..],
+"coords": [[x, y(, z)]..], "S": [nen], "dS": [nen][ndm], "Sp": [nen], "dSp": [nen][ndm],
+"trial": {"u": [nen][ndm], "p": [nen], "v": [nen][ndm], "pd": [nen], "a": [nen][ndm],
+"pdd": [nen]}, "K": [ndof][ndof], "C": [..], "M": [..], "R": [ndof], "R_static": [ndof]}`.
+Matrices are row-major lists of rows; every number uses 17 significant digits.
+- **Element DOF order.** Node-major, P4's `dofMap`: element DOF j = ndf·k + c, where k is the
+  support slot, c = 0..ndm−1 are u_x, u_y(, u_z) and c = ndm is p (ndf = ndm + 1 in a two-phase
+  epoch). The single scalar index j also places the pattern values below.
+- **Support-node order.** k runs over the tensor product of the per-axis supports. On each axis
+  the grid index rises (the scan i = c−1 … c+2, with S = dS = 0 entries dropped,
+  `LadrunoMPMCore.h:259-276`), and the product runs x fastest, then y, then z
+  (`particleSupport`, `:282-302`). Nodes removed by `renormalize` are absent; the survivors keep
+  their order. A plate unknown (P10), when present, is the last slot. `nodes` and `coords` are in
+  that order, so an oracle may also map by coordinates.
+- **Pattern values.** For every element DOF j:
+  `disp_j = s_kind sin(1.7 j + 0.3)`, `vel_j = s'_kind sin(1.7 j + 0.3)` and
+  `accel_j = s''_kind sin(1.7 j + 0.3)`. The kind is u or p, by c. So (s_u, s_p) scale the
+  displacement and p slots, (s_v, s_pd) the velocity and ṗ slots, and (s_a, s_pdd) the
+  acceleration and p̈ slots. They are written to the support nodes' trial disp, vel and accel.
+  The `trial` block repeats them. The previous trial state is restored afterwards and nothing is
+  committed.
+
+**Q2. Yes: K, C, M and R are all formed from the trial state after the pattern values are set.**
+- **Sequence.** The element is armed at the committed particle state, exactly as a step's
+  `prepareStep` does it (supports at the committed x; F_n, σ′_n, V_n). The pattern values are set,
+  then `update()` runs: Δε = sym Σ_k u_k ⊗ ∇S_k under `small`, then the material's trial strain.
+  Then K = `getTangentStiff`, C = `getDamp`, M = `getMass`,
+  R = `getResistingForceIncInertia` = R_static + M·a + C·v, and R_static = `getResistingForce`.
+- **u–u blocks under `small`.** K_u = V₀ Bᵀ D B, with D the material's `getTangent()` at the trial
+  strain, B in the engineering-shear Voigt order of §1 and B built from ∇S. There is no
+  geometric term. M_u = diag(S_k m_p) on every u DOF of slot k (lumped; S_k = W_k, the unsigned
+  weight). C_u = αM M_u + βK K_u.
+- **p blocks.** p rows and columns are §1's blocks: −Q in K, Qᵀ and S* in C, H in K, zero in M.
+- **R terms.** f′_k = V₀ σ′(trial)·∇S_k. f_body,k = S_k λ (m_p b + f_p). f_seep uses
+  b_f = λ·(`-fluidBody` or `mpm gravity`). λ is the host's current factor: 1 before the first
+  step, otherwise the factor of the last accepted step.
+- **α_st.** It uses h = the grid's cell size and D₀ = the material's `getInitialTangent()`, by
+  §1's rule.
+- **Single-phase particle in a two-phase epoch.** Its p rows and columns are zero.
+
+**Q3. GIMP weights after `renormalize` in T0 (ii).**
+- **The procedure** (`LadrunoMPMImplicit.cpp:726-789`):
+  1. Supports by `gimpFactor` (`LadrunoMPMCore.h:141-159`), with r = x_p − x_i and l_p = h/(2·ppc):
+     - |r| < l_p: S = 1 − (r² + l_p²)/(2h l_p);
+     - l_p ≤ |r| < h − l_p: S = 1 − |r|/h;
+     - h − l_p ≤ |r| < h + l_p: S = (h + l_p − |r|)²/(4h l_p);
+     - otherwise 0.
+     The tensor product is S = S_x S_y and ∇S = (S′_x S_y, S_x S′_y).
+  2. Nodal mass m_a = Σ_p S_pa m_p over every support node, ghosts included.
+  3. A node is kept iff m_a > 0.05 · max_p m_p.
+  4. Per particle, over its kept nodes: σ = Σ S, γ = Σ ∇S, S′ = S/σ and ∇S′ = (∇S − S′γ)/σ.
+- **What renormalize does on the flush-filled 2×2 grid.** Every particle centre lies inside, and
+  its support ends at |r| < h + l_p (open), so a body whose particle domains are flush with the
+  faces reaches no ghost node. Every real node has m_a ≥ m_p (a corner holds
+  Σ = (0.75 + 0.25)² m_p at ppc 2), so nothing is dropped. Then σ = 1 and γ = 0 to round-off, and
+  renormalize is the identity to round-off.
+- **Particles that cross a face.** A ghost node then gets S = δ²/(4h l_p), where δ is the
+  overshoot, far below the cutoff. It is dropped and the formula above rescales the rest. The
+  oracle should implement steps 1–4 literally, not assume the identity: the u stays free on every
+  face without a `fix`.
+- **S^p.** On GIMP S^p = S′ and ∇S^p = ∇S′.
+
+**Q4. Route S's M⁻¹ rule.** M⁻¹ is diagonal over velocity components (a, i).
+- **Free components.** M⁻¹ = 1/m_a. m_a is the lumped grid mass after the B-spline mass folds
+  (ghost mass on its image, `:858-864`).
+- **Zero entries.** A component gets 0 when it is:
+  - fixed by `fix` (face node or its ghost layer);
+  - prescribed by `gridvel`;
+  - on an inactive node (m_a ≤ c_m · max m_p);
+  - stray (P10: a plate face-row node's normal component).
+  Its v₁ is then the conditioned predictor value. Its Q row still enters Qᵀv* on the right side,
+  so a prescribed velocity drives the pressure. It never receives the correction Δt M⁻¹ Q p.
+- **The plate unknown U.** U is one more velocity component with M⁻¹_U = 1/M_U, where
+  M_U = Σ m_a over the face-row nodes (ghost-row mass stays on the mirrors, A4). Its Q row is
+  Q_U,b = α Σ_p V_p S^p_pb ∂_n S′_{n,U}. S′_{n,U} is P10's plate weight of the normal component:
+  the face-row S, plus 2× the ghost-row S on B-spline. Its predictor carries the force λF.
+- **Folded B-spline images.** Slaved ghosts carry no components of their own. Their Q rows are
+  folded into their images with P9's signs, since Q is assembled from the folded S′_{i,a}
+  and S^p_b.
+- **Walls.** `mpm wall` (frictional, conditional) is refused with a two-phase body in route S.
+
+**Q5. The first-step re-seed (mode A, step 1, from the initial particle state).**
+- **Particle state before step 1.**
+  - x, v, a: v from `mpm velocity` / `particleVelocity`, a from the new
+    `mpm particleAcceleration <flat>` (default 0);
+  - p, ṗ, p̈: from the new `mpm particlePressure <p..> [<pd..> <pdd..>]` or
+    `mpm porePressure <body> uniform <p>` (default 0);
+  - σ′ = 0, F = I, V = V₀.
+- **The grid, built from it with the Q3 weights after renormalize.**
+  - Mass: m_a = Σ W m.
+  - Velocity and acceleration: v̂_a,i = Σ_p S′_{i,pa} m_p v_p,i / m_a, and â the same with a
+    (on GIMP / linear, S′_i = S′).
+  - Pressure: over the two-phase particles only, p̂_a = Σ S^p V p / Σ S^p V, with
+    V = the step-start volume (V₀ under `small`); ṗ̂ and p̈̂ use the same weights. Nodes without
+    two-phase support get 0.
+- **Committed node state written before `domainChange()`.**
+  - u slots: disp 0; vel v̂ and accel â on free components; 0 and 0 on a fixed component;
+    v_prescribed and 0 on a `gridvel` component.
+  - p slot: disp p̂, vel ṗ̂, accel p̈̂; p₀, 0, 0 on a `pfix` node; 0, 0, 0 on a stray-p node.
+  - Newmark re-reads all of these (W1).
+- **The elements' FLIP references** are the unconditioned v̂, â, p̂, ṗ̂ and p̈̂ (P5).
+- **Every later step** repeats this from the committed particle state.
+- **The T1 common state is this re-seed**, and the FE nodal state is its projection: u = 0,
+  v = v̂, a = â, p = p̂, ṗ = ṗ̂, p̈ = p̈̂.
+
+**`mpm debug assemble <path>`** (T1).
+- **Requires** a Transient Newmark analysis.
+- **Runs** `prepareStep` as step 1 would, then the integrator's `newStep(dt)` with the dt given as
+  a third argument (`mpm debug assemble <path> <dt>`), which sets the Newmark predictor, then
+  `formTangent` and `formUnbalance`.
+- **Writes** `{"A": [n][n], "b": [n], "dofs": [[nodeTag, x, y(, z), dof]..]}`, where dof is
+  0-based and the equation order is the SOE's.
+- **Then reverts the Domain**, so nothing is committed.
+
+**Case notes (no interface change).** T3 and T6 use a 5 s linear ramp, which replaces T3's step
+load and P10's 2 s Terzaghi ramp; it is still ≥ 20 transits. T4 runs at h = H/20.
+
 ## 8. Proposed amendments and objections (none applied)
 
 - **A1** (U4): particles carry p̈ as well as p, ṗ (§1, P2).
