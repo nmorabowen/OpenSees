@@ -677,6 +677,13 @@ int cmdDebug(LadrunoMPMPattern *h)
     else return fail("debug reseed default|always|skip");
     return 0;
   }
+  if (what == "routeSLimit") {                                         // WP-232l (T7's scan; debug only)
+    const std::string m = OPS_GetNumRemainingInputArgs() > 0 ? OPS_GetString() : "";
+    if (m == "on") h->setRouteSLimit(true);
+    else if (m == "off") h->setRouteSLimit(false);
+    else return fail("debug routeSLimit on|off");
+    return 0;
+  }
   if (what == "particleBlocks") {                                      // WP-232l (§7a Q1, Q2)
     const char *usage = "debug particleBlocks <p> <path> <s_u> <s_p> <s_v> <s_pd> <s_a> <s_pdd>";
     int p;

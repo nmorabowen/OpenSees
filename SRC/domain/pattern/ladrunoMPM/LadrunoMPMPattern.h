@@ -425,6 +425,12 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   bool                    routeSWarned = false;    // 7c (3): the run-time limit's warning, once per epoch
   bool                    routeSCapWarned = false; // 7c amendment: s in (0.5, 0.7], warned once per epoch
   double                  pencilDt = -1.0;         // 7c amendment: the epoch's drained pencil (< 0: none)
+  int                     pencilAge = 0;           // steps since the pencil was computed (refresh at 100)
+  bool                    routeSLimitOff = false;  // `mpm debug routeSLimit off` (T7's scan; debug only)
+  bool                    routeSLimitOffWarned = false;
+ public:
+  void   setRouteSLimit(bool on) { routeSLimitOff = !on; routeSLimitOffWarned = false; }
+ private:
   std::vector<long>       pencilCell;              // ... and the particle-to-cell map it was computed on
   bool        routeSOn(void) const;                // a two-phase body, a plate, pfix or a traction
   std::string routeSAdmission(void) const;

@@ -143,7 +143,66 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
   std::vector<int> eIdx(sNode.size());
   for (size_t k = 0; k < sNode.size(); k++)
     eIdx[k] = (sNode[k] >= 0) ? loc[sNode[k]] : -(1 + (int)(-sNode[k] - 2));
+  // raw folded masses: u-activity (7c (1)) and the two-phase mass of fix 3
   std::vector<double> m(nl, 0.0), tpm(nl, 0.0), gp(nd * nl, 0.0), gf(nd * nl, 0.0);
+  for (int p = 0; p < N; p++)
+    for (long k = sS[p]; k < sS[p + 1]; k++) {
+      const int i = eIdx[k];
+      if (i < 0) continue;
+      m[i] += sW[k] * P.m[p];
+      if (u.tp[p] != 0) tpm[i] += sW[k] * P.m[p];
+    }
+  const double mmax = massRef();
+  // interface 7c (1) as corrected after the review of record: in a two-phase step a lattice node
+  // is u-active iff m_a > c_u m_max, c_u = max(massCutoff, pressureCutoff)
+  const double mcut = (up ? std::max(par.masscut, u.pCut) : par.masscut) * mmax;
+  std::vector<char> act(nl, 0);
+  for (int i = 0; i < nl; i++)
+    act[i] = (m[i] > 0.0 && imageCutoffMass(grid, par.basis, fc, nodes[i], m[i]) > mcut) ? 1 : 0;
+  // ... and every particle's u weights are renormalised over its u-active nodes (mode A's
+  // renormalize, B9: sums of the unsigned W over the kept lattice entries; every kept entry, the
+  // plate's included, rescaled; the p component untouched: fix 3 runs on the raw weights). A
+  // dropped entry is absent. pmask: the particle's plate axes (their normal component's lumped
+  // mass is the signed, translation-consistent weight S'_c -- review of record, plate finding)
+  const std::vector<double> rawW(sW), rawdW(sdW);
+  std::vector<unsigned> pmask(N, 0u);
+  for (int p = 0; p < N; p++) {
+    double sum = 0.0, gsum[3] = {0.0, 0.0, 0.0};
+    for (long k = sS[p]; k < sS[p + 1]; k++) {
+      const int i = eIdx[k];
+      if (i < 0) { pmask[p] |= 1u << ((-i - 1) / 2); continue; }
+      if (!act[i]) continue;
+      sum += rawW[k];
+      for (int a = 0; a < nd; a++) gsum[a] += rawdW[nd * k + a];
+    }
+    if (!(sum > 0.0)) {
+      err = "particle " + std::to_string((long long)P.id[p]) + " has no u-active support node (its"
+            " nodal mass is below the cutoff everywhere); step refused, nothing changed (interface 7c)";
+      return -1;
+    }
+    for (long k = sS[p]; k < sS[p + 1]; k++) {
+      const int i = eIdx[k];
+      if (i >= 0 && !act[i]) {
+        sW[k] = 0.0;
+        for (int a = 0; a < nd; a++) sdW[nd * k + a] = 0.0;
+        for (int c = 0; c < nd; c++) {
+          sSc[nc * k + c] = 0.0;
+          for (int a = 0; a < nd; a++) sdSc[(nc * k + c) * nd + a] = 0.0;
+        }
+        continue;
+      }
+      sW[k] /= sum;
+      for (int a = 0; a < nd; a++) sdW[nd * k + a] = (sdW[nd * k + a] - sW[k] * gsum[a]) / sum;
+      for (int c = 0; c < nd; c++) {
+        double &sc = sSc[nc * k + c];
+        sc /= sum;
+        for (int a = 0; a < nd; a++)
+          sdSc[(nc * k + c) * nd + a] = (sdSc[(nc * k + c) * nd + a] - sc * gsum[a]) / sum;
+      }
+    }
+  }
+  // P2G on the renormalised weights; per-component lumped mass mc
+  std::vector<double> mc(nd * nl, 0.0);
   double mU[6] = {0, 0, 0, 0, 0, 0}, pU[6] = {0, 0, 0, 0, 0, 0}, fU[6] = {0, 0, 0, 0, 0, 0};
   double b[3];
   for (int d = 0; d < 3; d++) b[d] = lambda * par.gravity[d];
@@ -154,22 +213,18 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
     voigtToTensor(&P.sig[nvv * p], sg);
     for (long k = sS[p]; k < sS[p + 1]; k++) {
       const int i = eIdx[k];
-      if (i >= 0) {
-        m[i] += sW[k] * mp;
-        if (u.tp[p] != 0) tpm[i] += sW[k] * mp;
-      } else {
-        mU[-i - 1] += sW[k] * mp;
-      }
+      if (i >= 0 && !act[i]) continue;
       for (int c = 0; c < nd; c++) {
         const double S = sSc[nc * k + c];
+        const double mw = (pmask[p] & (1u << c)) ? S : sW[k];
         const double *g = &sdSc[(nc * k + c) * nd];
         double s = 0.0;
         for (int j = 0; j < nd; j++) s += sg[c][j] * g[j];
         const double mom = S * mp * P.v[nd * p + c];
         const double frc = S * mp * (bfp ? b[c] + bfp[c] : b[c]) -
                            ((LADRUNO_MUTATE_MPM == MUT_ZERO) ? 0.0 : Vp * s);   // ADR-87 D2 ZERO
-        if (i >= 0) { gp[nd * i + c] += mom; gf[nd * i + c] += frc; }
-        else if (c == (-i - 1) / 2) { pU[-i - 1] += mom; fU[-i - 1] += frc; }
+        if (i >= 0) { mc[nd * i + c] += mw * mp; gp[nd * i + c] += mom; gf[nd * i + c] += frc; }
+        else if (c == (-i - 1) / 2) { mU[-i - 1] += mw * mp; pU[-i - 1] += mom; fU[-i - 1] += frc; }
       }
     }
   }
@@ -181,24 +236,19 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
   for (int f = 0; f < 2 * nd; f++) fU[f] += u.plateLoad[f];
 
   // ---- 2. predictor and the velocity conditions; M^-1 (§7a Q4) -----------------------------
-  const double mmax = massRef();
-  // interface 7c (1): in a two-phase step a lattice node is u-active iff m_a > c_u m_max,
-  // c_u = max(massCutoff, pressureCutoff); a node below it is dropped whole
-  const double mcut = (up ? std::max(par.masscut, u.pCut) : par.masscut) * mmax;
-  std::vector<char> act(nl, 0);
   std::vector<double> vhat(nd * nl, 0.0), vst(nd * nl, 0.0), minv(nd * nl, 0.0);
   const double SENT = 1.2345678e300;
   for (int i = 0; i < nl; i++) {
-    act[i] = (m[i] > 0.0 && imageCutoffMass(grid, par.basis, fc, nodes[i], m[i]) > mcut) ? 1 : 0;
     if (!act[i]) continue;
     double v[3], probe[3] = {SENT, SENT, SENT};
     for (int c = 0; c < nd; c++) {
-      vhat[nd * i + c] = gp[nd * i + c] / m[i];
+      const double mm = mc[nd * i + c];
+      vhat[nd * i + c] = (mm > 0.0) ? gp[nd * i + c] / mm : 0.0;
       double f = gf[nd * i + c];
       const double vn = vhat[nd * i + c];
       const double sgn = (vn > 0.0) ? 1.0 : ((vn < 0.0) ? -1.0 : 0.0);
       f -= par.damping * std::fabs(f) * sgn;
-      v[c] = vn + dt * f / m[i];
+      v[c] = (mm > 0.0) ? vn + dt * f / mm : 0.0;
     }
     applyConditions(nodes[i], v, true);
     applyConditions(nodes[i], probe, true);
@@ -208,9 +258,10 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
       bool stray = false;                  // P10: a plate face row's normal component
       for (int f = 0; f < 2 * nd; f++)
         if (fc.plateOn[f] && c == f / 2 && ijk[c] == ((f % 2) ? grid.n[c] : 0)) stray = true;
-      if (stray) v[c] = 0.0;
+      const bool massless = !(mc[nd * i + c] > 0.0);
+      if (stray || massless) v[c] = 0.0;
       vst[nd * i + c] = v[c];
-      minv[nd * i + c] = (stray || probe[c] != SENT) ? 0.0 : 1.0 / m[i];
+      minv[nd * i + c] = (stray || massless || probe[c] != SENT) ? 0.0 : 1.0 / mc[nd * i + c];
     }
   }
   double vhatU[6] = {0, 0, 0, 0, 0, 0}, vstU[6] = {0, 0, 0, 0, 0, 0}, minvU[6] = {0, 0, 0, 0, 0, 0};
@@ -243,7 +294,7 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
         if (eIdx[k] >= 0 && sSc[nc * k + nd] > 0.0) reach[eIdx[k]] = 1;
     }
     for (int i = 0; i < nl; i++)
-      if (reach[i] && imageCutoffMass(grid, par.basis, fc, nodes[i], tpm[i]) > u.pCut * mmax) {
+      if (act[i] && reach[i] && imageCutoffMass(grid, par.basis, fc, nodes[i], tpm[i]) > u.pCut * mmax) {
         pidx[i] = (int)pnode.size();
         pnode.push_back(i);
       }
@@ -261,8 +312,8 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
         const bool pa = pidx[eIdx[k]] >= 0;
         if (pa) anyAct = true;
         if (pa || !(sSc[nc * k + nd] > 0.0)) {
-          sum += sW[k];
-          for (int a = 0; a < nd; a++) gsum[a] += sdW[nd * k + a];
+          sum += rawW[k];                      // fix 3: the raw weights
+          for (int a = 0; a < nd; a++) gsum[a] += rawdW[nd * k + a];
         } else {
           allAct = false;
         }
@@ -487,7 +538,7 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
   for (int i = 0; i < nl; i++) {
     double vs[3] = {0, 0, 0};
     if (act[i]) {
-      for (int c = 0; c < nd; c++) vs[c] = gvs[nd * i + c] / m[i];
+      for (int c = 0; c < nd; c++) vs[c] = (mc[nd * i + c] > 0.0) ? gvs[nd * i + c] / mc[nd * i + c] : 0.0;
       applyConditions(nodes[i], vs, false);
       int ijk[3];
       grid.extIJK(nodes[i], ijk);

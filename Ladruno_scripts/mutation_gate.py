@@ -149,7 +149,13 @@ FAMILIES = {
         "paths": ["test_ladruno_mpm_engine.py",       # the cases suite; lifecycle/refusal tests are physics-free
                   "test_ladruno_mpm_implicit_engine.py",
                   "test_ladruno_mpm_bspline_mms.py",
-                  "test_ladruno_mpm_antilocking_switch.py"],
+                  "test_ladruno_mpm_antilocking_switch.py",
+                  # WP-232l (review of record): the two-phase oracle and FE identity (route E;
+                  # IDENT cuts the u-p coupling there: 14/14 red on d77caf8fd) and route S's
+                  # zone_a gates (T0 iii, T13 translation, T5 route S)
+                  "test_ladruno_mpm_twophase_oracle.py",
+                  "test_ladruno_mpm_twophase_fe_identity.py",
+                  "test_ladruno_mpm_twophase_gates.py"],
         "min_score": {"ZERO": 0.46, "SCALE": 0.38, "IDENT": 0.0},
     },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----

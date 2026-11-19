@@ -501,13 +501,18 @@ mpm twoPhase <body> -Kf <Kf> -poro <n> -rhoF <rhoF> -perm <k1> <k2> [<k3>] \
   `mpm massCutoff` is the u side's cutoff.
   - Mode A refuses `massCutoff` > `pressureCutoff` with a two-phase body.
   - In a route-S step of a two-phase model, a u node below max(massCutoff, pressureCutoff)·m_max is
-    dropped whole: no momentum, force or correction.
+    dropped, and each particle's u weights are renormalised over its remaining nodes (mode A's
+    `renormalize`), so a free block translates exactly (T13).
 - **Route S's time step.** The step must satisfy dt ≤ s·Δt_d, where Δt_d is the drained pencil
   (`mpm criticalTimeStep drainedPencil`) and s is `mpm safety`.
   - s defaults to 0.5. Values in (0.5, 0.7] run with a warning once per epoch, and s > 0.7 is
     refused (T7's measured USL limit: gimp 0.7×, bspline2 0.8×).
-  - Δt_d is computed once per epoch and again when a particle changes cell.
-  - `mpm criticalTimeStep undrainedPencil` reports the undrained limit, which route S does not need.
+  - Δt_d is computed once per epoch and refreshed when a particle changes cell, on a stage walk
+    or a parameter update, and at least every 100 steps.
+  - `mpm criticalTimeStep undrainedPencil` reports the undrained limit. Route S is not bound by it,
+    but at the default cap it runs below it anyway: on the gated soil (T2's), Δt_d / Δt_u = 1.414,
+    so s 0.5 admits 0.707 × the undrained pencil.
+  - `mpm debug routeSLimit off` lifts the limit and its cap (debug only; T7's scan uses it).
 - **Queries and state.**
   - `mpm particleData p | pd | pdd`.
   - `mpm particlePressure <p..> [<pd..> <pdd..>]` and `mpm porePressure <body> uniform <p>` set the

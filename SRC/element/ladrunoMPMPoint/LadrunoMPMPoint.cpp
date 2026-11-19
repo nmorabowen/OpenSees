@@ -55,7 +55,7 @@ namespace {
 // cubic B-spline; 27 x 3 before). The pool is static and allocates a size only
 // when one is first used, so no element stores more (232i F2). The element is
 // serial (no threading opt-in), so one scratch per size is safe.
-const int MAX_DOF = 256;            // WP-232l: 64 nodes x (3 + p)
+const int MAX_DOF = 260;            // WP-232l: 64 lattice nodes + a plate x (3 + p) (review of record)
 
 Matrix &scratchK(int n)
 {
@@ -1110,14 +1110,14 @@ LadrunoMPMPoint::getMass(void)
     Matrix &M = scratchMF(nf > 0 ? nf : 1);
     M.Zero();
     for (int k = 0; k < nen; k++)
-      for (int a = 0; a < ndm; a++) M(dofU(k, a), dofU(k, a)) = S[k] * mp;
+      for (int a = 0; a < ndm; a++) M(dofU(k, a), dofU(k, a)) = massW(k, a) * mp;
     return M;
   }
   const int n = nen * ndm;
   Matrix &M = scratchM(n > 0 ? n : 1);
   M.Zero();
   for (int k = 0; k < nen; k++)
-    for (int a = 0; a < ndm; a++) M(ndm * k + a, ndm * k + a) = S[k] * mp;
+    for (int a = 0; a < ndm; a++) M(ndm * k + a, ndm * k + a) = massW(k, a) * mp;
   return M;
 }
 
@@ -1134,7 +1134,7 @@ LadrunoMPMPoint::getDamp(void)
   if (nf == 0) return C;
   if (alphaM != 0.0)
     for (int k = 0; k < nen; k++)
-      for (int a = 0; a < ndm; a++) C(dofU(k, a), dofU(k, a)) += alphaM * S[k] * mp;
+      for (int a = 0; a < ndm; a++) C(dofU(k, a), dofU(k, a)) += alphaM * massW(k, a) * mp;
   if (betaK != 0.0) {
     if (st == ARMED && (needUpdate || !trialValid)) this->update();
     Matrix &Kc = scratchK(nen * ndm);

@@ -288,6 +288,14 @@ class LadrunoMPMPoint : public Element
   bool   affOn;
   double piStart_;
   double piNow(double *grad) const;        // fix 2: pi and grad pi at the current drive
+  // WP-232l (review of record): the axes whose normal component a plate carries; their lumped
+  // mass is the signed, translation-consistent weight S'_a (B-spline affine plate image)
+  unsigned plateMask_ = 0u;
+ public:
+  void   setPlateMask(unsigned m) { plateMask_ = m; }
+ private:
+  double massW(int k, int a) const
+  { return ((plateMask_ & (1u << a)) && !Sc.empty()) ? Sc[ndm * k + a] : S[k]; }
   int  dofU(int k, int a) const { return ndfN * k + a; }
   int  dofP(int k) const { return ndfN * k + ndm; }
   void compactTangent(Matrix &Kc, bool initial);

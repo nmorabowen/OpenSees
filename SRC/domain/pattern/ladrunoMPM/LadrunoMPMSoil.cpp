@@ -144,6 +144,7 @@ LadrunoMPMPattern::mpmStageParameter(const char **argv, int argc, Parameter &par
 int
 LadrunoMPMPattern::stageWalk(int matTag, int stage, std::string &err)
 {
+  pencilDt = -1.0;                 // WP-232l review of record: route S's cached pencil is stale
   // The value goes through unchanged, as update(double(stage)): each material reads its
   // own states (SANISAND 0/1, HS 0/1, UW DruckerPrager 0/1/2 -- its 1 is still elastic,
   // DruckerPrager.cpp:158-160, :446). No mapping here (orchestrator ruling at the freeze).

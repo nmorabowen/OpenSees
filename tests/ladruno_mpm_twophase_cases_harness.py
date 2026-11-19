@@ -180,7 +180,7 @@ def patch_check(ops, basis, tmp):
 T2_STEPS = {0.05: 450, 0.1: 900, 0.2: 1800, 0.5: 4500}
 
 
-def run_t2(ops, basis, stab, kin="hypo"):
+def run_t2(ops, basis, stab, kin="hypo", upto=None):
     w = 2.0 if basis.startswith("bspline") else 1.0
     L, q, dt = 10.0, 10.0, 0.02
     E, nu, Kf, n, kbar = 1.0e4, 0.2, 4444.0, 0.4, 1.0e-4
@@ -200,7 +200,7 @@ def run_t2(ops, basis, stab, kin="hypo"):
     pt = None
     U = 0.0
     rows = {}
-    last = max(T2_STEPS.values())
+    last = max(T2_STEPS.values()) if upto is None else T2_STEPS[upto]
     for step in range(1, last + 1):
         ops.mpm("analyze", 1, dt)
         if pt is None:
@@ -214,7 +214,7 @@ def run_t2(ops, basis, stab, kin="hypo"):
                 perr = max(abs(pp[k] - p0 * terzaghi_series((L - Y0[k]) / L, Tva)) for k in range(len(pp))) / p0
                 sx = s0 + (sinf - s0) * terzaghi_U(Tva)
                 rows[str(Tv)] = {"Tv_actual": Tva, "p_err_max": perr, "U_err": abs(U - sx) / (sinf - s0), "U": U}
-    gated = {"0.1", "0.2", "0.5"}
+    gated = {"0.1", "0.2", "0.5"} & set(rows)
     ok = all(rows[k]["p_err_max"] <= 0.02 and rows[k]["U_err"] <= 0.02 for k in gated)
     return {"basis": basis, "stab": stab, "kin": kin, "rows": rows, "pass_bands_0.02": ok,
             "wall_s": time.time() - t0}
@@ -233,15 +233,16 @@ def t6_terzaghi_spec(basis, stab, safety=None):
 
 def run_t7(ops, basis, stab=("auto", 0.25), nsteps=2000):
     """Stable at 0.9 x the drained pencil for 2000 steps, unstable or refused at 1.5 x (A6). The
-    run-time estimator runs at its largest safety (`mpm safety 1`, the cap: s in (0, 1]); where
-    the estimator refuses 0.9 x the pencil, a diagnostic leg runs at the estimator's limit."""
+    route-S run-time limit and its cap are lifted (`mpm debug routeSLimit off`, debug only), so
+    the legs measure the scheme itself (review of record)."""
     build(ops, t6_terzaghi_spec(basis, stab))
     dt_d = as_list(ops.mpm("criticalTimeStep", "drainedPencil"))[0]
     dt_u = as_list(ops.mpm("criticalTimeStep", "undrainedPencil"))[0]
     dt_est = as_list(ops.mpm("criticalTimeStep"))[0]
 
     def leg(fac):
-        build(ops, t6_terzaghi_spec(basis, stab, safety=1.0))
+        build(ops, t6_terzaghi_spec(basis, stab))
+        ops.mpm("debug", "routeSLimit", "off")      # review of record: measure above the cap
         dt = fac * dt_d
         vmax = pmax = 0.0
         for s in range(nsteps):
@@ -301,7 +302,7 @@ def terzaghi_settle_ramp(t, cv, L, tr, q, B, Eoed, nterms=300):
     return (q * min(t / tr, 1.0) * L - B * q * ip) / Eoed
 
 
-def run_t6_terzaghi(ops, basis, stab, fe, dt=0.005):
+def run_t6_terzaghi(ops, basis, stab, fe, dt=0.005, upto=None):
     """T6 Terzaghi, route S: p at the particles' initial depths against the ramp closed form, and the
     settlement read as the particle quadrature sum_p (F_yy - 1) V0_p / width (mode F has no plate
     node to read U from). Bands: the FE record's band_p, band_U per Tv (t6_fe_dt<dt>.json)."""
@@ -323,6 +324,8 @@ def run_t6_terzaghi(ops, basis, stab, fe, dt=0.005):
     steps = {str(r["Tv"]): (int(round(r["t"] / dt)), i) for i, r in enumerate(fe["rows"])}
     rows = {}
     done = 0
+    if upto is not None:
+        steps = {k: v for k, v in steps.items() if float(k) <= upto}
     for Tv, (st, i) in sorted(steps.items(), key=lambda kv: kv[1][0]):
         ops.mpm("analyze", st - done, dt)
         done = st
@@ -371,9 +374,90 @@ def run_t6_mandel(ops, basis, stab, fe, peak_gate, dt=0.005):
 
 
 # ---------------------------------------------------------------------------
+#  T13 translation patch (pre-registered in the review of record; block t13_translation)
+# ---------------------------------------------------------------------------
+def run_t13(ops, mode, basis, plate, steps=200, dt=2.0e-3, vy=-1.0):
+    """A free two-phase block in rigid translation (v = (0, vy), no gravity, sealed, p = 0: a
+    uniform p would not be in equilibrium with its traction-free faces) keeps v, sigma' and p:
+    rel |v - v0| / |v0|, |sigma'| / E and |p| / E after every step.
+    Rollers on xmin / xmax; without a plate the block floats inside the grid, with one it is
+    flush with ymax under `plate ymax 0` (the plate moves with it)."""
+    E = 1.0e4
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, E, 0.2, 2.0)
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 1.0, "-cells", 2, 8, "-basis", basis)
+    ops.mpm("mode", mode)
+    top = 8.0 if plate else 6.0
+    ops.mpm("body", 1, "box", 0.0, top - 3.0, 2.0, top, "-ppc", 2, "-mat", 1, "-rho", 2.0)
+    ops.mpm("twoPhase", 1, "-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-perm", 1.0e-4, 1.0e-4)
+    ops.mpm("fix", "xmin", "x")
+    ops.mpm("fix", "xmax", "x")
+    if plate:
+        ops.mpm("plate", "ymax", 0.0)
+    n = len(as_list(ops.mpm("particleData", "m")))
+    ops.mpm("particleVelocity", *([0.0, vy] * n))
+    if mode == "implicit":
+        ops.constraints("Transformation")
+        ops.numberer("RCM")
+        ops.system("UmfPack")
+        ops.test("NormDispIncr", 1e-12, 25)
+        ops.algorithm("Newton")
+        ops.integrator("Newmark", 0.6, 0.3025)
+        ops.analysis("Transient")
+    ev = es = ep = 0.0
+    for s in range(steps):
+        ops.mpm("analyze", 1, dt)
+        v = as_list(ops.mpm("particleData", "v"))
+        sg = as_list(ops.mpm("particleData", "sig"))
+        pp = as_list(ops.mpm("particleData", "p"))
+        ev = max(ev, max(abs(v[2 * k]) + abs(v[2 * k + 1] - vy) for k in range(n)) / abs(vy))
+        es = max(es, max(abs(x) for x in sg) / E)
+        ep = max(ep, max(abs(x) for x in pp) / E)
+    return {"mode": mode, "basis": basis, "plate": plate, "steps": steps, "dt": dt, "v_rel": ev,
+            "sig_rel": es, "p_rel": ep, "pass": max(ev, es, ep) <= 1e-10}
+
+
+def case_bands(name):
+    """The `band` lines of case block <name> in tests/mpm_twophase_cases.txt: {key: text}."""
+    out, on = {}, False
+    for ln in (HERE / "mpm_twophase_cases.txt").read_text(encoding="utf-8").splitlines():
+        if ln.startswith("case "):
+            on = ln.split()[1] == name
+            continue
+        if on and ln.strip() == "end":
+            break
+        if on and ln.startswith("band "):
+            parts = ln.split(None, 2)
+            out[parts[1]] = parts[2] if len(parts) > 2 else ""
+    return out
+
+
+def case_band_line(name, contains):
+    """The text after `band ` of the first band line of case <name> that contains <contains>."""
+    on = False
+    for ln in (HERE / "mpm_twophase_cases.txt").read_text(encoding="utf-8").splitlines():
+        if ln.startswith("case "):
+            on = ln.split()[1] == name
+            continue
+        if on and ln.strip() == "end":
+            break
+        if on and ln.startswith("band ") and contains in ln:
+            return ln[5:]
+    raise KeyError((name, contains))
+
+
+def band_value(text):
+    """The first number in a band's text (`0.02`, `<= 0.3`, `>= 1.039...`, `0.01 (of ...)`)."""
+    import re as _re
+    m = _re.search(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", text)
+    return float(m.group(0))
+
+
+# ---------------------------------------------------------------------------
 #  T3 Mandel (block t3_ref_mandel), 5 s ramp
 # ---------------------------------------------------------------------------
-def run_t3(ops, basis, stab, rec):
+def run_t3(ops, basis, stab, rec, upto=None):
     a, b, h, dt, sig0 = 10.0, 4.0, 1.0, 0.02, 10.0
     g = [x for x in rec["gated"] if (x["stab"] == "off") == (stab == "off")][0]
     p0 = g["p0"]
@@ -387,6 +471,8 @@ def run_t3(ops, basis, stab, rec):
     col = [k for k, x in enumerate(X0) if x[0] < h / 2.0]
     rows = {}
     peak = -1e30
+    if upto is not None:
+        steps = {k: v for k, v in steps.items() if float(k) <= upto}
     last = max(steps.values())
     for step in range(1, last + 1):
         ops.mpm("analyze", 1, dt)
@@ -760,6 +846,9 @@ def main(argv=None):
             r += [run_t6_mandel(ops, basis, stabs[fst(f["stab"])], f, 1.0390679304096313) for f in fe["mandel"]]
         elif leg == "t5_routeS":
             r = [run_t5_routeS(ops, AUTO), run_t5_routeS(ops, "off")]
+        elif leg == "t13":
+            r = [run_t13(ops, m, b, pl) for m in ("implicit", "explicit") for b in ("gimp", "bspline2")
+                 for pl in (False, True)]
         elif leg == "t7":
             r = [run_t7(ops, "bspline2"), run_t7(ops, "gimp")]
         elif leg == "t5":

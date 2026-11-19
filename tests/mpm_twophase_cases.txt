@@ -388,3 +388,31 @@ field legs_stiff_fluid, legs_dynamic  the same
 band settle0_ratio report
 ref fork FE, LadrunoUP Q4, build in the record; s0 closed form
 end
+
+# ============================================================================
+# T13 -- translation patch (pre-registered in the review of record, wp-briefs "232l", 2026-11-19).
+# A free two-phase block (gimp / bspline2, 2 x 8 cells of h 1, body 2 x 3, ppc 2, E 1e4, nu 0.2,
+# rho 2; Kf 4444, n 0.4, rhoF 1, kbar 1e-4; sealed, p = 0, no gravity; rollers xmin / xmax) in
+# rigid translation v = (0, -1), dt 2e-3, 200 steps, both routes (mode A Newmark 0.6 / 0.3025;
+# mode F route S), with and without `plate ymax 0` (the block flush with ymax). After every step:
+# v_rel = max |v - v0| / |v0|, sig_rel = max |sigma'| / E, p_rel = max |p| / E.
+# Harness: tests/ladruno_mpm_twophase_cases_harness.py run_t13.
+# ============================================================================
+case t13_translation
+kind run
+band v_rel 1e-10
+band sig_rel 1e-10
+band p_rel 1e-10
+end
+
+# ============================================================================
+# The fix-2 patch check (interface 7b, P9 amended; owner's rule d064f5b7e): the bspline2 hydrostatic
+# column (E 1e4, kbar 1) run to steady state (change of max|p| <= 1e-13 gamma_w H, cap 2000 steps);
+# the grid coefficients and the field at the particles (pi included) against gamma_w (H - y).
+# The particle-carried p is recorded (P5a's motion residual), not gated here.
+# ============================================================================
+case fix2_patch
+kind run
+band grid_coef_err 1e-10 (of gamma_w H)
+band field_at_particles_err 1e-10 (of gamma_w H)
+end

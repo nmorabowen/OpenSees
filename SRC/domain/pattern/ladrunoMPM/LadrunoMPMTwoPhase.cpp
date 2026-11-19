@@ -896,14 +896,23 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
   // ---- P2G (§7a Q5): m, v, a and the two-phase projections ------------------------------
   const bool qs = (theMode == MODE_QUASISTATIC);
   const int R0 = 1 + 2 * nd, RS = R0 + 4;    // r = [m, m v, m a, Vp p, Vp pd, Vp pdd, Vp]
+  const int RM = RS;                          // ... then the per-component mass m_c (nd)
+  // review of record (plate finding): a particle's plate axes; the lumped mass of their normal
+  // component is the signed, translation-consistent weight S'_c (the affine plate image)
+  std::vector<unsigned> pmaskA(N, 0u);
+  for (int p = 0; p < N; p++)
+    for (long k = supStart[p]; k < supStart[p + 1]; k++)
+      if (keep[k] && node[k] < 0) pmaskA[p] |= 1u << ((int)(-node[k] - 2) / 2);
   std::map<long, std::vector<double>> mv;
-  for (long x : want) mv[x].assign(RS, 0.0);
-  for (int f = 0; f < 2 * nd; f++) if (eng.fc.plateOn[f]) mv[ladruno_mpm::plateId(f)].assign(RS, 0.0);
+  for (long x : want) mv[x].assign(RS + nd, 0.0);
+  for (int f = 0; f < 2 * nd; f++) if (eng.fc.plateOn[f]) mv[ladruno_mpm::plateId(f)].assign(RS + nd, 0.0);
   for (int p = 0; p < N; p++) {
     for (long k = supStart[p]; k < supStart[p + 1]; k++) {
       if (!keep[k]) continue;
       std::vector<double> &r = mv[node[k]];
       r[0] += Sv[k] * P.m[p];
+      for (int a = 0; a < nd; a++)
+        r[RM + a] += ((pmaskA[p] & (1u << a)) ? ScG[nc * k + a] : Sv[k]) * P.m[p];
       if (!qs)
         for (int a = 0; a < nd; a++) {
           const double wa = ScG[nc * k + a] * P.m[p];
@@ -922,8 +931,8 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
   for (auto &kv : mv) {
     std::vector<double> &r = kv.second;
     for (int a = 0; a < nd; a++) {
-      r[1 + a] = (r[0] > 0.0) ? r[1 + a] / r[0] : 0.0;
-      r[1 + nd + a] = (r[0] > 0.0) ? r[1 + nd + a] / r[0] : 0.0;
+      r[1 + a] = (r[RM + a] > 0.0) ? r[1 + a] / r[RM + a] : 0.0;
+      r[1 + nd + a] = (r[RM + a] > 0.0) ? r[1 + nd + a] / r[RM + a] : 0.0;
     }
     for (int q = 0; q < 3; q++) r[R0 + q] = (r[R0 + 3] != 0.0) ? r[R0 + q] / r[R0 + 3] : 0.0;
   }
@@ -1011,6 +1020,7 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
       err = "re-pointing failed";
       return -2;
     }
+    e->setPlateMask(pmaskA[p]);                // review of record: the plate-consistent mass
     if (up) {
       const auto it = twoPhase.find(P.body[p]);
       const ladruno_mpm::TwoPhaseProps *tp = (it != twoPhase.end()) ? &it->second : 0;
@@ -1265,17 +1275,45 @@ LadrunoMPMPattern::pencilTimeStep(bool undrained, std::string &err)
   double mmax = 0.0;
   for (int p = 0; p < N; p++) {
     mmax = std::max(mmax, P.m[p]);
-    for (long k = sS[p]; k < sS[p + 1]; k++) {
+    for (long k = sS[p]; k < sS[p + 1]; k++)
       if (sNode[k] >= 0) mnode[loc[sNode[k]]] += sW[k] * P.m[p];
-      else mass[nd * nl + (int)(-sNode[k] - 2)] += sW[k] * P.m[p];
+  }
+  // the step's u-activity and renormalisation (7c (1) as corrected), and its per-component
+  // lumped mass (the plate's normal component on the signed weight), as Engine::advanceUP
+  const double mcutP = (anyTwoPhase() ? std::max(eng.par.masscut, eng.par.pCut) : eng.par.masscut) * mmax;
+  std::vector<char> actN(nl, 0);
+  for (const auto &kv : loc)
+    actN[kv.second] = (mnode[kv.second] > 0.0 &&
+                       ladruno_mpm::imageCutoffMass(G, eng.par.basis, eng.fc, kv.first, mnode[kv.second]) > mcutP);
+  for (int p = 0; p < N; p++) {
+    unsigned pm = 0u;
+    double sum = 0.0, gsum[3] = {0.0, 0.0, 0.0};
+    for (long k = sS[p]; k < sS[p + 1]; k++) {
+      if (sNode[k] < 0) { pm |= 1u << ((int)(-sNode[k] - 2) / 2); continue; }
+      if (!actN[loc[sNode[k]]]) continue;
+      sum += sW[k];
+      for (int a = 0; a < nd; a++) gsum[a] += sdW[nd * k + a];
+    }
+    if (!(sum > 0.0)) { err = "particle " + std::to_string(p) + " has no u-active support node"; return -1.0; }
+    for (long k = sS[p]; k < sS[p + 1]; k++) {
+      const bool kept = sNode[k] < 0 || actN[loc[sNode[k]]];
+      const double w = kept ? sW[k] / sum : 0.0;
+      for (int c = 0; c < nd; c++) {
+        double &sc = sSc[nc * k + c];
+        sc = kept ? sc / sum : 0.0;
+        for (int a = 0; a < nd; a++) {
+          double &g = sdSc[(nc * k + c) * nd + a];
+          g = kept ? (g - sc * gsum[a]) / sum : 0.0;
+        }
+        const int r = row(k, c);
+        if (r >= 0) mass[r] += ((pm & (1u << c)) ? sc : w) * P.m[p];
+      }
     }
   }
   std::vector<char> freeC(nu, 0);
   for (const auto &kv : loc) {
     const int i = kv.second;
-    if (!(mnode[i] > 0.0 && ladruno_mpm::imageCutoffMass(G, eng.par.basis, eng.fc, kv.first, mnode[i]) >
-                                (anyTwoPhase() ? std::max(eng.par.masscut, eng.par.pCut)
-                                                               : eng.par.masscut) * mmax)) continue;   // 7c (1)
+    if (!actN[i]) continue;
     int ijk[3];
     G.extIJK(kv.first, ijk);
     for (int c = 0; c < nd; c++) {
@@ -1286,8 +1324,7 @@ LadrunoMPMPattern::pencilTimeStep(bool undrained, std::string &err)
         if (on && (eng.fc.fixMask[f] & (1u << c))) fixed = true;
         if (eng.fc.plateOn[f] && c == d && ijk[d] == ((f % 2) ? G.n[d] : 0)) fixed = true;
       }
-      mass[nd * i + c] = mnode[i];
-      freeC[nd * i + c] = fixed ? 0 : 1;
+      freeC[nd * i + c] = (fixed || !(mass[nd * i + c] > 0.0)) ? 0 : 1;
     }
   }
   for (int f = 0; f < 2 * nd; f++) if (eng.fc.plateOn[f] && mass[nd * nl + f] > 0.0) freeC[nd * nl + f] = 1;

@@ -626,6 +626,7 @@ opt-in like `-precision f32` on the recorder (C2-DTYPE).
 | `VOLUME` | `V` | `V` | `L^3` | 0 | current volume, `J·V₀` (2D: area × t) |
 | `GIMP_HALF_LENGTH` | `lx,ly` | `lx,ly,lz` | `L` | 1 | current half-lengths, when they evolve |
 | `DEFORMATION_GRADIENT` | `F11,F12,F21,F22` | `F11,F12,F13,F21,F22,F23,F31,F32,F33` | absent (`""`) | 2 | row-major; in 2D `F33 = 1` is not stored |
+| `PORE_PRESSURE` | `p` | `p` | `F/L^2` | 0 | WP-232l: excess pore pressure of a two-phase particle, compression positive (0 for a single-phase particle); additive, no version bump. A two-phase particle's `STRESS` is the effective stress σ′ |
 | `STATE_<token>` | the material's response labels | same | as the material says | 0 | a material state variable (below) |
 
 - **Values are finite** in every field except `STATE_*` (C2-FINITE).

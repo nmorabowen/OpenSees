@@ -535,7 +535,8 @@
  "t6_diagnosis": {
   "verdict": "STOP at T6 Mandel (bspline2 gated: off misses at tv 0.2 / 0.4, auto at tv 0.2 / 0.4; gimp reported, misses from tv 0.04). Terzaghi passes on both bases and both stabs (p <= 0.0068, U <= 0.0030 against 0.02).",
   "bspline2": "A growing x-velocity oscillation at the top-right particles (9.25, 3.75): the corner of the plate face and the drained traction-free face. |v| doubles about every 5 s at dt 0.005 (1.7e-3 at t 2.5 s, 9.0e-2 at 42.5 s, 3.7 at 75 s); p follows. dt 0.005 is 0.30 x the deck's drained pencil (0.01686; undrained 0.01158; estimator 0.01398), so the A6 claim does not bound route S here. Controls: dt 0.0025 decays (5.5e-4 at 50 s); a 2 % velocity PIC fraction (flip 0.98) decays; the same deck single-phase (no twoPhase) stays bounded (2.5e-4); pressureBlend 0.98 changes nothing (p stays representable).",
-  "gimp": "Fails fast at dt 0.005 (p -88 at (8.76, 0.25) by t 5 s) and still wrong at dt 0.0025 (p turns negative): particles at the drained free face (x 9.75, lp 0.25) creep past x = 9.75 and give the ghost column beyond it a GIMP tail S = d^2 / (4 h lp); that u node is active (mode F's u cutoff 1e-10) and its correction dt M^-1 Q p scales as dS/S = 2/d (hypothesis, not yet isolated)."
+  "gimp": "Fails fast at dt 0.005 (p -88 at (8.76, 0.25) by t 5 s) and still wrong at dt 0.0025 (p turns negative): particles at the drained free face (x 9.75, lp 0.25) creep past x = 9.75 and give the ghost column beyond it a GIMP tail S = d^2 / (4 h lp); that u node is active (mode F's u cutoff 1e-10) and its correction dt M^-1 Q p scales as dS/S = 2/d (hypothesis, not yet isolated).",
+  "build": "4b74bd335093cc074bd863da887ae5ea4970f07a"
  },
  "t6_mandel_diagnostics_4b74bd335": {
   "build": "4b74bd335093cc074bd863da887ae5ea4970f07a",
@@ -1331,7 +1332,8 @@
  "pencil_cost_5d64922a4": {
   "deck": "T6 Mandel, 160 particles, dt 0.005, route S",
   "bspline2": "step 12.3 ms incl. the pencil; pencil 9.3 ms = 76 %",
-  "gimp": "step 11.9 ms incl. the pencil; pencil 9.5 ms = 80 %"
+  "gimp": "step 11.9 ms incl. the pencil; pencil 9.5 ms = 80 %",
+  "build": "5d64922a495dce7415ee3427718853b568ddb58d"
  },
  "t6_bspline2_5d64922a4": {
   "build": "5d64922a495dce7415ee3427718853b568ddb58d",
@@ -1946,7 +1948,8 @@
      ],
      "dp": 1.2380739100592564e-08
     }
-   ]
+   ],
+   "build": "5d64922a495dce7415ee3427718853b568ddb58d"
   },
   "bspline2_dt0.0025": {
    "basis": "bspline2",
@@ -2076,8 +2079,10 @@
      ],
      "dp": 1.1174897451837751e-08
     }
-   ]
-  }
+   ],
+   "build": "5d64922a495dce7415ee3427718853b568ddb58d"
+  },
+  "build": "5d64922a495dce7415ee3427718853b568ddb58d"
  },
  "t10_5d64922a4": {
   "build": "5d64922a495dce7415ee3427718853b568ddb58d",

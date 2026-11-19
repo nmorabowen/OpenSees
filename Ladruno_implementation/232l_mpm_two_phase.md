@@ -42,6 +42,7 @@ record carries `ladrunoBuild`.
 | T10 single-phase bit for bit against cfe478254 | 24 cases | 24/24 | d77caf8fd |
 | T11 mutation: MPM IDENT (joint Q + projection cut) | the two-phase oracle and T1 go red | 14/14 red (`_twophase_oracle` + `_fe_identity` on `dist/mut_MPM_IDENT`; green on the normal build) | d77caf8fd |
 | T11 mutation: MPM ZERO ≥ 0.500, SCALE ≥ 0.398 | CI lane | pending: run 44532817830 | d77caf8fd |
+| T13 translation patch (free block, both routes, gimp / bspline2, with / without a plate) | v, σ′, p rel 1e-10 | pending: the review-of-record build | — |
 | T12 engines agree (Tcl, Python) | pass | pass | d77caf8fd |
 | Two-phase test files | — | 69 passed, 2 xfailed (T7) | d77caf8fd |
 | The whole MPM suite (`tests/test_ladruno_mpm_*.py` + the oracle's self-test) | — | 509 passed, 40 skipped (opt-in slow tiers, MUMPS matrix types absent), 14 xfailed (12 pre-registered from 232f–232k + T7 × 2), 0 failed | d77caf8fd |
@@ -79,6 +80,16 @@ against 1.00093 before (4b74bd335); measured on 69ffff490, whose route S equals 
   - K_f = 1 gives the same thresholds, so the u-p coupling is not the cause.
   - Route S's limit is s·Δt_d, with s ≤ 0.5 by default, up to 0.7 warned, and refused above.
   - Δt_d is computed per epoch and on a cell change. The Mandel step dropped from 12.3 ms to 2.95 ms.
+
+- **2026-11-19, ready-flip review of record on d77caf8fd (Fable BLOCK + /code-review high):**
+  - **Blocker:** route S could not translate a two-phase body. §7c (1) dropped light u nodes
+    without renormalising. Corrected: mode A's `renormalize` is applied over each particle's
+    u-active nodes in every route-S step.
+  - **Plate finding (confirmed with probe_plate.py):** with `plate ymax 0` on bspline2 and uniform
+    v_y = −1, both modes were off by 7 % in v and 14 kPa in σ′. The lumped mass of the plate's
+    normal component used the unsigned W while the momentum used the affine image's signed weights.
+    Fixed: that component's mass is Σ S′_c m_p on the mirror rows and the plate.
+  - New gate T13. The gates are now asserted by pytest (`tests/test_ladruno_mpm_twophase_gates.py`).
 
 ## R rows — route E (reported, never gated; `r_rows_route_e.json`, build 5d64922a4)
 

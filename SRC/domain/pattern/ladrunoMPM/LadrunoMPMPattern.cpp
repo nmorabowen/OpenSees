@@ -401,6 +401,7 @@ LadrunoMPMPattern::setParameter(const char **argv, int argc, Parameter &param)
 int
 LadrunoMPMPattern::updateParameter(int parameterID, Information &info)
 {
+  pencilDt = -1.0;                 // WP-232l review of record: route S's cached pencil is stale
   // WP-232k (D9): a stage registration made by setParameter (double path) or handed over
   // by a particle element from MaterialStageParameter (int path, mpmStageParameter)
   const int k = parameterID - STAGE_PARAM_BASE;
@@ -885,7 +886,12 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       // 7c amendment (owner, wp-briefs "Route S after the consistency fix"): s <= 0.5 by default,
       // up to 0.7 with a warning (T7's scan), refused above
       const double sS = eng.par.safety;
-      if (sS > 0.7) {
+      if (routeSLimitOff && !routeSLimitOffWarned) {
+        opserr << "WARNING mpm analyze -- `mpm debug routeSLimit off`: route S's run-time limit and its"
+                  " safety cap are OFF (debug only: T7's scan measures above the cap)\n";
+        routeSLimitOffWarned = true;
+      }
+      if (!routeSLimitOff && sS > 0.7) {
         opserr << "ERROR mpm analyze -- route S caps `mpm safety` at 0.7 (s = " << sS << "): T7's scan"
                   " found the USL skeleton stable only to 0.7 x the drained pencil on gimp (0.8 x on"
                   " bspline2); interface §7c amendment. Step refused, nothing changed\n";
@@ -911,7 +917,10 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
           }
           cells[p] = c;
         }
-        if (pencilDt < 0.0 || cells != pencilCell) {
+        // ... and on a stage walk or a parameter update (they reset pencilDt), and at least
+        // every 100 steps (review of record)
+        if (pencilDt < 0.0 || cells != pencilCell || pencilAge >= 100) {
+          pencilAge = 0;
           std::string perr;
           pencilDt = pencilTimeStep(false, perr);
           if (!perr.empty()) {
@@ -923,6 +932,7 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
           }
           pencilCell.swap(cells);
         }
+        pencilAge++;
       }
       const double dtd = pencilDt;
       if (!routeSWarned) {
@@ -933,7 +943,7 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
                << "): the pressure is implicit, the skeleton explicit (interface §7c)\n";
         routeSWarned = true;
       }
-      if (dt > eng.par.safety * dtd) {
+      if (!routeSLimitOff && dt > eng.par.safety * dtd) {
         opserr << "ERROR mpm analyze -- dt = " << dt << " exceeds s * dt_pencil = " << eng.par.safety
                << " * " << dtd << " = " << eng.par.safety * dtd
                << " (route S: the drained pencil, interface §7c); step refused, nothing changed\n";
@@ -1109,6 +1119,8 @@ LadrunoMPMPattern::reset(void)
   piC.clear();                      // the q + pi invariant: q is p again until the first projection
   routeSWarned = false;             // WP-232l 7c (3): warn again in the next epoch
   routeSCapWarned = false;
+  routeSLimitOffWarned = false;
+  pencilAge = 0;
   pencilDt = -1.0;                  // 7c amendment: the pencil is recomputed in the next epoch
   pencilCell.clear();
   pendValid = pendFirst = false;    // Fable audit finding 2: nothing pending
