@@ -1,0 +1,202 @@
+# mpm_twophase_cases.txt -- two-phase particles (WP-232l, ADR-232 §9 phase 6). Format version:
+# mpm-twophase-cases 1.
+#
+# Two kinds of block live here:
+#   * REFERENCE blocks (kind reference), written by the verification worker 232l-V from closed
+#     forms and the fork's own LadrunoUP (tests/mpm_twophase_reference.py; never MPM). Each names
+#     its JSON record under tests/data/mpm/twophase/ (provenance: ladrunoBuild, deck, date). The C++
+#     worker reads these blocks; it never reads tests/mpm_twophase_reference.py.
+#   * MPM blocks (kind run | refusal | protocol), added by 232l-C (interface
+#     tests/mpm_twophase_interface.md §7).
+# Gates are the pre-registered rows T0-T12 of .claude/skills/ladruno-mpm/references/wp-briefs.md
+# "232l", as amended by its freeze block (c579b08e8) and the rulings on 232l-V's Round 1
+# (5820012e5) -- copied, never widened.
+#
+# FORMAT: that of tests/mpm_implicit_cases.txt (its header is authoritative for every key it
+# defines), plus the keys of interface §7 (twophase, pfix, plate, traction, kinematics, pblend,
+# pinit). Keys used by the reference blocks:
+#   kind      reference
+#   twophase  <body> <Kf> <n> <rhoF> <perm: ndm> [alpha <a>] [Ks <Ks>] [stab off|auto <a0>|<alpha>]
+#   data      <path>              the JSON record
+#   field     <name> <meaning>    a field of that record the MPM harness reads
+#   band      <observable> <value | rule>   the gate's band, as ruled
+#   ref, gap  free text
+# Units: kN, t, m, s, kPa. Sign: tension-positive stress; p compression-positive. Plane strain,
+# thickness 1. The body's rho is the SATURATED MIXTURE density (LadrunoUP's convention).
+#
+# THE FE DECKS (LadrunoUP, ELE 33017): Q4, h = grid spacing, -dynSeepage off, system UmfPack,
+# numberer RCM, constraints Transformation, algorithm Linear, Newmark 0.6 / 0.3025, -geom linear
+# (the default; the MPM gates T2-T7 run under `hypo`, the gap is small strain: settlements here
+# are <= 0.9 % of a cell). The plate is the frozen P10: the loaded face's u_y tied by equalDOF to
+# one retained node, which carries the plate force. Errors are at the GIMP ppc-2 particle points
+# (FE p interpolated linearly between nodes), the MPM observable's own points.
+
+# ============================================================================
+# T2 -- Terzaghi, route E (mode A; gimp 1 cell wide, bspline2 2 cells wide; linear reported)
+# ============================================================================
+# The case of tests/test_ladruno_up_element_analytic.py:213-224, quoted: E 1.0e4, nu 0.2, rho 2.0,
+# Kf 4444.0, poro 0.4, rhoF 1.0, kbar 1.0e-4, L 10.0, q 10.0, nely 10; Newmark 0.6 / 0.3025,
+# dt 0.02 (:236), -stab off (:227). Here: both stab legs (off; auto 0.25 = the MPM default).
+# Geometry: x in [0, w] (w = 1 gimp, 2 bspline2), y in [0, 10], h 1 (10 cells tall). Grid
+# conditions: fix xmin x, fix xmax x, fix ymin y, pfix ymax 0 (drained), plate ymax F = q w
+# (10 kN per m of width), a STEP from t = 0 (Constant series). Impervious elsewhere (natural).
+# Closed form: p/p0 = terzaghi_series(Z, Tv), Z = (L - Y)/L from the drained face, Tv = cv t/L^2;
+# cv = kbar/(1/Eoed + n/Kf) = 0.5555277763888194 m^2/s, Eoed = 11111.11, Qbar = Kf/n = 11110,
+# p0 = q Qbar/(Qbar + Eoed) = 4.999749987499374 kPa, s0 = q L/(Eoed + Qbar) = 0.004500225011250563,
+# sinf = q L/Eoed = 0.009 m. Read times Tv 0.05, 0.1, 0.2, 0.5 = steps 450, 900, 1800, 4500 of dt
+# 0.02 (t = 9.0, 18.0, 36.0, 90.0 s; the record carries Tv_actual of the step reached).
+# Observables: p_err_max@Tv = max over particles |p_p - p0 terzaghi_series((L - Y_p)/L, Tv)| / p0
+# (Y_p initial); U_err@Tv = |U - s_exact(Tv)| / (sinf - s0), U the plate's downward displacement,
+# s_exact = s0 + (sinf - s0) terzaghi_U(Tv).
+# FE errors (record, uniform dt 0.02 from t = 0; 1x10 and 2x10 identical; plate = nodal loads to
+# the last digit): p at the GIMP points off / auto: Tv 0.1 0.0079 / 0.0095, Tv 0.2 0.0009 /
+# 0.0016, Tv 0.5 0.0011 / 0.0008; U_err <= 0.0056. Tv 0.05: 0.109 / 0.102 (the step transient).
+case t2_ref_terzaghi
+kind reference
+material 1 elastic 1.0e4 0.2 2.0
+twophase 1 4444.0 0.4 1.0 1.0e-4 1.0e-4
+data tests/data/mpm/twophase/t2_terzaghi_fe.json
+field runs[k] (nx 1|2, stab off|[auto,0.25], first_small_step False = the uniform-dt leg) .rows[Tv].{p_err_gimp_points, p_err_nodes_interior, U_err, Tv_actual}
+field runs[k].constants  {Eoed, Qbar, cv, p0, s0, sinf}
+band p_err_max@0.1 0.02
+band p_err_max@0.2 0.02
+band p_err_max@0.5 0.02
+band U_err@0.1 0.02
+band U_err@0.2 0.02
+band U_err@0.5 0.02
+band p_err_max@0.05 report
+ref closed form (terzaghi_series / terzaghi_U, test_ladruno_up_element_analytic.py:89-102); FE LadrunoUP Q4 at the same grid, dt and Newmark pair
+gap MPM hypo vs FE small strain (settlement 0.009 m = 0.9 % of h)
+end
+
+# ============================================================================
+# T3 -- Mandel, route E (mode A; gimp, bspline2). Ruling 5820012e5: a 5 s LINEAR RAMP, not a step.
+# ============================================================================
+# Soil: Terzaghi's with nu 0.1: E 1.0e4, nu 0.1, rho 2.0, Kf 4444.0, poro 0.4, rhoF 1.0, kbar 1.0e-4
+# (alpha 1, Ks inf). Derived: K 4166.67, G 4545.45, M = Kf/n = 11110, Ku 15276.67, B 0.72725289,
+# nu_u 0.36465270, c = kbar M (K + 4G/3)/(Ku + 4G/3) = 0.5325188530527032 m^2/s (equal to the
+# papers' 2 kbar B^2 G (1-nu)(1+nu_u)^2 / (9 (1-nu_u)(nu_u-nu)) to 2e-16).
+# Geometry: half strip x in [0, 10] (a = 10), y in [0, 4] (b = 4), h 1, 10 x 4 cells.
+# Grid conditions: fix xmin x (symmetry, impervious), fix ymin y (symmetry, impervious), pfix xmax 0
+# (drained, traction-free: no u condition there), plate ymax F = a sig0 = 100 kN/m (sig0 10 kPa),
+# load factor lambda(t) = min(t/5, 1) (`series linear 5.0`). dt 0.02.
+# Closed form (MANDEL_NOTE in the record): p(x,t) = (2F B (1+nu_u)/(3a)) sum_n sin a_n/(a_n -
+# sin a_n cos a_n) (cos(a_n x/a) - cos a_n) exp(-a_n^2 c t/a^2), F = a sig0, tan a_n = (1-nu)/(nu_u-nu)
+# a_n; the ramp by Duhamel on each term. Mandel (1953); Cheng & Detournay (1988); Abousleiman et al.
+# (1996). THE PAPERS' EQUATION NUMBERS ARE UNVERIFIED; the warrant is the independent Laplace
+# solution derived in the reference (agreement 2.4e-11 p0). p0 = B (1 + nu_u) sig0/3 =
+# 3.3081587353148176 kPa.
+# Read times tv = c t/a^2: 0.04, 0.078 (the ramp peak), 0.12, 0.2, 0.4 = steps 376, 732, 1127, 1878,
+# 3756 of dt 0.02.
+# Observable p_center@tv = mean over the first particle column (initial x_p < h/2; ppc 2: x = h/4)
+# of p_p / p0, against the closed form's mean at the same particles' x. The record gives both the
+# FE at x = 0 and at x = h/4 (FE interpolated); the band uses the larger FE error.
+# Closed-form peak under the ramp: 1.0781358608192628 p0 at tv 0.07815 (step: 1.0791 at tv 0.0647).
+# Peak gate: the largest p_center over the five times (and, if the harness samples every step, over
+# the run) >= 1 + (1.0781 - 1)/2 = 1.0390679304096313.
+# FE (record.gated, uniform dt 0.02): err at x = h/4 off / auto: 0.0080 / 0.0082 (tv 0.04), 0.0021 /
+# 0.0014 (0.078), 0.0018 / 0.0018 (0.12), 0.0005 / 0.0017 (0.2), 0.0009 / 0.0014 (0.4). Bands 0.02.
+# Reported: the step load (FE misses p(0) by 0.05-1.13 p0 up to the peak: the strip rings), a 2 s
+# ramp, and dt 0.002 (record.reported).
+case t3_ref_mandel
+kind reference
+material 1 elastic 1.0e4 0.1 2.0
+twophase 1 4444.0 0.4 1.0 1.0e-4 1.0e-4
+data tests/data/mpm/twophase/t3_mandel_fe.json
+field gated[k] (stab off | [auto, 0.25]) .rows[tv].{p_exact_quarter_over_p0, p_fe_quarter_over_p0, err_quarter_over_p0, p_exact_over_p0, err_over_p0, t}; gated[k].band
+field closed_form_peak_ramp, peak_gate, closed_form_note, selfcheck
+band p_center@0.04 0.02
+band p_center@0.078 0.02
+band p_center@0.12 0.02
+band p_center@0.2 0.02
+band p_center@0.4 0.02
+band p_center_peak >= 1.0390679304096313
+ref Mandel closed form (series, Laplace-checked); FE LadrunoUP Q4 10 x 4 with the tied plate, same grid, dt, Newmark
+gap MPM hypo vs FE small strain; the FE observable at x = h/4 is interpolated, the MPM's is at particles
+end
+
+# ============================================================================
+# T4 -- hydrostatics + effective self-weight (mode A; gimp, bspline2). Ruling: h = H/20.
+# ============================================================================
+# Soil: Terzaghi's (E 1.0e4, nu 0.2, rho_sat 2.0, Kf 4444.0, poro 0.4, rhoF 1.0, kbar 1.0e-4).
+# Geometry: x in [0, w] (w = 0.5 gimp, 1.0 bspline2 = 2 cells), y in [0, 10], h 0.5 (20 cells
+# tall). Grid conditions: fix xmin x, fix xmax x, fix ymin y, pfix ymax 0. Gravity g = 9.81 from
+# t = 0 on the mixture (rho_sat) and as the fluid drive b_f (the body's default -fluidBody).
+# Run to steady state: the FE ran to Tv = 5 (t = 900 s); the MPM must reach Tv >= 3 (t >= 540 s;
+# at Tv 2 the decaying excess is still ~1 % of the undrained gravity excess).
+# Closed form, at each particle (Y_p initial, y_p current; H = 10 = the pfix face):
+#   p_exact = rhoF g (H - y_p)
+#   syy'_exact = -rho_sat g (H - Y_p) + rhoF g (H - y_p)     (total weight above the particle in
+#                the reference configuration, minus p; = -(rho_sat - rhoF) g (H - Y) when y = Y)
+# Gates (fixed bands, not 2 x FE): |p - p_exact| <= 0.01 rhoF g H = 0.981 kPa and
+# |syy' - syy'_exact| <= 0.03 (rho_sat - rhoF) g H = 2.943 kPa, at every particle.
+# FE (record.gated, h = H/20): p exact to 3.9e-9 rhoF g H; sigma' is element-constant, so its error
+# is rho' g h/4 = 0.0125 rho' g H at the GIMP points (0.0144 at the Gauss points). h = H/10
+# (record.reported): 0.025 / 0.0289.
+case t4_ref_hydro
+kind reference
+material 1 elastic 1.0e4 0.2 2.0
+twophase 1 4444.0 0.4 1.0 1.0e-4 1.0e-4
+data tests/data/mpm/twophase/t4_hydro_fe.json
+field gated[k] (nx 1|2, stab) .{p_err_over_gwH, sig_err_gimp_over_rhopgH, sig_err_gauss_over_rhopgH, nely 20}
+field reported[k]  the same at nely 10
+band hydro_p_err 0.01 (of rhoF g H)
+band hydro_syy_err 0.03 (of (rho_sat - rhoF) g H)
+ref closed form (equilibrium + hydrostatics); FE LadrunoUP Q4 column, steady state
+gap none in the closed form; the FE's own sigma' error is a discretization fact (element-constant)
+end
+
+# ============================================================================
+# T5 -- checkerboard: ADR-71's B4 footing on particles (gimp, ppc 2, the B4 grid)
+# ============================================================================
+# B4 = tests/test_ladruno_up_element_equiv.py:332-411, quoted: E 25000, nu 0.3, rho 2.67, poro 0.4,
+# Kf 2.2e12, rhoF 1.0, perm 1.0e-7 (both), 30 x 30 m half model, 10 x 10 cells (h 3), strip 3 m
+# (the first top cell) q 0.1 kPa ramped 0 -> 1 over 0.1 s then held (Path 0, 0.1, 1e6 / 0, 1, 1);
+# rollers on xmin and xmax (x), base fixed (y), drained top only (pfix ymax 0); Rayleigh 0.05 M +
+# 0.02 K (route E only; route S has none, amendment A5); Newmark 0.6 / 0.3025; dt 0.01; check time
+# t = 1 s. MPM: `traction` on the strip = consistent nodal forces q * 3 / 2 on its two top nodes.
+# CB_lap = ||p_ij - mean of 4 neighbours|| / ||p|| over the interior grid nodes i, j = 1..9 (the grid
+# p after the last step); CB_lat the lattice cosine (reported).
+# FE: CB_lap 0.6030 (off), 0.1259 (auto 0.25); CB_lat 0.1384 / 0.0264 (= the shipped test's
+# measured 0.603 / 0.126).
+case t5_ref_b4
+kind reference
+material 1 elastic 25000.0 0.3 2.67
+twophase 1 2.2e12 0.4 1.0 1.0e-7 1.0e-7
+data tests/data/mpm/twophase/t5_b4_fe.json
+field runs[k] (stab off | [auto, 0.25]) .{CB_lap, CB_lat}
+band cb_lap(route E, stab auto 0.25) <= 0.3
+band cb_lap(route S, default stab) <= 0.3
+band cb_lap(route E, stab off) >= 0.5
+ref FE LadrunoUP Q4 B4 (reported beside, not a band source)
+end
+
+# ============================================================================
+# T6 -- Terzaghi and Mandel, route S (mode F; bspline2 gated, gimp reported). Ruling 5820012e5.
+# ============================================================================
+# T2's and T3's cases with a 5 s linear ramp for BOTH (Terzaghi: 53 undrained transits of H, 0.0949
+# s each; Mandel: 52 lateral transits, 0.0968 s), no damping during consolidation, read at T2's Tv
+# and T3's tv. Closed forms: the ramp forms (terzaghi_ramp, terzaghi_settle_ramp, mandel_p with
+# t_ramp; Duhamel), so p_err_max and U_err are against the RAMPED solution.
+# The FE reference runs at the MPM run's OWN dt (the FE error depends on dt: gamma 0.6 damps the
+# slow undrained modes per step). The band of each leg is max(2 x FE error at that dt, 0.02), per
+# observable and time. Produce the record for the run's dt with
+#     python3.12 tests/mpm_twophase_reference.py t6fe <dt>      (writes t6_fe_dt<dt>.json, ~1 min)
+# and read band_p / band_U (Terzaghi) and band (Mandel). The dt sweep (record t6_dtsweep_fe.json,
+# stab off): Terzaghi p at Tv 0.1 = 0.0031 (dt 0.05) ... 0.0112 (dt 0.001); Mandel peak 0.0036 ...
+# 0.0193.
+case t6_ref_ramp
+kind reference
+material 1 elastic 1.0e4 0.2 2.0
+material 2 elastic 1.0e4 0.1 2.0
+twophase 1 4444.0 0.4 1.0 1.0e-4 1.0e-4
+data tests/data/mpm/twophase/t6_fe_dt<dt>.json
+data tests/data/mpm/twophase/t6_dtsweep_fe.json
+data tests/data/mpm/twophase/t6_terzaghi_ramp_fe.json
+field terzaghi[k].rows[Tv].{p_err_gimp_points, U_err}; terzaghi[k].band_p, band_U
+field mandel[k].rows[tv].{err_quarter_over_p0, p_exact_quarter_over_p0}; mandel[k].band
+band per leg: max(2 x FE error at the run's dt, 0.02)
+band p_center_peak >= 1 + (closed-form ramp peak - 1)/2 (1.0390679304096313 for Mandel)
+ref closed forms with the ramp; FE LadrunoUP under Newmark at the MPM dt
+gap route S has no algorithmic damping; the FE has gamma 0.6
+end

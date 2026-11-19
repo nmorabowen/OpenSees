@@ -14,64 +14,12 @@
   "rhoF": 1.0,
   "kbar": 0.0001,
   "L": 10.0,
-  "nely": 10,
-  "g": 9.81
+  "nely": 20,
+  "g": 9.81,
+  "ruling": "h = H/20 gated, band 0.03; H/10 reported"
  },
- "runs": [
-  {
-   "nx": 1,
-   "nely": 10,
-   "stab": "off",
-   "t_end": 900.04500450045,
-   "dt": 1.0,
-   "p_err_over_gwH": 3.737752189534725e-09,
-   "sig_err_gauss_over_rhopgH": 0.028867517174219478,
-   "sig_err_gimp_over_rhopgH": 0.02500000371473814,
-   "last_elem_gp_spread": 1.9539925233402755e-14,
-   "note": "sigma' is element-constant on this column; the error at a point is rho' g |y - y_mid|, i.e. h/(2 sqrt3) at Gauss points, h/4 at GIMP points"
-  },
-  {
-   "nx": 1,
-   "nely": 10,
-   "stab": [
-    "auto",
-    0.25
-   ],
-   "t_end": 900.04500450045,
-   "dt": 1.0,
-   "p_err_over_gwH": 1.4939772622094206e-08,
-   "sig_err_gauss_over_rhopgH": 0.02886752830726627,
-   "sig_err_gimp_over_rhopgH": 0.025000014847784937,
-   "last_elem_gp_spread": 5.773159728050814e-14,
-   "note": "sigma' is element-constant on this column; the error at a point is rho' g |y - y_mid|, i.e. h/(2 sqrt3) at Gauss points, h/4 at GIMP points"
-  },
-  {
-   "nx": 2,
-   "nely": 10,
-   "stab": "off",
-   "t_end": 900.04500450045,
-   "dt": 1.0,
-   "p_err_over_gwH": 3.73775103064749e-09,
-   "sig_err_gauss_over_rhopgH": 0.02886751717421745,
-   "sig_err_gimp_over_rhopgH": 0.025000003714736114,
-   "last_elem_gp_spread": 5.861977570020827e-14,
-   "note": "sigma' is element-constant on this column; the error at a point is rho' g |y - y_mid|, i.e. h/(2 sqrt3) at Gauss points, h/4 at GIMP points"
-  },
-  {
-   "nx": 2,
-   "nely": 10,
-   "stab": [
-    "auto",
-    0.25
-   ],
-   "t_end": 900.04500450045,
-   "dt": 1.0,
-   "p_err_over_gwH": 1.4939771318346067e-08,
-   "sig_err_gauss_over_rhopgH": 0.02886752830726497,
-   "sig_err_gimp_over_rhopgH": 0.025000014847783632,
-   "last_elem_gp_spread": 3.9968028886505635e-14,
-   "note": "sigma' is element-constant on this column; the error at a point is rho' g |y - y_mid|, i.e. h/(2 sqrt3) at Gauss points, h/4 at GIMP points"
-  },
+ "closed_form": "p = rho_f g (H - Y); sigma'_yy = -(rho_sat - rho_f) g (H - Y); bars 0.01 rho_f g H (p) and 0.03 (rho_sat - rho_f) g H (sigma')",
+ "gated": [
   {
    "nx": 1,
    "nely": 20,
@@ -124,6 +72,62 @@
    "sig_err_gauss_over_rhopgH": 0.014433760589067807,
    "sig_err_gimp_over_rhopgH": 0.012500003859327357,
    "last_elem_gp_spread": 8.08242361927114e-14,
+   "note": "sigma' is element-constant on this column; the error at a point is rho' g |y - y_mid|, i.e. h/(2 sqrt3) at Gauss points, h/4 at GIMP points"
+  }
+ ],
+ "reported": [
+  {
+   "nx": 1,
+   "nely": 10,
+   "stab": "off",
+   "t_end": 900.04500450045,
+   "dt": 1.0,
+   "p_err_over_gwH": 3.737752189534725e-09,
+   "sig_err_gauss_over_rhopgH": 0.028867517174219478,
+   "sig_err_gimp_over_rhopgH": 0.02500000371473814,
+   "last_elem_gp_spread": 1.9539925233402755e-14,
+   "note": "sigma' is element-constant on this column; the error at a point is rho' g |y - y_mid|, i.e. h/(2 sqrt3) at Gauss points, h/4 at GIMP points"
+  },
+  {
+   "nx": 1,
+   "nely": 10,
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "t_end": 900.04500450045,
+   "dt": 1.0,
+   "p_err_over_gwH": 1.4939772622094206e-08,
+   "sig_err_gauss_over_rhopgH": 0.02886752830726627,
+   "sig_err_gimp_over_rhopgH": 0.025000014847784937,
+   "last_elem_gp_spread": 5.773159728050814e-14,
+   "note": "sigma' is element-constant on this column; the error at a point is rho' g |y - y_mid|, i.e. h/(2 sqrt3) at Gauss points, h/4 at GIMP points"
+  },
+  {
+   "nx": 2,
+   "nely": 10,
+   "stab": "off",
+   "t_end": 900.04500450045,
+   "dt": 1.0,
+   "p_err_over_gwH": 3.73775103064749e-09,
+   "sig_err_gauss_over_rhopgH": 0.02886751717421745,
+   "sig_err_gimp_over_rhopgH": 0.025000003714736114,
+   "last_elem_gp_spread": 5.861977570020827e-14,
+   "note": "sigma' is element-constant on this column; the error at a point is rho' g |y - y_mid|, i.e. h/(2 sqrt3) at Gauss points, h/4 at GIMP points"
+  },
+  {
+   "nx": 2,
+   "nely": 10,
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "t_end": 900.04500450045,
+   "dt": 1.0,
+   "p_err_over_gwH": 1.4939771318346067e-08,
+   "sig_err_gauss_over_rhopgH": 0.02886752830726497,
+   "sig_err_gimp_over_rhopgH": 0.025000014847783632,
+   "last_elem_gp_spread": 3.9968028886505635e-14,
    "note": "sigma' is element-constant on this column; the error at a point is rho' g |y - y_mid|, i.e. h/(2 sqrt3) at Gauss points, h/4 at GIMP points"
   }
  ],

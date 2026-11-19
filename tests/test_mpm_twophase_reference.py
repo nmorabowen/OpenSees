@@ -88,6 +88,13 @@ def test_mandel_peak_meets_the_kickoff_floor():
     assert pk >= 1.05 and 0.05 < tv < 0.09
 
 
+def test_cases_file_reference_blocks_point_at_records():
+    text = (HERE / "mpm_twophase_cases.txt").read_text(encoding="utf-8")
+    for line in text.splitlines():
+        if line.startswith("data ") and "<dt>" not in line:
+            assert (R.REPO / line.split()[1]).exists(), line
+
+
 def test_records_t2_terzaghi():
     d = _json("t2_terzaghi_fe")
     _provenance_ok(d)
@@ -100,17 +107,21 @@ def test_records_t2_terzaghi():
 def test_records_t3_mandel():
     d = _json("t3_mandel_fe")
     _provenance_ok(d)
-    assert d["closed_form_peak_ramp"]["p_over_p0"] >= 1.05
-    gated = [r for r in d["runs"] if r["t_ramp"] == R.MANDEL["t_ramp"] and r["dt"] == 0.02]
-    assert len(gated) == 2
-    for run in gated:
+    assert "UNVERIFIED" in d["closed_form_note"]
+    assert d["selfcheck"]["mandel_series_vs_laplace_max_over_p0"] < 1e-8
+    pk = d["closed_form_peak_ramp"]["p_over_p0"]
+    assert pk >= 1.05 and math.isclose(d["peak_gate"], 1 + 0.5 * (pk - 1), rel_tol=1e-15)
+    assert len(d["gated"]) == 2
+    for run in d["gated"]:
+        assert run["t_ramp"] == R.MANDEL["t_ramp"] and run["dt"] == 0.02
         assert [r["tv"] for r in run["rows"]] == list(R.MANDEL_TVS)
+        assert all(b == 0.02 for b in run["band"])          # FE error < 0.01 everywhere
 
 
 def test_records_t4_t5():
     h = _json("t4_hydro_fe")
     _provenance_ok(h)
-    for run in h["runs"]:
+    for run in h["gated"] + h["reported"]:
         assert run["p_err_over_gwH"] < 1e-6
         # sigma' is element-constant: the point error is the h/4 (GIMP) and h/(2 sqrt 3) offsets
         hL = 1.0 / run["nely"]

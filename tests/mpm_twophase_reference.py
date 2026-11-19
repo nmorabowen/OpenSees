@@ -249,6 +249,11 @@ MANDEL_SOIL = dict(E=1.0e4, nu=0.1, Kf=4444.0, poro=0.4, kbar=1.0e-4)
 MANDEL = dict(a=10.0, b=4.0, nx=10, ny=4, rho=2.0, rhoF=1.0, sig0=10.0, t_ramp=5.0,
               dt=0.02, dt0=1.0e-3, gamma=0.6, beta=0.3025)
 MANDEL_TVS = (0.04, 0.078, 0.12, 0.2, 0.4)     # 0.078 = the ramp closed form's peak (tv 0.0781)
+MANDEL_NOTE = ("Series of Mandel (1953) in the form of Cheng & Detournay (1988) and Abousleiman et "
+               "al. (1996), root equation tan a = (1 - nu)/(nu_u - nu) a. The papers' EQUATION "
+               "NUMBERS ARE UNVERIFIED (the papers were not opened). The warrant is the independent "
+               "Laplace-domain solution derived in mandel_p_laplace (fixed Talbot inversion), which "
+               "the series matches to selfcheck.mandel_series_vs_laplace_max_over_p0.")
 TERZ_T6_RAMP = 5.0   # s: 53 undrained transits of H (0.0949 s each); 2 s (21) leaves 0.0175 at Tv 0.1, dt 0.002
 
 HYDRO = dict(E=1.0e4, nu=0.2, rho=2.0, Kf=4444.0, poro=0.4, rhoF=1.0, kbar=1.0e-4,
@@ -487,9 +492,15 @@ def fe_mandel(stab="off", t_ramp=0.0, tvs=None, nx=None, ny=None, dt=None, first
         pc = np.mean([ops.nodeDisp(nid[(0, j)], 3) for j in range(ny + 1)])
         pc_spread = np.ptp([ops.nodeDisp(nid[(0, j)], 3) for j in range(ny + 1)])
         pex = mandel_p(0.0, t, a, c["sig0"], mc, t_ramp=t_ramp, roots=al)
+        # the MPM observable: the first particle column (ppc 2: x = hx/4), FE interpolated
+        p1 = np.mean([ops.nodeDisp(nid[(1, j)], 3) for j in range(ny + 1)])
+        pq = 0.75 * pc + 0.25 * p1
+        pexq = mandel_p(0.25 * hx, t, a, c["sig0"], mc, t_ramp=t_ramp, roots=al)
         rows.append(dict(tv=tv, tv_actual=tvA, t=t, p_fe_over_p0=pc / p0,
                          p_exact_over_p0=pex / p0, err_over_p0=abs(pc - pex) / p0,
-                         spread_over_p0=pc_spread / p0))
+                         spread_over_p0=pc_spread / p0,
+                         p_fe_quarter_over_p0=pq / p0, p_exact_quarter_over_p0=pexq / p0,
+                         err_quarter_over_p0=abs(pq - pexq) / p0))
     return dict(stab=stab if isinstance(stab, str) else list(stab), t_ramp=t_ramp, nx=nx, ny=ny,
                 dt=dt, p0=p0, constants=mc, rows=rows)
 
@@ -647,11 +658,39 @@ def main(argv):
         rec["tvs"] = list(MANDEL_TVS)
         rec["undrained_lateral_transit_s"] = MANDEL["a"] / math.sqrt(
             (mc["Ku"] + 4 * mc["G"] / 3) / MANDEL["rho"])
-        rec["runs"] = [fe_mandel(st, tvs=MANDEL_TVS, t_ramp=tr)
-                       for tr in (MANDEL["t_ramp"], 2.0, 0.0) for st in ("off", ("auto", 0.25))]
-        rec["runs"] += [fe_mandel(st, tvs=MANDEL_TVS, t_ramp=MANDEL["t_ramp"], dt=0.002)
+        rec["closed_form_note"] = MANDEL_NOTE
+        rec["peak_gate"] = 1.0 + 0.5 * (rec["closed_form_peak_ramp"]["p_over_p0"] - 1.0)
+        # GATED (ruling 5820012e5): 5 s linear ramp from t = 0, uniform dt 0.02, both stab legs
+        rec["gated"] = [fe_mandel(st, tvs=MANDEL_TVS, t_ramp=MANDEL["t_ramp"], first_small=False)
                         for st in ("off", ("auto", 0.25))]
+        for run in rec["gated"]:
+            run["band"] = [max(2.0 * max(r["err_over_p0"], r["err_quarter_over_p0"]), 0.02)
+                           for r in run["rows"]]
+        # REPORTED: the step load (unreachable by the FE: it rings), a 2 s ramp, dt 0.002
+        rec["reported"] = [fe_mandel(st, tvs=MANDEL_TVS, t_ramp=tr)
+                           for tr in (0.0, 2.0) for st in ("off", ("auto", 0.25))]
+        rec["reported"] += [fe_mandel(st, tvs=MANDEL_TVS, t_ramp=MANDEL["t_ramp"], dt=0.002,
+                                      first_small=False) for st in ("off", ("auto", 0.25))]
         print(_save("t3_mandel_fe", rec))
+        return
+    if leg == "t6fe":
+        # T6 (ruling): the FE reference at route S's OWN dt, 5 s ramp, both cases, both stab legs
+        dt = float(argv[2])
+        rec = _provenance(f"t6_fe_dt{dt:g}", "fe_terzaghi+fe_mandel")
+        rec["dt"] = dt
+        rec["t_ramp"] = dict(terzaghi=TERZ_T6_RAMP, mandel=MANDEL["t_ramp"])
+        rec["closed_form_note"] = MANDEL_NOTE
+        rec["terzaghi"] = [fe_terzaghi(1, st, t_ramp=TERZ_T6_RAMP, first_small=False, dt=dt,
+                                       tvs=TV_T2) for st in ("off", ("auto", 0.25))]
+        rec["mandel"] = [fe_mandel(st, tvs=MANDEL_TVS, t_ramp=MANDEL["t_ramp"], dt=dt,
+                                   first_small=False) for st in ("off", ("auto", 0.25))]
+        for run in rec["terzaghi"]:
+            run["band_p"] = [max(2.0 * r["p_err_gimp_points"], 0.02) for r in run["rows"]]
+            run["band_U"] = [max(2.0 * r["U_err"], 0.02) for r in run["rows"]]
+        for run in rec["mandel"]:
+            run["band"] = [max(2.0 * max(r["err_over_p0"], r["err_quarter_over_p0"]), 0.02)
+                           for r in run["rows"]]
+        print(_save(f"t6_fe_dt{dt:g}", rec))
         return
     if leg == "ramp":
         rec = _provenance("terzaghi_ramp_fe", "fe_terzaghi")
@@ -665,9 +704,12 @@ def main(argv):
         return
     if leg == "hydro":
         rec = _provenance("hydro_fe", "fe_hydro")
-        rec["case"] = HYDRO
-        rec["runs"] = [fe_hydro(nx, st, nely=ne) for ne in (10, 20) for nx in (1, 2)
-                       for st in ("off", ("auto", 0.25))]
+        rec["case"] = dict(HYDRO, nely=20, ruling="h = H/20 gated, band 0.03; H/10 reported")
+        rec["closed_form"] = ("p = rho_f g (H - Y); sigma'_yy = -(rho_sat - rho_f) g (H - Y); "
+                              "bars 0.01 rho_f g H (p) and 0.03 (rho_sat - rho_f) g H (sigma')")
+        rec["gated"] = [fe_hydro(nx, st, nely=20) for nx in (1, 2) for st in ("off", ("auto", 0.25))]
+        rec["reported"] = [fe_hydro(nx, st, nely=10) for nx in (1, 2)
+                           for st in ("off", ("auto", 0.25))]
         print(_save("t4_hydro_fe", rec))
         return
     if leg == "dtsweep":
