@@ -28,8 +28,9 @@ updated: 2026-11-18
 > **Checked against.** Fork claims: `cfe478254` (`origin/ladruno` on 2026-11-18), cited as `path::symbol`.
 > Fork ADR 236: PR #1117 head `f7f89a4c6`. apeGmsh ADR 0136: PR apeGmsh#3052 head `668b99a44`. apeGmsh
 > ADRs 0121 and 0134: `main` at `60d0517bc`. Only apeGmsh ADR text was read, not its source. The draft
-> P0 contract is `tests/limit_interface.md` on `wp/237a-limit-contract` at `09a0afebe` (2026-11-19). It is not on
-> this branch, is cited as "the contract" with its section numbers, and is not frozen yet.
+> P0 contract is `tests/limit_interface.md` on `wp/237a-limit-contract` at `03f59c1a4` (2026-11-19), the version the
+> orchestrator froze; the file's own status line still reads "proposed for freeze". It is not on this branch and is
+> cited as "the contract" with its section numbers.
 >
 > **Discipline.** Under ADR-87 an unmeasured claim is a claim. §19.3 lists what could not be verified.
 
@@ -355,7 +356,7 @@ meaning.
 | Id | Field | Role in P0 |
 |---|---|---|
 | `upper.p2c-vertex.v0` | continuous P2 | **control**. It is run and reported, and it is not expected to pass the true-3D gate for `phi = 0` |
-| `upper.p2d-jump-bernstein.v0` | P2 per element, with charged facet jumps | **the P0 Upper formulation**, admitted by the contract at `09a0afebe` (orchestrator ruling R2, contract §12). It must still pass every gate |
+| `upper.p2d-jump-bernstein.v0` | P2 per element, with charged facet jumps | **the P0 Upper formulation**, admitted by the contract at `03f59c1a4` (orchestrator ruling R2, contract §12). It must still pass every gate |
 | another element | must be proven by the same gates | admissible alternative, for example a split-element or higher-order space [Zha11]. Nothing is adopted here |
 
 **Ownership.** 237a freezes the jump-based formulation, or a proven alternative if it fails. 237b assembles it, 237c
@@ -1089,6 +1090,8 @@ This records the method of the table in §10.1. It is not a reference implementa
   Drucker-Prager boxes, a certified Upper at every gate size and witness-based kinematic verdicts; the owner's decisions of
   2026-11-19 on gap limits and on 30-degree Drucker-Prager misses; the threshold chronology; the half-space coverage rule; the
   record file names and reserved checker names.
+- **2026-11-19, frozen contract `03f59c1a4`.** Decision labels OD1 and OD2; the narrowed 30-degree withholding scope;
+  `literal_zero_violated`, the positive shift-invert shift and `D_scale_int > 0`. The header and §9.2 now name `03f59c1a4`.
 
 ## Implementation log
 
