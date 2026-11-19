@@ -276,6 +276,101 @@ def run_t7(ops, basis, stab=("auto", 0.25), nsteps=2000):
 
 
 # ---------------------------------------------------------------------------
+#  T6 route S (block t6_ref_ramp): T2's Terzaghi and T3's Mandel under the 5 s ramp, mode F
+# ---------------------------------------------------------------------------
+def terzaghi_ramp(Z, t, cv, L, tr, nterms=300):
+    """p / (B q) under q(t) = q min(t / tr, 1) (Duhamel on the step series, written here from
+    dp/dt = cv p'' + B dq/dt with p = 0 at the drained top, Z = depth / L, impervious base)."""
+    te = min(t, tr)
+    s = 0.0
+    for m in range(nterms):
+        M = (2 * m + 1) * math.pi / 2.0
+        lam = M * M * cv / (L * L)
+        s += (2.0 / M) * math.sin(M * Z) * (math.exp(-lam * (t - te)) - math.exp(-lam * t)) / (lam * tr)
+    return s
+
+
+def terzaghi_settle_ramp(t, cv, L, tr, q, B, Eoed, nterms=300):
+    """settlement = (q(t) L - int_0^L p dz) / Eoed under the ramp (compression positive)."""
+    te = min(t, tr)
+    ip = 0.0
+    for m in range(nterms):
+        M = (2 * m + 1) * math.pi / 2.0
+        lam = M * M * cv / (L * L)
+        ip += (2.0 * L / (M * M)) * (math.exp(-lam * (t - te)) - math.exp(-lam * t)) / (lam * tr)
+    return (q * min(t / tr, 1.0) * L - B * q * ip) / Eoed
+
+
+def run_t6_terzaghi(ops, basis, stab, fe, dt=0.005):
+    """T6 Terzaghi, route S: p at the particles' initial depths against the ramp closed form, and the
+    settlement read as the particle quadrature sum_p (F_yy - 1) V0_p / width (mode F has no plate
+    node to read U from). Bands: the FE record's band_p, band_U per Tv (t6_fe_dt<dt>.json)."""
+    L, q, tr = 10.0, 10.0, 5.0
+    E, nu, Kf, n, kbar = 1.0e4, 0.2, 4444.0, 0.4, 1.0e-4
+    Eoed = E * (1 - nu) / ((1 + nu) * (1 - 2 * nu))
+    Qbar = Kf / n
+    cv = kbar / (1.0 / Eoed + n / Kf)
+    B = Qbar / (Qbar + Eoed)
+    p0 = q * B
+    s0 = q * L / (Eoed + Qbar)
+    sinf = q * L / Eoed
+    w = 2.0 if basis.startswith("bspline") else 1.0
+    t0 = time.time()
+    build(ops, t6_terzaghi_spec(basis, stab))
+    X0 = pdata(ops, "x", 2)
+    Y0 = [x[1] for x in X0]
+    V0 = pdata(ops, "V")
+    steps = {str(r["Tv"]): (int(round(r["t"] / dt)), i) for i, r in enumerate(fe["rows"])}
+    rows = {}
+    done = 0
+    for Tv, (st, i) in sorted(steps.items(), key=lambda kv: kv[1][0]):
+        ops.mpm("analyze", st - done, dt)
+        done = st
+        t = st * dt
+        pp = pdata(ops, "p")
+        F = pdata(ops, "F", 4)
+        U = -sum((F[k][3] - 1.0) * V0[k] for k in range(len(pp))) / w
+        perr = max(abs(pp[k] - p0 * terzaghi_ramp((L - Y0[k]) / L, t, cv, L, tr)) for k in range(len(pp))) / p0
+        sx = terzaghi_settle_ramp(t, cv, L, tr, q, B, Eoed)
+        rows[Tv] = {"t": t, "Tv_actual": cv * t / (L * L), "p_err_max": perr, "U": U, "U_exact": sx,
+                    "U_err": abs(U - sx) / (sinf - s0), "band_p": fe["band_p"][i], "band_U": fe["band_U"][i],
+                    "fe_p_err": fe["rows"][i]["p_err_gimp_points"], "fe_U_err": fe["rows"][i]["U_err"]}
+    gated = [k for k in rows if k != "0.05"]
+    ok = all(rows[k]["p_err_max"] <= rows[k]["band_p"] and rows[k]["U_err"] <= rows[k]["band_U"] for k in gated)
+    return {"case": "terzaghi", "basis": basis, "stab": stab, "dt": dt, "rows": rows, "pass": ok,
+            "gated": basis.startswith("bspline"), "wall_s": time.time() - t0}
+
+
+def run_t6_mandel(ops, basis, stab, fe, peak_gate, dt=0.005):
+    a, b, h, sig0 = 10.0, 4.0, 1.0, 10.0
+    p0 = fe["p0"]
+    spec = dict(mat=(1.0e4, 0.1, 2.0), h=h, cells=(10, 4), basis=basis, box=((0.0, 0.0), (a, b)),
+                mode="explicit", fluid=(4444.0, 0.4, 1.0, 1.0e-4, stab), fix=[("xmin", "x"), ("ymin", "y")],
+                pfix=[("xmax", 0.0)], plate=("ymax", a * sig0), path=((0.0, 5.0, 1.0e6), (0.0, 1.0, 1.0)))
+    t0 = time.time()
+    build(ops, spec)
+    X0 = pdata(ops, "x", 2)
+    col = [k for k, x in enumerate(X0) if x[0] < h / 2.0]
+    want = {int(round(r["t"] / dt)): i for i, r in enumerate(fe["rows"])}
+    rows = {}
+    peak = -1e30
+    for step in range(1, max(want) + 1):
+        ops.mpm("analyze", 1, dt)
+        pp = pdata(ops, "p")
+        pc = sum(pp[k] for k in col) / len(col) / p0
+        peak = max(peak, pc)
+        if step in want:
+            r = fe["rows"][want[step]]
+            rows[str(r["tv"])] = {"p_center": pc, "p_exact_quarter": r["p_exact_quarter_over_p0"],
+                                  "err": abs(pc - r["p_exact_quarter_over_p0"]), "band": fe["band"][want[step]],
+                                  "fe_err": r["err_quarter_over_p0"]}
+    ok = all(v["err"] <= v["band"] for v in rows.values()) and peak >= peak_gate
+    return {"case": "mandel", "basis": basis, "stab": stab, "dt": dt, "rows": rows, "peak": peak,
+            "peak_gate": peak_gate, "pass": ok, "gated": basis.startswith("bspline"),
+            "wall_s": time.time() - t0}
+
+
+# ---------------------------------------------------------------------------
 #  T3 Mandel (block t3_ref_mandel), 5 s ramp
 # ---------------------------------------------------------------------------
 def run_t3(ops, basis, stab, rec):
@@ -359,6 +454,37 @@ def run_t5(ops, stab):
     cb_lat = abs(sum(a * b for a, b in zip(p, chi))) / max(pn * math.sqrt(len(chi)), 1e-30)
     gate = (cb_lap <= 0.3) if stab != "off" else (cb_lap >= 0.5)
     return {"stab": stab, "CB_lap": cb_lap, "CB_lat": cb_lat, "pmax": max(abs(x) for x in p), "pass": gate,
+            "wall_s": time.time() - t0}
+
+
+def run_t5_routeS(ops, stab):
+    """T5 route S (mode F): B4 undamped (A5: mode F has no Rayleigh); the grid p of the last step from
+    `mpm info gridPressure` (ids are extended-lattice ids, ghost layer 1). Gate CB_lap <= 0.3 with the
+    default stab; `-stab off` reported."""
+    N, h, q, strip = 10, 3.0, 0.1, 3.0
+    spec = dict(mat=(25000.0, 0.3, 2.67), h=h, cells=(N, N), basis="gimp", box=((0.0, 0.0), (30.0, 30.0)),
+                mode="explicit", fluid=(2.2e12, 0.4, 1.0, 1.0e-7, stab),
+                fix=[("xmin", "x"), ("xmax", "x"), ("ymin", "y")], pfix=[("ymax", 0.0)],
+                traction=[("strip", "ymax", (0.0, 30.0), (strip, 30.0), (0.0, -q))],
+                path=((0.0, 0.1, 1.0e6), (0.0, 1.0, 1.0)))
+    t0 = time.time()
+    build(ops, spec)
+    ops.mpm("analyze", 100, 0.01)
+    flat = as_list(ops.mpm("info", "gridPressure"))
+    ext = N + 3
+    P = {}
+    for k in range(0, len(flat), 3):
+        e = int(flat[k])
+        P[(e % ext - 1, e // ext - 1)] = flat[k + 1]
+    inter = [(i, j) for i in range(1, N) for j in range(1, N)]
+    p = [P[k] for k in inter]
+    chi = [(-1.0) ** (i + j) for (i, j) in inter]
+    pn = math.sqrt(sum(x * x for x in p))
+    lap = [P[(i, j)] - 0.25 * (P[(i + 1, j)] + P[(i - 1, j)] + P[(i, j + 1)] + P[(i, j - 1)]) for (i, j) in inter]
+    cb_lap = math.sqrt(sum(x * x for x in lap)) / max(pn, 1e-30)
+    cb_lat = abs(sum(a * b for a, b in zip(p, chi))) / max(pn * math.sqrt(len(chi)), 1e-30)
+    return {"route": "S", "stab": stab, "CB_lap": cb_lap, "CB_lat": cb_lat, "pmax": max(abs(x) for x in p),
+            "gated": stab != "off", "pass": (cb_lap <= 0.3) if stab != "off" else None,
             "wall_s": time.time() - t0}
 
 
@@ -624,6 +750,16 @@ def main(argv=None):
             r = [run_t4(ops, b, s) for b in ("gimp", "bspline2") for s in ("off", AUTO)]
         elif leg == "t4_reported":
             r = [run_t4(ops, b, s, h=1.0) for b in ("gimp", "bspline2") for s in ("off", AUTO)]
+        elif leg in ("t6_bspline2", "t6_gimp"):
+            fe = json.loads((DATA / "t6_fe_dt0.005.json").read_text())
+            basis = leg.split("_")[1]
+            stabs = {"off": "off", "auto": AUTO}
+            def fst(x):
+                return "off" if x == "off" else "auto"
+            r = [run_t6_terzaghi(ops, basis, stabs[fst(f["stab"])], f) for f in fe["terzaghi"]]
+            r += [run_t6_mandel(ops, basis, stabs[fst(f["stab"])], f, 1.0390679304096313) for f in fe["mandel"]]
+        elif leg == "t5_routeS":
+            r = [run_t5_routeS(ops, AUTO), run_t5_routeS(ops, "off")]
         elif leg == "t7":
             r = [run_t7(ops, "bspline2"), run_t7(ops, "gimp")]
         elif leg == "t5":
