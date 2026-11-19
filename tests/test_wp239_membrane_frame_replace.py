@@ -129,6 +129,7 @@ if mode == "save":
     assert ops.analyze(1) == 0
     ops.database("File", db)
     ops.save(1)
+    res["raw_disp"] = {n: list(ops.nodeDisp(n)) for n in M.SLAB}
 else:
     ops.model("basic", "-ndm", 3, "-ndf", 6)
     ops.database("File", db)
@@ -169,9 +170,14 @@ def test_save_then_restore_in_a_fresh_process(hinge):
         back, log = _child("restore", hinge, db, os.path.join(td, "back.json"))
     assert "not one of its nodes" not in log, log
     assert "EleLoad" not in log, log
+    # the committed state comes back bit for bit
+    assert live["raw_disp"] == back["raw_disp"]
+    # one more step at the same load factor, in each process: the same model
+    # gives the same answer (round-off only; the 1e12 / 1e-6 springs make K
+    # ill-conditioned, so the step itself moves u by ~1e-8 relative)
     for n, d in live["disp"].items():
         for k in range(6):
-            assert _close(d[k], back["raw_disp"][n][k], 1e-12, 1e-14), (n, k)
+            assert _close(d[k], back["disp"][n][k], 1e-10, 1e-14), (n, k)
     for b, f in live["forces"].items():
         for i, v in enumerate(f):
             assert _close(v, back["forces"][b][i], 1e-8, 1e-8), (b, i, v, back["forces"][b][i])
