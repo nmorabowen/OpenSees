@@ -1832,6 +1832,14 @@ sealed-column invariant, and reports it without gating it.
   condition is stated at t₀, so a ramp from 0 gives max |π_⊥| = 0. Every later projection and
   after-step update uses the drive of the step being taken.
 
+**Route S batch (`21916618f`), amendment A7 accepted (2026-11-18, before any route-S number).**
+Route S refuses loudly an impervious B-spline face with a normal fluid drive (fix 2's affine term).
+Carrying π and the q + π invariant into mode F is a follow-up issue, opened at landing. No gated
+route-S case has that configuration: T0 (iii) and T5 are gimp, and T6 and T7 have no gravity. A
+two-phase B-spline column under gravity in mode F is therefore unavailable in this WP; the guide
+says so. 232l-V re-checked the T0 (iii) oracle against every later ruling (`bc118a60e`): only the
+renormalisation's form changed, by ≤ 9.7e-16.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
