@@ -1249,5 +1249,88 @@
    "gimp_dt0.005": "rho = 0.999997: linearly stable; the failure is the light-node events themselves.",
    "gimp_massCutoff_5e-2": "T6 Mandel PASSES both stabs (off: worst 0.0139 / 0.0214 at tv 0.04, peak 1.0945; auto: 0.0150 / 0.0227, peak 1.0925): the light-node hypothesis holds on gimp, and the 3d3699a50 rule (keep the correction on light u components) is the cause there."
   }
+ },
+ "t7_5d64922a4": {
+  "build": "5d64922a495dce7415ee3427718853b568ddb58d",
+  "date": "2026-11-19 07:37",
+  "wall_s": 1.7756080627441406,
+  "results": [
+   {
+    "basis": "bspline2",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "dt_drained_pencil": 0.01774823938882102,
+    "dt_undrained_pencil": 0.0125502141852342,
+    "dt_estimator_h_over_c": 0.013416407864998736,
+    "undrained_over_drained": 0.7071244595190175,
+    "at_0.9": {
+     "factor": 0.9,
+     "dt": 0.015973415449938917,
+     "steps": 388,
+     "refused": true,
+     "blew_up": false,
+     "vmax": 12.17910371258489,
+     "pmax": 1055.5240898694333
+    },
+    "at_1.5": {
+     "factor": 1.5,
+     "dt": 0.02662235908323153,
+     "steps": 0,
+     "refused": true,
+     "blew_up": false,
+     "vmax": 0.0,
+     "pmax": 0.0
+    },
+    "pass": false,
+    "wall_s": 1.729527473449707
+   },
+   {
+    "basis": "gimp",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "dt_drained_pencil": 0.013457894061347508,
+    "dt_undrained_pencil": 0.009516406064394554,
+    "dt_estimator_h_over_c": 0.013416407864998736,
+    "undrained_over_drained": 0.7071244595190176,
+    "at_0.9": {
+     "factor": 0.9,
+     "dt": 0.012112104655212758,
+     "steps": 24,
+     "refused": true,
+     "blew_up": false,
+     "vmax": 13.41751124087796,
+     "pmax": 1369.8804683775315
+    },
+    "at_1.5": {
+     "factor": 1.5,
+     "dt": 0.020186841092021263,
+     "steps": 0,
+     "refused": true,
+     "blew_up": false,
+     "vmax": 0.0,
+     "pmax": 0.0
+    },
+    "pass": false,
+    "wall_s": 0.03708052635192871
+   }
+  ],
+  "diagnosis": {
+   "verdict": "STOP at T7 (both bases): after interface 7c, 0.9 x the drained pencil is UNSTABLE (gimp blows at step 20, bspline2 at step 54; the per-step pencil limit then refuses). Before 7c (MUSL) gimp was stable at 0.9 x for 2000 steps.",
+   "scan_2000_steps_x_drained_pencil": {
+    "gimp (dt_d 0.013458, undrained 0.009516)": "stable 0.3 / 0.5 / 0.6 / 0.7 (0.00942); blows at 0.8 (step 56), 0.9 (step 20)",
+    "bspline2 (dt_d 0.017748, undrained 0.012550)": "stable 0.3 ... 0.8 (0.01420); blows at 0.9 (step 54)",
+    "gimp with K_f = 1 (coupling ~ 2e-4 of M_d)": "same thresholds: stable to 0.7, blows at 0.8 (step 53)"
+   },
+   "read": "Not the u-p coupling (K_f = 1 changes nothing): the USL skeleton update with FLIP particle velocities has a smaller limit than the grid pencil M_L^-1 K_d (MUSL's second projection is what made 0.9 x stable before). Empirical USL limit on this column: gimp 0.70-0.80, bspline2 0.80-0.90 x the drained pencil."
+  }
+ },
+ "pencil_cost_5d64922a4": {
+  "deck": "T6 Mandel, 160 particles, dt 0.005, route S",
+  "bspline2": "step 12.3 ms incl. the pencil; pencil 9.3 ms = 76 %",
+  "gimp": "step 11.9 ms incl. the pencil; pencil 9.5 ms = 80 %"
  }
 }
