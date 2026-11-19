@@ -519,6 +519,27 @@ projection.
   - π̇ (from λ̇) is neglected; it is exact for a constant drive, as in T4.
 - **Patch check (before T4p):** a bspline2 hydrostatic column with k̄ = 1, run 200 steps of dt 1 s.
   The base particle's p equals γ_w(H − y) to 1e-10 γ_w H.
+- **A′ (frozen, ruling `f69e450dd`): π's invisible part, compensated once.**
+  - **The gap.** The field is p = Σ S^p c + π, and π is not in the range of P. A particle field that
+    starts at zero (or at any value) therefore carries the invisible remainder −π_⊥. P5a's
+    projection never removes it: on build `d06695367` the grid coefficients were exact to 2e-15,
+    but the patch check's base particle missed by 1.0e-3 γ_w H.
+  - **The step.** At the first projection at which π ≠ 0, each two-phase particle's p gains only
+    π's own invisible part, π_⊥ = π − P M⁻¹ Pᵀ V π, on that projection's p-active set, M and S^p.
+    - It is applied after every solve of that projection has succeeded. If the step is then
+      refused, nothing is applied.
+    - Because Pᵀ V π_⊥ = 0, it leaves that projection's x̂ unchanged.
+    - ṗ and p̈ are unchanged.
+  - **Never again.** G2P adds the change of π in full, so the residual stays constant. A drive that
+    ramps up from 0 never triggers it, because π = 0 at the first projection.
+  - **State.** The flag (applied or not) and max |π_⊥| are in the restart pack (version 5), so a
+    restart never re-applies it. `mpm reset` clears both with the particles.
+    `mpm info twoPhase` reports max |π_⊥| applied as its last entry, after `pressureCutoff`.
+  - **What it leaves alone.** GIMP, linear and every case without a normal fluid drive on an
+    impervious B-spline face have π = 0, and are untouched. That includes T0, T1 and the sealed
+    column. User content in the particles' representable part is never erased (A, which would
+    have, was declined).
+- **The "field at the particle points" readout** (the T2p/T4p reported column) includes π.
 
 ### P4, amended (defect fix 3): mode A's p-activity is route S's rule
 

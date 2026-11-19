@@ -66,13 +66,13 @@ def _refused(ops):
 def test_pressure_cutoff_is_its_own_knob():
     ops = _ops()
     _deck(ops)
-    assert _as_list(ops.mpm("info", "twoPhase", 1))[-1] == 5e-2
+    assert _as_list(ops.mpm("info", "twoPhase", 1))[11] == 5e-2
     ops.mpm("massCutoff", 1e-10)
-    assert _as_list(ops.mpm("info", "twoPhase", 1))[-1] == 5e-2
+    assert _as_list(ops.mpm("info", "twoPhase", 1))[11] == 5e-2
     ops.mpm("pressureCutoff", 0.1)
-    assert _as_list(ops.mpm("info", "twoPhase", 1))[-1] == 0.1
+    assert _as_list(ops.mpm("info", "twoPhase", 1))[11] == 0.1
     ops.mpm("massCutoff", 0.3)
-    assert _as_list(ops.mpm("info", "twoPhase", 1))[-1] == 0.1
+    assert _as_list(ops.mpm("info", "twoPhase", 1))[11] == 0.1
 
 
 def test_admitted_deck_runs():

@@ -1312,8 +1312,12 @@ LadrunoMPMPoint::writeBlocks(const double sc[6], std::ostream &os, double lambda
   const std::vector<double> &SpO = tpOn ? Sp : S, &dSpO = tpOn ? dSp : dS;
   os << "{\"particle\": " << p << ", \"id\": " << id << ", \"ndm\": " << ndm << ", \"ndf\": "
      << ndfN << ", \"nen\": " << nen << ", \"lambda\": " << lambda << ", \"V\": " << PP.V[p]
-     << ", \"m\": " << mp << ", \"alpha_st\": " << stabA << ", \"two_phase\": " << (tpOn ? 1 : 0)
-     << ",\n \"nodes\": ";
+     << ", \"m\": " << mp << ", \"alpha_st\": " << stabA << ", \"two_phase\": " << (tpOn ? 1 : 0);
+  {
+    double gpi[3];                       // fix 2: the known affine term at the particle (0 = none)
+    os << ", \"pi\": " << piNow(gpi);
+  }
+  os << ",\n \"nodes\": ";
   os << "[";
   for (int k = 0; k < nen; k++) os << (k ? ", " : "") << connect(k);
   os << "],\n \"coords\": ";

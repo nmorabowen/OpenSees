@@ -1634,6 +1634,7 @@ LadrunoMPMPattern::packState(Vector &out)
     k.putv(eng.P.pw); k.putv(eng.P.pwd); k.putv(eng.P.pwdd);
     k.putv(snapshot.pw); k.putv(snapshot.pwd); k.putv(snapshot.pwdd);
     k.put(eng.par.smallKin); k.put(eng.par.pBlend); k.put(eng.par.pCut);
+    k.put(piInitApplied ? 1 : 0); k.put(piPerpMax);                   // A' (ruling f69e450dd)
     for (int f = 0; f < 6; f++) {
       k.put(eng.fc.pfixOn[f] ? 1 : 0); k.put(eng.fc.pfixVal[f]);
       k.put(eng.fc.plateOn[f] ? 1 : 0); k.put(eng.fc.plateF[f]); k.put(plateTag[f]);
@@ -1745,6 +1746,8 @@ LadrunoMPMPattern::unpackState(const Vector &in)
   tractionLoads.clear();
   eng.par.smallKin = 0;
   eng.par.pBlend = 1.0;
+  piInitApplied = false;
+  piPerpMax = 0.0;
   eng.par.pCut = 5.0e-2;
   for (int f = 0; f < 6; f++) {
     eng.fc.pfixOn[f] = false; eng.fc.pfixVal[f] = 0.0;
@@ -1761,6 +1764,8 @@ LadrunoMPMPattern::unpackState(const Vector &in)
     eng.par.smallKin = (int)u.get();
     eng.par.pBlend = u.get();
     eng.par.pCut = u.get();
+    piInitApplied = u.get() != 0.0;                                   // A': a restart never re-applies
+    piPerpMax = u.get();
     for (int f = 0; f < 6; f++) {
       eng.fc.pfixOn[f] = u.get() != 0.0; eng.fc.pfixVal[f] = u.get();
       eng.fc.plateOn[f] = u.get() != 0.0; eng.fc.plateF[f] = u.get(); plateTag[f] = (int)u.get();

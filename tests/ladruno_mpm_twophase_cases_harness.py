@@ -331,7 +331,8 @@ def field_at_particles(ops, tmp, nodal_p):
         ops.mpm("debug", "particleBlocks", p, path, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         d = json.loads(Path(path).read_text())
         miss = [t for k, t in enumerate(d["nodes"]) if t not in nodal_p and d["Sp"][k] != 0.0]
-        f = sum(d["Sp"][k] * nodal_p.get(d["nodes"][k], 0.0) for k in range(d["nen"]))
+        # the field includes fix 2's known affine term pi (the dump's "pi"; 0 off B-spline images)
+        f = sum(d["Sp"][k] * nodal_p.get(d["nodes"][k], 0.0) for k in range(d["nen"])) + d.get("pi", 0.0)
         out.append({"field": f, "nodes": d["nodes"], "Sp": d["Sp"], "V": d["V"], "missing": len(miss)})
     return out
 

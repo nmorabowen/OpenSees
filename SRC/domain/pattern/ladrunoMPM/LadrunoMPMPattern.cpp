@@ -1026,6 +1026,8 @@ LadrunoMPMPattern::reset(void)
   eng.presc.clear();                // WP-232k (D18)
   sanisandStage = 0;                // WP-232k (D10): the particles go back to stage 0
   hsWalked.clear();                 // AMEND A1
+  piInitApplied = false;            // WP-232l A': the particles go back to their initial p
+  piPerpMax = 0.0;
   for (NDMaterial *m : mats)
     if (m != 0) m->revertToStart();   // review item 6: a hand-removed particle element took its material
   lambda = 1.0;

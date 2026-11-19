@@ -411,6 +411,8 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   std::vector<Traction>   tractions;
   std::vector<std::pair<int, std::vector<double>>> tractionLoads;   // this step: node tag, force
   std::vector<double>     fdBuf;                   // mpmFluidDrive scratch
+  bool                    piInitApplied = false;   // A' (interface 7b): pi_perp added (once per epoch)
+  double                  piPerpMax = 0.0;         // A': max |pi_perp| applied
   int    prepareStepUP(double h, std::string &err);   // a two-phase epoch or a plate (§2, §3)
   int    tagOfExt(long ext) const;                     // a lattice id or plateId(f) -> live tag
   void   retirePlates(void);

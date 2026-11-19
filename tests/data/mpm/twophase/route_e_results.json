@@ -891,6 +891,7 @@
     }
    ],
    "reported_never_gated": true
-  }
+  },
+  "annotation": "2026-11-18 (ruling f69e450dd): on bspline2 the column 'ii_field_at_particles_err' (and the residual columns derived from it) omits fix 2's known affine term pi; it is the field without pi, not a field error. The fd81cbdd3 build predates fix 2, so pi was 0 there and these numbers are unaffected in value; the omission matters from build 7b7cdc9cf on, where the readout now adds the dump's 'pi'. Numbers left as recorded."
  }
 }

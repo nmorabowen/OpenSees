@@ -265,6 +265,7 @@ LadrunoMPMPattern::twoPhaseInfo(int body, std::vector<double> &out, std::string 
       }
   out.push_back(ast);
   out.push_back(eng.par.pCut);                    // ruling c84f71fb3: route S's p cutoff
+  out.push_back(piPerpMax);                       // A' (ruling f69e450dd): max |pi_perp| applied
   return 0;
 }
 
@@ -605,6 +606,30 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
       for (int a = 0; a < np; a++) bq[a] = std::sin(1.7 * a + 0.3);
       if (!pcg(bq, xs)) { err = singular + " (the probe solve)"; return -1; }
     }
+    // A' (ruling f69e450dd, interface 7b): at the first projection at which pi != 0, each
+    // two-phase particle's p gains pi's own invisible part, pi_perp = pi - P M^-1 P^T V pi (same
+    // p-active set, M, S^p). pd, pdd unchanged; never again (G2P adds the change of pi in full).
+    // P^T V pi_perp = 0, so the projection below is the same with or without it.
+    std::vector<double> piPerp;
+    bool anyPi = false;
+    for (int p = 0; p < N; p++) anyPi = anyPi || piS[p] != 0.0;
+    if (!piInitApplied && anyPi && np > 0) {
+      std::vector<double> bpi(np, 0.0), y;
+      for (int p = 0; p < N; p++) {
+        if (!isTwoPhaseParticle(p) || piS[p] == 0.0) continue;
+        for (long k = supStart[p]; k < supStart[p + 1]; k++)
+          if (SpF[k] != 0.0 && node[k] >= 0) bpi[pidx[node[k]]] += P.V[p] * SpF[k] * piS[p];
+      }
+      if (!pcg(bpi, y)) { err = singular + " (the pi_perp solve, A')"; return -1; }
+      piPerp.assign(N, 0.0);
+      for (int p = 0; p < N; p++) {
+        if (!isTwoPhaseParticle(p)) continue;
+        double s = 0.0;
+        for (long k = supStart[p]; k < supStart[p + 1]; k++)
+          if (SpF[k] != 0.0 && node[k] >= 0) s += SpF[k] * y[pidx[node[k]]];
+        piPerp[p] = piS[p] - s;
+      }
+    }
     std::vector<double> sol(3 * (size_t)np, 0.0);
     for (int q = 0; q < 3 && np > 0; q++) {
       for (int a = 0; a < np; a++) bq[a] = rhs[3 * (size_t)a + q];
@@ -614,6 +639,13 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
     for (const auto &kv : pidx)
       pProj[kv.first] = {sol[3 * (size_t)kv.second], sol[3 * (size_t)kv.second + 1],
                          sol[3 * (size_t)kv.second + 2]};
+    if (!piPerp.empty()) {                     // applied once every solve has succeeded
+      for (int p = 0; p < N; p++) {
+        P.pw[p] += piPerp[p];
+        piPerpMax = std::max(piPerpMax, std::fabs(piPerp[p]));
+      }
+      piInitApplied = true;
+    }
   }
 
   {
