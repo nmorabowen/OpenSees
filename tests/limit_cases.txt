@@ -4,7 +4,11 @@
 #         it changes no case line. Under amendment 1, item 8, the checker's present capacity cannot prove the
 #         conditioning bound on mesh 5 for the Lower formulation of every upper_gate_3d case or for the jump
 #         Upper formulation of the phi = 0 cases; those mesh-5 gates stand unchanged and cannot pass until
-#         WP-237d identifies an open, proved route (interface 11.2, 17.1).
+#         WP-237d identifies an open, proved route (interface 11.2, 18.3, 17.1).
+#         Amendment 2 (interface 19.2.2, owner decision OD3 of 2026-11-19) turns 'formulation upper.p2c-vertex.v0'
+#         into a 'control' line in the two Tresca strip cases, so the jump pair alone decides their gates.
+#         The decision came after strip results were seen; the disclosure is in interface 19.2.2.
+#         The two Drucker-Prager Prandtl thin slabs still bind P2c until the owner decides them case by case.
 #
 # FORMAT (line based, ASCII)
 #   '#' starts a comment line; blank lines are ignored. Tokens are separated by whitespace.
@@ -418,8 +422,8 @@ mesh        16 1 8
 mesh        32 1 16
 nested      0 1
 formulation lower.p1d-vertex.v0
-formulation upper.p2c-vertex.v0
 formulation upper.p2d-jump-bernstein.v0
+control     upper.p2c-vertex.v0
 region      soil von_mises k 1.0
 footing     strip xref 0 0.125 0 law bonded
 boundary    y0 symmetry plane y 0
@@ -457,8 +461,8 @@ mesh        16 1 8
 mesh        32 1 16
 nested      0 1
 formulation lower.p1d-vertex.v0
-formulation upper.p2c-vertex.v0
 formulation upper.p2d-jump-bernstein.v0
+control     upper.p2c-vertex.v0
 gravity_sensitive no
 region      soil von_mises k 1.0 b0 0 0 -1.5
 footing     strip xref 0 0.125 0 law bonded
