@@ -2,7 +2,7 @@
 
 ADR 232 phase 6, PR #1116, branch `wp/232l-mpm-two-phase`. Interface `tests/mpm_twophase_interface.md`
 (P1–P13, §7a, §7b, §7c and its amendment). User guide: [[232_ladruno_mpm_guide]], "Two-phase particles".
-Warrant build: **d77caf8fdfbf37a244ab7e2a58e0ccef926b3d3b** (release candidate, 2026-11-19). Records: `tests/data/mpm/twophase/` (`route_e_p5a_results.json`, `route_s_results.json`,
+Final build: **cd503bdbb224c887319c367bc0fb511df3a6cc98** (after the review of record, 2026-11-19); the first release candidate `d77caf8fd` was BLOCKED by the review (route-S translation). Records: `tests/data/mpm/twophase/` (`route_e_p5a_results.json`, `route_s_results.json`,
 `t0_t1_mpm*.json`, `t0_iii_mpm.json`, `t10_single_phase_bitwise.json`, `r_rows_route_e.json`). Every
 record carries `ladrunoBuild`.
 
