@@ -1567,6 +1567,20 @@ quoted from them.
   This is the mode-F analogue of mode A's `renormalize` drop. (2) Under `kinematics small` in
   mode F, Δε = sym(Δt Σ_a v**_a ⊗ ∇S_a), with v** the conditioned second-projection velocity (the
   one MUSL builds L from). V stays V₀, σ′ is the material's at ε_n + Δε, and x moves with v₁.
+- **Re-ruling of point (1) (2026-11-18, before T0 (iii) is gated).** 232l-V measured that the
+  literal rule admits the T0 (iii) ghost row (m_a = 1.3e-8 to 2.6e-8 m_p, above mode F's 1e-10). Those
+  rows are ill-conditioned (p = +44 000 kPa at step 3 against about 20), and including them moves
+  particle p by 1.2e-3, v by 3.6e-3 and σ′ by 5.2e-3 after 10 steps. A quantity no CG reproduces to
+  1e-9 is not gateable. **New rule, one for both modes:** in route S a node is **p-active iff
+  m_a > c_m · m_max**, where c_m is mode A's cutoff (default 5e-2, set by `mpm massCutoff`, the
+  test of `LadrunoMPMImplicit.cpp:741-753`), and S^p > 0 there. Each two-phase particle's S^p,
+  ∇S^p are **renormalised over its p-active nodes** with `renormalize`'s formula
+  (`:764-788`; B9 for B-spline images). A dropped node is therefore absent from the pressure
+  system, the projection and G2P, and is never treated as drained. The u side is unchanged: mode
+  F's 1e-10 cutoff, Q_(a,i),b = α V ∂_iS_a S^p_b with the renormalised S^p. The light-node
+  correction then scales as the existing σ′ force does. This is mode A's P4 rule (S^p rescaled by
+  the same sums) carried to mode F. Not a band change: T0 (iii) is gated at rel 1e-9 under it, and
+  the oracle runs with `pcut` = c_m.
 
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
