@@ -191,6 +191,46 @@ set rc [catch {ladrunoDR} msg]
 check "DR.noSubcommand.errors" {$rc != 0} \
     "a bare ladrunoDR answered '$msg'"
 
+# WP-240: maxDisplacement, and `relax`, which marches. The classic bridge has to
+# hand the dispatch commands.cpp's own theTransientAnalysis as well as the
+# integrator; a bridge that passed only the integrator would error here with
+# "no transient analysis" while every query above still answered.
+set um [ladrunoDR maxDisplacement]
+check_numeric "DR.maxDisplacement" $um
+check "DR.maxDisplacement.isTheApex" {abs($um - abs($uy)) < 1.0e-14} \
+    "maxDisplacement $um vs |uy| [expr {abs($uy)}]"
+
+build_arch
+timeSeries Constant 1
+pattern Plain 1 1 { load 2 0.0 -3.0 }
+constraints Plain
+numberer Plain
+system Diagonal
+test NormUnbalance 1.0e30 1 0
+algorithm Linear
+integrator LadrunoDynamicRelaxation
+analysis Transient
+set rc [catch {ladrunoDR relax -tolResidual 1.0e-8 -maxSteps 50000} rel]
+check "DR.relax.runs" {$rc == 0} "ladrunoDR relax failed: $rel"
+check "DR.relax.fiveValues" {[llength $rel] == 5} "relax answered '$rel'"
+if {[llength $rel] == 5} {
+    lassign $rel rStatus rSteps rRes rKE rUmax
+    check_numeric "DR.relax.residual" $rRes
+    check "DR.relax.rest" {int($rStatus) == 0 && $rSteps > 1 && $rSteps < 50000} \
+        "status $rStatus after $rSteps steps"
+    check "DR.relax.belowTolerance" {$rRes < 1.0e-8} "residual $rRes"
+    check "DR.relax.clockAdvanced" {abs([getTime] - $rSteps) < 1.0e-9} \
+        "time [getTime] after $rSteps steps of dt = 1"
+    check "DR.relax.matches.loadcontrol" {abs([nodeDisp 2 2] - $refUy) < 1.0e-6} \
+        "relaxed uy = [nodeDisp 2 2] vs LoadControl $refUy"
+}
+set rel [ladrunoDR relax -tolResidual 1.0e-300 -maxSteps 3 -dt 0.5]
+check "DR.relax.maxSteps" {int([lindex $rel 0]) == 1 && int([lindex $rel 1]) == 3} \
+    "relax -maxSteps 3 answered '$rel'"
+set rc [catch {ladrunoDR relax -maxSteps 3} msg]
+check "DR.relax.needsTolerance.errors" {$rc != 0} \
+    "relax without -tolResidual answered '$msg'"
+
 # --------------------------------------------------------------------------
 # 3. ladrunoArcLength against a live LadrunoArcLength: read a query, then drive
 #    a MUTATOR, which proves the value argument reaches the elementAPI cursor

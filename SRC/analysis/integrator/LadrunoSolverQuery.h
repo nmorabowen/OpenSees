@@ -61,6 +61,7 @@
 #include <TransientIntegrator.h>
 #include <LadrunoArcLength.h>
 #include <LadrunoDynamicRelaxation.h>
+#include <DirectIntegrationAnalysis.h>   // Ladruno WP-240: ladrunoDR relax
 #include <classTags.h>
 #include <elementAPI.h>
 #include <OPS_Globals.h>
@@ -212,7 +213,93 @@ inline int arcLengthCommand(StaticIntegrator *si)
 // when the dynamics excursion has relaxed to a quasi-static rest state -- the
 // physical-mass EnergyBalance KE is ~0 on DR's pseudo-mass models, so the gate
 // MUST be this force residual, not a KE ratio.
-inline int drCommand(TransientIntegrator *ti)
+//
+// Ladruno WP-240 (from jaabell/OpenSees 9a429237e, J. Abell):
+//   ladrunoDR maxDisplacement -> max |u| over the equation DOFs
+//   ladrunoDR relax -tolResidual r <-tolKE k> -maxSteps n <-runaway f> <-uRef u>
+//                   <-checkEvery m> <-dt dt>
+//        march until rest, runaway or n steps in ONE call, instead of one
+//        interpreter round trip per step:
+//          rest     residualNorm < r (and kineticEnergy < k when given),
+//                   checked every step;
+//          runaway  max|u| > f * uRef, checked every m steps (default 100);
+//                   uRef defaults to max|u| after the first step of this call.
+//        Returns {status steps residualNorm kineticEnergy maxDisplacement} with
+//        status 0 rest, 1 maxSteps, 2 runaway, 3 failed step. dt defaults to 1.
+//        The three values are global in a parallel run, so every process takes
+//        the same decision at the same step.
+//        It loops the stock DirectIntegrationAnalysis::analyze(1, dt): no new
+//        analysis type and no copy of the driver (ADR 21 section 7.3 stands).
+//        The analysis is a PARAMETER for the reason the integrator is one.
+inline int drRelax(LadrunoDynamicRelaxation *dr, DirectIntegrationAnalysis *ta)
+{
+    if (ta == 0) {
+        opserr << "WARNING ladrunoDR relax - no transient analysis (use `analysis Transient`)\n";
+        return -1;
+    }
+    double tolR = -1.0, tolKE = -1.0, runaway = 0.0, uRef = -1.0, dt = 1.0;
+    int maxSteps = -1, checkEvery = 100;
+    while (OPS_GetNumRemainingInputArgs() > 0) {
+        const char *opt = OPS_GetString();
+        int nd = 1;
+        int bad = 0;
+        if (OPS_GetNumRemainingInputArgs() < 1 && opt != 0 && opt[0] == '-') {
+            opserr << "WARNING ladrunoDR relax - " << opt << " expects a value\n";
+            return -1;
+        }
+        if      (strcmp(opt, "-tolResidual") == 0) bad = OPS_GetDoubleInput(&nd, &tolR);
+        else if (strcmp(opt, "-tolKE") == 0)       bad = OPS_GetDoubleInput(&nd, &tolKE);
+        else if (strcmp(opt, "-runaway") == 0)     bad = OPS_GetDoubleInput(&nd, &runaway);
+        else if (strcmp(opt, "-uRef") == 0)        bad = OPS_GetDoubleInput(&nd, &uRef);
+        else if (strcmp(opt, "-dt") == 0)          bad = OPS_GetDoubleInput(&nd, &dt);
+        else if (strcmp(opt, "-maxSteps") == 0)    bad = OPS_GetIntInput(&nd, &maxSteps);
+        else if (strcmp(opt, "-checkEvery") == 0)  bad = OPS_GetIntInput(&nd, &checkEvery);
+        else {
+            opserr << "WARNING ladrunoDR relax - unknown option '" << opt << "'\n";
+            return -1;
+        }
+        if (bad < 0) {
+            opserr << "WARNING ladrunoDR relax - failed to read the value of " << opt << "\n";
+            return -1;
+        }
+    }
+    if (!(tolR > 0.0) || maxSteps < 1) {
+        opserr << "WARNING ladrunoDR relax - needs -tolResidual r > 0 and -maxSteps n >= 1\n";
+        return -1;
+    }
+    if (!(dt > 0.0)) {
+        opserr << "WARNING ladrunoDR relax - -dt must be positive\n";
+        return -1;
+    }
+    if (checkEvery < 1) checkEvery = 1;
+    // uRef by default: max|u| after the first step, when the integrator has been
+    // (re)seeded from the domain
+    const bool uRefFromFirstStep = runaway > 0.0 && !(uRef > 0.0);
+
+    int status = 1, steps = 0;
+    while (steps < maxSteps) {
+        if (ta->analyze(1, dt) < 0) { status = 3; ++steps; break; }
+        ++steps;
+        if (steps == 1 && uRefFromFirstStep) {
+            uRef = dr->getMaxDisplacement();
+            if (!(uRef > 0.0)) uRef = 1.0e-12;  // from rest at u = 0
+        }
+        if (dr->getResidualNorm() < tolR && (tolKE < 0.0 || dr->getKineticEnergy() < tolKE)) {
+            status = 0; break;
+        }
+        if (runaway > 0.0 && steps % checkEvery == 0
+            && dr->getMaxDisplacement() > runaway * uRef) {
+            status = 2; break;
+        }
+    }
+    double out[5] = {(double)status, (double)steps, dr->getResidualNorm(),
+                     dr->getKineticEnergy(), dr->getMaxDisplacement()};
+    int n = 5;
+    OPS_SetDoubleOutput(&n, out, false);
+    return 0;
+}
+
+inline int drCommand(TransientIntegrator *ti, DirectIntegrationAnalysis *ta = 0)
 {
     if (ti == 0 || ti->getClassTag() != INTEGRATOR_TAGS_LadrunoDynamicRelaxation) {
         opserr << "WARNING ladrunoDR - the active transient integrator is not a "
@@ -224,13 +311,16 @@ inline int drCommand(TransientIntegrator *ti)
 
     if (OPS_GetNumRemainingInputArgs() < 1) {
         opserr << "WARNING ladrunoDR - expects a subcommand "
-                  "(residualNorm|kineticEnergy|stabilityMargin)\n";
+                  "(residualNorm|kineticEnergy|stabilityMargin|maxDisplacement|relax)\n";
         return -1;
     }
     const char *sub = OPS_GetString();
+    if (strcmp(sub, "relax") == 0)               // Ladruno WP-240
+        return drRelax(dr, ta);
     double out = 0.0;
     if      (strcmp(sub, "residualNorm") == 0)  out = dr->getResidualNorm();
     else if (strcmp(sub, "kineticEnergy") == 0) out = dr->getKineticEnergy();
+    else if (strcmp(sub, "maxDisplacement") == 0) out = dr->getMaxDisplacement();   // Ladruno WP-240
     // Ladruno (#728, merged into the shared dispatch here): the -massSafety
     // silent-divergence detector. It landed in OpenSeesCommands.cpp while this
     // branch was extracting that function into this header, so the two PRs
@@ -239,7 +329,7 @@ inline int drCommand(TransientIntegrator *ti)
     else if (strcmp(sub, "stabilityMargin") == 0) out = dr->getStabilityMargin();
     else {
         opserr << "WARNING ladrunoDR - unknown subcommand '" << sub
-               << "' (use residualNorm|kineticEnergy|stabilityMargin)\n";
+               << "' (use residualNorm|kineticEnergy|stabilityMargin|maxDisplacement|relax)\n";
         return -1;
     }
     int n = 1;
