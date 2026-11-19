@@ -4,11 +4,13 @@ L0 operator tests need numpy and scipy only (Zone A). They check every operator 
 route: the contract's helpers, Gauss quadrature, closed-form fields, or the case derivations of interface
 16, and they check that each family of program rows is live (a field breaking it leaves a residual).
 
-Tests that run the open solver are Zone B (``pytest.importorskip("clarabel")``); their numbers are
-estimates of the discrete optima, never certified values. The ``slow`` tier holds the larger estimates:
-measured 2026-11-19 on a 16-thread desktop, 52 s in total (Clarabel 0.11.1); the hard stop is
+Tests that run the open solver carry no zone marker and are skipped unless Clarabel is installed
+(``requires_clarabel``), so the Zone-A selection never needs it; their numbers are estimates of the
+discrete optima, never certified values. The ``slow`` tier holds the larger estimates:
+measured 2026-11-19 on a 16-thread desktop, 82 s in total (Clarabel 0.11.1); the hard stop is
 ``limit_reference.CLARABEL_TIME_LIMIT_S``, and a leg ending on it carries no number and fails.
 """
+import importlib.util
 import math
 
 import numpy as np
@@ -29,6 +31,8 @@ BUILDABLE = sorted(name for name, case in CASES.items() if case["status"] == "ac
 FORMULATIONS = (lr.LOWER_ID, lr.CONTROL_ID, lr.JUMP_ID)
 
 _CACHE = {}
+HAS_CLARABEL = importlib.util.find_spec("clarabel") is not None
+requires_clarabel = pytest.mark.skipif(not HAS_CLARABEL, reason="open solver Clarabel not installed")
 
 
 def problem_of(name, mesh=0):
@@ -213,7 +217,7 @@ def test_geometry_refuses_curved_inverted_and_reserved_input():
     bent["nodes"][bent["tets"][0, 4]] += 1e-3
     with pytest.raises(contract.ContractError) as error:
         lr.Geometry(problem, bent)
-    assert error.value.code == "curved_element"
+    assert error.value.code == "element_curved"
     flipped = {key: value.copy() for key, value in arrays.items()}
     flipped["tets"][0, [1, 2]] = flipped["tets"][0, [2, 1]]
     with pytest.raises(contract.ContractError) as error:
@@ -240,6 +244,7 @@ def test_formulations_are_named_and_the_jump_refuses_steep_cones():
     steep = contract.copy.deepcopy(problem)
     steep["regions"][0] = {"name": "soil", "criterion": "drucker_prager", "k": 1.0, "alpha": 0.3,
                            "b0": [0.0] * 3, "b1": [0.0] * 3}
+    steep["problem_sha256"] = contract.document_hash(steep, arrays, "problem_sha256")
     lr.assemble(steep, arrays, lr.CONTROL_ID)
     with pytest.raises(contract.ContractError) as error:
         lr.assemble(steep, arrays, lr.JUMP_ID)
@@ -765,7 +770,7 @@ def solved(name, mesh, formulation, interior=False):
 SOLVER_SLACK = 1e-6   # relative; Clarabel 0.11.1 default tolerances are 1e-8, see the module docstring
 
 
-@pytest.mark.zone_b
+@requires_clarabel
 @pytest.mark.parametrize("formulation", FORMULATIONS)
 @pytest.mark.parametrize("name", EXACT)
 def test_estimates_of_exact_cases_reach_the_target(name, formulation):
@@ -780,7 +785,7 @@ def test_estimates_of_exact_cases_reach_the_target(name, formulation):
     assert np.abs(program.zero_residual(x)).max() < 1e-7
 
 
-@pytest.mark.zone_b
+@requires_clarabel
 @pytest.mark.parametrize("name", EXACT_LOWER)
 def test_estimates_of_exact_lower_cases_respect_the_band_formula(name):
     case = CASES[name]
@@ -793,7 +798,7 @@ def test_estimates_of_exact_lower_cases_respect_the_band_formula(name):
         assert target <= upper <= formula + 1e-9 * formula
 
 
-@pytest.mark.zone_b
+@requires_clarabel
 def test_estimates_of_the_column_sit_inside_the_sandwich():
     params = {"k": 1.0, "gamma": 0.25, "H": 2.0}
     low, high = (contract.TARGET_FORMULAS[name](params) for name in ("column_static", "column_uniform"))
@@ -802,7 +807,7 @@ def test_estimates_of_the_column_sit_inside_the_sandwich():
     assert low - 1e-9 <= lower <= jump <= high + 1e-9
 
 
-@pytest.mark.zone_b
+@requires_clarabel
 def test_zero_gravity_mutant_is_killed_by_the_dead_shear_layer():
     pytest.importorskip("clarabel")
     problem, arrays, geo = problem_of("vm_dead_gravity_shear_layer", 1)
@@ -818,7 +823,7 @@ def test_zero_gravity_mutant_is_killed_by_the_dead_shear_layer():
     assert low < case["target"] - 0.1 and high > formula + 0.1
 
 
-@pytest.mark.zone_b
+@requires_clarabel
 def test_lower_interior_field_is_strictly_admissible():
     program, x, doc, fields = solved("vm_dead_gravity_shear_layer", 1, lr.LOWER_ID, interior=True)
     problem, arrays, geo = problem_of("vm_dead_gravity_shear_layer", 1)
@@ -829,7 +834,7 @@ def test_lower_interior_field_is_strictly_admissible():
     assert np.abs(program.zero_residual(xi)).max() < 1e-7
 
 
-@pytest.mark.zone_b
+@requires_clarabel
 def test_strip_estimates_on_mesh_0_straddle_the_target():
     target = CASES["tresca_strip_vm_thin_slab"]["target"]
     lower = solved("tresca_strip_vm_thin_slab", 0, lr.LOWER_ID)[2]["value"]
@@ -838,7 +843,7 @@ def test_strip_estimates_on_mesh_0_straddle_the_target():
     assert lower < target < jump < control
 
 
-@pytest.mark.zone_b
+@requires_clarabel
 @pytest.mark.slow
 @pytest.mark.parametrize("name", ["upper3d_fixed_phi00", "dp_prandtl_cohesion_thin_slab"])
 def test_slow_estimates_are_ordered(name):
@@ -847,3 +852,371 @@ def test_slow_estimates_are_ordered(name):
     assert lower["solver_status"] in ("solved", "almost_solved")
     assert upper["solver_status"] in ("solved", "almost_solved")
     assert lower["value"] < upper["value"]
+
+
+# ---------------------------------------------------------------------------------------------------
+# Review round: row content, block order, regions, golden programs, refusals, interior fields
+# ---------------------------------------------------------------------------------------------------
+
+def rehash(problem, arrays):
+    problem["problem_sha256"] = contract.document_hash(problem, arrays, "problem_sha256")
+    return problem
+
+
+RIGID_BLOCK = """
+case rigid_block
+units       length m; force kN; stress kPa
+box         0 0 0 1 1 1
+mesh        1 1 1
+region      soil drucker_prager k 1.0 alpha 0.2
+footing     plate xref 0.3 1.2 0.4 law bonded
+boundary    top footing plane y 1 footing plate
+boundary    x0 free plane x 0
+boundary    x1 free plane x 1
+boundary    y0 free plane y 0
+boundary    z0 free plane z 0
+boundary    z1 free plane z 1
+query       q ray
+F1          plate 0 0 -1 0.5 -1 2
+end
+"""
+
+
+def rigid_block():
+    return contract.build_case_problem(contract.parse_case_text(RIGID_BLOCK)["rigid_block"], 0)
+
+
+@pytest.mark.zone_a
+@pytest.mark.parametrize("formulation", [lr.CONTROL_ID, lr.JUMP_ID])
+def test_rigid_footing_rows_hold_for_a_rotating_footing(formulation):
+    """A rigid motion with nonzero angular velocity satisfies every footing row; w -> -w does not."""
+    problem, arrays = rigid_block()
+    geo = lr.Geometry(problem, arrays)
+    program = lr.assemble(problem, arrays, formulation, geometry=geo)
+    x_ref = np.array(problem["footings"][0]["x_ref"])
+    u, w = np.array([0.1, 0.2, -0.3]), np.array([0.3, -0.7, 0.5])
+    xg = geo.global_node_coordinates()
+    v = u + np.cross(w, xg - x_ref)
+    work_row = program.layout["work_row"]
+    for sign, holds in ((1.0, True), (-1.0, False)):
+        x = upper_vector(program, v, np.concatenate([u, sign * w])[None])
+        others = np.delete(program.zero_residual(x), work_row)
+        assert (np.abs(others).max() < 1e-12) == holds
+    x = upper_vector(program, v, np.concatenate([u, w])[None])
+    f1 = np.array(problem["queries"][0]["F1"][0])
+    w1 = program.layout["w1"]
+    assert w1 @ x[: len(w1)] == pytest.approx(f1 @ np.concatenate([u, w]), rel=1e-14)
+    _, dissipation, _, w1_field = lr.upper_field_value(problem, arrays, "q", v, np.concatenate([u, w])[None], geo)
+    assert abs(dissipation) < 1e-12 and w1_field == pytest.approx(f1 @ np.concatenate([u, w]), rel=1e-14)
+
+
+@pytest.mark.zone_a
+def test_lower_resultant_moment_of_a_uniform_stress_about_an_offset_point():
+    problem, arrays = rigid_block()
+    geo = lr.Geometry(problem, arrays)
+    s = np.array([0.3, -1.1, 0.4, 0.7, -0.2, 0.5])
+    sigma = np.tile(s, (geo.E, 4, 1))
+    t = np.array([s[3], s[1], s[4]])                     # sigma e_y on the top face y = 1, area 1
+    centroid, x_ref = np.array([0.5, 1.0, 0.5]), np.array(problem["footings"][0]["x_ref"])
+    expected = np.concatenate([t, np.cross(centroid - x_ref, t)])
+    np.testing.assert_allclose(lr.lower_resultant(problem, arrays, sigma, geo)[0], expected, atol=1e-14)
+
+
+@pytest.mark.zone_a
+def test_frictional_jump_rows_carry_minus_tau_rho():
+    problem, arrays, geo = problem_of("dp_uniaxial_tension", 1)
+    program = lr.assemble(problem, arrays, lr.JUMP_ID, geometry=geo)
+    tau, root = contract.jump_constants(problem["regions"][0]["alpha"])
+    assert tau > 0.1
+    rng = np.random.default_rng(12)
+    x = rng.normal(size=program.A.shape[1])
+    field = x[: 30 * geo.E].reshape(geo.E, 10, 3)
+    jumps = x[program.layout["jump"]:].reshape(geo.F, 6, 3)
+    rows = (program.A @ x)[24 * geo.E: 24 * geo.E + 18 * geo.F].reshape(geo.F, 6, 3)
+    for fi, ((e1, f1), (e2, _)) in enumerate(contract.mesh_facets(arrays["tets"])[0]):
+        n, _ = contract.facet_geometry(arrays["nodes"][arrays["tets"][e1][:4]], f1)
+        t1, t2 = contract.tangent_basis(n)
+        c = contract.bernstein_from_nodal(contract.facet_nodal_jump(arrays["tets"], field, e1, f1, e2))
+        np.testing.assert_allclose(rows[fi, :, 0], c @ n - tau * jumps[fi, :, 0], atol=1e-11)
+        np.testing.assert_allclose(rows[fi, :, 1], c @ t1 - jumps[fi, :, 1], atol=1e-11)
+        np.testing.assert_allclose(rows[fi, :, 2], c @ t2 - jumps[fi, :, 2], atol=1e-11)
+    # The objective charges k_J = k / root per unit rho, with weight A / 6.
+    rho_cols = program.layout["jump"] + 18 * np.arange(geo.F)[:, None] + 3 * np.arange(6)[None, :]
+    np.testing.assert_allclose(program.c[rho_cols], (geo.interior_area / 6.0 / root)[:, None] * np.ones(6), rtol=1e-15)
+
+
+def lower_facet_offsets(problem, arrays):
+    """Start row of each exterior facet's block in the Lower program, by interface 15.4."""
+    n_e, n_i = len(arrays["tets"]), len(contract.mesh_facets(arrays["tets"])[0])
+    row, out = 3 * n_e + 9 * n_i, []
+    for index in arrays["facet_set"]:
+        out.append(row)
+        row += {"free": 9, "traction": 9, "symmetry": 6}.get(problem["boundary_sets"][int(index)]["kind"], 0)
+    return out
+
+
+def expected_boundary_rows(problem, arrays, broken):
+    """Upper rows 3 to 5 of interface 15.4 from the arrays alone, as (kind, node, component, extra)."""
+    tets, kinds = arrays["tets"], [item["kind"] for item in problem["boundary_sets"]]
+    sets = [set() for _ in kinds]
+    for (e, f), index in zip(arrays["facets"], arrays["facet_set"]):
+        for a in contract.FACET_NODES[int(f)]:
+            sets[int(index)].add((int(e), a) if broken else int(tets[int(e)][a]))
+    fixed = sorted(set().union(*[s for s, k in zip(sets, kinds) if k == "fixed"]))
+    rows = [("fixed", node, c, None) for node in fixed for c in range(3)]
+    for index, kind in enumerate(kinds):
+        if kind == "symmetry":
+            first = int(np.nonzero(arrays["facet_set"] == index)[0][0])
+            e, f = arrays["facets"][first]
+            n, _ = contract.facet_geometry(arrays["nodes"][tets[e][:4]], int(f))
+            axis = int(np.argmax(np.abs(n)))
+            rows += [("symmetry", node, None, (axis, float(n[axis]))) for node in sorted(sets[index] - set(fixed))]
+    for fi in range(len(problem["footings"])):
+        members = set().union(*[s for s, item in zip(sets, problem["boundary_sets"])
+                                if item["kind"] == "footing" and item["footing"] == fi])
+        rows += [("footing", node, c, fi) for node in sorted(members) for c in range(3)]
+    return rows
+
+
+@pytest.mark.zone_a
+def test_symmetry_rows_carry_the_tangential_traction_and_the_normal_velocity():
+    problem, arrays, geo = problem_of("vm_uniaxial_tension", 0)
+    lower = lr.assemble(problem, arrays, lr.LOWER_ID, geometry=geo)
+    s = np.array([0.4, -0.3, 0.2, 1.0, -0.6, 2.0])
+    values = lower.A @ lower_vector(lower, 0.0, np.tile(s, (geo.E, 4, 1)))
+    names = [item["name"] for item in problem["boundary_sets"]]
+    checked = 0
+    for row, (start, index) in enumerate(zip(lower_facet_offsets(problem, arrays), arrays["facet_set"])):
+        if problem["boundary_sets"][int(index)]["kind"] != "symmetry":
+            continue
+        e, f = arrays["facets"][row]
+        n, _ = contract.facet_geometry(arrays["nodes"][arrays["tets"][e][:4]], int(f))
+        t1, t2 = contract.tangent_basis(n)
+        t = contract.voigt_n(n) @ s
+        np.testing.assert_allclose(values[start: start + 6], np.tile([t1 @ t, t2 @ t], 3), atol=1e-14)
+        if names[int(index)] == "x0":            # n = -e_x: T1 = e_y x n = e_z, T2 = n x T1 = e_y
+            np.testing.assert_allclose(values[start: start + 2], [-s[5], -s[3]], atol=1e-15)
+            checked += 1
+    assert checked > 0
+    for formulation in (lr.CONTROL_ID, lr.JUMP_ID):
+        broken = formulation == lr.JUMP_ID
+        upper = lr.assemble(problem, arrays, formulation, geometry=geo)
+        uniform = np.array([1.0, 2.0, 3.0])
+        rows = upper.A[: upper.n_zero] @ upper_vector(upper, np.tile(uniform, (geo.N, 1)), np.zeros((0, 6)))
+        start = 24 * geo.E + (18 * geo.F if broken else 0)
+        expected = expected_boundary_rows(problem, arrays, broken)
+        sym = [k for k, item in enumerate(expected) if item[0] == "symmetry"]
+        want = [expected[k][3][1] * uniform[expected[k][3][0]] for k in sym]
+        np.testing.assert_allclose(rows[start + np.array(sym)], want, atol=1e-15)
+
+
+@pytest.mark.zone_a
+@pytest.mark.parametrize("formulation", [lr.CONTROL_ID, lr.JUMP_ID])
+def test_fixed_symmetry_footing_and_restrained_blocks_are_in_contract_order(formulation):
+    problem, arrays, geo = problem_of("tresca_strip_vm_thin_slab", 0)
+    program = lr.assemble(problem, arrays, formulation, geometry=geo)
+    broken = formulation == lr.JUMP_ID
+    rows = expected_boundary_rows(problem, arrays, broken)
+    kinds = [item[0] for item in rows]
+    assert kinds == sorted(kinds, key=["fixed", "symmetry", "footing"].index) and set(kinds) == {
+        "fixed", "symmetry", "footing"}
+    start = 24 * geo.E + (18 * geo.F if broken else 0)
+    a, V = program.A.tocsr(), program.layout["V"]
+
+    def vcol(node, comp):
+        return (30 * node[0] + 3 * node[1] if broken else 3 * node) + comp
+
+    for k, (kind, node, comp, extra) in enumerate(rows):
+        line = a.getrow(start + k)
+        entries = dict(zip(line.indices.tolist(), line.data.tolist()))
+        if kind == "fixed":
+            assert entries == {vcol(node, comp): 1.0}
+        elif kind == "symmetry":
+            assert entries == {vcol(node, extra[0]): extra[1]}
+        else:
+            assert entries.pop(vcol(node, comp)) == 1.0 and entries.pop(V + 6 * extra + comp) == -1.0
+            assert set(entries) <= set((V + 6 * extra + 3 + np.arange(3)).tolist())
+        assert program.b[start + k] == 0.0
+    tail = start + len(rows)
+    restrained = problem["queries"][0]["restrained"]
+    for k, (f, c) in enumerate(restrained):
+        line = a.getrow(tail + k)
+        assert line.indices.tolist() == [V + 6 * f + c] and line.data.tolist() == [1.0]
+    assert tail + len(restrained) == program.n_zero - 1 == program.layout["work_row"]
+    assert program.b[program.n_zero - 1] == 1.0
+
+
+@pytest.mark.zone_a
+def test_two_regions_carry_their_own_strength_and_weight_in_every_formulation():
+    problem, arrays, _ = problem_of("dp_uniaxial_tension", 1)
+    problem, arrays = contract.copy.deepcopy(problem), dict(arrays)
+    problem["regions"].append({"name": "stiff", "criterion": "von_mises", "k": 2.5, "b0": [0.0, 0.0, -0.1],
+                               "b1": [0.0] * 3})
+    centroid = arrays["nodes"][arrays["tets"][:, :4]].mean(axis=1)
+    arrays["element_region"] = (centroid[:, 0] > 0.5).astype("<i8")
+    rehash(problem, arrays)
+    geo = lr.Geometry(problem, arrays)
+    second = arrays["element_region"] == 1
+    assert 0 < second.sum() < geo.E
+    k, alpha = np.where(second, 2.5, 1.0), np.where(second, 0.0, 0.2)
+    lower = lr.assemble(problem, arrays, lr.LOWER_ID, geometry=geo)
+    cone_rows = lower.n_zero + 24 * np.arange(geo.E)[:, None] + 6 * np.arange(4)[None, :]
+    np.testing.assert_allclose(lower.b[cone_rows], S2 * k[:, None] * np.ones(4), rtol=1e-15)
+    sig0 = lower.layout["sigma"] + 24 * np.arange(geo.E)
+    np.testing.assert_allclose(np.asarray(lower.A[cone_rows[:, 0], sig0]).ravel(), S2 * alpha, rtol=1e-15)
+    np.testing.assert_allclose(lower.b[3 * np.arange(geo.E) + 2], np.where(second, 0.1, 0.0))
+    for formulation in (lr.CONTROL_ID, lr.JUMP_ID):
+        upper = lr.assemble(problem, arrays, formulation, geometry=geo)
+        r_cols = upper.layout["rz"] + 24 * np.arange(geo.E)[:, None] + 6 * np.arange(4)[None, :]
+        np.testing.assert_allclose(upper.c[r_cols], (geo.volume * S2 * k / 4.0)[:, None] * np.ones(4), rtol=1e-15)
+        coef = np.asarray(upper.A[24 * np.arange(geo.E), r_cols[:, 0]]).ravel()     # flow row xx, column r
+        np.testing.assert_allclose(coef, -S2 * alpha, rtol=1e-15)
+        if formulation == lr.JUMP_ID:
+            tau, kj = lr.jump_constants(alpha[geo.e_minus])
+            rho = upper.layout["jump"] + 18 * np.arange(geo.F)
+            coef = np.asarray(upper.A[24 * geo.E + 18 * np.arange(geo.F), rho]).ravel()
+            np.testing.assert_allclose(coef, -tau, rtol=1e-15)
+            np.testing.assert_allclose(upper.c[rho], geo.interior_area / 6.0 * k[geo.e_minus] * kj, rtol=1e-15)
+
+
+GOLDEN = """
+case golden_plate
+units       length m; force kN; stress kPa
+box         0 0 0 1 1 1
+mesh        1 1 1
+region      soil drucker_prager k 1.0 alpha 0.2
+footing     plate xref 0.5 1 0.25 law bonded
+boundary    base fixed plane y 0
+boundary    top footing plane y 1 footing plate
+boundary    z0 symmetry plane z 0
+boundary    x0 free plane x 0
+boundary    x1 free plane x 1
+boundary    z1 free plane z 1
+query       q ray
+F1          plate 1 0 0 0 0 0.5
+restrained  plate ry
+end
+"""
+
+# document_hash({}, program arrays) of the golden case, recorded 2026-11-19 from this module once every
+# other L0 test passed. The 6-tet unit cube has exactly representable geometry, so the digest does not
+# depend on the platform. A sign error in skew(r) or -tau, a changed symmetry row or block order moves it.
+GOLDEN_SHA = {
+    lr.LOWER_ID: "063f5495fd952b8e695c49dc6d8ac4209773e78c562aaee125a2e0ad72e91b81",
+    lr.CONTROL_ID: "a4056cd8d46336b2a954662033f1c4482550a6fde88f86bf893fca543c6d2df5",
+    lr.JUMP_ID: "d05fe0ba976c2a8efce4533497beef02b87a2c25b55838d51f32ba7450d7a383",
+}
+
+
+def golden_digest(formulation):
+    problem, arrays = contract.build_case_problem(contract.parse_case_text(GOLDEN)["golden_plate"], 0)
+    return contract.document_hash({}, lr.assemble(problem, arrays, formulation).arrays(), "none")
+
+
+@pytest.mark.zone_a
+@pytest.mark.parametrize("formulation", FORMULATIONS)
+def test_golden_program_digest(formulation):
+    assert golden_digest(formulation) == GOLDEN_SHA[formulation]
+
+
+@pytest.mark.zone_a
+def test_ray_upper_with_nonpositive_reference_work_has_no_number(tmp_path):
+    problem, arrays, geo = problem_of("vm_plate_shear", 0)
+    program = lr.assemble(problem, arrays, lr.JUMP_ID, geometry=geo)
+    value, v, footing = exact_upper_field("vm_plate_shear", geo, problem)
+    record = {"name": "none", "version": "0", "settings": {}}
+    good, _ = lr.export_result(tmp_path, program, "solved", upper_vector(program, v, footing), record)
+    assert good["value"] == pytest.approx(value) and (tmp_path / good["arrays"]).exists()
+    bad, empty = lr.export_result(tmp_path, program, "solved", upper_vector(program, -v, -footing), record)
+    assert bad["solver_status"] == "numerical_error" and bad["value"] is None and bad["objective"] is None
+    assert not empty and bad["arrays"] is None
+    contract.validate_result(bad, empty, problem, arrays)
+    assert not (tmp_path / good["arrays"]).exists()     # the stale field arrays were removed
+
+
+def plate_unvalidated(queries):
+    case = contract.parse_case_text(PLATE_FREE)["plate_free_sides"]
+    problem, arrays = contract.build_case_problem(case, 0)
+    problem["queries"] = queries
+    return rehash(problem, arrays), arrays
+
+
+@pytest.mark.zone_a
+def test_problems_are_validated_and_ignored_query_fields_refused(tmp_path):
+    problem, arrays, geo = problem_of("vm_plate_shear", 0)
+    stale = contract.copy.deepcopy(problem)
+    stale["regions"][0]["k"] = 2.0                       # not rehashed
+    with pytest.raises(contract.ContractError) as error:
+        lr.assemble(stale, arrays, lr.LOWER_ID)
+    assert error.value.code == "hash_mismatch"
+    program = lr.assemble(problem, arrays, lr.LOWER_ID, geometry=geo)
+    program.problem = stale
+    with pytest.raises(contract.ContractError) as error:
+        lr.export_program(tmp_path, program)
+    assert error.value.code == "hash_mismatch"
+    for fixed, code in (([[0, 1, -0.5], [0, 1, -0.4]], "query_fixed"), ([[0, 5, 0.0]], "query_restrained_load")):
+        query = {"id": "f", "form": "fixed_components", "restrained": [[0, 5]], "fixed": fixed,
+                 "direction": [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0]]}
+        bad, bad_arrays = plate_unvalidated([query])
+        contract.validate_problem(bad, bad_arrays)    # the contract validator alone accepts it
+        with pytest.raises(contract.ContractError) as error:
+            lr.assemble(bad, bad_arrays, lr.LOWER_ID, "f")
+        assert error.value.code == code
+    for formulation, code in (("lower.p2d-vertex.v0", "formulation_not_admitted"), ("middle.p1d.v0", "formulation_unknown")):
+        with pytest.raises(contract.ContractError) as error:
+            lr.assemble(problem, arrays, formulation, geometry=geo)
+        assert error.value.code == code
+
+
+@pytest.mark.zone_a
+def test_interior_option_refuses_an_upper_without_inequalities():
+    with pytest.raises(contract.ContractError) as error:
+        lr.run_case("vm_plate_shear", 0, [lr.LOWER_ID, lr.JUMP_ID], interior=True)
+    assert error.value.code == "no_interior_field"
+
+
+@requires_clarabel
+@pytest.mark.parametrize("formulation", [lr.CONTROL_ID, lr.JUMP_ID])
+@pytest.mark.parametrize("name", ["dp_uniaxial_tension", "dp_weighted_apex_column"])
+def test_upper_interior_field_satisfies_the_projection_rows_and_clears_the_cone(name, formulation):
+    program, _, doc, fields = solved(name, 1, formulation)
+    problem, arrays, geo = problem_of(name, 1)
+    velocity, footing, info = lr.upper_interior_field(program)
+    broken = formulation == lr.JUMP_ID
+    x = np.zeros(program.A.shape[1])
+    x[: velocity.size] = velocity.reshape(-1)
+    x[program.layout["V"]: program.layout["V"] + footing.size] = footing.reshape(-1)
+    # Projection rows (boundary, footing, restrained; the work row excluded) hold to solver accuracy.
+    boundary = program.zero_residual(x)[24 * geo.E + (18 * geo.F if broken else 0):]
+    assert np.abs(np.delete(boundary, -1)).max() < 1e-7
+    cv, cj, scale = lr.upper_conditions(geo, velocity)
+    live = np.concatenate([cv.ravel(), cj.ravel()])
+    live = live[np.isfinite(live)]
+    assert scale > 0.0 and np.all(live <= 1e-9 * scale) and np.mean(live < -1e-6 * scale) > 0.9
+    result, arrays_out = lr.result_document(program, doc["solver_status"], solved(name, 1, formulation)[1],
+                                            doc["solver"], doc["wall_time_s"], (velocity, footing))
+    contract.validate_result(result, arrays_out, problem, arrays)
+    candidate = fields["element_velocity"] if broken else fields["velocity"]
+    preview = lr.repair_preview(geo, candidate, velocity)
+    assert preview["ready"], preview
+
+
+@requires_clarabel
+def test_run_case_attaches_an_upper_interior_field_when_alpha_is_positive(tmp_path):
+    runs = lr.run_case("dp_uniaxial_tension", 0, [lr.CONTROL_ID, lr.JUMP_ID], tmp_path, solve_it=True)
+    problem, arrays = contract.load_document(tmp_path / "dp_uniaxial_tension.m0.problem.json")
+    for formulation, name in ((lr.CONTROL_ID, "interior_velocity"), (lr.JUMP_ID, "interior_element_velocity")):
+        doc, fields = contract.load_document(tmp_path / f"dp_uniaxial_tension.m0.q.{formulation}.result.json")
+        contract.validate_result(doc, fields, problem, arrays)
+        assert name in fields and "interior_footing_velocity" in fields
+        assert runs[formulation][1][0]["result_sha256"] == doc["result_sha256"]
+
+
+@requires_clarabel
+@pytest.mark.slow
+def test_frictional_strip_jump_estimate_is_repair_ready_on_the_producer_preview():
+    """DP strip mesh 0, jump Upper: P is non-empty and the interior field clears it (preview, no projection)."""
+    program, _, _, fields = solved("dp_prandtl_cohesion_thin_slab", 0, lr.JUMP_ID)
+    velocity, _, _ = lr.upper_interior_field(program)
+    preview = lr.repair_preview(program.layout["geometry"], fields["element_velocity"], velocity)
+    assert preview["n_repaired"] > 0 and preview["ready"] and preview["mu"] < 1e-5, preview

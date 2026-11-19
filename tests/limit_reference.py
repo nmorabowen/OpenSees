@@ -11,8 +11,13 @@ Written from ``tests/limit_interface.md``, ``tests/limit_cases.txt`` and the exe
   rigid footings with restrained components (interface 4 to 6);
 * the ``ray``, ``fixed_components`` and ``support`` queries (interface 7);
 * export of problems, programs and results in the frozen formats (interface 15);
-* an optional open-solver path through Clarabel. It is imported lazily, so assembly needs only numpy and
-  scipy, and only Zone-B code calls it.
+* an optional open-solver path through Clarabel, imported lazily, so assembly needs only numpy and scipy;
+  tests that solve are gated on Clarabel being installed. It also builds the optional interior fields of
+  interface 15.3: a strictly admissible Lower field, and a relative-interior Upper field for every problem
+  with ``alpha > 0`` (interface 17.4 step 4).
+
+Every problem is checked with the contract's ``validate_problem`` before assembly and export, and refusals
+carry the contract validator's error codes.
 
 Every value this module produces is an **estimate**. Certification belongs to the independent checker
 (interface 17); nothing here writes a certificate, a feasibility record or a bracket.
@@ -20,9 +25,12 @@ Every value this module produces is an **estimate**. Certification belongs to th
 Program identity. The exported matrix is canonical CSC: duplicate entries summed, explicit zeros removed,
 row indices sorted within each column. Operators use the four vertex coordinates only; mid-edge nodes
 sit at ``0.5 * (x_a + x_b)`` of their element's vertices (interface 3.1). Symmetry rows use the set's
-normal, the normal of the set's first facet in ``facets`` order (interface 5), in both bounds.
+normal, the normal of the set's first facet in ``facets`` order (interface 5), in both bounds. That is a
+proposed clarification of interface 5, not yet in the contract; on every committed case mesh each
+symmetry facet's normal equals its set's normal exactly, so the choice does not change any case program.
 
-Result values. ``objective`` is ``c^T x``. A Lower ``value`` is ``objective_sign * c^T x``: ``lambda``, or
+Result values (a proposed clarification of interface 15.3, not yet in the contract). ``objective`` is
+``c^T x``. A Lower ``value`` is ``objective_sign * c^T x``: ``lambda``, or
 ``d^T R(sigma)`` for ``support``. An Upper ``value`` is the theorem's value of the stored field, ``(D - W0) /
 W1`` or ``D - W0`` with the formulas of interface 4.3 and 12.2 (17.4 steps 1 and 6). Up to equality
 residuals it does not exceed the objective, and differs from it by the solver's cone slack.
@@ -219,7 +227,7 @@ class Geometry:
             fail("element_orientation", f"element {int(np.argmin(det))}")
         tol = contract.TOLERANCES
         if np.any(det / 6.0 < tol["TOL_GEOM_VOLUME"] * self.h ** 3):
-            fail("degenerate_element", "volume below TOL_GEOM_VOLUME h^3")
+            fail("element_degenerate", "volume below TOL_GEOM_VOLUME h^3")
         inv = np.linalg.inv(jac)
         grad = np.empty((self.E, 4, 3))
         grad[:, 1:] = inv
@@ -233,7 +241,7 @@ class Geometry:
         offset = np.linalg.norm(nodes[tets[:, 4:]] - xn[:, 4:], axis=2).max(axis=1)
         self.straightness = offset / self.h
         if np.any(self.straightness > tol["TOL_GEOM_STRAIGHT"]):
-            fail("curved_element", f"element {int(np.argmax(self.straightness))}")
+            fail("element_curved", f"element {int(np.argmax(self.straightness))}")
 
         regions = problem["regions"]
         region = np.asarray(arrays["element_region"], dtype=np.int64)
@@ -494,14 +502,42 @@ def query_by_id(problem, query_id):
 
 
 def check_formulation(formulation, problem):
-    if formulation not in ADMITTED:
-        fail("formulation_not_admitted", repr(formulation))
-    if formulation == JUMP_ID:
-        jump_constants([region.get("alpha", 0.0) for region in problem["regions"]])
+    """The contract's refusal codes: ``formulation_not_admitted``, ``formulation_unknown``, ``..._not_applicable``."""
+    bound = ADMITTED.get(formulation)
+    if bound is None:
+        prefix = formulation.split(".", 1)[0] if isinstance(formulation, str) else None
+        bound = prefix if prefix in ("lower", "upper") else "lower"
+    contract.validate_formulation(bound, formulation, problem)
 
 
-def assemble(problem, arrays, formulation, query_id="q", geometry=None):
-    """The canonical program of ``formulation`` for one query (interface 15.4)."""
+def check_query(problem, query):
+    """Refuse query content that the programs would otherwise ignore (beyond ``validate_problem``)."""
+    if query["form"] != "fixed_components":
+        return
+    restrained = {tuple(item) for item in query["restrained"]}
+    seen = set()
+    for f, c, _ in query["fixed"]:
+        if (f, c) in seen:
+            fail("query_fixed", f"duplicate fixed component {[f, c]}")
+        seen.add((f, c))
+        if (f, c) in restrained:
+            fail("query_restrained_load", f"fixed component {[f, c]} is restrained and has no load row")
+
+
+def validate(problem, arrays):
+    """The contract's problem validator, then the query rules of :func:`check_query`."""
+    contract.validate_problem(problem, arrays)
+    for query in problem["queries"]:
+        check_query(problem, query)
+
+
+def assemble(problem, arrays, formulation, query_id="q", geometry=None, validated=False):
+    """The canonical program of ``formulation`` for one query (interface 15.4).
+
+    The problem is validated first unless the caller has just done so (``validated=True``).
+    """
+    if not validated:
+        validate(problem, arrays)
     check_formulation(formulation, problem)
     geo = geometry or Geometry(problem, arrays)
     query = query_by_id(problem, query_id)
@@ -727,6 +763,7 @@ def _assemble_upper(geo, query, broken):
         rhs.append([0.0])
         row += 1
     w0, w1 = work_vectors(geo, f0, f1, broken, include_f0=ray)
+    work_row = row if ray else None
     if ray:
         nz = np.nonzero(w1)[0]
         t.add(row, nz, w1[nz])
@@ -762,7 +799,7 @@ def _assemble_upper(geo, query, broken):
             (geo.interior_area / 6.0 * geo.k[geo.e_minus] * kj)[:, None]
     c[: rz_off] -= w0
     layout = {"broken": broken, "v": v_off, "V": V_off, "rz": rz_off, "jump": jump_off if broken else None,
-              "geometry": geo, "w0": w0, "w1": w1, "form": form, "direction": direction}
+              "geometry": geo, "w0": w0, "w1": w1, "form": form, "direction": direction, "work_row": work_row}
     formulation = JUMP_ID if broken else CONTROL_ID
     return Program(problem, query, formulation, "upper", t.matrix(row, n_var), b, c, n_zero, cones, layout)
 
@@ -892,39 +929,51 @@ def export_problem(directory, problem, arrays):
 
 
 def export_program(directory, program):
+    """Validate the problem and the program document against the contract, then write both files."""
+    geo = program.layout["geometry"]
+    validate(program.problem, geo.arrays)
     stem = record_stem(program.problem, program.query["id"], program.formulation)
-    doc = program.document(f"{stem}.program.npz")
-    return write_document(directory, f"{stem}.program", doc, program.arrays())
+    doc, arrays = program.document(f"{stem}.program.npz"), program.arrays()
+    contract.validate_program(doc, arrays, program.problem, geo.arrays)
+    return write_document(directory, f"{stem}.program", doc, arrays)
 
 
 def result_document(program, solver_status, x=None, solver=None, wall_time_s=None, interior=None):
-    """The result document and arrays of a solved program (interface 15.3). Values are estimates."""
+    """The result document and arrays of a solved program (interface 15.3). Values are estimates.
+
+    A ray-form Upper field whose reference work ``W1`` is not positive gives no number: it is recorded as
+    ``numerical_error`` with null ``value`` and ``objective`` and no arrays (interface 13, ``W1 > 0``).
+    """
     problem, query = program.problem, program.query
     stem = record_stem(problem, query["id"], program.formulation)
     has_value = solver_status in contract.SOLVER_STATUS_WITH_VALUE and x is not None
-    arrays = {}
+    value, arrays = None, {}
+    if has_value:
+        x = np.asarray(x, dtype=float)
+        arrays = extract_fields(program, x)
+        if program.bound == "lower":
+            value = program.value(x)
+        else:
+            # The value of the stored field (interface 17.4 steps 1 and 6), not c^T x: an interior-point
+            # solution keeps r slightly above |z|, which would put the objective a few 1e-6 above the
+            # field's own value and fail TOL_VALUE_MATCH for no defect.
+            velocity = arrays["element_velocity"] if program.layout["broken"] else arrays["velocity"]
+            geo = program.layout["geometry"]
+            value, _, _, w1 = upper_field_value(problem, geo.arrays, query["id"], velocity, arrays["footing_velocity"],
+                                                geo)
+            if query["form"] != "support" and not w1 > 0.0:
+                solver_status, has_value, value = "numerical_error", False, None
+    arrays = arrays if has_value else {}
     doc = {
         "format": contract.FORMAT_RESULT, "format_version": contract.FORMAT_VERSION,
         "arrays": f"{stem}.result.npz" if has_value else None,
         "problem_sha256": problem["problem_sha256"], "query_id": query["id"], "bound": program.bound,
         "formulation": program.formulation, "producer": dict(PRODUCER),
         "solver": solver or {"name": "none", "version": "0", "settings": {}},
-        "solver_status": solver_status, "objective": None, "value": None,
+        "solver_status": solver_status, "objective": float(program.c @ x) if has_value else None, "value": value,
         "wall_time_s": None if wall_time_s is None else float(wall_time_s),
     }
     if has_value:
-        x = np.asarray(x, dtype=float)
-        doc["objective"] = float(program.c @ x)
-        arrays = extract_fields(program, x)
-        if program.bound == "lower":
-            doc["value"] = program.value(x)
-        else:
-            # The value of the stored field (interface 17.4 steps 1 and 6), not c^T x: an interior-point
-            # solution keeps r slightly above |z|, which would put the objective a few 1e-6 above the
-            # field's own value and fail TOL_VALUE_MATCH for no defect.
-            velocity = arrays["element_velocity"] if program.layout["broken"] else arrays["velocity"]
-            doc["value"] = upper_field_value(problem, program.layout["geometry"].arrays, query["id"], velocity,
-                                             arrays["footing_velocity"], program.layout["geometry"])[0]
         if interior is not None:
             if program.bound == "lower":
                 arrays["interior_sigma"] = np.asarray(interior[0], dtype="<f8")
@@ -953,8 +1002,12 @@ def extract_fields(program, x):
 
 
 def export_result(directory, program, *args, **kwargs):
+    """Write the result; a no-value status also removes a stale ``.result.npz`` of an earlier run."""
     doc, arrays = result_document(program, *args, **kwargs)
     stem = record_stem(program.problem, program.query["id"], program.formulation)
+    stale = Path(directory) / f"{stem}.result.npz"
+    if not arrays and stale.exists():
+        stale.unlink()
     write_document(directory, f"{stem}.result", doc, arrays)
     return doc, arrays
 
@@ -1053,6 +1106,178 @@ def lower_interior_field(program, time_limit=CLARABEL_TIME_LIMIT_S):
     return sigma, value, float(x[-1])
 
 
+def upper_conditions(geo, velocity):
+    """Signed Upper conditions of interface 17.4 step 3 for a continuous (N, 3) or broken (E, 10, 3) field.
+
+    Returns ``(c_vertex (E, 4), c_jump (F, 6), D_scale)``: ``3 sqrt2 alpha |e| - theta`` at vertices with
+    ``alpha > 0`` and ``tau |c_t| - n . c_B`` at coefficients with ``tau > 0``, ``-inf`` elsewhere, and the
+    largest ``|D_ei|_F`` or ``|c_B|``. A continuous field has no jump conditions. The producer's own
+    evaluation; the checker recomputes it.
+    """
+    velocity = np.asarray(velocity, dtype=float)
+    broken = velocity.ndim == 3
+    field = velocity if broken else velocity[geo.tets]
+    d = geo.strain_rates(field)
+    theta, enorm = strain_split(d)
+    frobenius = np.sqrt(np.sum(d[..., :3] ** 2, axis=-1) + 0.5 * np.sum(d[..., 3:] ** 2, axis=-1))
+    c_vertex = np.where(geo.alpha[:, None] > 0.0, 3.0 * S2 * geo.alpha[:, None] * enorm - theta, -np.inf)
+    d_scale = float(frobenius.max(initial=0.0))
+    c_jump = np.full((geo.F, 6), -np.inf)
+    if broken and geo.F:
+        coeff = jump_coefficients(geo, field)
+        n = geo.interior_normal[:, None, :]
+        opening = np.sum(coeff * n, axis=2)
+        slip = np.linalg.norm(coeff - opening[..., None] * n, axis=2)
+        tau, _ = jump_constants(geo.alpha[geo.e_minus])
+        c_jump = np.where(tau[:, None] > 0.0, tau[:, None] * slip - opening, -np.inf)
+        d_scale = max(d_scale, float(np.linalg.norm(coeff, axis=2).max(initial=0.0)))
+    return c_vertex, c_jump, d_scale
+
+
+def repair_preview(geo, velocity, interior_velocity):
+    """What the repair of interface 17.4 step 4 would need, evaluated WITHOUT the checker's projection.
+
+    ``P`` is the set of conditions above ``TOL_CONE_MARGIN * D_scale``. Returns a dict with the size of
+    ``P``, the interior field's worst clearance on ``P`` relative to ``D_scale_int``, its worst condition
+    overall relative to its margin, and ``mu``. A producer-side preview, never a certificate.
+    """
+    tol = contract.TOLERANCES
+    cv, cj, scale = upper_conditions(geo, velocity)
+    iv, ij, scale_int = upper_conditions(geo, interior_velocity)
+    cand = np.concatenate([cv.ravel(), cj.ravel()])
+    inter = np.concatenate([iv.ravel(), ij.ravel()])
+    live = np.isfinite(cand)
+    cand, inter = cand[live], inter[live]
+    in_p = cand > tol["TOL_CONE_MARGIN"] * scale
+    mu = float(np.max(cand[in_p] / (cand[in_p] - inter[in_p]), initial=0.0)) if np.all(inter[in_p] < cand[in_p]) \
+        else math.inf
+    return {
+        "n_conditions": int(live.sum()), "n_repaired": int(in_p.sum()), "d_scale_int": scale_int,
+        "worst_clearance_on_P": float(np.max(inter[in_p], initial=-math.inf) / scale_int) if scale_int > 0 else math.inf,
+        "worst_condition": float(np.max(inter, initial=-math.inf) / scale_int) if scale_int > 0 else math.inf,
+        "mu": mu,
+        "ready": bool(scale_int > 0 and np.all(inter <= tol["TOL_CONE_MARGIN"] * scale_int)
+                      and np.all(inter[in_p] <= -tol["TOL_INTERIOR_MIN"] * scale_int) and mu <= tol["TOL_REPAIR_MAX"]),
+    }
+
+
+# Relative-interior construction of 17.4 step 4. Each slack is capped at a small fraction of its natural
+# bound, so the capped sum is reachable jointly (the average of the one-condition maximisers clears every
+# raisable condition) and an LP vertex does not starve the others. A slack that did not reach half its
+# cap is re-raised next round with a cap ten times smaller while the reached ones are held at half their
+# value. Producer settings, uncalibrated; the checker judges the field.
+INTERIOR_CAP_FRACTION = 1e-3
+INTERIOR_REACHED_FRACTION = 0.5
+INTERIOR_HOLD_FRACTION = 0.5
+INTERIOR_CAP_SHRINK = 0.1
+INTERIOR_ROUNDS = 4
+
+
+def upper_interior_field(program, time_limit=CLARABEL_TIME_LIMIT_S, weights=None):
+    """A relative-interior Upper field for the checker's repair (interface 17.4 step 4).
+
+    It satisfies the projection rows of 17.4 step 2: every zero row of the program except the work
+    normalisation (R9), so fixed, roller, footing, restrained, ``V = d`` for ``support``, the flow rows
+    (isochory where ``alpha = 0``) and the jump rows (``n . c_B = 0`` where ``tau = 0``). One bounded slack
+    ``s`` per inequality condition enters its cone, so the condition reads ``c~ <= -s``: ``(r - s / (3 sqrt2
+    alpha), z)`` in ``SOC6`` at a vertex with ``alpha > 0`` and ``(rho - s / tau, y)`` in ``SOC3`` at a
+    coefficient with ``tau > 0``. Velocities are boxed by ``v_box``; a slack's natural bound is ``v_box / h_e``
+    at a vertex (a strain rate) and ``v_box`` on a jump coefficient (a velocity), and it is capped at
+    ``INTERIOR_CAP_FRACTION`` of that. The sum of scaled slacks is maximised; slacks that did not reach their
+    cap are re-raised with smaller caps while the others are held (the producer route of 17.4 step 4) until
+    none moves. Conditions the rows force to zero stay at zero and are never in ``P``. ``weights``
+    (one per slack, vertex slacks first) is a diagnostic override of the objective.
+
+    Returns ``(velocity, footing_velocity, info)`` with ``velocity`` shaped as the result's field. Refuses
+    with ``no_interior_field`` when the problem has no inequality condition (every ``alpha = 0``).
+    """
+    import clarabel
+    layout, geo = program.layout, program.layout["geometry"]
+    if program.bound != "upper":
+        fail("no_interior_field", "upper_interior_field needs an Upper program")
+    if not np.any(geo.alpha > 0.0):
+        fail("no_interior_field", "every alpha = 0: no inequality condition exists, so no repair is needed")
+    broken, n_f = layout["broken"], len(program.problem["footings"])
+    E, F = geo.E, geo.F
+    n_var = program.A.shape[1]
+    a_csr = program.A.tocsr()
+    keep = np.ones(program.n_zero, dtype=bool)
+    if layout["work_row"] is not None:
+        keep[layout["work_row"]] = False
+    a_eq, b_eq = a_csr[: program.n_zero][keep], program.b[: program.n_zero][keep]
+    a_cone, b_cone = a_csr[program.n_zero:], program.b[program.n_zero:]
+    # Slack columns in the cones.
+    elements, vertices = np.nonzero(np.repeat(geo.alpha[:, None] > 0.0, 4, axis=1))
+    slack_rows = [6 * (4 * elements + vertices)]
+    slack_coef = [1.0 / (3.0 * S2 * geo.alpha[elements])]
+    slack_max = [1.0 / geo.h[elements]]
+    if broken and F:
+        tau, _ = jump_constants(geo.alpha[geo.e_minus])
+        facets = np.nonzero(tau > 0.0)[0]
+        f_idx, b_idx = np.repeat(facets, 6), np.tile(np.arange(6), len(facets))
+        slack_rows.append(24 * E + 3 * (6 * f_idx + b_idx))
+        slack_coef.append(1.0 / tau[f_idx])
+        slack_max.append(np.ones(len(f_idx)))          # a jump condition is a velocity, not a strain rate
+    slack_rows, slack_coef = np.concatenate(slack_rows), np.concatenate(slack_coef)
+    n_s = len(slack_rows)
+    weight = np.ones(n_s) if weights is None else np.asarray(weights, dtype=float)
+    ell = float(program.problem["length_scale"])
+    v_box = 1.0
+    if layout["form"] == "support":
+        d = layout["direction"]
+        v_box = max(1.0, float(np.abs(d[:, :3]).max(initial=0.0)), ell * float(np.abs(d[:, 3:]).max(initial=0.0)))
+    s_max = np.concatenate(slack_max) * v_box
+    slack_block = sp.csr_matrix((slack_coef, (slack_rows, np.arange(n_s))), shape=(a_cone.shape[0], n_s))
+    # Velocity box: every velocity entry, and footing components unless V = d fixes them.
+    n_v = 30 * E if broken else 3 * geo.N
+    boxed = list(range(n_v))
+    bounds = [v_box] * n_v
+    if layout["form"] != "support":
+        for fi in range(n_f):
+            boxed += [layout["V"] + 6 * fi + c for c in range(6)]
+            bounds += [v_box] * 3 + [v_box / ell] * 3
+    boxed, bounds = np.asarray(boxed), np.asarray(bounds)
+    n_box = len(boxed)
+    box = sp.csr_matrix((np.concatenate([np.ones(n_box), -np.ones(n_box)]),
+                         (np.arange(2 * n_box), np.concatenate([boxed, boxed]))), shape=(2 * n_box, n_var + n_s))
+    upper_s = sp.csr_matrix((np.ones(n_s), (np.arange(n_s), n_var + np.arange(n_s))), shape=(n_s, n_var + n_s))
+    lower_s = -upper_s
+    matrix = sp.vstack([
+        sp.hstack([a_eq, sp.csr_matrix((a_eq.shape[0], n_s))]),
+        sp.hstack([a_cone, slack_block]),
+        box, upper_s, lower_s,
+    ]).tocsc()
+    cones = _clarabel_cones(clarabel, a_eq.shape[0], program.cones, extra_nonneg=2 * n_box + 2 * n_s)
+    cap = INTERIOR_CAP_FRACTION * s_max
+    held = np.zeros(n_s)
+    active = weight > 0.0
+    best, rounds, status = None, 0, "not_run"
+    for rounds in range(1, INTERIOR_ROUNDS + 1):
+        b = np.concatenate([b_eq, b_cone, np.concatenate([bounds, bounds]), cap, -held])
+        c = np.zeros(n_var + n_s)
+        c[n_var:][active] = -weight[active] / s_max[active]
+        status, x, _, _ = _clarabel_solve(matrix, b, c, cones, time_limit)
+        if status not in contract.SOLVER_STATUS_WITH_VALUE:
+            break
+        best = x
+        s = x[n_var:]
+        reached = s >= INTERIOR_REACHED_FRACTION * cap
+        held = np.where(reached | ~active, INTERIOR_HOLD_FRACTION * s, 0.0)
+        if not np.any(active & reached) and rounds > 1:
+            break
+        active = active & ~reached
+        if not np.any(active):
+            break
+        cap = np.where(active, INTERIOR_CAP_SHRINK * cap, cap)
+    if best is None:
+        fail("no_interior_field", f"interior program not solved ({status})")
+    fields = extract_fields(program, best[:n_var])
+    velocity = fields["element_velocity"] if broken else fields["velocity"]
+    s = best[n_var:]
+    info = {"rounds": rounds, "n_conditions": n_s, "n_unraised": int(np.sum(s < 1e-6 * s_max)), "v_box": v_box}
+    return velocity, fields["footing_velocity"], info
+
+
 def _footing_areas(geo):
     areas = np.zeros(len(geo.problem["footings"]))
     for row in range(len(geo.facets)):
@@ -1074,23 +1299,37 @@ def case_problem(name, mesh_index=0):
 
 def run_case(name, mesh_index, formulations, directory=None, solve_it=False, interior=False,
              time_limit=CLARABEL_TIME_LIMIT_S):
-    """Build, assemble, optionally solve and export one case. Returns ``{formulation: (program, result)}``."""
+    """Build, validate, assemble, optionally solve and export one case. Returns ``{formulation: (program, result)}``.
+
+    Upper solves of a problem with any ``alpha > 0`` always carry an interior field
+    (:func:`upper_interior_field`). ``interior=True`` adds the Lower interior field; it refuses an Upper
+    formulation on a problem with every ``alpha = 0``, which has no inequality to repair.
+    """
     problem, arrays = case_problem(name, mesh_index)
+    validate(problem, arrays)
     geo = Geometry(problem, arrays)
+    frictional = bool(np.any(geo.alpha > 0.0))
+    for formulation in formulations:
+        check_formulation(formulation, problem)
+        if interior and ADMITTED[formulation] == "upper" and not frictional:
+            fail("no_interior_field", f"{formulation}: every alpha = 0, so no Upper interior field exists")
     if directory is not None:
         export_problem(directory, problem, arrays)
     out = {}
     for formulation in formulations:
-        program = assemble(problem, arrays, formulation, "q", geometry=geo)
+        program = assemble(problem, arrays, formulation, "q", geometry=geo, validated=True)
         if directory is not None:
             export_program(directory, program)
         result = None
         if solve_it:
             status, x, wall, record = solve(program, time_limit)
             extra = None
-            if interior and program.bound == "lower" and status in contract.SOLVER_STATUS_WITH_VALUE:
+            solved_ok = status in contract.SOLVER_STATUS_WITH_VALUE
+            if interior and program.bound == "lower" and solved_ok:
                 found = lower_interior_field(program, time_limit)
                 extra = None if found is None else found[:2]
+            if program.bound == "upper" and frictional and solved_ok:
+                extra = upper_interior_field(program, time_limit)[:2]
             result = (result_document(program, status, x, record, wall, extra) if directory is None
                       else export_result(directory, program, status, x, record, wall, extra))
         out[formulation] = (program, result)
