@@ -289,8 +289,8 @@ route S
 kinematics small
 flip 1.0
 pblend 1.0
-masscut 1.0e-10
-pcut 0.05
+note no `mpm massCutoff` is given: the u side takes mode F's default 1e-10 and the p side the 5e-2
+note default (interface §7a Q4 as of 5307d4757 makes a given massCutoff the p cutoff too)
 dt 1.0e-3
 steps 10
 data tests/data/mpm/twophase/t0_oracle.json
