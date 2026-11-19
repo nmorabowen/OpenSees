@@ -45,6 +45,8 @@
   "TOL_VALUE_MATCH": 1e-06,
   "TOL_WORK_MIN": 1e-12
  },
+ "witness_projection_move": 0.0,
  "witness_residual": 0.0,
- "witness_result_sha256": "4a4ef9c4ff567d4ff3bd890197f754fed4bdb932355dd0e6b4d2e00ff3ba5fb5"
+ "witness_result_sha256": "4a4ef9c4ff567d4ff3bd890197f754fed4bdb932355dd0e6b4d2e00ff3ba5fb5",
+ "witness_work_reference": 1.0
 }

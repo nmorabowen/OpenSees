@@ -1,6 +1,7 @@
 {
+ "apex_zero": null,
  "bound": "upper",
- "certificate_sha256": "5d07bc962dd9834542a4bd21d076dac638ac2e0f36b1ae23abe39454a1f0ddfe",
+ "certificate_sha256": "796677104dd16893cf77b4d6308d633fa974f4ec72ed1e23c5649b1f78bc9787",
  "checker": {
   "name": "schema-fixture",
   "version": "0"
