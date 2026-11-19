@@ -1904,6 +1904,31 @@ renormalisation's form changed, by ≤ 9.7e-16.
   3. One build.
   4. T0 (iii), T7, T6 (all legs), T5 route S, T10 and the route-E zone_a set.
 
+**Route S after the consistency fix (build `5d64922a4`, records `f3082784a`, `70ac724cb`).**
+- **Pass:**
+  - T0 (iii): 8.1e-12.
+  - **T6 all eight legs:**
+    - Terzaghi bspline2: ≤ 0.0037 against 0.02.
+    - Mandel bspline2: ≤ 0.0166 against 0.0214/0.0227, peaks 1.089 and 1.087.
+    - gimp reported: also passes.
+  - Mandel ρ: 0.999999998, where it was 1.00093.
+  - T5 route S: CB_lap 0.137.
+  - T10: 24/24 bit for bit.
+  - Two-phase files: 65/65, re-run by the orchestrator.
+- **T7 misses on both bases.** USL's skeleton limit is below the grid pencil: gimp is stable to 0.7×,
+  bspline2 to 0.8×, and K_f = 1 gives the same thresholds. The per-step pencil costs 76–80 % of a
+  Mandel step.
+- **Owner decision (2026-11-19, asked directly): record the miss and cap at 0.5.**
+  - T7 is recorded as a strict-xfail miss, with the scan as its diagnosis. The gate text is not
+    rewritten.
+  - The route-S run-time limit is dt ≤ s·Δt_d, with s ≤ 0.5 by default. A user may raise s up to
+    0.7, the measured gimp bound, with a once-per-epoch warning naming T7's scan. Above 0.7 the step
+    is refused.
+  - Δt_d is computed once per epoch and refreshed when the particle-to-cell connectivity changes, not
+    every step. The cost goes in the R row.
+  - Each route-S records file carries `ladrunoBuild`; the Mandel amplification record lacked it and
+    is restamped.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
