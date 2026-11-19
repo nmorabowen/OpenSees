@@ -41,8 +41,8 @@ record carries `ladrunoBuild`.
 | T9 restart bit for bit | pass | pass | cd503bdbb |
 | T10 single-phase bit for bit against cfe478254 | 24 cases | 24/24 | cd503bdbb |
 | T11 mutation: MPM IDENT (joint Q + projection cut) | the two-phase oracle and T1 go red | 14/14 red (`_twophase_oracle` + `_fe_identity` on `dist/mut_MPM_IDENT`; green on the normal build) | cd503bdbb |
-| T11 mutation: MPM ZERO ≥ 0.46, SCALE ≥ 0.38 (family floors) | CI lane | **pending on the final head**. d77caf8fd gave 0.500 / 0.398 (run 44532817830). 439fee82b gave 0.453 / 0.316 (run 44551994541) with the IDENT-only files selected; re-scoped by `paths_by_mode` | — |
-| T13 translation patch (free block, both routes, gimp / bspline2, with / without a plate) | v, σ′, p rel 1e-10 | 8/8; worst v 1.0e-13 (route E), 7.9e-17 (route S) | cd503bdbb |
+| T11 mutation: MPM ZERO ≥ 0.46, SCALE ≥ 0.38 (family floors) | CI lane | **judged on the established suite: ZERO 0.500 / SCALE 0.398 (232k reproduced, run 44555570302)**; the two-phase gates file is reported beside it: ZERO 7/15, SCALE 1/15 killed (combined 0.495 / 0.350). Owner's decision, 2026-11-19 | fa4087122 |
+| T13 translation patch (free block, both routes, gimp / bspline2, with / without a plate) | v, σ′, p, x (against X + v₀t) rel 1e-10 | 8/8; worst v 1.0e-13 (route E), 7.9e-17 (route S); positions ≤ 1.5e-13 | cd503bdbb |
 | T12 engines agree (Tcl, Python) | pass | pass | cd503bdbb |
 | Two-phase test files (incl. `_gates`: zone_a 16, slow full forms 21) | — | all pass; T7 2 xfailed | cd503bdbb |
 | The whole MPM suite (`tests/test_ladruno_mpm_*.py` + the oracle's self-test) | — | 526 passed, 61 skipped (opt-in slow tiers incl. the gates' full forms, MUMPS matrix types absent), 14 xfailed (12 pre-registered from 232f–232k + T7 × 2), 0 failed; the gates' full forms separately 21/21 | cd503bdbb |

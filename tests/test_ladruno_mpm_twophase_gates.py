@@ -67,7 +67,7 @@ def test_t0_iii_route_s_oracle():
 def test_t13_translation_patch(mode, basis, plate):
     ops = _ops()
     r = H.run_t13(ops, mode, basis, plate)
-    for k in ("v_rel", "sig_rel", "p_rel"):
+    for k in ("v_rel", "sig_rel", "p_rel", "x_rel"):
         assert r[k] <= _band("t13_translation", k), r
 
 

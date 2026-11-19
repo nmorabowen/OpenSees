@@ -379,7 +379,8 @@ def run_t6_mandel(ops, basis, stab, fe, peak_gate, dt=0.005):
 def run_t13(ops, mode, basis, plate, steps=200, dt=2.0e-3, vy=-1.0):
     """A free two-phase block in rigid translation (v = (0, vy), no gravity, sealed, p = 0: a
     uniform p would not be in equilibrium with its traction-free faces) keeps v, sigma' and p:
-    rel |v - v0| / |v0|, |sigma'| / E and |p| / E after every step.
+    rel |v - v0| / |v0|, |sigma'| / E and |p| / E after every step, and the positions against
+    X + v0 t: x_rel = max |x - (X + v0 t)| / (|v0| t).
     Rollers on xmin / xmax; without a plate the block floats inside the grid, with one it is
     flush with ymax under `plate ymax 0` (the plate moves with it)."""
     E = 1.0e4
@@ -405,9 +406,14 @@ def run_t13(ops, mode, basis, plate, steps=200, dt=2.0e-3, vy=-1.0):
         ops.algorithm("Newton")
         ops.integrator("Newmark", 0.6, 0.3025)
         ops.analysis("Transient")
-    ev = es = ep = 0.0
+    X = as_list(ops.mpm("particleData", "x"))
+    ev = es = ep = ex = 0.0
     for s in range(steps):
         ops.mpm("analyze", 1, dt)
+        tt = (s + 1) * dt
+        xx = as_list(ops.mpm("particleData", "x"))
+        ex = max(ex, max(abs(xx[2 * k] - X[2 * k]) + abs(xx[2 * k + 1] - (X[2 * k + 1] + vy * tt))
+                         for k in range(n)) / (abs(vy) * tt))
         v = as_list(ops.mpm("particleData", "v"))
         sg = as_list(ops.mpm("particleData", "sig"))
         pp = as_list(ops.mpm("particleData", "p"))
@@ -415,7 +421,7 @@ def run_t13(ops, mode, basis, plate, steps=200, dt=2.0e-3, vy=-1.0):
         es = max(es, max(abs(x) for x in sg) / E)
         ep = max(ep, max(abs(x) for x in pp) / E)
     return {"mode": mode, "basis": basis, "plate": plate, "steps": steps, "dt": dt, "v_rel": ev,
-            "sig_rel": es, "p_rel": ep, "pass": max(ev, es, ep) <= 1e-10}
+            "sig_rel": es, "p_rel": ep, "x_rel": ex, "pass": max(ev, es, ep, ex) <= 1e-10}
 
 
 def case_bands(name):

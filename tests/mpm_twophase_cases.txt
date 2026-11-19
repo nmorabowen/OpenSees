@@ -396,6 +396,7 @@ end
 # rigid translation v = (0, -1), dt 2e-3, 200 steps, both routes (mode A Newmark 0.6 / 0.3025;
 # mode F route S), with and without `plate ymax 0` (the block flush with ymax). After every step:
 # v_rel = max |v - v0| / |v0|, sig_rel = max |sigma'| / E, p_rel = max |p| / E.
+# x_rel = max |x - (X + v0 t)| / (|v0| t) (added by the owner's T11 decision, 2026-11-19).
 # Harness: tests/ladruno_mpm_twophase_cases_harness.py run_t13.
 # ============================================================================
 case t13_translation
@@ -403,6 +404,7 @@ kind run
 band v_rel 1e-10
 band sig_rel 1e-10
 band p_rel 1e-10
+band x_rel 1e-10
 end
 
 # ============================================================================

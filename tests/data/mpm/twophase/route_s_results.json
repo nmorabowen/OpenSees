@@ -3959,5 +3959,108 @@
   "gates_slow_full_forms": "21 passed (T2p x4, T3 x4, T4p x4, T6 x8, T5 route E), 447 s",
   "t7": "strict xfail exercised with `mpm debug routeSLimit off`: 0.9 x the drained pencil fails (bspline2 at step 247, gimp at step 24; particles leave the grid / invert)",
   "t10": "24/24 bit for bit vs cfe478254"
+ },
+ "t13_with_positions_cd503bdbb": {
+  "build": "cd503bdbb224c887319c367bc0fb511df3a6cc98",
+  "date": "2026-11-19 12:16",
+  "wall_s": 0.8691201210021973,
+  "results": [
+   {
+    "mode": "implicit",
+    "basis": "gimp",
+    "plate": false,
+    "steps": 200,
+    "dt": 0.002,
+    "v_rel": 9.628210039457477e-14,
+    "sig_rel": 5.79783135082028e-15,
+    "p_rel": 2.33850388225196e-15,
+    "x_rel": 1.4802973661668753e-13,
+    "pass": true
+   },
+   {
+    "mode": "implicit",
+    "basis": "gimp",
+    "plate": true,
+    "steps": 200,
+    "dt": 0.002,
+    "v_rel": 1.0349478245069553e-13,
+    "sig_rel": 6.167905692362e-15,
+    "p_rel": 2.3951763169227746e-15,
+    "x_rel": 1.4802973661668753e-13,
+    "pass": true
+   },
+   {
+    "mode": "implicit",
+    "basis": "bspline2",
+    "plate": false,
+    "steps": 200,
+    "dt": 0.002,
+    "v_rel": 8.064774744862836e-14,
+    "sig_rel": 3.454027187722716e-15,
+    "p_rel": 2.2010324995164556e-15,
+    "x_rel": 1.4802973661668753e-13,
+    "pass": true
+   },
+   {
+    "mode": "implicit",
+    "basis": "bspline2",
+    "plate": true,
+    "steps": 200,
+    "dt": 0.002,
+    "v_rel": 7.117818049632637e-14,
+    "sig_rel": 3.9474596431116766e-15,
+    "p_rel": 2.0203650233720978e-15,
+    "x_rel": 1.4802973661668753e-13,
+    "pass": true
+   },
+   {
+    "mode": "explicit",
+    "basis": "gimp",
+    "plate": false,
+    "steps": 200,
+    "dt": 0.002,
+    "v_rel": 5.122970912366836e-17,
+    "sig_rel": 7.23243253747416e-19,
+    "p_rel": 2.0348954540901674e-18,
+    "x_rel": 1.4802973661668753e-13,
+    "pass": true
+   },
+   {
+    "mode": "explicit",
+    "basis": "gimp",
+    "plate": true,
+    "steps": 200,
+    "dt": 0.002,
+    "v_rel": 3.67159992495298e-17,
+    "sig_rel": 6.731748062854076e-19,
+    "p_rel": 1.6141371125506869e-18,
+    "x_rel": 1.4802973661668753e-13,
+    "pass": true
+   },
+   {
+    "mode": "explicit",
+    "basis": "bspline2",
+    "plate": false,
+    "steps": 200,
+    "dt": 0.002,
+    "v_rel": 7.900593574240498e-17,
+    "sig_rel": 1.3178726883612006e-18,
+    "p_rel": 2.9088186995314915e-18,
+    "x_rel": 1.4802973661668753e-13,
+    "pass": true
+   },
+   {
+    "mode": "explicit",
+    "basis": "bspline2",
+    "plate": true,
+    "steps": 200,
+    "dt": 0.002,
+    "v_rel": 7.498116810152657e-17,
+    "sig_rel": 1.471744118729142e-18,
+    "p_rel": 2.8050870315737367e-18,
+    "x_rel": 1.4802973661668753e-13,
+    "pass": true
+   }
+  ]
  }
 }
