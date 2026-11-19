@@ -289,7 +289,8 @@ Matrices are row-major lists of rows; every number uses 17 significant digits.
 - **p blocks.** p rows and columns are §1's blocks: −Q in K, Qᵀ and S* in C, H in K, zero in M.
 - **R terms.** f′_k = V₀ σ′(trial)·∇S_k. f_body,k = S_k λ (m_p b + f_p). f_seep uses
   b_f = λ·(`-fluidBody` or `mpm gravity`). λ is the host's current factor: 1 before the first
-  step, otherwise the factor of the last accepted step.
+  step, otherwise the factor of the last accepted step. *(Superseded for π by the Fable audit,
+  finding 3, wp-briefs "232l": π is evaluated at the drive of the step being taken; see §7b.)*
 - **α_st.** It uses h = the grid's cell size and D₀ = the material's `getInitialTangent()`, by
   §1's rule.
 - **Single-phase particle in a two-phase epoch.** Its p rows and columns are zero.
@@ -345,7 +346,8 @@ Matrices are row-major lists of rows; every number uses 17 significant digits.
         A's test at `LadrunoMPMImplicit.cpp:741-753`; reported by `mpm info twoPhase`). It is
         never moved by `mpm massCutoff`, which keeps setting the u-side cutoffs only (mode F
         1e-10, mode A 5e-2). This is ruling c84f71fb3, and T8 checks that `massCutoff` leaves
-        it unchanged. Mode A's p rows follow `renormalize` (P4) and have no separate knob;
+        it unchanged. *(Scoped to route S, mode F, by the Fable audit, finding 4: in mode A
+        p-active ⊆ u-kept, so a two-phase body refuses `massCutoff` > `pressureCutoff`; see §7b.)* Mode A's p rows follow `renormalize` (P4) and have no separate knob;
     - some two-phase particle has S^p > 0 there.
   - **Renormalisation.** Each two-phase particle's S^p and ∇S^p are renormalised over its
     p-active nodes by Q3's formula, using B9's rule on B-spline images.
@@ -567,7 +569,26 @@ projection.
     changes: π_c = 0 and q = p.
   - **Self-check (harness, numpy-free).** On the patch column, after every step,
     max_p |(p_p − π(x_p)) − (P c)_p − r_user,p| ≤ 1e-12 γ_w H, with r_user = 0 here; c is the grid
-    p read after the step, π and S^p from the particle's block dump.
+    p read after the step, π and S^p from the particle's block dump. *(Ruled at `0fc5a3f13`: the
+    self-check is the bookkeeping identity |p_p − π(x_p, drive) − q_p| ≤ 1e-12, with q's FLIP
+    carry and π_c = π(x_p) checked; q − P c is the motion residual, reported.)*
+- **Implementation notes after the Fable carrier audit (wp-briefs "232l"; frozen text unchanged).**
+  - **Renormalisation (ruling `bb1421559`).** The u side's mass-cutoff renormalisation rescales
+    the u components only. The p weights and fix 2's coefficients follow fix 3 on the raw
+    weights, and a folded-away entry is retained even when the u side dropped it.
+  - **Finding 1.** On a face with a u fold and `pfix`, the ghost's W folds onto the mirror only
+    (a dangling `else` once added it to the ghost too: ΣW = 1.03125).
+  - **Finding 2.** A′'s π_⊥ and the new π_c are computed at the projection but committed (p, π_c,
+    the applied flag, max |π_⊥|) only when the step is accepted: G2P leaves q_new + π_c, and the
+    accepted step adds α_p π_⊥ (first step only) + π(x_new) − π_c. A refused step and the debug
+    hooks change none of them. Setting p by command (`particlePressure`, `porePressure`) clears
+    the flag, so A′ re-arms for the new field.
+  - **Finding 3.** π is evaluated at the drive of the step being taken (the series value that
+    step's `applyLoad` uses), in the projection's step and after it. A′'s π(0) is π at the epoch's
+    initial drive, λ(t₀): a drive that ramps from 0 needs no A′ (max |π_⊥| = 0), and the first
+    step's π_c is that π(0).
+  - **Finding 4.** In mode A, a two-phase body refuses `massCutoff` > `pressureCutoff`, naming the
+    rule. With massCutoff ≤ pressureCutoff, p-active ⊆ u-kept holds by itself.
 
 ### P4, amended (defect fix 3): mode A's p-activity is route S's rule
 

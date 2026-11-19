@@ -84,11 +84,13 @@ def test_admitted_deck_runs():
     assert len(p) == 16 and all(x == x for x in p)
 
 
-@pytest.mark.parametrize("why", ["symmetric", "static", "hht", "sig0", "fbar"])
+@pytest.mark.parametrize("why", ["symmetric", "static", "hht", "sig0", "fbar", "masscut"])
 def test_refusals(why):
+    """... "masscut": Fable audit finding 4, mode A refuses massCutoff > pressureCutoff."""
     ops = _ops()
+    extra = {"fbar": [("antiLocking", "fbar")], "masscut": [("massCutoff", 0.2)]}.get(why, [])
     _deck(ops, mode="quasiStatic" if why == "static" else "implicit", stress=(why == "sig0"),
-          extra=([("antiLocking", "fbar")] if why == "fbar" else []))
+          extra=extra)
     if why == "symmetric":
         _analysis(ops, system="ProfileSPD")
     elif why == "static":
@@ -349,6 +351,7 @@ def test_drained_face_p_weights_reproduce_linear_after_u_drop(tmp_path):
         ops.mpm("fix", face, c)
     ops.mpm("pfix", "ymax", 0.0)
     ops.mpm("massCutoff", 0.2)              # drops the y = H + h row (its mass ~0.05 m_max)
+    ops.mpm("pressureCutoff", 0.25)         # finding 4: massCutoff <= pressureCutoff in mode A
     _analysis(ops)
     xy = _as_list(ops.mpm("particleData", "x"))
     top = max(range(len(xy) // 2), key=lambda k: (xy[2 * k + 1], -xy[2 * k]))
@@ -366,3 +369,129 @@ def test_drained_face_p_weights_reproduce_linear_after_u_drop(tmp_path):
     gy = sum(g[1] * v for g, v in zip(d["dSp"], lin))
     assert abs(f - (H - y)) <= 1e-14
     assert abs(gy + 1.0) <= 1e-13
+
+
+def test_plate_pfix_face_weights_sum_to_one(tmp_path):
+    """Fable audit finding 1 (wp-briefs "232l"): beside a face with a u fold (`plate`) and `pfix`,
+    the ghost's W folds onto the mirror only -- sum W over the lattice entries is 1 to 1e-14 at
+    every particle within reach of the face (`emptyNodes exclude`, `massCutoff 0`: no
+    renormalisation hides it). The dangling else gave 1.03125."""
+    import json
+    ops = _ops()
+    H, h = 10.0, 1.0
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e4, 0.2, 2.0)
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", h, "-cells", 2, 10, "-basis", "bspline2")
+    ops.mpm("mode", "implicit")
+    ops.mpm("body", 1, "box", 0.0, 0.0, 2.0, H, "-ppc", 2, "-mat", 1, "-rho", 2.0)
+    ops.mpm("twoPhase", 1, "-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-perm", 1e-4, 1e-4, "-stab", "off")
+    for face, c in (("xmin", "x"), ("xmax", "x"), ("ymin", "y")):
+        ops.mpm("fix", face, c)
+    ops.mpm("pfix", "ymax", 0.0)
+    ops.mpm("plate", "ymax", 20.0)
+    ops.mpm("emptyNodes", "exclude")
+    ops.mpm("massCutoff", 0.0)
+    _analysis(ops)
+    xy = _as_list(ops.mpm("particleData", "x"))
+    checked = 0
+    for p in range(len(xy) // 2):
+        if xy[2 * p + 1] < H - 1.5 * h:
+            continue
+        path = str(tmp_path / ("p%d.json" % p))
+        ops.mpm("debug", "particleBlocks", p, path, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        d = json.loads(open(path).read())
+        grid = set(int(t) for t in _as_list(ops.mpm("info", "gridNodeTags")))   # after the dump's build
+        sw = sum(s for t, s in zip(d["nodes"], d["S"]) if int(t) in grid)
+        assert abs(sw - 1.0) <= 1e-14, (p, xy[2 * p + 1], sw)
+        checked += 1
+    assert checked > 0
+
+
+
+def _column(ops, ramp=False, newton_fail=False):
+    """A small bspline2 hydrostatic column (the fix-2 patch deck, H = 4): pi != 0 under gravity."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e4, 0.2, 2.0)
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 0.5, "-cells", 2, 8, "-basis", "bspline2")
+    ops.mpm("mode", "implicit")
+    ops.mpm("body", 1, "box", 0.0, 0.0, 1.0, 4.0, "-ppc", 2, "-mat", 1, "-rho", 2.0)
+    ops.mpm("twoPhase", 1, "-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-perm", 1.0, 1.0, "-stab", "off")
+    ops.mpm("gravity", 0.0, -9.81)
+    for face, c in (("xmin", "x"), ("xmax", "x"), ("ymin", "y")):
+        ops.mpm("fix", face, c)
+    ops.mpm("pfix", "ymax", 0.0)
+    if ramp:
+        ops.timeSeries("Path", 77, "-time", 0.0, 5.0, 100.0, "-values", 0.0, 1.0, 1.0)
+        ops.mpm("timeSeries", 77)
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("UmfPack")
+    if newton_fail:
+        ops.test("NormDispIncr", 1e-300, 1)
+        ops.mpm("cut", 2.0, 0)
+    else:
+        ops.test("NormDispIncr", 1e-10, 25)
+    ops.algorithm("Newton")
+    ops.integrator("Newmark", 0.6, 0.3025)
+    ops.analysis("Transient")
+
+
+def _pi_perp_max(ops):
+    return _as_list(ops.mpm("info", "twoPhase", 1))[-1]
+
+
+def test_a_prime_commits_on_acceptance_only(tmp_path):
+    """Fable audit finding 2: A' (pi_perp) and pi_c are committed only when a step is accepted.
+    Block dumps change nothing (p bit for bit, max|pi_perp| 0); dump -> analyze gives the same p
+    and pi_perp as a fresh analyze; reset -> analyze gives them again (one pi_perp)."""
+    ops = _ops()
+    _column(ops)
+    ops.mpm("analyze", 1, 1.0)
+    p_ref, pp_ref = _as_list(ops.mpm("particleData", "p")), _pi_perp_max(ops)
+    assert pp_ref > 0.0
+    _column(ops)
+    p0 = _as_list(ops.mpm("particleData", "p"))
+    for k in (0, 5):
+        ops.mpm("debug", "particleBlocks", k, str(tmp_path / ("d%d.json" % k)), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    assert _as_list(ops.mpm("particleData", "p")) == p0
+    assert _pi_perp_max(ops) == 0.0
+    ops.mpm("analyze", 1, 1.0)
+    p1 = _as_list(ops.mpm("particleData", "p"))
+    assert max(abs(a - b) for a, b in zip(p1, p_ref)) <= 1e-12 * 9.81 * 4.0
+    assert abs(_pi_perp_max(ops) - pp_ref) <= 1e-12 * 9.81 * 4.0
+    ops.mpm("reset")
+    ops.mpm("analyze", 1, 1.0)
+    p2 = _as_list(ops.mpm("particleData", "p"))
+    assert max(abs(a - b) for a, b in zip(p2, p_ref)) <= 1e-12 * 9.81 * 4.0
+    assert abs(_pi_perp_max(ops) - pp_ref) <= 1e-12 * 9.81 * 4.0
+
+
+def test_refused_first_step_leaves_a_prime_unset():
+    """Fable audit finding 2: a first step that fails (Newton, no cut allowed) leaves p and the A'
+    flag untouched; the next accepted step applies pi_perp once, as a fresh run does."""
+    ops = _ops()
+    _column(ops)
+    ops.mpm("analyze", 1, 1.0)
+    p_ref, pp_ref = _as_list(ops.mpm("particleData", "p")), _pi_perp_max(ops)
+    _column(ops, newton_fail=True)
+    p0 = _as_list(ops.mpm("particleData", "p"))
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 1, 1.0)
+    assert _as_list(ops.mpm("particleData", "p")) == p0
+    assert _pi_perp_max(ops) == 0.0
+    ops.test("NormDispIncr", 1e-10, 25)
+    ops.mpm("analyze", 1, 1.0)
+    p1 = _as_list(ops.mpm("particleData", "p"))
+    assert max(abs(a - b) for a, b in zip(p1, p_ref)) <= 1e-12 * 9.81 * 4.0
+    assert abs(_pi_perp_max(ops) - pp_ref) <= 1e-12 * 9.81 * 4.0
+
+
+def test_ramped_drive_needs_no_a_prime():
+    """Fable audit finding 3: pi is evaluated at the drive of the step being taken; A' compensates
+    pi(0) at the epoch's initial drive, which is 0 for a ramp from 0: max|pi_perp| = 0."""
+    ops = _ops()
+    _column(ops, ramp=True)
+    ops.mpm("analyze", 2, 1.0)
+    assert _pi_perp_max(ops) == 0.0

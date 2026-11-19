@@ -44,6 +44,7 @@
 #include <SP_Constraint.h>
 #include <NDMaterial.h>
 #include <Vector.h>
+#include <TimeSeries.h>
 #include <Matrix.h>
 #include <ID.h>
 #include <classTags.h>
@@ -209,6 +210,7 @@ LadrunoMPMPattern::setParticlePressure(const std::vector<double> &v, std::string
     eng.P.pw[p] = v[p];
     if ((int)v.size() == 3 * N) { eng.P.pwd[p] = v[N + p]; eng.P.pwdd[p] = v[2 * N + p]; }
   }
+  clearPiState();                    // Fable audit finding 2: A' re-arms for the new field
   return 0;
 }
 
@@ -234,7 +236,28 @@ LadrunoMPMPattern::setBodyPorePressure(int body, double pv, std::string &err)
   int n = 0;
   for (int p = 0; p < eng.P.size(); p++)
     if (eng.P.body[p] == body) { eng.P.pw[p] = pv; n++; }
+  if (n > 0) clearPiState();         // Fable audit finding 2: A' re-arms for the new field
   return n;
+}
+
+void
+LadrunoMPMPattern::clearPiState(void)
+{
+  piInitApplied = false;
+  piPerpMax = 0.0;
+  piC.clear();
+  pendValid = pendFirst = false;
+  pendPiPerp.clear();
+  pendPiC.clear();
+}
+
+// Fable audit finding 3 (wp-briefs "232l"; supersedes 7a Q2 for pi): the drive factor of a step
+// ending at t is the series value that step's applyLoad uses; `loadConst` freezes it
+double
+LadrunoMPMPattern::driveFactorAt(double t) const
+{
+  if (isConstant == 0) return lambda;
+  return (series != 0) ? series->getFactor(t) : 1.0;
 }
 
 int
@@ -349,6 +372,13 @@ LadrunoMPMPattern::twoPhaseAdmission(const LadrunoMPMAnalysisRefs &A) const
   if (theMode == MODE_QUASISTATIC)
     return "mode quasiStatic is refused with a two-phase body: a static step has no S or Q^T rate terms,"
            " so it cannot consolidate (interface P7 (2)); use mode implicit with Newmark";
+  // Fable audit finding 4 (wp-briefs "232l"): mode A's p-active set is a subset of the u-kept set;
+  // with massCutoff <= pressureCutoff that is automatic (two-phase mass <= total mass)
+  if (theMode != MODE_EXPLICIT && modeAMassCutoff() > eng.par.pCut)
+    return "`mpm massCutoff` (" + std::to_string(modeAMassCutoff()) + ") > `mpm pressureCutoff` (" +
+           std::to_string(eng.par.pCut) + ") is refused in mode A with a two-phase body: a node the u side"
+           " drops could not be p-active, so the p rule would be moved by the u cutoff (interface 7b, P4"
+           " amended; Fable audit finding 4)";
   if (A.ta != 0 && A.ta->getIntegrator() != 0 &&
       A.ta->getIntegrator()->getClassTag() != INTEGRATOR_TAGS_Newmark)
     return "a two-phase body runs Newmark only: HHT and GeneralizedAlpha stay refused until a test"
@@ -381,7 +411,7 @@ LadrunoMPMPattern::twoPhaseAdmission(const LadrunoMPMAnalysisRefs &A) const
 // invariant (ruling on 89718fdad). No side effect on the model.
 struct LadrunoMPMPattern::PSup {
   std::vector<long> supStart, node;
-  std::vector<double> Sv, dSv, ScG, dScG, aff, SpF, dSpF, piS;
+  std::vector<double> Sv, dSv, ScG, dScG, aff, SpF, dSpF, piU;
   std::vector<char> keep, inact;
   std::set<long> want, pAct;
   double mmax = 0.0;
@@ -487,8 +517,8 @@ LadrunoMPMPattern::buildPSup(PSup &s, std::string &err)
   std::set<long> &pAct = s.pAct;
   pAct.clear();
   std::vector<double> &SpF = s.SpF, &dSpF = s.dSpF;  // per entry: the final p weight, gradient
-  std::vector<double> &piS = s.piS;            // fix 2: pi at the current position, per particle
-  piS.assign(N, 0.0);
+  std::vector<double> &piU = s.piU;            // fix 2: pi per unit drive factor, current x
+  piU.assign(N, 0.0);
   if (up) {
     // ruling 3d3699a50 in full: the mass test AND some two-phase particle with S^p > 0 there (a
     // ghost behind a drained-only face keeps its u mass, but its p weight is folded away)
@@ -541,11 +571,14 @@ LadrunoMPMPattern::buildPSup(PSup &s, std::string &err)
         for (int a = 0; a < nd; a++) dSpF[nd * k + a] = gg[a];
       }
       if (!allAct && bspl) rescale(&aff[(size_t)NA * p], sum, gsum);
-      // fix 2: pi at the projection = rhoF sum_d drive_d a_d (drive = the host's lambda b_f)
+      // fix 2: pi = rhoF sum_d (lambda b_f,d) a_d; pi per unit lambda here (finding 3: the
+      // caller picks the drive factor of the step)
       if (bspl) {
         const auto it = twoPhase.find(P.body[p]);
-        const double *drv = mpmFluidDrive(p);
-        for (int d = 0; d < nd; d++) piS[p] += it->second.rhoF * drv[d] * aff[(size_t)NA * p + d * (nd + 1)];
+        for (int d = 0; d < nd; d++) {
+          const double b = it->second.fluidBodyGiven ? it->second.fluidBody[d] : eng.par.gravity[d];
+          piU[p] += it->second.rhoF * b * aff[(size_t)NA * p + d * (nd + 1)];
+        }
       }
     }
   }
@@ -570,7 +603,17 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
   std::vector<long> &supStart = s.supStart, &node = s.node;
   std::vector<double> &Sv = s.Sv, &dSv = s.dSv, &ScG = s.ScG, &dScG = s.dScG;
   const int NA = nd * (nd + 1);
-  std::vector<double> &aff = s.aff, &SpF = s.SpF, &dSpF = s.dSpF, &piS = s.piS;
+  std::vector<double> &aff = s.aff, &SpF = s.SpF, &dSpF = s.dSpF, &piU = s.piU;
+  // the q + pi invariant with findings 2 and 3: the fit's pi_c is the committed one; at the
+  // epoch's first projection it is pi(x_0) at the epoch's initial drive factor lambda(t), and A'
+  // compensates that pi's invisible part. Nothing is committed here.
+  const bool first = !piInitApplied;
+  const double lam0 = driveFactorAt(t);
+  std::vector<double> piUse(N, 0.0);
+  if (up) {
+    if ((int)piC.size() != N) piC.assign(N, 0.0);
+    for (int p = 0; p < N; p++) piUse[p] = first ? lam0 * piU[p] : piC[p];
+  }
   std::vector<char> &keep = s.keep, &inact = s.inact;
   std::set<long> &want = s.want, &pAct = s.pAct;
   std::map<long, std::vector<double>> pProj;  // P5a: x^ for p, pd, pdd per p-active node
@@ -585,9 +628,8 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
       if (!isTwoPhaseParticle(p)) continue;
       const double V = P.V[p];
       // the q + pi invariant: the projection fits q = p - pi_c (at the epoch's first projection,
-      // p_init - pi: A' then makes q representable)
-      if ((int)piC.size() != N) piC.assign(N, 0.0);
-      const double xv[3] = {P.pw[p] - (piInitApplied ? piC[p] : piS[p]), P.pwd[p], P.pwdd[p]};
+      // p_init - pi(0): A' then makes q representable)
+      const double xv[3] = {P.pw[p] - piUse[p], P.pwd[p], P.pwdd[p]};
       for (long k = supStart[p]; k < supStart[p + 1]; k++) {
         if (SpF[k] == 0.0 || node[k] < 0) continue;
         const int a = pidx[node[k]];
@@ -664,13 +706,13 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
     // ramps from 0 has pi(0) = 0: nothing. P^T V pi_perp = 0: the projection below is unchanged.
     std::vector<double> piPerp;
     bool anyPi = false;
-    for (int p = 0; p < N; p++) anyPi = anyPi || piS[p] != 0.0;
-    if (!piInitApplied && anyPi && np > 0) {
+    for (int p = 0; p < N; p++) anyPi = anyPi || piUse[p] != 0.0;
+    if (first && anyPi && np > 0) {
       std::vector<double> bpi(np, 0.0), y;
       for (int p = 0; p < N; p++) {
-        if (!isTwoPhaseParticle(p) || piS[p] == 0.0) continue;
+        if (!isTwoPhaseParticle(p) || piUse[p] == 0.0) continue;
         for (long k = supStart[p]; k < supStart[p + 1]; k++)
-          if (SpF[k] != 0.0 && node[k] >= 0) bpi[pidx[node[k]]] += P.V[p] * SpF[k] * piS[p];
+          if (SpF[k] != 0.0 && node[k] >= 0) bpi[pidx[node[k]]] += P.V[p] * SpF[k] * piUse[p];
       }
       if (!pcg(bpi, y)) { err = singular + " (the pi_perp solve, A')"; return -1; }
       piPerp.assign(N, 0.0);
@@ -679,7 +721,7 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
         double s = 0.0;
         for (long k = supStart[p]; k < supStart[p + 1]; k++)
           if (SpF[k] != 0.0 && node[k] >= 0) s += SpF[k] * y[pidx[node[k]]];
-        piPerp[p] = piS[p] - s;
+        piPerp[p] = piUse[p] - s;
       }
     }
     std::vector<double> sol(3 * (size_t)np, 0.0);
@@ -691,22 +733,11 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
     for (const auto &kv : pidx)
       pProj[kv.first] = {sol[3 * (size_t)kv.second], sol[3 * (size_t)kv.second + 1],
                          sol[3 * (size_t)kv.second + 2]};
-    // applied once every solve has succeeded (a refused step changes nothing)
-    if (!piInitApplied) {          // the epoch's first projection: q = p_init - (P M^-1 P^T V pi)
-      if (!piPerp.empty())
-        for (int p = 0; p < N; p++) {
-          P.pw[p] += piPerp[p];
-          piPerpMax = std::max(piPerpMax, std::fabs(piPerp[p]));
-        }
-      piC = piS;
-      piInitApplied = true;
-    } else {                       // p <- q + pi(current x, drive): the change of pi since pi_c
-      for (int p = 0; p < N; p++) {
-        if (!isTwoPhaseParticle(p)) continue;
-        P.pw[p] += piS[p] - piC[p];
-        piC[p] = piS[p];
-      }
-    }
+    // Fable audit finding 2: recorded, committed only on acceptance (twoPhaseAfterStep)
+    pendValid = true;
+    pendFirst = first;
+    pendPiPerp = piPerp;
+    pendPiC = piUse;
   }
 
   {
@@ -981,7 +1012,7 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
     if (up) {
       const auto it = twoPhase.find(P.body[p]);
       const ladruno_mpm::TwoPhaseProps *tp = (it != twoPhase.end()) ? &it->second : 0;
-      if (e->setTwoPhase(ndfN, tp, G.h, Sp, dSp, pRef, bspl ? &aff[(size_t)NA * p] : 0, piS[p]) < 0) {
+      if (e->setTwoPhase(ndfN, tp, G.h, Sp, dSp, pRef, bspl ? &aff[(size_t)NA * p] : 0, piUse[p]) < 0) {
         err = "the two-phase blocks of particle " + std::to_string((long long)P.id[p]) + " failed";
         return -2;
       }
@@ -1049,21 +1080,35 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
 void
 LadrunoMPMPattern::twoPhaseAfterStep(void)
 {
-  if (!piInitApplied || !ladruno_mpm::isBSpline(eng.par.basis) || !anyTwoPhase()) return;
-  PSup s;
-  std::string err;
-  if (buildPSup(s, err) < 0) {
-    opserr << "WARNING mpm analyze -- the pore-pressure term pi could not be re-evaluated after the"
-              " step (" << err.c_str() << "); the next projection does it\n";
-    return;
-  }
+  // The accepted step's commit (Fable audit finding 2): G2P left p = q_new + pi_c - (A''s share);
+  // p <- q_new + pi(x_new, the step's drive), pi_c <- that pi; at the epoch's first step A' is
+  // applied (alpha_p pi_perp: the PIC part of q is representable already) and the flag set.
+  if (!pendValid || !anyTwoPhase()) return;
+  pendValid = false;
   const int N = eng.P.size();
-  if ((int)piC.size() != N) piC.assign(N, 0.0);
+  if ((int)pendPiC.size() != N) return;
+  std::vector<double> piNew(N, 0.0);
+  if (ladruno_mpm::isBSpline(eng.par.basis)) {
+    PSup s;
+    std::string err;
+    if (buildPSup(s, err) < 0) {
+      opserr << "WARNING mpm analyze -- the pore-pressure term pi could not be re-evaluated after the"
+                " step (" << err.c_str() << "); p keeps pi_c\n";
+      piNew = pendPiC;
+    } else {
+      const double lam = driveFactorAt(this->getDomain()->getCurrentTime());
+      for (int p = 0; p < N; p++) piNew[p] = lam * s.piU[p];
+    }
+  }
+  const double ap = eng.par.pBlend;
+  const bool aPrime = pendFirst && (int)pendPiPerp.size() == N;
   for (int p = 0; p < N; p++) {
     if (!isTwoPhaseParticle(p)) continue;
-    eng.P.pw[p] += s.piS[p] - piC[p];
-    piC[p] = s.piS[p];
+    eng.P.pw[p] += (aPrime ? ap * pendPiPerp[p] : 0.0) + piNew[p] - pendPiC[p];
+    if (aPrime) piPerpMax = std::max(piPerpMax, std::fabs(pendPiPerp[p]));
   }
+  piC = piNew;
+  if (pendFirst) piInitApplied = true;
 }
 
 // ---------------------------------------------------------------------------

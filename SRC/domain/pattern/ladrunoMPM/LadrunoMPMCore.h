@@ -618,11 +618,13 @@ inline void upSupport(const Grid &g, Basis b, const FaceConditions &fc, const do
       }
       const int rowFace = (i == 0) ? 2 * d : ((i == g.n[d]) ? 2 * d + 1 : -1);
       if (f >= 0 && foldsU(fc, f)) add(wE[d], mir, S, dS);
+      else add(wE[d], i, S, dS);
+      // (Fable audit finding 1, wp-briefs "232l": this `if` once sat between the W fold and its
+      // `else`, so a u-fold + pfix face put the ghost W on the mirror AND the ghost)
       if (f >= 0 && (foldsU(fc, f) || fc.pfixOn[f]) && !fc.pfixOn[f]) {
         aff1[d] += S * (i - mir) * g.h;
         daff1[d] += dS * (i - mir) * g.h;
       }
-      else add(wE[d], i, S, dS);
       if (rowFace >= 0 && fc.plateOn[rowFace]) {
         plateFace[d] = rowFace;
         wFace[d] += S;

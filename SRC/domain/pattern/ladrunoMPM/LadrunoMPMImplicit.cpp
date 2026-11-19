@@ -1751,6 +1751,9 @@ LadrunoMPMPattern::unpackState(const Vector &in)
   piInitApplied = false;
   piPerpMax = 0.0;
   piC.clear();
+  pendValid = pendFirst = false;
+  pendPiPerp.clear();
+  pendPiC.clear();
   eng.par.pCut = 5.0e-2;
   for (int f = 0; f < 6; f++) {
     eng.fc.pfixOn[f] = false; eng.fc.pfixVal[f] = 0.0;

@@ -416,9 +416,15 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   // the q + pi invariant (ruling on 89718fdad): pi_c = the pi each two-phase particle's p holds,
   // so q = p - pi_c is the FLIP-carried coefficient-space part
   std::vector<double>     piC;
+  // Fable audit finding 2: what this step's projection computed, committed only when the step is
+  // accepted (twoPhaseAfterStep); a refused step and the debug hooks leave the state unchanged
+  bool                    pendValid = false, pendFirst = false;
+  std::vector<double>     pendPiPerp, pendPiC;    // A''s pi_perp (first projection); the pi_c used
   struct PSup;
   int    buildPSup(PSup &s, std::string &err);
-  void   twoPhaseAfterStep(void);                  // p <- q + pi(current x, drive)
+  double driveFactorAt(double t) const;            // finding 3: the series value a step at t uses
+  void   clearPiState(void);                       // A' re-arms (reset, p set by command)
+  void   twoPhaseAfterStep(void);                  // commit: p <- q + pi(current x, drive)
   int    prepareStepUP(double h, std::string &err);   // a two-phase epoch or a plate (§2, §3)
   int    tagOfExt(long ext) const;                     // a lattice id or plateId(f) -> live tag
   void   retirePlates(void);
