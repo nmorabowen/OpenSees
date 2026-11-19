@@ -171,12 +171,46 @@ def test_t0_blocks_have_the_route_e_pattern():
         assert abs(sum(b["S"]) - 1.0) < 1e-14
 
 
+def _assert_close(got, ref, path="", rel=1e-12, floor=1e-14):
+    """Recursive comparison of a fresh oracle run with the stored record: structure and non-numeric
+    leaves exactly; every numeric field (a scalar, or a rectangular list of numbers) to
+    |got - ref| <= rel |ref| + floor max|ref field|."""
+    if isinstance(ref, dict):
+        assert isinstance(got, dict) and set(got) == set(ref), path
+        for k in ref:
+            _assert_close(got[k], ref[k], f"{path}.{k}", rel, floor)
+        return
+    if isinstance(ref, (list, tuple)) or isinstance(ref, (int, float)) and not isinstance(ref, bool):
+        try:
+            a = np.asarray(ref, dtype=float)
+            b = np.asarray(got, dtype=float)
+        except (TypeError, ValueError):
+            a = None
+        if a is not None and a.dtype != object:
+            assert a.shape == b.shape, f"{path}: shape {b.shape} vs {a.shape}"
+            if a.size == 0:
+                return
+            tol = rel * np.abs(a) + floor * np.max(np.abs(a))
+            bad = np.abs(b - a) > tol
+            assert not np.any(bad), f"{path}: max |diff| {np.max(np.abs(b - a)):.3e}"
+            return
+        assert isinstance(got, (list, tuple)) and len(got) == len(ref), path
+        for i, (g, r) in enumerate(zip(got, ref)):
+            _assert_close(g, r, f"{path}[{i}]", rel, floor)
+        return
+    assert got == ref, path
+
+
 def test_t0_record_is_the_oracle():
+    """A self-consistency check of the stored reference (not a gated band): a fresh oracle run
+    equals t0_oracle.json to rel 1e-12, with an absolute floor of 1e-14 x the field's max |value|
+    for entries at zero. Exact equality is not portable: the record was frozen with Windows numpy,
+    and Linux numpy differs in the last 1-3 ulps (Zone-A)."""
     d = _json("t0_oracle")
     assert d["source"].startswith("tests/mpm_twophase_interface.md")
     fresh = {"t0_i": R.t0_particle_dump(R.T0A), "t0_ii": R.t0_modeA(R.T0A),
              "t0_iii": R.t0_routeS(R.T0S)}
-    assert json.loads(json.dumps(fresh)) == {k: d[k] for k in fresh}
+    _assert_close(json.loads(json.dumps(fresh)), {k: d[k] for k in fresh})
 
 
 def test_t0_drained_nodes_and_p_activity():
