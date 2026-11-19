@@ -333,6 +333,22 @@ Matrices are row-major lists of rows; every number uses 17 significant digits.
   folded into their images with P9's signs, since Q is assembled from the folded S′_{i,a}
   and S^p_b.
 - **Walls.** `mpm wall` (frictional, conditional) is refused with a two-phase body in route S.
+- **p-activity in route S** (orchestrator's ruling, 3d3699a50; it replaces "p-active" in §1
+  step 3 and P4 for mode F).
+  - **The cutoff.** A node is p-active iff two things hold:
+    - m̃_a > c_m · m_max, where:
+      - m̃_a is the folded nodal mass, × 2^k on a B-spline face layer
+        (`imageCutoffMass`);
+      - m_max = max over every particle, single- and two-phase, of m_p;
+      - c_m is `mpm massCutoff` when given, otherwise 5e-2 (mode A's test,
+        `LadrunoMPMImplicit.cpp:741-753`);
+    - some two-phase particle has S^p > 0 there.
+  - **Renormalisation.** Each two-phase particle's S^p and ∇S^p are renormalised over its
+    p-active nodes by Q3's formula, using B9's rule on B-spline images.
+  - **A dropped node** is absent from the pressure system, the projection and G2P. It is never
+    treated as drained.
+  - **The u side** keeps mode F's 1e-10 cutoff: Q's u rows use the unrenormalised ∇S′, its p
+    columns the renormalised S^p.
 
 **Q5. The first-step re-seed (mode A, step 1, from the initial particle state).**
 - **Particle state before step 1.**
