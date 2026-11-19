@@ -469,6 +469,24 @@ whatever x̂ is.
   created or retired, so a refused step leaves the model unchanged.
 - **(b) T8 gains a rank-deficient case:** bspline2 with one particle per cell in a p-active region.
   It must be refused, not solved.
+- **(a) amended (ruling on `7b7cdc9cf`): the probe.** Each projection also runs one probe PCG on
+  b_k = sin(1.7 k + 0.3) over the p-active rows in storage order, with the same tolerance, the same
+  iteration cap and the same curvature test. A failed probe refuses the step loudly (rule named,
+  nothing changed).
+  - **Why it is needed.** The data's right side Pᵀ V x always lies in M's range, so PCG converges
+    on a singular M without failing. The probe does not lie in that range.
+  - **Answers are unchanged.** A nonsingular M passes the probe, and its solution is discarded.
+  - **Cost.** One more PCG per step, about one third of the projection's three solves.
+- **p-activity, implementation fix (ruling on `7b7cdc9cf`).** A node is p-active iff two things
+  hold:
+  - its two-phase nodal mass passes `pressureCutoff`;
+  - some two-phase particle has S^p > 0 there (ruling `3d3699a50` in full).
+- **Renormalisation (implementation note, disclosed for ruling).** The p renormalisation of P4
+  amended treats a kept entry whose p weight is folded away (S^p = 0, e.g. a ghost behind a
+  drained-only face) as retained: its W counts in σ and γ. Renormalisation therefore runs only when
+  a p-reached node (S^p > 0) is dropped. Read literally, the text would rescale every particle beside
+  a drained-only B-spline face by Σ W over its p-active nodes alone, which is a spurious scaling.
+  GIMP and linear, where nothing folds, are identical under both readings.
 
 **Cost.** One sparse SPD solve per step with three right-hand sides, over the p-active nodes. The
 pattern is that of H.

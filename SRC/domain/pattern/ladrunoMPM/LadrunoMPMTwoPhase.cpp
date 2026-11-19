@@ -468,9 +468,18 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
   std::vector<double> piS(N, 0.0);            // fix 2: pi at the projection, per particle
   std::map<long, std::vector<double>> pProj;  // P5a: x^ for p, pd, pdd per p-active node
   if (up) {
+    // ruling 3d3699a50 in full: the mass test AND some two-phase particle with S^p > 0 there (a
+    // ghost behind a drained-only face keeps its u mass, but its p weight is folded away)
+    std::set<long> pReach;
+    for (int p = 0; p < N; p++) {
+      if (!isTwoPhaseParticle(p)) continue;
+      for (long k = supStart[p]; k < supStart[p + 1]; k++)
+        if (keep[k] && node[k] >= 0 && ScG[nc * k + nd] > 0.0) pReach.insert(node[k]);
+    }
     const double pcut = eng.par.pCut * mmax;
     for (long x : want)
-      if (ladruno_mpm::imageCutoffMass(G, eng.par.basis, eng.fc, x, tpMass[x]) > pcut) pAct.insert(x);
+      if (pReach.count(x) && ladruno_mpm::imageCutoffMass(G, eng.par.basis, eng.fc, x, tpMass[x]) > pcut)
+        pAct.insert(x);
     SpF.assign(node.size(), 0.0);
     dSpF.assign(nd * node.size(), 0.0);
     for (int p = 0; p < N; p++) {
@@ -479,11 +488,14 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
       double sum = 0.0, gsum[3] = {0.0, 0.0, 0.0};
       for (long k = supStart[p]; k < supStart[p + 1]; k++) {
         if (!keep[k] || node[k] < 0) continue;
-        if (pAct.count(node[k])) {
-          anyAct = true;
+        // a node whose p weight is folded away (S^p = 0: a ghost behind a drained-only face) is
+        // not a dropped p node -- its W counts as kept, so it never triggers a renormalisation
+        const bool pa = pAct.count(node[k]) != 0;
+        if (pa) anyAct = true;
+        if (pa || !(ScG[nc * k + nd] > 0.0)) {
           sum += Sv[k];
           for (int a = 0; a < nd; a++) gsum[a] += dSv[nd * k + a];
-        } else if (Sv[k] != 0.0) {
+        } else {
           allAct = false;
         }
       }
@@ -546,44 +558,57 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
         " on a B-spline grid); step refused, nothing changed";
     for (int a = 0; a < np; a++)
       if (!(diag[a] > 0.0)) { err = singular; return -1; }
+    // Jacobi-PCG to rel 1e-14, with the frozen singularity guard (wp-briefs "Freeze of P5a"):
+    // false when it does not converge within 4 np + 1000 iterations, or a curvature
+    // d^T M d <= 1e-14 max diag(M) d^T d. A zero right side returns 0.
+    auto pcg = [&](const std::vector<double> &b, std::vector<double> &xs) -> bool {
+      std::vector<double> r(b), z(np), dvec(np), Ad(np);
+      xs.assign(np, 0.0);
+      double r0 = 0.0;
+      for (int a = 0; a < np; a++) r0 += r[a] * r[a];
+      r0 = std::sqrt(r0);
+      if (!(r0 > 0.0)) return true;
+      double rz = 0.0;
+      for (int a = 0; a < np; a++) { z[a] = r[a] / diag[a]; dvec[a] = z[a]; rz += r[a] * z[a]; }
+      const int maxit = 4 * np + 1000;
+      for (int it = 0; it < maxit; it++) {
+        double dAd = 0.0, dd = 0.0;
+        for (int a = 0; a < np; a++) {
+          double s2 = 0.0;
+          for (const auto &kv : M[a]) s2 += kv.second * dvec[kv.first];
+          Ad[a] = s2;
+          dAd += dvec[a] * s2;
+          dd += dvec[a] * dvec[a];
+        }
+        if (!(dAd > 1e-14 * dmax * dd)) return false;     // a (near-)singular direction
+        const double al = rz / dAd;
+        double rn = 0.0;
+        for (int a = 0; a < np; a++) {
+          xs[a] += al * dvec[a];
+          r[a] -= al * Ad[a];
+          rn += r[a] * r[a];
+        }
+        if (std::sqrt(rn) <= 1e-14 * r0) return true;
+        double rzn = 0.0;
+        for (int a = 0; a < np; a++) { z[a] = r[a] / diag[a]; rzn += r[a] * z[a]; }
+        const double be = rzn / rz;
+        rz = rzn;
+        for (int a = 0; a < np; a++) dvec[a] = z[a] + be * dvec[a];
+      }
+      return false;
+    };
+    // guard (a) amended (ruling on 7b7cdc9cf): the probe, b_k = sin(1.7 k + 0.3) over the
+    // p-active rows in storage order. The data's right side P^T V x lies in M's range, so its own
+    // PCG converges on a singular M; the probe does not lie in the range of a singular M.
+    std::vector<double> xs, bq(np);
+    if (np > 0) {
+      for (int a = 0; a < np; a++) bq[a] = std::sin(1.7 * a + 0.3);
+      if (!pcg(bq, xs)) { err = singular + " (the probe solve)"; return -1; }
+    }
     std::vector<double> sol(3 * (size_t)np, 0.0);
     for (int q = 0; q < 3 && np > 0; q++) {
-      // Jacobi-PCG to rel 1e-14, with the frozen singularity guard (wp-briefs "Freeze of P5a")
-      std::vector<double> xs(np, 0.0), r(np), z(np), dvec(np), Ad(np);
-      double r0 = 0.0;
-      for (int a = 0; a < np; a++) { r[a] = rhs[3 * (size_t)a + q]; r0 += r[a] * r[a]; }
-      r0 = std::sqrt(r0);
-      if (r0 > 0.0) {
-        bool ok = false;
-        double rz = 0.0;
-        for (int a = 0; a < np; a++) { z[a] = r[a] / diag[a]; dvec[a] = z[a]; rz += r[a] * z[a]; }
-        const int maxit = 4 * np + 1000;
-        for (int it = 0; it < maxit; it++) {
-          double dAd = 0.0, dd = 0.0;
-          for (int a = 0; a < np; a++) {
-            double s2 = 0.0;
-            for (const auto &kv : M[a]) s2 += kv.second * dvec[kv.first];
-            Ad[a] = s2;
-            dAd += dvec[a] * s2;
-            dd += dvec[a] * dvec[a];
-          }
-          if (!(dAd > 1e-14 * dmax * dd)) break;          // a (near-)singular direction: refuse
-          const double al = rz / dAd;
-          double rn = 0.0;
-          for (int a = 0; a < np; a++) {
-            xs[a] += al * dvec[a];
-            r[a] -= al * Ad[a];
-            rn += r[a] * r[a];
-          }
-          if (std::sqrt(rn) <= 1e-14 * r0) { ok = true; break; }
-          double rzn = 0.0;
-          for (int a = 0; a < np; a++) { z[a] = r[a] / diag[a]; rzn += r[a] * z[a]; }
-          const double be = rzn / rz;
-          rz = rzn;
-          for (int a = 0; a < np; a++) dvec[a] = z[a] + be * dvec[a];
-        }
-        if (!ok) { err = singular; return -1; }
-      }
+      for (int a = 0; a < np; a++) bq[a] = rhs[3 * (size_t)a + q];
+      if (!pcg(bq, xs)) { err = singular; return -1; }
       for (int a = 0; a < np; a++) sol[3 * (size_t)a + q] = xs[a];
     }
     for (const auto &kv : pidx)
