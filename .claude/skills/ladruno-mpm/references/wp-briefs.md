@@ -1748,6 +1748,22 @@ projection's right side).
   alternative design on the table: no p fold on impervious faces (zero flux as the natural
   condition), which removes π entirely.
 
+**Rulings before the `3fe8a445c` build (2026-11-18), on 232l-C's two caveats.**
+- **The fix-2 patch check runs to steady state; the gate stays at 1e-10 and E stays at 1e4.** The
+  §7b deck (200 steps of 1 s) ends in a transient. With π = 0, the base particle is still at
+  2.2e-9 γ_w H at step 200, decaying ×0.974 per step, so the check could not measure the boundary
+  condition it exists to test.
+  - New stopping rule, fixed before the run: step until the step-to-step change of max |p_p| is
+    ≤ 1e-13 γ_w H, capped at 2000 steps. Reaching the cap is a miss.
+  - E = 1e4 stays, because motion is what broke A′. A stiffer skeleton would hide it.
+  - Reported beside: the π = 0 twin and the E = 1e6 and rigid controls.
+- **The per-step self-check is the bookkeeping identity:** |p_p − π(x_p, drive) − q_p| ≤ 1e-12 γ_w H
+  after every step, with q the FLIP-carried state, or p − π_c with π_c = π(x_p) checked as well.
+  The part of q that the moved supports cannot represent is the motion residual, not a bookkeeping
+  error. It is reported per step, beside the rigid control (expected about 1e-15).
+- **No-p-fold design:** kept in reserve. 232l-C argues that it meets the same motion residual and
+  enforces zero flux only weakly.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
