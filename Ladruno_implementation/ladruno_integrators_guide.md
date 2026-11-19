@@ -499,6 +499,44 @@ def relax_to_static(chunk=100, dt=1.0, maxIter=200000, tolR=1e-5, tolKE=1e-4):
     return False
 ```
 
+**Runtime commands (`ladrunoDR`).** Queries of the active integrator, and one
+command that marches (WP-240, from José Abell's `jaabell/OpenSees`):
+
+| Command | Returns |
+|---|---|
+| `ladrunoDR residualNorm` | $\lVert\mathbf F_{\text{ext}}-\mathbf F_{\text{int}}\rVert_\infty$ |
+| `ladrunoDR kineticEnergy` | $\tfrac12\mathbf v^\top\mathbf M^*\mathbf v$ |
+| `ladrunoDR maxDisplacement` | largest displacement magnitude over the free DOFs |
+| `ladrunoDR stabilityMargin` | $(\omega_{\max}\Delta t/2)^2$ of the mass in use; negative means not measured |
+| `ladrunoDR relax ...` | `[status, steps, residualNorm, kineticEnergy, maxDisplacement]` |
+
+```python
+status, steps, res, ke, umax = ops.ladrunoDR(
+    'relax', '-tolResidual', 1e-6, '-maxSteps', 200000,   # required
+    '-tolKE', 1e-10,           # also require a small kinetic energy
+    '-runaway', 50.0,          # stop when max|u| > 50 * uRef ...
+    '-uRef', 0.01,             # ... default: max|u| after the first step
+    '-checkEvery', 100,        # how often the runaway test runs
+    '-dt', 1.0)
+# status: 0 rest, 1 maxSteps, 2 runaway, 3 failed step
+```
+
+`relax` loops the stock one-step `analyze` inside one command, so it saves one
+interpreter round trip per step. Use the script loop above when you need to do
+something between steps.
+
+**OpenSeesMP.** With the model split over several processes use
+`system MPIDiagonal` and `numberer ParallelPlain`; the integrator refuses any
+other system there. Residual, kinetic energy and largest displacement are then
+global: every process reads the same numbers and zeroes its velocities at the
+same step. `MPIDiagonal` keeps the mass of its first solve, so the KE-peak
+refresh and `-recompute` are off; the matching serial run is the one with
+`-noAutoRefresh`. Give a nodal load on an interface node from one process only.
+
+**One element update per step.** Each step calls `Element::update()` once, in
+`newStep()`. An element that reads the nodal velocity there sees the half-step
+velocity $\mathbf v_{n+1/2}$.
+
 **Limits:** pseudo-time is fictitious; global KE zeroing is blunt on
 heterogeneous models (per-region KE is a follow-up); DR finds *static
 equilibria*, it is not a path-follower (use arc-length for true snap-back

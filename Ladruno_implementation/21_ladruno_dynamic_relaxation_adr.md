@@ -613,3 +613,95 @@ external watchdog only.
   ([[11_brick_asdconcrete_integration]]) and Lemaitre-damaged
   ([[15_lemaitre_ductile_damage_adr]]) payloads whose limit points DR clears by
   relaxation rather than by factorizing an indefinite tangent.
+
+---
+
+## 10. Amendment (WP-240): one element update per step, OpenSeesMP, `ladrunoDR relax`
+
+Three changes written by José Abell on `jaabell/OpenSees` (branch `ladruño`,
+commits `c8b0f3bc4`, `3c2f585b5`, `9a429237e`), ported by hand onto the fork's
+integrator.
+
+### 10.1 One element update per step
+
+`update()` called `theModel->updateDomain()` after `setResponse()`. The
+displacements it pushed were those of `newStep()`, whose `updateDomain(time, dt)`
+had already brought the elements to them, so each element was updated twice per
+step with the same displacements. The second call is removed.
+
+What the removed call did, in this fork:
+
+| Part of `AnalysisModel::updateDomain()` | Effect of the second call |
+|---|---|
+| `Domain::update()` | a second `Element::update()` with the same trial displacements, and the full-step velocity in place of the half-step one |
+| `ConstraintHandler::update()` | none: no handler overrides the base no-op |
+
+`TransformationDOF_Group::setNodeDisp` keeps the trial value of a DOF that has
+an `sp`, so the prescribed values enforced in `newStep()` survive the
+`setResponse()` of `update()`. The WP-153 snapshot holds integrator state only.
+
+Consequence for rate-dependent elements: an element that reads the nodal
+velocity in `update()` now commits the state of `v_{n+1/2}`, the velocity its
+force in the residual was computed with. Before, it committed the state of the
+full-step velocity, which was never in the residual. DR velocities are
+fictitious, so neither is physical; the new one is the consistent one.
+`LadrunoQuad` and `LadrunoBrick` read no velocity and give the same numbers
+(`tests/test_wp240_dr_single_update.py`).
+
+### 10.2 OpenSeesMP: global kinetic energy and residual
+
+Each process computed the kinetic energy and the residual of its own
+equations. The processes then zeroed their velocities at different peaks, and
+an interface DOF saw only its own elements' share of the residual.
+
+- `Ladruno::drAllreduceSum` and `Ladruno::drAllreduceMax` are function
+  pointers, identity by default, because the library is compiled once without
+  MPI. `Ladruno::drInstallMPIReductions()` (`LadrunoSolverQuery.h`) points them
+  at `MPI_Allreduce`. Both `_PARALLEL_INTERPRETERS` engines call it when the
+  integrator is created: `SRC/tcl/commands.cpp` (`OpenSeesMP.exe`) and
+  `SRC/interpreter/OpenSeesCommands.cpp` (`openseesmp.pyd`).
+- Kinetic energy: the sum over the processes. The `M*` of a process holds the
+  row sums of its own elements, so the shares of an interface DOF add up.
+- Residual: the maximum over the processes of `|B|` of the solve. With
+  `MPIDiagonal`, `B` holds the neighbours' contributions at the interface DOFs.
+  A system that is not distributed keeps `|M* a|`.
+- A run on several processes must use `system MPIDiagonal`; `domainChanged()`
+  fails otherwise. This also refuses independent models, one per process, under
+  `OpenSeesMP` with `system Diagonal`: the reductions are collective, so such a
+  run would wait forever once the processes took a different number of steps.
+- `MPIDiagonalSOE` inverts `A` at its first solve and ignores `zeroA`/`addA`
+  afterwards, so `M*` cannot be rebuilt. Whenever the system is distributed
+  (also on one process) the integrator switches off the KE-peak refresh and
+  `-recompute`, and says so once. Compare a parallel run with a serial run
+  that has `-noAutoRefresh`.
+
+`OpenSeesSP` is not covered: its `_PARALLEL_PROCESSING` build does not set the
+pointers.
+
+### 10.3 `ladrunoDR relax` and `ladrunoDR maxDisplacement`
+
+```tcl
+ladrunoDR maxDisplacement
+ladrunoDR relax -tolResidual $r <-tolKE $k> -maxSteps $n \
+                <-runaway $f> <-uRef $u> <-checkEvery $m> <-dt $dt>
+```
+
+`relax` runs one-step analyses until one of:
+
+| Status | Meaning | Test |
+|---|---|---|
+| 0 | rest | `residualNorm < r`, and `kineticEnergy < k` when `-tolKE` is given; every step |
+| 1 | `maxSteps` | `n` steps done |
+| 2 | runaway | the largest displacement exceeds `f * uRef`; every `m` steps (default 100) |
+| 3 | failed step | `analyze(1, dt)` returned a negative value |
+
+It returns `{status steps residualNorm kineticEnergy maxDisplacement}`. `uRef`
+defaults to `max|u|` after the first step of the call. `dt` defaults to 1. The
+three values are global in OpenSeesMP, so every process stops at the same step.
+
+Section 7.3 stands. `relax` is a command that loops the stock
+`DirectIntegrationAnalysis::analyze(1, dt)`; it adds no analysis type and copies
+no driver code. It replaces the script loop of section 5 where the cost of one
+interpreter round trip per step matters, and where all processes of a parallel
+run must take the same decision. `Ladruno_scripts/relax_to_static.py` is
+unchanged.
