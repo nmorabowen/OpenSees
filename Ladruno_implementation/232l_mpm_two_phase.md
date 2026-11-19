@@ -41,13 +41,13 @@ record carries `ladrunoBuild`.
 | T9 restart bit for bit | pass | pass | cd503bdbb |
 | T10 single-phase bit for bit against cfe478254 | 24 cases | 24/24 | cd503bdbb |
 | T11 mutation: MPM IDENT (joint Q + projection cut) | the two-phase oracle and T1 go red | 14/14 red (`_twophase_oracle` + `_fe_identity` on `dist/mut_MPM_IDENT`; green on the normal build) | cd503bdbb |
-| T11 mutation: MPM ZERO ≥ 0.500, SCALE ≥ 0.398 | CI lane | 0.500 / 0.398 on d77caf8fd (run 44532817830); re-dispatched on the final head | d77caf8fd |
+| T11 mutation: MPM ZERO ≥ 0.46, SCALE ≥ 0.38 (family floors) | CI lane | **pending on the final head**. d77caf8fd gave 0.500 / 0.398 (run 44532817830). 439fee82b gave 0.453 / 0.316 (run 44551994541) with the IDENT-only files selected; re-scoped by `paths_by_mode` | — |
 | T13 translation patch (free block, both routes, gimp / bspline2, with / without a plate) | v, σ′, p rel 1e-10 | 8/8; worst v 1.0e-13 (route E), 7.9e-17 (route S) | cd503bdbb |
 | T12 engines agree (Tcl, Python) | pass | pass | cd503bdbb |
 | Two-phase test files (incl. `_gates`: zone_a 16, slow full forms 21) | — | all pass; T7 2 xfailed | cd503bdbb |
 | The whole MPM suite (`tests/test_ladruno_mpm_*.py` + the oracle's self-test) | — | 526 passed, 61 skipped (opt-in slow tiers incl. the gates' full forms, MUMPS matrix types absent), 14 xfailed (12 pre-registered from 232f–232k + T7 × 2), 0 failed; the gates' full forms separately 21/21 | cd503bdbb |
 
-Mandel route S, amplification of the step map at Δt 0.005 (bspline2): ρ = 0.999999998 after §7c,
+Mandel route S, amplification of the step map at Δt 0.005 (bspline2), **reported only, measured before the §7c (1) correction (cd503bdbb)**: ρ = 0.999999998 after §7c,
 against 1.00093 before (4b74bd335); measured on 69ffff490, whose route S equals d77caf8fd's.
 
 ## Recorded misses and owner decisions
@@ -117,7 +117,9 @@ against 1.00093 before (4b74bd335); measured on 69ffff490, whose route S equals 
 
 ## R rows — route S
 
-`r_rows_route_s.json` (232l-V, 2d4a95129, build 69ffff490; route S is unchanged since then).
+`r_rows_route_s.json` (232l-V, 2d4a95129, build 69ffff490). **Reported only, measured before the §7c (1)
+correction (cd503bdbb)**, which renormalises route S's u weights. The confined decks used here drop few
+or no nodes, but the numbers are not re-measured.
 
 - **R1, first settlement** u(T_r)/s0 at the end of a 20-transit ramp. Route S runs at
   0.49 × Δt_d and reads the settlement as the particle quadrature.

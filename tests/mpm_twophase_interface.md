@@ -285,7 +285,10 @@ Matrices are row-major lists of rows; every number uses 17 significant digits.
 - **u–u blocks under `small`.** K_u = V₀ Bᵀ D B, with D the material's `getTangent()` at the trial
   strain, B in the engineering-shear Voigt order of §1 and B built from ∇S. There is no
   geometric term. M_u = diag(S_k m_p) on every u DOF of slot k (lumped; S_k = W_k, the unsigned
-  weight). C_u = αM M_u + βK K_u.
+  weight). *Amended (review of record, 2026-11-19): on a particle whose support holds a plate
+  entry, the plate axis's normal component uses the signed affine weight S′_c instead of W, on
+  every slot, the plate's included. That makes the lumped mass translation-consistent with the
+  affine plate image.* C_u = αM M_u + βK K_u.
 - **p blocks.** p rows and columns are §1's blocks: −Q in K, Qᵀ and S* in C, H in K, zero in M.
 - **R terms.** f′_k = V₀ σ′(trial)·∇S_k. f_body,k = S_k λ (m_p b + f_p). f_seep uses
   b_f = λ·(`-fluidBody` or `mpm gravity`). λ is the host's current factor: 1 before the first
@@ -328,7 +331,9 @@ Matrices are row-major lists of rows; every number uses 17 significant digits.
   Its v₁ is then the conditioned predictor value. Its Q row still enters Qᵀv* on the right side,
   so a prescribed velocity drives the pressure. It never receives the correction Δt M⁻¹ Q p.
 - **The plate unknown U.** U is one more velocity component with M⁻¹_U = 1/M_U, where
-  M_U = Σ m_a over the face-row nodes (ghost-row mass stays on the mirrors, A4). Its Q row is
+  M_U = Σ m_a over the face-row nodes (ghost-row mass stays on the mirrors, A4). *Amended (review
+  of record): M_U = Σ_p S′_{n,U} m_p, the signed affine weight. The mirror rows' normal
+  component likewise takes Σ_p S′_{n,a} m_p, so a uniform velocity projects to itself.* Its Q row is
   Q_U,b = α Σ_p V_p S^p_pb ∂_n S′_{n,U}. S′_{n,U} is P10's plate weight of the normal component:
   the face-row S, plus 2× the ghost-row S on B-spline. Its predictor carries the force λF.
 - **Folded B-spline images.** Slaved ghosts carry no components of their own. Their Q rows are
@@ -732,7 +737,8 @@ applies to two-phase steps and also to a route-S step without a two-phase body, 
 6. The p component and its gradient are **not** rescaled by this pass. p-activity, S^p and its
    renormalisation follow fix 3 on the raw weights (ruling bb1421559), as before.
 7. Then the step of §1 and §7c (2) runs on the renormalised u weights: P2G of mass
-   (m_a = Σ W m_p over the kept entries), momentum and forces; the predictor; M⁻¹; Q's u rows
+   (per component, Σ W m_p over the kept entries; *amended (review of record): Σ S′_c m_p for a
+   plate axis's normal component*), momentum and forces; the predictor; M⁻¹; Q's u rows
    (∂_i S′_{i,a} renormalised); the correction; MUSL G2P; and L (v₁ for two-phase particles,
    v** for the rest).
 

@@ -58,9 +58,22 @@ def _analysis(ops, system="UmfPack", integrator=("Newmark", 0.6, 0.3025), static
         ops.analysis("Transient")
 
 
-def _refused(ops):
+def _refused(ops, capfd, needle, call=None):
+    """The call raises AND the refusal names its rule: `needle` is in the stderr text (review of
+    record: no bare raises)."""
+    capfd.readouterr()
     with pytest.raises(Exception):
-        ops.mpm("analyze", 1, 0.01)
+        if call is None:
+            ops.mpm("analyze", 1, 0.01)
+        else:
+            call()
+    err = capfd.readouterr().err
+    assert needle in err, err[-800:]
+
+
+REFUSAL_TEXT = {"symmetric": "symmetric-storage", "static": "mode quasiStatic is refused",
+                "hht": "Newmark only", "sig0": "initial-stress offset", "fbar": "antiLocking fbar",
+                "masscut": "massCutoff"}
 
 
 def test_pressure_cutoff_is_its_own_knob():
@@ -85,7 +98,7 @@ def test_admitted_deck_runs():
 
 
 @pytest.mark.parametrize("why", ["symmetric", "static", "hht", "sig0", "fbar", "masscut"])
-def test_refusals(why):
+def test_refusals(why, capfd):
     """... "masscut": Fable audit finding 4, mode A refuses massCutoff > pressureCutoff."""
     ops = _ops()
     extra = {"fbar": [("antiLocking", "fbar")], "masscut": [("massCutoff", 0.2)]}.get(why, [])
@@ -99,15 +112,15 @@ def test_refusals(why):
         _analysis(ops, integrator=("HHT", 0.9))
     else:
         _analysis(ops)
-    _refused(ops)
+    _refused(ops, capfd, REFUSAL_TEXT[why])
 
 
-def test_dynseepage_on_refused():
+def test_dynseepage_on_refused(capfd):
     ops = _ops()
     _deck(ops)
-    with pytest.raises(Exception):
-        ops.mpm("twoPhase", 1, "-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-perm", 0.01, 0.01,
-                "-dynSeepage", "on")
+    _refused(ops, capfd, "dynSeepage on is refused",
+             lambda: ops.mpm("twoPhase", 1, "-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-perm", 0.01,
+                             0.01, "-dynSeepage", "on"))
 
 
 def test_route_s_admitted_deck_runs():
@@ -120,8 +133,8 @@ def test_route_s_admitted_deck_runs():
     assert _as_list(ops.mpm("info", "twoPhase", 1))[0] == 2.0            # route S
 
 
-@pytest.mark.parametrize("why", ["wall", "fbar", "fix2"])
-def test_route_s_refusals(why):
+@pytest.mark.parametrize("why", ["wall", "fbar", "fix2", "sig0"])
+def test_route_s_refusals(why, capfd):
     """Route S refuses what it does not carry (P7): a wall, F-bar, and fix 2's affine term (a
     B-spline impervious face with a normal fluid drive)."""
     ops = _ops()
@@ -136,61 +149,61 @@ def test_route_s_refusals(why):
         ops.mpm("gravity", 0.0, -9.81)
         ops.mpm("fix", "ymin", "y")
         ops.mpm("pfix", "ymax", 0.0)
+    elif why == "sig0":                                  # mode F: a sigma0 offset on a two-phase particle
+        _deck(ops, mode="explicit", stress=True)
     else:
         _deck(ops, mode="explicit",
               extra=[("wall", "xmax", 0.0)] if why == "wall" else [("antiLocking", "fbar")])
-    with pytest.raises(Exception):
-        ops.mpm("analyze", 1, 1.0e-3)
+    needle = {"wall": "`mpm wall` is refused", "fbar": "antiLocking fbar",
+              "fix2": "fix 2's affine image term", "sig0": "initial-stress offset"}[why]
+    _refused(ops, capfd, needle, lambda: ops.mpm("analyze", 1, 1.0e-3))
 
 
-def test_generalized_alpha_refused():
+def test_generalized_alpha_refused(capfd):
     ops = _ops()
     _deck(ops)
     _analysis(ops, integrator=("GeneralizedAlpha", 0.9, 0.8))
-    _refused(ops)
+    _refused(ops, capfd, "Newmark only")
 
 
-@pytest.mark.parametrize("args", [
-    ["-poro", 0.4, "-rhoF", 1.0, "-perm", 0.01, 0.01],                         # no -Kf
-    ["-Kf", 4444.0, "-poro", 0.6, "-rhoF", 1.0, "-perm", 0.01, 0.01, "-alpha", 0.5],   # n > alpha
-    ["-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-perm", 0.01, 0.01, "-bogus", 1.0],   # unknown flag
-    ["-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-permH", 0.01, 0.01],          # -permH without -gammaW
+@pytest.mark.parametrize("args,needle", [
+    (["-poro", 0.4, "-rhoF", 1.0, "-perm", 0.01, 0.01], "missing required argument"),          # no -Kf
+    (["-Kf", 4444.0, "-poro", 0.6, "-rhoF", 1.0, "-perm", 0.01, 0.01, "-alpha", 0.5], "alpha"),   # n > alpha
+    (["-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-perm", 0.01, 0.01, "-bogus", 1.0], "unknown flag"),
+    (["-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-permH", 0.01, 0.01], "-permH and -gammaW come together"),
 ])
-def test_twophase_parser_refusals(args):
+def test_twophase_parser_refusals(args, needle, capfd):
     ops = _ops()
     _deck(ops)
-    with pytest.raises(Exception):
-        ops.mpm("twoPhase", 2, *args)
+    _refused(ops, capfd, needle, lambda: ops.mpm("twoPhase", 2, *args))
 
 
-def test_porous_material_refused_at_particles():
+def test_porous_material_refused_at_particles(capfd):
     ops = _ops()
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
     ops.nDMaterial("ElasticIsotropic", 1, 1.0e4, 0.2, 2.0)
     ops.nDMaterial("FluidSolidPorous", 2, 2, 1, 2.2e6, 101.0)
     ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 1.0, "-cells", 2, 2)
-    with pytest.raises(Exception):
-        ops.mpm("body", 1, "box", 0.0, 0.0, 2.0, 2.0, "-ppc", 2, "-mat", 2, "-rho", 2.0)
+    _refused(ops, capfd, "Porous materials (PDMY, PIMY, FluidSolidPorous) are not admitted",
+             lambda: ops.mpm("body", 1, "box", 0.0, 0.0, 2.0, 2.0, "-ppc", 2, "-mat", 2, "-rho", 2.0))
 
 
-def test_bspline_pfix_nonzero_and_traction_refused():
+def test_bspline_pfix_nonzero_and_traction_refused(capfd):
     ops = _ops()
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
     ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 1.0, "-cells", 2, 2, "-basis", "bspline2")
     ops.mpm("pfix", "ymax", 0.0)                     # drained: admitted
-    with pytest.raises(Exception):
-        ops.mpm("pfix", "xmax", 3.0)
-    with pytest.raises(Exception):
-        ops.mpm("traction", "t", "ymax", 0.0, 2.0, 1.0, 2.0, 0.0, -1.0)
+    _refused(ops, capfd, "p0 != 0 on a B-spline face is refused", lambda: ops.mpm("pfix", "xmax", 3.0))
+    _refused(ops, capfd, "is GIMP / linear only in phase 6",
+             lambda: ops.mpm("traction", "t", "ymax", 0.0, 2.0, 1.0, 2.0, 0.0, -1.0))
 
 
-def test_pack_below_5_refused_with_two_phase():
+def test_pack_below_5_refused_with_two_phase(capfd):
     ops = _ops()
     _deck(ops)
-    with pytest.raises(Exception):
-        ops.mpm("debug", "packVersion", 4)
+    _refused(ops, capfd, "two-phase", lambda: ops.mpm("debug", "packVersion", 4))
 
 
 def test_info_reports_route_constants_and_stab():
@@ -233,7 +246,7 @@ def test_stray_p_is_fixed_where_no_two_phase_particle_reaches():
     assert stray > 0
 
 
-def test_rank_deficient_projection_refused():
+def test_rank_deficient_projection_refused(capfd):
     """P5a's singularity guard (b): bspline2 with one particle per cell -- fewer particles than
     p-active nodes, so the consistent projection matrix is singular; the step is refused loudly
     and nothing moves."""
@@ -249,7 +262,7 @@ def test_rank_deficient_projection_refused():
     ops.mpm("fix", "ymin", "y")
     _analysis(ops)
     x0 = _as_list(ops.mpm("particleData", "x"))
-    _refused(ops)
+    _refused(ops, capfd, "consistent pressure projection")
     assert _as_list(ops.mpm("particleData", "x")) == x0
     assert all(v == 5.0 for v in _as_list(ops.mpm("particleData", "p")))
 

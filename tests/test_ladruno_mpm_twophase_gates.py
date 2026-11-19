@@ -95,7 +95,7 @@ def test_t10_single_phase_bit_for_bit(tmp_path):
     out = tmp_path / "t10.json"
     env = dict(os.environ, LADRUNO_OPENSEES_QUIET="1")
     subprocess.run([sys.executable, str(HERE / "mpm_twophase_t10_single.py"), os.path.dirname(ops.__file__),
-                    str(out)], check=True, env=env, capture_output=True)
+                    str(out)], check=True, env=env, capture_output=True, stdin=subprocess.DEVNULL)
     new = json.loads(out.read_text())
     base = json.loads((DATA / "t10_baseline_cfe478254.json").read_text())
     cases = [k for k in base if k != "build"]
