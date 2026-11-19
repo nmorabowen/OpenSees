@@ -65,6 +65,7 @@
 #include <ElementResponse.h>
 #include <CompositeResponse.h>
 #include <LadrunoResponseTokens.h>
+#include <LadrunoHingeStatus.h>
 #include <ElementalLoad.h>
 #include <elementAPI.h>
 #include <UniaxialMaterial.h>
@@ -3721,6 +3722,11 @@ LadrunoForceBeamColumn2d::setResponse(const char **argv, int argc, OPS_Stream &o
            (strcmp(argv[0], "hingeJ") == 0 || strcmp(argv[0], "hingeZJ") == 0 || strcmp(argv[0], "hinge2") == 0)) {
     theResponse = theHingeJ->setResponse(&argv[1], argc - 1, output);
   }
+  else if (LadrunoResp::is(argv[0], "hingeStatus")) {
+    LadrunoHingeStatus::tagColumns(output);
+    theResponse = new ElementResponse(this, LadrunoHingeStatus::responseID,
+                                      Vector(LadrunoHingeStatus::numColumns));
+  }
   else if (hingeOn && (theHinge != 0 || theHingeJ != 0) && LadrunoResp::is(argv[0], "hingeSummary")) {
     output.tag("ResponseType", "theta_i");
     output.tag("ResponseType", "M_i");
@@ -3776,6 +3782,16 @@ LadrunoForceBeamColumn2d::getResponse(int responseID, Information &eleInfo)
       la(i + 6) = vz(i);
     }
     return eleInfo.setVector(la);
+  }
+
+  else if (responseID == LadrunoHingeStatus::responseID) {
+    static thread_local Vector status(LadrunoHingeStatus::numColumns);
+    LadrunoHingeStatus::reset(status);
+    if (hingeOn) {
+      LadrunoHingeStatus::fillEnd(status, LadrunoHingeStatus::endI, theHinge, 0, 0);
+      LadrunoHingeStatus::fillEnd(status, LadrunoHingeStatus::endJ, theHingeJ, 0, 0);
+    }
+    return eleInfo.setVector(status);
   }
 
   else if (responseID == 31) {

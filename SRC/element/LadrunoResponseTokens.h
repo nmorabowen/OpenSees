@@ -116,6 +116,8 @@ inline const char *canon(const char *s)
                             "hingeRotations", 0}},
     {"hingeMoment",        {"hingeMoments", 0}},
     {"hingeSummary",       {"hingeState", 0}},
+    // Not an alias of hingeSummary: hinge kind and damage per slot (WP-235).
+    {"hingeStatus",        {0}},
 
     // ---- penalty / tie / coupling family ----------------------------------
     {"penalty",            {"kt", "k", "penaltyStiffness", 0}},

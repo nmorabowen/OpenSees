@@ -70,6 +70,7 @@
 #include <ElementResponse.h>
 #include <CompositeResponse.h>
 #include <LadrunoResponseTokens.h>
+#include <LadrunoHingeStatus.h>
 #include <math.h>
 #include <cmath>
 #include <ElementalLoad.h>
@@ -3668,6 +3669,11 @@ LadrunoDispBeamColumn2d::setResponse(const char **argv, int argc,
            (strcmp(argv[0],"hingeJ") == 0 || strcmp(argv[0],"hingeZJ") == 0 || strcmp(argv[0],"hinge2") == 0)) {
     theResponse = theHingeJ->setResponse(&argv[1], argc-1, output);
   }
+  else if (LadrunoResp::is(argv[0], "hingeStatus")) {
+    LadrunoHingeStatus::tagColumns(output);
+    theResponse = new ElementResponse(this, LadrunoHingeStatus::responseID,
+                                      Vector(LadrunoHingeStatus::numColumns));
+  }
   else if (hingeOn && (theHinge != 0 || theHingeJ != 0) && LadrunoResp::is(argv[0], "hingeSummary")) {
     output.tag("ResponseType", "theta_i");
     output.tag("ResponseType", "M_i");
@@ -3745,6 +3751,16 @@ LadrunoDispBeamColumn2d::getResponse(int responseID, Information &eleInfo)
     crdTransf->getLocalAxes(vx, vy, vz);
     for (int i = 0; i < 3; i++) { la(i) = vx(i); la(i + 3) = vy(i); la(i + 6) = vz(i); }
     return eleInfo.setVector(la);
+  }
+
+  else if (responseID == LadrunoHingeStatus::responseID) {
+    static thread_local Vector status(LadrunoHingeStatus::numColumns);
+    LadrunoHingeStatus::reset(status);
+    if (hingeOn) {
+      LadrunoHingeStatus::fillEnd(status, LadrunoHingeStatus::endI, theHinge, 0, 0);
+      LadrunoHingeStatus::fillEnd(status, LadrunoHingeStatus::endJ, theHingeJ, 0, 0);
+    }
+    return eleInfo.setVector(status);
   }
 
   else if (responseID == 31) {

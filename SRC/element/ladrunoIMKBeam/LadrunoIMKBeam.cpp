@@ -42,6 +42,7 @@
 #include <Parameter.h>
 #include <ElementResponse.h>
 #include <LadrunoResponseTokens.h>   // Ladruno — shared recorder-token aliases
+#include <LadrunoHingeStatus.h>      // Ladruno (WP-235) — hingeStatus response
 #include <ElementalLoad.h>
 #include <Renderer.h>
 #include <classTags.h>
@@ -1524,6 +1525,11 @@ Response *LadrunoIMKBeam::setResponse(const char **argv, int argc, OPS_Stream &s
     s.tag("ResponseType", "My_2");
     theResponse = new ElementResponse(this, 5, Vector(4));
 
+  } else if (LadrunoResp::is(argv[0], "hingeStatus")) {
+    LadrunoHingeStatus::tagColumns(s);
+    theResponse = new ElementResponse(this, LadrunoHingeStatus::responseID,
+                                      Vector(LadrunoHingeStatus::numColumns));
+
   } else if (LadrunoResp::is(argv[0], "hingeSummary")) {
     s.tag("ResponseType", "thetaZ_i");
     s.tag("ResponseType", "Mz_i");
@@ -1696,6 +1702,13 @@ int LadrunoIMKBeam::getResponse(int responseID, Information &info)
     Pl(2)  = -V + pe(3);      Pl(8)  =  V + pe(4);
 
     return info.setVector(Pl);
+  }
+  case LadrunoHingeStatus::responseID: {
+    static thread_local Vector status(LadrunoHingeStatus::numColumns);
+    LadrunoHingeStatus::reset(status);
+    LadrunoHingeStatus::fillEnd(status, LadrunoHingeStatus::endI, theMat[0], theMat[2], theBiaxialMat[0]);
+    LadrunoHingeStatus::fillEnd(status, LadrunoHingeStatus::endJ, theMat[1], theMat[3], theBiaxialMat[1]);
+    return info.setVector(status);
   }
   case 8: {
     static thread_local Vector hs(8);

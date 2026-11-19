@@ -160,6 +160,7 @@ GLOBS = [
     "SRC/element/LadrunoElementShell.h",   # WP-124 shared Element-contract helpers
     "SRC/element/LadrunoMassCache.h",
     "SRC/element/LadrunoResponseTokens.h",
+    "SRC/element/LadrunoHingeStatus.h",    # WP-235 shared hingeStatus response
     "SRC/interpreter/PythonMPIModule.cpp",
     "SRC/interpreter/LadrunoCommand*.h",   # WP-168 command table + DL registration hooks
     "SRC/interpreter/LadrunoSchema.h",     # WP-185 ladrunoSchema generator
