@@ -1,6 +1,10 @@
 # limit_cases.txt -- analytic and gate cases for limit analysis (WP-237a).
 # Interface: tests/limit_interface.md. Format version: limit-cases 0.
-# STATUS: proposed for freeze; the orchestrator has not frozen this file.
+# STATUS: frozen at 03f59c1a4 (2026-11-19). Amendment 1 (interface section 19.1) is recorded after the freeze;
+#         it changes no case line. Under amendment 1, item 8, the checker's present capacity cannot prove the
+#         conditioning bound on mesh 5 for the Lower formulation of every upper_gate_3d case or for the jump
+#         Upper formulation of the phi = 0 cases; those mesh-5 gates stand unchanged and cannot pass until
+#         WP-237d identifies an open, proved route (interface 11.2, 17.1).
 #
 # FORMAT (line based, ASCII)
 #   '#' starts a comment line; blank lines are ignored. Tokens are separated by whitespace.

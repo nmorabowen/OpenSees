@@ -1,8 +1,8 @@
 # Limit analysis: the P0 interface (WP-237a)
 
-**Status:** proposed for freeze after the 2026-11-19 review-fix round; **not frozen**. The orchestrator
-freezes this file. After the freeze a change is an amendment logged in section 19, never a silent edit.
-Section 18 separates accepted owner decisions from orchestrator P0 rulings.
+**Status:** **frozen at `03f59c1a4`** (2026-11-19, after the pre-freeze round), with **amendment 1** recorded after
+it (section 19.1). A change after the freeze is an amendment logged in section 19, never a silent edit. Section 18
+separates accepted owner decisions from orchestrator P0 rulings.
 
 **Who reads it.** The Python reference author, the independent checker author, the external reference
 author and later the C++ author. Each implements from this file and `tests/limit_cases.txt`, without
@@ -240,7 +240,7 @@ its three vertices. Body force is constant in a region. A region's strength is c
 | `free` | `N(n) sigma = 0` | none |
 | `traction` | `N(n) sigma = t0 + lambda t1` | none; adds work |
 | `fixed` | none | `v = 0` |
-| `symmetry` | `T1^T N(n) sigma = T2^T N(n) sigma = 0` | `n^T v = 0` |
+| `symmetry` | `T1^T N(n_S) sigma = T2^T N(n_S) sigma = 0` | `n_S^T v = 0` |
 | `footing` | enters the resultant (section 6) | rigid map (section 6) |
 | `interface` | reserved, refused in version 0 | reserved |
 
@@ -249,6 +249,12 @@ and `T2 = n x T1`.
 
 **Symmetry sets** must be planar. All their facets share one normal and one plane within
 `TOL_GEOM_PLANE`. The set's normal is the normal of its first facet in `facets` order.
+
+**Symmetry rows use the declared set normal (amendment 1, item 3).** In both bounds every symmetry row of set `S` uses
+`n_S`, the set normal above, never the facet's own computed normal: Lower rows `T1^T N(n_S) sigma` and `T2^T N(n_S) sigma`,
+with `T1`, `T2` the tangent basis of `n_S`; Upper rows `n_S^T v`. The program (15.4) and the certificate projections
+(17.3, 17.4) use the same rows. Facet normals of a planar set differ from `n_S` only by rounding, so this fixes one row
+per node or vertex and makes independent assemblies produce identical rows.
 
 **Corners.** Conditions apply per facet in the Lower problem and accumulate per node in the Upper problem.
 
@@ -401,6 +407,10 @@ satisfying the boundary and footing rows and the query normalisation.
   `nullity = n_unknowns - rank`. `footing_modes` is the rank of the kernel restricted to `V`. A dense factorisation
   may be skipped when too large; then the three are `null`. Nullity does not enter the verdict: the broken space has a
   large nullity on every mesh, and every `alpha > 0` space has no isochory rows.
+- **No footing (amendment 1, item 10).** When the problem has no footing (`n_f = 0`) there is no `V`, so `footing_modes`
+  is `null` whether or not `rank` is computed, and the `footing_modes` condition of `formulation_feasible` does not
+  apply. A number in its place is refused (`feasibility_rank`). With `n_f >= 1`, `rank`, `nullity` and `footing_modes`
+  are computed together or are all `null`.
 - **Residual.** With `c_ei` the flow violation at element vertices, `c_FB` the jump violation on Bernstein
   coefficients, `w_ei = V_e / 4` and `w_FB = A_F / (6 h_F)`, `h_F` the longest edge of the facet:
 
@@ -420,10 +430,16 @@ fixed, so `rho_feas` is the witness's own `rho`.
 - **Witness.** A result document (section 15.3) of the formulation holding a field `(v, V)` in `A`. A certified Upper
   of the same problem is a witness. The **checker**, not the producer, recomputes `rho` at the witness from the problem
   file with its own operators, and writes the record of section 15.5 with the witness's `result_sha256`.
+- **Witness field (amendment 1, item 10).** `rho` is evaluated at the **certified projected field** of the witness: the
+  field that the checker's section 17.4 procedure produces from the witness result, after the affine projection of step
+  2 and, when a repair is made, the blend of step 4. When that procedure certifies the witness it is the field `x_c` of
+  section 17.5. The raw arrays of the result document are **not** the witness field: they satisfy the equality rows only
+  to solver accuracy. The projection uses the scales and literal zeros of section 17.1, so the field and its residual
+  are reproducible from the problem and result documents alone.
 
 | `status` | Condition |
 |---|---|
-| `formulation_feasible` | `rho_feas <= TOL_FEAS_OK`; the witness has `rho <= TOL_FEAS_OK`; `footing_modes`, where computed, is at least 1 |
+| `formulation_feasible` | `rho_feas <= TOL_FEAS_OK`; the witness has `rho <= TOL_FEAS_OK`; `footing_modes`, where computed and `n_f >= 1`, is at least 1 |
 | `formulation_infeasible` | every `alpha = 0`, and `rho_feas >= TOL_FEAS_LOCKED`. Never claimed for `alpha > 0` |
 | `inconclusive` | anything else |
 
@@ -450,6 +466,17 @@ unconverged candidate, and is never averaged away.
 The limits were set late (section 18.3) and the owner accepted them on 2026-11-19 (OD1). They are closed from this
 revision: a limit does not move and no gate mesh changes. A miss is a real P0 failure, recorded.
 
+**Mesh-5 conditioning route (amendment 1, item 8).** At this amendment the checker's capacity is **insufficient** to prove
+the conditioning bound of section 17.1 on mesh 5 for two groups: the **Lower** formulation in all eight `upper_gate_3d`
+cases, and the **jump Upper** formulation in the von Mises cases (`phi = 0`, fixed and roller walls). On those meshes the
+checker writes a capacity or conditioning refusal (section 15.8), not a certificate. So `certified_bracket mesh 5`,
+`gap_le ... mesh 5` and `lower_nondecrease 3 5` in every 3D case, and `certified_upper mesh 5` and `upper_nonincrease 3 5`
+in the two von Mises cases, **cannot pass** until WP-237d identifies an open-source route that proves the bound at that size
+(section 17.1: shape-forced zeros, dense singular values on disjoint row blocks, or an explicit null-space basis with a
+stated residual bound, and a proved lower bound on the smallest kept singular value). The gates are **not** weakened: no
+mesh, limit, tolerance or gate line moves, a refusal never counts as a pass, and under OD2 it is not a missing certificate
+(section 11.3).
+
 ### 11.3 Verdicts
 
 The verdict is per case, so **per angle and wall type**, as `evaluate_case` returns it, and `evaluate_program` reads the
@@ -462,6 +489,9 @@ verdicts for P0. By owner decision OD2, after the box correction above:
 - at **any** angle, a failed `upper_nonincrease` or `lower_nondecrease` between two certified values, a failed or
   missing `kinematic_status`, or an invalid record keeps P0 open, and any contradiction (certified Lower above certified
   Upper beyond the floors) stops the program;
+- at **any** angle, an item whose certificate was replaced by a **capacity or conditioning refusal** (section 15.8)
+  keeps P0 open. A refusal is **not** a missing certificate under OD2: it says that the checker could not prove the
+  bound, not that no candidate was offered (amendment 1, item 7; orchestrator ruling of 2026-11-19);
 - a miss at `phi = 0, 10, 20` degrees is a P0 failure that keeps P0 open (ADR 18.3), and no candidate passing
   triggers K2;
 - a failure of an exact formulation case (`exact_on_mesh`, `exact_lower_on_mesh`) or of the thin-slab strip still
@@ -615,6 +645,8 @@ relative to the JSON file. Arrays are `<f8` or `<i8` only.
 <case>.m<m>.<query>.<formulation-id>.result.json            and .npz
 <case>.m<m>.<query>.<formulation-id>.program.json           and .npz
 <case>.m<m>.<query>.<formulation-id>.certificate.json
+<case>.m<m>.<query>.<formulation-id>.certificate.method.json         amendment 1, section 15.9
+<case>.m<m>.<query>.<formulation-id>.refusal.json                    amendment 1, section 15.8
 <case>.m<m>.<query>.<formulation-id>.feasibility.json
 <case>.m<m>.<query>.<lower-formulation-id>__<upper-formulation-id>.bracket.json
 ```
@@ -635,7 +667,8 @@ enc(object) = b"m" + u64(count) + for each key in UTF-8 byte order: enc(key) + e
 ```
 
 `u64` is unsigned little-endian. The `arrays` file name is part of the document. Hash keys are
-`problem_sha256` in a problem and `result_sha256` in a result. **Negative zero hashes as zero**: numbers are
+`problem_sha256` in a problem and `result_sha256` in a result. A certificate has no hash key of its own: its
+`certificate_sha256` (amendment 1, section 15.9) is this hash of the whole certificate document with no arrays. **Negative zero hashes as zero**: numbers are
 encoded as `float64(x) + 0.0`, and float arrays are hashed as `array + 0.0`.
 
 The Kuhn generator (section 3.5) computes vertex `(i, j, k)` as `lo + (hi - lo) * [i/nx, j/ny, k/nz]` in IEEE double,
@@ -676,6 +709,20 @@ Every boundary set is non-empty and every footing has at least one set.
 becomes a problem as follows: all elements take region 0; `target` is `box`; `length_scale` is the longest
 box side; exterior facets take the first matching `boundary` line; tractions are evaluated at facet vertices;
 `F0` and `F1` default to zero. `build_case_problem` in `tests/test_limit_contract.py` is the executable form.
+
+**The problem `name` (amendment 1, item 4).** `name` is part of the hashed document, so a case problem's name is fixed:
+`<case>:<label>`, with `<case>` the case name and `<label>` built from the case's `mesh` or `mesh_file` line for that
+mesh index:
+
+- `mesh nx ny nz` gives `<nx>x<ny>x<nz>`, the three counts as decimal integers joined by a lower-case `x`
+  (`tresca_strip_vm_thin_slab:8x1x4` for its mesh 0);
+- `mesh_file <file> [refine r]` gives `<stem>+<r>`, with `<stem>` the file name up to its **first** `.` and `r` the
+  refinement count, `0` when `refine` is absent (`upper3d_fixed_phi00:upper3d_a+0`, `upper3d_fixed_phi00:upper3d_d+1`).
+
+The other derived values follow the same executable form: `units` is `{length, force}` from the first two
+`;`-separated parts of the `units` line, each split at its first space; `length_scale` is the longest box side as a
+double; `regions` copy the case's region lines with `b0`, `b1` defaulting to `[0, 0, 0]` and `alpha` present only for
+Drucker-Prager; `restrained` lists `[footing index, component index]` in case order. `problem_hashes.json` is the check.
 A `mesh_file` is an NPZ with `nodes (n, 3)` of `<f8` and `tets (E, 4)` of `<i8`, positively oriented, and
 sections 3.5 and 3.6 add refinement and mid-edge nodes. The four committed files are unstructured tetrahedral meshes
 of the box `[-2, 2] x [-2, 2] x [-2, 0]`, with the square `[-0.5, 0.5]^2` conforming on `z = 0`, made with gmsh 4.15
@@ -715,6 +762,15 @@ Keys: `format` = `ladruno-limit-result`, `format_version`, `arrays`, `problem_sh
 | `upper`, `upper.p2c-vertex.v0` | `velocity (N,3)`, `footing_velocity (n_f,6)` | `interior_velocity (N,3)` and `interior_footing_velocity (n_f,6)`; `strain_rate (E,4,6)`; `dissipation (E,4)` |
 | `upper`, `upper.p2d-jump-bernstein.v0` | `element_velocity (E,10,3)`, `footing_velocity (n_f,6)` | `interior_element_velocity (E,10,3)` and `interior_footing_velocity (n_f,6)`; `strain_rate (E,4,6)`; `dissipation (E,4)` |
 
+**`value` and `objective` (amendment 1, item 2).** `objective` is `c^T x`, the objective of the section 15.4 program at
+the producer's solution `x`, with that program's sign. `value` is the bound the field claims:
+
+- Lower: `value = objective_sign * objective`, which is `lambda` for ray forms and `d^T R` for `support`;
+- Upper: `value` is the **field value of section 17.4 step 6** evaluated on the stored velocity field, without testing
+  the domain: `(D - W0) / W1` for ray forms and `D - W0` for `support`, with `D` the vertex and Bernstein sums of that step.
+  It is **not** `c^T x`. The two differ when `W1 = 1` holds only to solver accuracy, or when a cone variable `r` or `rho`
+  sits above its minimum. The checker compares `value` with its own step 6 value (17.4 step 1, `value_mismatch`).
+
 `interior_value` is a top-level key, present exactly when `interior_sigma` is. With `solver_status` of
 `solved` or `almost_solved`, `value` and the arrays are required. Otherwise `value` and `objective` are
 `null` and no field arrays are stored: a time limit gives **no number**. A `lower` result carrying velocity
@@ -724,7 +780,8 @@ vertex outside the flow cone is not a repair (section 17.4).
 ### 15.4 Program: `<stem>.<query>.<formulation-id>.program.json`, `.npz`
 
 Canonical form: minimise `c^T x` subject to `A x + s = b`, `s` in `K`. `K` is the zero cone, then the listed
-second-order cones in order. `value = objective_sign * c^T x`.
+second-order cones in order. A result's `objective` is `c^T x`; for Lower, `value = objective_sign * c^T x`; for Upper,
+`value` is the field value of section 15.3, not `c^T x` (amendment 1, item 2).
 
 Keys: `format` = `ladruno-limit-program`, `format_version`, `arrays`, `problem_sha256`, `query_id`, `bound`,
 `formulation`, `objective_sign`, `n_variables`, `n_rows`, `n_zero`, and `cones`, a list of `{dim, count}`. Arrays: CSC
@@ -738,7 +795,7 @@ Rows, in order:
 1. equilibrium, 3 per element: `[b1_e | sum N(grad L_i)]`, right side `-b0_e`;
 2. interior facets in section 3.4 order, 3 vertices, 3 components: `N(n) sigma_- - N(n) sigma_+ = 0`;
 3. exterior facets in `facets` order, 3 vertices: `free` and `traction`, 3 rows, `N(n) sigma - lambda t1 = t0`;
-   `symmetry`, rows `T1`, `T2`; none for others;
+   `symmetry`, rows `T1`, `T2` of the set normal `n_S` (section 5); none for others;
 4. ray forms: for each footing and unrestrained component, `R - lambda F1 = F0`;
 5. cones, per `(e, i)`: rows `[sqrt2 alpha one^T ; -Q]` on `sigma_ei`, right side `(sqrt2 k, 0)`.
 
@@ -747,7 +804,7 @@ Rows, in order:
 
 1. flow, per `(e, i)`, 6 rows: `B_ei v - sqrt2 alpha r one - Q^T z = 0`;
 2. `fixed`: for each fixed node ascending, 3 rows `v = 0`;
-3. `symmetry`: per set in order, nodes ascending, fixed nodes omitted, `n^T v = 0`;
+3. `symmetry`: per set in order, nodes ascending, fixed nodes omitted, `n_S^T v = 0` with the set normal;
 4. `footing`: per footing, nodes ascending, 3 rows `v - u - w x (x_a - x_ref) = 0`;
 5. restrained components, in list order: `V = 0`;
 6. ray forms: `W1 = 1`; `support`: `V_fc = d_fc` over unrestrained `(f, c)`;
@@ -761,7 +818,7 @@ interior facets of section 3.4 and `B` in facet-node order. `objective_sign = +1
 2. jumps, per `(F, B)`, 3 rows: `n . c_B - tau rho = 0`, `T1 . c_B - y1 = 0`, `T2 . c_B - y2 = 0`. `c_B` uses `e+` values
    minus `e-` values, matched by global node id, and the tangent basis of section 5 for `n`;
 3. `fixed`: per `(e, a)` ascending, 3 rows;
-4. `symmetry`: per set, per `(e, a)` ascending, those in `fixed` omitted, one row;
+4. `symmetry`: per set, per `(e, a)` ascending, those in `fixed` omitted, one row `n_S^T v = 0`;
 5. `footing`: per footing, per `(e, a)` ascending, 3 rows;
 6. restrained components, then `W1 = 1` or `V_fc = d_fc`;
 7. cones: `SOC6` per `(e, i)`, then `SOC3` per `(F, B)`. `cones = [{dim: 6, count: 4 E}, {dim: 3, count: 6 F}]`.
@@ -772,7 +829,9 @@ Written by the checker. Keys: `format` = `ladruno-limit-feasibility`, `format_ve
 `formulation`, `status`, `rho_feas`, `numerator`, `denominator`, `n_unknowns`, `n_rows`, `rank`, `nullity`,
 `footing_modes`, `method`, `witness_result_sha256`, `witness_residual`, `checker` `{name, version}`, `tolerances`.
 `rho_feas = numerator / denominator`; `witness_residual` is `rho` at the witness, and both witness keys are `null`
-together. For `alpha > 0`, `rho_feas` equals `witness_residual`. `status` follows section 11.1.
+together. For `alpha > 0`, `rho_feas` equals `witness_residual`. `status` follows section 11.1. `witness_residual` is
+evaluated at the certified projected field of the witness (11.1). `footing_modes` is `null` when the problem has no
+footing, and `rank`, `nullity`, `footing_modes` are `null` together when the factorisation is skipped (amendment 1).
 
 ### 15.6 Certificate and bracket
 
@@ -798,6 +857,12 @@ together. For `alpha > 0`, `rho_feas` equals `witness_residual`. `status` follow
 Two checker names are reserved and no gate accepts them: `schema-fixture`, for hand-made fixtures, and
 `procedure-demo`, for the demonstration of section 18.3.
 
+**Gate certificates need a method report (amendment 1, item 5).** A certificate written under any other checker name is a
+*gate certificate*. It is gate-admissible only with a valid method report (section 15.9) bound to it by
+`certificate_sha256`. `gate_admissible`, the bracket validator and `evaluate_case` all refuse a gate certificate without
+one; the bracket validator refuses the bracket with `method_report_missing`, or with the report's own code when the report
+is invalid.
+
 ### 15.7 Literal conventions object
 
 ```json
@@ -805,6 +870,46 @@ Two checker names are reserved and no gate accepts them: `schema-fixture`, for h
  "stress_shear": "tensor", "strain_rate_shear": "engineering", "tet10": "vtk",
  "facets": "opposite_vertex_outward", "footing_resultant": "footing_on_soil"}
 ```
+
+### 15.8 Capacity refusal: `<stem>.<query>.<formulation-id>.refusal.json` (amendment 1, item 7)
+
+Written by the checker **instead of** a certificate when it cannot finish the procedure of section 17 for lack of
+capacity, or cannot prove the conditioning bound of section 17.1. Keys: `format` = `ladruno-limit-refusal`,
+`format_version`, `problem_sha256`, `result_sha256`, `query_id`, `bound`, `formulation`, `kind`, `stage`, `detail`,
+`resources`, `checker` `{name, version}`, `tolerances`.
+
+| Key | Content |
+|---|---|
+| `kind` | `capacity`: the computation did not fit in the checker's memory or time. `conditioning`: it ran, and no bound of section 17.1 was proved |
+| `stage` | `projection`, `dependent_rows` or `kappa_bound`: the step that could not be completed |
+| `detail` | free text naming the route tried and why it failed |
+| `resources` | `{n_rows, n_unknowns, nnz}` of the reduced system, non-negative integers |
+
+Identity keys must match the result document, exactly as for a certificate. A refusal carries no value and no
+classification. A result with both a certificate and a refusal is an invalid record set (`refusal_conflict`).
+
+**Meaning.** A refusal is **not** an estimate of the bound and **not** a missing certificate. A case item whose mesh and
+formulation have a refusal from a gate checker, and no gate-admissible certificate, fails with cause `refused`. Under OD2
+that cause is never withholdable, so it keeps P0 open at every angle (section 11.3). `evaluate_program` lists the cases
+with refused items.
+
+### 15.9 Method report: `<stem>.<query>.<formulation-id>.certificate.method.json` (amendment 1, item 5)
+
+Written by the checker beside every certificate, and **required** for a gate certificate (15.6). Keys: `format` =
+`ladruno-limit-certificate-method`, `format_version`, `problem_sha256`, `result_sha256`, `certificate_sha256`, `query_id`,
+`bound`, `formulation`, `checker`, `kappa`, `dependent_rows`, `rows_skipped`, `interior_field`, `tolerances`.
+
+| Key | Content and rule |
+|---|---|
+| identity | `problem_sha256`, `result_sha256`, `query_id`, `bound`, `formulation` and `checker` equal the certificate's. `certificate_sha256` is the section 15.1 hash of the certificate document |
+| `kappa` | `{method, sigma_max_upper, sigma_min_lower, kappa_upper, perturbation_bound, residual}`. `method` is `dense_svd`, `dense_svd_blocks`, `eigen_normal_rows` (`A_hat A_hat^T`) or `eigen_normal_columns` (`A_hat^T A_hat`). `sigma_max_upper` is a proved upper bound on `sigma_max(A_hat)`; `sigma_min_lower > 0` a proved lower bound on the smallest kept singular value; `perturbation_bound >= 0` the stated bound used for them. `residual` is the Ritz or eigenvalue residual bound, required for the two eigenvalue methods and `null` for the two singular-value methods. `kappa_upper` equals the certificate's `checks.kappa_eq` and is at least `sigma_max_upper / sigma_min_lower` |
+| `dependent_rows` | `{n_rows, n_unknowns, rank, proofs}` of the reduced system. `proofs` is a list of `{route, count, residual_bound}`: `route` is `shape_forced_zeros`, `dense_svd_blocks` or `null_space_basis`; `count >= 1`. `residual_bound` is `null` for `shape_forced_zeros`, the stated factorisation perturbation bound for `dense_svd_blocks`, and the bound on the null-space basis residual for `null_space_basis`, which must not exceed `TOL_RANK * sigma_max_upper`. `rank = n_rows - rows_skipped` |
+| `rows_skipped` | the number of rows whose zero singular values were skipped. It equals the sum of the proof counts: **no row is skipped without a proof** |
+| `interior_field` | `{source, sha256}`. `source` is `none` (no repair; requires `checks.repair_mu = 0`), `zero` (Lower only, under 17.3 step 5), or `result` (the result's interior arrays). `sha256` is `null` unless `source` is `result`; then it is the section 15.1 hash of the empty document `{}` with the interior arrays of the bound (`interior_sigma`; or `interior_velocity` or `interior_element_velocity`, with `interior_footing_velocity`) |
+| `tolerances` | the table of section 17.8 |
+
+`validate_method_report` in `tests/test_limit_contract.py` is the executable form. A report that does not match its
+certificate is invalid, and the certificate is then not gate-admissible.
 
 ## 16. Derivations behind the cases
 
@@ -943,14 +1048,32 @@ tolerances. It always runs **affine projection, then inequality repair, then a f
   `omega` times its own natural size: `x` solves exactly a system whose right side `g_i` moves by at most
   `omega (sum_j |a_ij| d_j + |g_i|)`. A componentwise form, with `|x_j|` in place of `d_j`, is **not** used: a homogeneous
   row whose entries are all rounding-small has residual equal to its denominator, and no solver field could pass.
-- **Conditioning.** `kappa_eq = sigma_max(A_hat) / sigma_min+(A_hat)`, the smallest singular value above
-  `TOL_RANK sigma_max`. The value used must be an upper bound on the true ratio or an estimate within a factor 2.
-  Method: a dense singular value decomposition where it fits; otherwise shift-invert Lanczos on `A_hat A_hat^T` for the
-  smallest non-zero eigenvalue, with the Ritz residual reported. That normal matrix is singular when rows are
-  dependent, so the shift `s` must be **positive** and below the eigenvalue sought. Eigenvalues at or below
-  `TOL_RANK^2 sigma_max^2` are the dependent rows and are skipped, and
-  their count must equal `n_rows - rank`. The certificate states which method gave the number;
-  an iterative value is an estimate of conditioning. 237c reports `kappa_eq` on every gate mesh before any gate is read.
+- **Conditioning: a proved bound (amendment 1, item 6; replaces the frozen rule).** With `n_dep` the number of dependent
+  rows **proved** below and `r = n_rows - n_dep`, let `sigma_r` be the `r`-th largest singular value of `A_hat`. The
+  reported `kappa_eq` must be a **proved upper bound** on `sigma_max(A_hat) / sigma_r`: `kappa_eq >= sigma_max_upper /
+  sigma_min_lower`, with `sigma_max_upper >= sigma_max(A_hat)` and `0 < sigma_min_lower <= sigma_r` each proved, and the
+  perturbation and residual bounds used stated in the method report (15.9). An estimate, including an unbounded Lanczos or
+  Ritz value, is not a bound and certifies nothing.
+  - *Dependent rows* count, and their zero singular values are skipped, **only** when proved by one of:
+    1. **shape-forced zeros**: after literal zeros a row has no remaining entry. Its right side must be zero; otherwise
+       the system is inconsistent and fails at the recheck;
+    2. **dense singular values on disjoint row blocks**: the rows are split into blocks whose column supports are
+       pairwise disjoint, so the singular values of `A_hat` are the union of the blocks' values. Each block gets a dense
+       singular value decomposition with a stated perturbation bound `delta`. A value counts as zero only when it is at
+       most `TOL_RANK * sigma_max_upper`, and the smallest kept value minus `delta` exceeds `TOL_RANK * sigma_max_upper +
+       delta`, so the factorisation error cannot move a value across the split. One block, the whole matrix, is allowed;
+    3. **an explicit null-space basis**: `n_dep` left null vectors `Z` with stated bounds on `|Z^T A_hat|_2` and on the
+       departure of `Z` from orthonormality, which together bound the skipped singular values by at most
+       `TOL_RANK * sigma_max_upper`.
+  - *Eigenvalue routes.* `A_hat A_hat^T` and `A_hat^T A_hat` are both allowed. Their non-zero eigenvalues are the
+    `sigma_i^2`. `A_hat A_hat^T` has `n_dep` zero eigenvalues and `A_hat^T A_hat` has `n_unknowns - r`; a skipped count
+    must match. A Ritz or eigenvalue residual gives `sigma_min_lower` only together with a proof that no unskipped
+    eigenvalue lies below it, such as the full spectrum of a dense block or a counted inertia; the residual is reported.
+    A shift used on these singular matrices is **positive**.
+  - *No proof, no number.* When no route proves `n_dep`, or no lower bound on `sigma_r` is proved within the checker's
+    capacity, the checker writes a **capacity or conditioning refusal** (section 15.8) and no certificate. It never
+    reports an estimated `kappa_eq`, and it never skips a row it has not proved dependent.
+  237c reports `kappa_eq`, or the refusal, on every gate mesh before any gate is read.
 - **Move.** `projection_move = max_j |x_P,j - x_j| / d_j`.
 
 ### 17.2 Equality acceptance
@@ -964,8 +1087,9 @@ accept only if   omega <= tau_eq,   kappa_eq <= TOL_KAPPA_CAP   and   kappa_eq *
 The threshold is a rounding level. Evaluating a row of at most about 60 entries in double precision is accurate to a
 few dozen `u` of its natural size whatever the conditioning, so `tau_eq` carries **no** `kappa` factor. Conditioning
 enters the floor only (section 17.5): `kappa_eq` measures how far a rounding-level residual can move the value. The cap
-is a number: `TOL_KAPPA_CAP = 1e8`, and with `omega <= tau_eq` it implies `kappa_eq * omega <= 7.1e-7`. A system above
-the cap gives an estimate with `equality_ill_conditioned`; one with `omega > tau_eq` gives
+is a number: `TOL_KAPPA_CAP = 1e8`, and with `omega <= tau_eq` it implies `kappa_eq * omega <= 7.1e-7`. `kappa_eq` is the
+proved bound of section 17.1. A proved bound above the cap gives an estimate with `equality_ill_conditioned`; a bound that
+cannot be proved gives a refusal (15.8), not an estimate; a system with `omega > tau_eq` gives
 `equality_residual_above_floor`. No solver setting enters either test. The demonstration of section 18.3 reached
 `omega` between 3e-17 and 7e-17 on solver fields.
 
@@ -976,7 +1100,7 @@ the cap gives an estimate with `equality_ill_conditioned`; one with `omega > tau
    `TOL_VALUE_MATCH * S_ref * A_f` (moments with an extra `ell`). For `support`, recompute `value = d^T R` and compare
    within `TOL_VALUE_MATCH * |value|`. A mismatch is `value_mismatch`.
 2. **Project.** `x = (lambda, sigma)`, or `sigma` for `support`. Rows: equilibrium, facet continuity, free and traction
-   boundaries, symmetry rows, and unrestrained footing resultants. Apply the literal zeros, then the minimum-norm
+   boundaries, symmetry rows with the set normal (section 5), and unrestrained footing resultants. Apply the literal zeros, then the minimum-norm
    correction of the scaled unknowns in `A_hat`, with iterative refinement until `omega` stops decreasing (at most five
    sweeps). Require `projection_move <= TOL_PROJECTION_MOVE`. An inconsistent system keeps its residual and fails at
    step 6.
@@ -997,7 +1121,7 @@ the cap gives an estimate with `equality_ill_conditioned`; one with `omega > tau
 1. As Lower step 1. The value is recomputed from the candidate with the formulas of sections 4.3 and 12.2 **without
    testing the domain**: `sqrt2 k |e|` or `k theta / (3 alpha)` per vertex, `k s` or `k o / (3 alpha)` per Bernstein
    coefficient. The domain is step 3's business. Stored `strain_rate` and `dissipation` arrays are ignored.
-2. **Project.** `x = (v, V)`. Rows: fixed nodes, roller nodes, rigid footprint, restrained components, `V = d` for
+2. **Project.** `x = (v, V)`. Rows: fixed nodes, roller nodes with the set normal (section 5), rigid footprint, restrained components, `V = d` for
    `support`, `theta = 0` at every `alpha = 0` element vertex, and `n . c_B = 0` on every coefficient where `tau = 0`.
    Work normalisation is **not** a row (section 18.2, R9). Literal zeros and the scaled minimum-norm correction as in
    Lower step 2. Require `projection_move <= TOL_PROJECTION_MOVE`.
@@ -1008,15 +1132,29 @@ the cap gives an estimate with `equality_ill_conditioned`; one with `omega > tau
    c~_FB = tau |c_t| - n . c_B                      each coefficient with tau > 0
    ```
 
-   which are convex and positively homogeneous; admissible means `c~ <= 0`. With `D_scale` the largest `|D_ei|_F` or
-   `|c_B|`, `rho_flow = max(0, max c~_ei) / D_scale` and `rho_jump_cone = max(0, max c~_FB) / D_scale`. If either exceeds
-   `TOL_FLOW_ACCEPT`, stop with `flow_violation_too_large`.
+   which are convex and positively homogeneous; admissible means `c~ <= 0`.
+
+   **`D_scale` has one value per kind of condition, never a mixture (amendment 1, item 10).** A volume condition has the
+   units of a strain rate (1/time) and a jump condition those of a velocity (length/time), so they are scaled separately:
+
+   ```text
+   D_scale_vol  = max over (e, i) of |D_ei|_F          strain-rate units; |D|_F^2 = |d_diag|^2 + (d_xy^2 + d_yz^2 + d_zx^2)/2
+   D_scale_jump = max over (F, B) of |c_B|             velocity units; Euclidean norm of the coefficient vector
+   rho_flow      = max(0, max c~_ei) / D_scale_vol
+   rho_jump_cone = max(0, max c~_FB) / D_scale_jump
+   ```
+
+   A ratio whose scale is zero is `0`: every condition of that kind then vanishes. Wherever a `D_scale` appears below, it
+   is the scale of the condition's own kind. If either ratio exceeds `TOL_FLOW_ACCEPT`, stop with
+   `flow_violation_too_large`.
 4. **Repair inequalities** only by an admissible construction. `pi` and `pi_J` are `+infinity` outside their domains, so a
-   finite dissipation charge is not a repair. Let `m = TOL_CONE_MARGIN * D_scale` and `P` the conditions with `c~ > m`.
+   finite dissipation charge is not a repair. Let `m = TOL_CONE_MARGIN * D_scale` (per kind) and `P` the conditions with
+   `c~ > m`.
    - If `P` is empty, nothing is repaired. This is always the case for von Mises: after projection no inequality remains.
    - Otherwise blend with a supplied field `(v_int, V_int)` (`interior_element_velocity` or `interior_velocity`, with
-     `interior_footing_velocity`), projected by step 2 with its own scales. It must have `D_scale_int > 0`, satisfy
-     `c~_int <= m_int` at every condition and `c~_int <= -TOL_INTERIOR_MIN * D_scale_int` at every condition of `P`,
+     `interior_footing_velocity`), projected by step 2 with its own scales. It must have `D_scale_int > 0` for each kind
+     that has a condition in `P`, satisfy `c~_int <= m_int` at every condition and
+     `c~_int <= -TOL_INTERIOR_MIN * D_scale_int` (same kind) at every condition of `P`,
      else `interior_field_invalid`. Then `mu = max over P of c~ / (c~ - c~_int)`, `x_new = (1 - mu) x + mu x_int`,
      `mu <= TOL_REPAIR_MAX`. By convexity each condition of `P` ends at or below 0 and every other one at or below its
      margin.
@@ -1031,7 +1169,7 @@ the cap gives an estimate with `equality_ill_conditioned`; one with `omega > tau
    `support`: `U = D - W0`.
 7. **Recheck the final field from scratch:** every literal-zero unknown exactly `0.0` (else `literal_zero_violated`),
    `omega`, `kappa_eq`, all conditions of step 2,
-   `c~ <= TOL_CONE_MARGIN * D_scale` at every `alpha > 0` condition, and `U`.
+   `c~ <= TOL_CONE_MARGIN * D_scale` (per kind) at every `alpha > 0` condition, and `U`.
 
 ### 17.5 What "certified" means
 
@@ -1040,7 +1178,8 @@ independent checker:
 
 1. every affine row holds with residual at most `omega (sum_j |a_ij| d_j + |g_i|)`, `omega <= tau_eq`, and the rows of
    literal zeros hold exactly;
-2. every inequality passes on the final field: Lower `g <= 0`; Upper `c~ <= TOL_CONE_MARGIN * D_scale`. The margin is a
+2. every inequality passes on the final field: Lower `g <= 0`; Upper `c~ <= TOL_CONE_MARGIN * D_scale`, with the
+   `D_scale` of the condition's kind (17.4 step 3). The margin is a
    rounding allowance for evaluating the cone, a few thousand `u` of the field's size, and is unrelated to the floor.
    No flow or jump condition is merely charged for;
 3. the value is the theorem's value for `x_c`, recomputed by the checker;
@@ -1070,6 +1209,21 @@ three times `tau_eq` in the `omega` of section 17.1, with `S_ref = 1`.
 The jump fixture uses the ADR 10.2 pattern on a strictly dilating field with no equality rows: one side of an interior
 plane opens by `delta n` at element vertices only, so every nodal jump is admissible and the edge Bernstein coefficients are
 `-delta n`. A checker that tests jumps only at facet nodes passes it.
+
+Fixtures added by amendment 1 (item 9):
+
+- `normal_jump_isochoric` replaces `normal_jump_one_node`, which also broke isochory. It moves one mid-edge node of one
+  element along `grad L_a x grad L_b`, the direction orthogonal to both vertex gradients of its edge `(a, b)`. Then
+  `theta` stays zero at all four vertices (section 3.3), no boundary row is touched, and the only violated equality is the
+  normal jump `n . c_B = 0` on the two interior facets through that edge;
+- `vm_jump_opening` translates one side of an interior plane of the von Mises cube rigidly, so every Bernstein coefficient on
+  that plane **opens** (`n . c_B > 0`) with no strain and no boundary row touched. A checker that reads the von Mises jump
+  condition as the cone `n . c_B >= tau |c_t|` with `tau = 0`, instead of the equality of section 12.3, passes it;
+- `restrained_footing_component` adds `delta y e_z` to the plate-shear field of a problem whose query restrains the
+  plate's `uz`. The field stays isochoric, zero on the fixed base and rigid on the footprint with `V_uz = delta`, so the
+  only violated row is the restrained component `V_uz = 0`.
+
+Each expects `projection_move_too_large`.
 
 ### 17.7 Scaled metrics
 
@@ -1137,14 +1291,19 @@ evidence, and **never to rescue a run**.
 bracket. Otherwise write `estimate: L=..., U=...`. Report `domain_claim`, criterion, `flow_rule` and interface law with
 every result.
 
-**Case lines.** `evaluate_case(case, certificates, results, feasibility, brackets)` in `tests/test_limit_contract.py`
-is the executable meaning of `assert`, `gate` and `record`.
+**Case lines.** `evaluate_case(case, certificates, results, feasibility, methods, *, brackets, refusals)` in
+`tests/test_limit_contract.py` is the executable meaning of `assert`, `gate` and `record`. `methods` are the method
+reports of section 15.9 and `refusals` the records of section 15.8 (amendment 1); `brackets` and `refusals` are keyword
+arguments.
 
 - Records are matched to meshes through `problem_hashes.json`, so a record of another case or mesh counts as missing.
 - Every record used is validated against the problem built from the case: each certificate with its result document
   (`validate_certificate`), each feasibility record (`validate_feasibility`), and each bracket record supplied
   (`validate_bracket`). An invalid record is listed, excluded, and keeps the case from passing.
-- Only gate-admissible records count; `schema-fixture` and `procedure-demo` never do.
+- Only gate-admissible records count; `schema-fixture` and `procedure-demo` never do. A gate certificate counts only with a
+  valid method report bound to it (15.9); an invalid report is listed as an invalid record.
+- A refusal (15.8) is validated against its result document. When a mesh and formulation have no gate-admissible
+  certificate and a refusal from a gate checker, the item fails with cause `refused`, which is never withholdable.
 - Bracket status and gap are **recomputed** from the two gate-admissible certificates with section 17.9's rules. A bracket
   record is checked, never trusted, and is not needed.
 - Every `formulation` line binds: a Lower item holds for each Lower formulation, an Upper item for each Upper formulation,
@@ -1152,10 +1311,10 @@ is the executable meaning of `assert`, `gate` and `record`.
 - For `gap_le`, status `order_within_floor` counts as gap 0 **only in an `exact_on_mesh` case**, where both exact fields lie
   in the discrete spaces; elsewhere it fails the item. `contradiction` fails the case and sets `stop_program`.
 - Floors are not added to one-sided assertions: `TOL_CASE_ONE_SIDED` is the allowance for them.
-- Each failed item carries a cause (`missing`, `estimate`, `violated`, `order_within_floor`, `no_gap`, `contradiction`).
-  The verdict sets `claim_withheld` when every failure is withholdable under OD2 (section 11.3), and `p0_blocking`
-  otherwise. `evaluate_program(verdicts, required)` reports `stop_program`, `p0_open`, the blocking and missing cases, and
-  the withheld claims.
+- Each failed item carries a cause (`missing`, `estimate`, `refused`, `violated`, `order_within_floor`, `no_gap`,
+  `contradiction`). The verdict sets `claim_withheld` when every failure is withholdable under OD2 (section 11.3), and
+  `p0_blocking` otherwise. `evaluate_program(verdicts, required)` reports `stop_program`, `p0_open`, the blocking and
+  missing cases, the cases with refused items, and the withheld claims.
 
 ## 18. Decision record
 
@@ -1191,6 +1350,7 @@ owner decisions.**
 | R9 | The Upper work normalisation is not a projection row, unlike ADR 11.2 step 3: the value is `(D - W0) / W1`, so no exact normalisation is needed, and a row would only move the field | Section 17.4 |
 | R10 | Equality acceptance is row-normwise with literal zeros, `tau_eq` carries no `kappa` factor, and `TOL_KAPPA_CAP` replaces the ADR's `TOL_EQ_CAP` | Sections 17.1, 17.2 |
 | R11 | Per-angle Drucker-Prager boxes; a certified Upper at every size with the gap trend recorded; kinematic verdicts written by the checker from a witness | Section 11 |
+| R12 | A checker capacity or conditioning failure is not an OD2 miss; it keeps P0 open. Recorded 2026-11-19, entered by amendment 1 | Sections 11.3, 15.8 |
 
 ### 18.3 Evidence notes and chronology
 
@@ -1242,6 +1402,14 @@ As estimates: strip `estimate: L=4.684, U=5.328` against 5.142; 3D `phi = 0` `es
 `estimate: L=10.08, U=16.75` against 14.83. The Drucker-Prager repair used a relative-interior field (section 17.4 step 4);
 its worst clearance on the repaired conditions was -3.9e-4 of its size. The review's componentwise `omega` had stayed at 1
 on the same kind of fields.
+
+**Rerun under amendment 1, 2026-11-19** (same driver, Clarabel 0.11.1, numpy 2.3.5, scipy 1.16.3). The demonstration now
+writes Upper `objective = c^T x`, builds Lower symmetry rows from the set normal, and scales flow and jump conditions by
+`D_scale_vol` and `D_scale_jump` separately. Every value, `kappa_eq`, `omega_eq` and `repair_mu` in the table is unchanged to
+the digits shown, and the Drucker-Prager clearance is still -3.9e-4. On the strip the jump Upper has `objective` 5.3284148
+against the field `value` 5.3284138, the gap that item 2 of amendment 1 makes explicit. Its `kappa_eq` is the ratio of
+computed dense singular values, **not** a proved bound of section 17.1, and it writes no method report: the values remain
+estimates and the reserved checker name keeps them from every gate.
 
 ## 19. Amendment log
 
@@ -1309,3 +1477,29 @@ Review-fix list, applied:
 9. 16.1: the column assertions `L <= S - gamma H/2` and `U >= S - gamma H` are now in the case.
 10. 5 and 6 (file formats): the record names of section 15, the bracket's formulation keys, and the reserved checker name
     `procedure-demo`.
+
+### 19.1 Amendment 1, 2026-11-19
+
+**Freeze record.** The orchestrator froze this file, `tests/limit_cases.txt` and `tests/test_limit_contract.py` at
+`03f59c1a4` (WP-237a pre-freeze round). Everything above this subsection, except the passages marked "amendment 1", is
+that frozen text. Amendment 1 is the first change after the freeze. The orchestrator requested it, and it was written
+without reading the reference or checker code.
+
+| Item | Change | Sections | Executable form |
+|---|---|---|---|
+| 1 | Status: frozen at `03f59c1a4`, amendment 1 recorded after it | header, 19.1 | `test_interface_records_the_freeze_and_amendment_1` |
+| 2 | Upper `value` is the field value of 17.4 step 6; `objective` is `c^T x` for both bounds; Lower `value = objective_sign * objective` | 15.3, 15.4 | fixture Upper results carry `objective = D - W0` |
+| 3 | Symmetry rows use the declared set normal `n_S` in both bounds, in the program and in both projections | 5, 15.4, 17.3, 17.4 | text; the demonstration's Lower rows now use `n_S` |
+| 4 | Problem `name` of a case problem: `<case>:<nx>x<ny>x<nz>` or `<case>:<stem>+<r>`, with the other derived values | 15.2 | `build_case_problem`, `test_case_problem_name_rule` |
+| 5 | Method report `<stem>.<query>.<formulation-id>.certificate.method.json`, bound by `certificate_sha256`, recording the kappa method, dependent-row proofs, rows skipped, Ritz or eigenvalue residual and interior-field identity; required for every gate certificate | 15.1, 15.6, 15.9, 17.9 | `validate_method_report`; `gate_admissible(..., method=)`, `validate_bracket(..., lower_method=, upper_method=)`, `evaluate_case(..., methods)` |
+| 6 | Conditioning: dependent rows only by shape-forced zeros, dense singular values on disjoint row blocks, or an explicit null-space basis with a residual bound; `kappa_eq` a proved upper bound; `A_hat^T A_hat` allowed; no proof gives a refusal. Replaces the frozen rule, which accepted an estimate within a factor 2 and skipped eigenvalues below a threshold without proof | 17.1, 17.2 | method-report rules |
+| 7 | Capacity-refusal record; cause `refused`; not a missing certificate under OD2; keeps P0 open; ruling R12 | 11.3, 15.8, 17.9, 18.2 | `validate_refusal`, `evaluate_case(..., refusals=)`, `evaluate_program` |
+| 8 | Mesh-5 conditioning route: present capacity insufficient for mesh-5 Lower (all 3D cases) and von Mises jump Upper; WP-237d must identify an open, proved route; gates unchanged | 11.2 | none; gates unchanged |
+| 9 | Fixtures: `normal_jump_one_node` replaced by `normal_jump_isochoric`; `vm_jump_opening` and `restrained_footing_component` added, with the fixture problem `vm_plate_shear_restrained` | 17.6 | `negative_fixtures.json`, `apply_negative` |
+| 10 | Feasibility witness field is the certified projected field; `footing_modes` is `null` without a footing; `D_scale` split into `D_scale_vol` (1/time) and `D_scale_jump` (velocity) | 11.1, 15.5, 17.4, 17.5 | `validate_feasibility`; text |
+
+**What changes downstream.** A producer writes Upper `value` from the field and `objective = c^T x`. The checker writes a
+method report beside every certificate, a refusal instead of a certificate when no bound is proved, rows with `n_S`, the
+witness residual at the projected field, and two flow scales. A caller of `evaluate_case` passes method reports as the
+fifth positional argument and brackets and refusals by keyword. Every fixture certificate and result was regenerated; no
+case value, limit, mesh, tolerance or gate line changed, and every `problem_sha256` is unchanged.
