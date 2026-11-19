@@ -372,7 +372,10 @@ def patch_fix2(ops, tmp, E=1.0e4, drive=True, selfcheck=True, cap=2000, stop=1e-
     if selfcheck:
         d = _dump_all(ops, tmp, n)
         pp = pdata(ops, "p")
-        q0 = [pp[k] - d[k][0] for k in range(n)]
+        # q_0 = p_init - (P M^-1 P^T V pi(0))_p (A', the invariant's Init): A' is committed with the
+        # first accepted step (Fable audit finding 2), so it is built here from the dumps
+        cpi = _projection(d, [d[k][0] for k in range(n)])
+        q0 = [pp[k] - sum(sp * cpi.get(t, 0.0) for t, sp in d[k][1].items()) for k in range(n)]
         prev = (q0, d, _projection(d, q0))
     pmax_old, steps, change = None, 0, None
     while steps < cap:
@@ -407,9 +410,20 @@ def patch_fix2(ops, tmp, E=1.0e4, drive=True, selfcheck=True, cap=2000, stop=1e-
     err = [abs(pp[k] - ex[k]) / s for k in range(n)]
     base = min(range(n), key=lambda k: y[k])
     steady = change is not None and change <= stop
+    # the owner's decision (d064f5b7e): the gates are the grid coefficients and the field at the
+    # particles (pi included), 1e-10; the particle-carried p is recorded (P5a's motion residual,
+    # gated by T4p at 0.01)
+    nodes = nodal_pressure(ops)
+    exc = (lambda Y: rf * g * (H - Y)) if drive else (lambda Y: 0.0)
+    coef_err = max(abs(v[1] - exc(v[0][1])) for v in nodes.values() if -1e-9 <= v[0][1] <= H + 1e-9) / s
+    fp = field_at_particles(ops, tmp, {t_: v[1] for t_, v in nodes.items()})
+    field_err = [abs(fp[k]["field"] - ex[k]) / s for k in range(n)]
     r = {"E": E, "drive": drive, "unit": "rhoF g H", "steps": steps, "steady": steady,
-         "last_change": change, "base_err": err[base], "max_err": max(err),
-         "pass": steady and err[base] <= 1e-10}
+         "last_change": change, "grid_coef_err": coef_err, "field_at_particles_err": max(field_err),
+         "field_base_err": field_err[base], "missing_nodes": sum(q["missing"] for q in fp),
+         "particle_base_err": err[base], "particle_max_err": max(err),
+         "pass": steady and coef_err <= 1e-10 and max(field_err) <= 1e-10,
+         "rule": "d064f5b7e: grid coefficients + field at the particles <= 1e-10; particle p recorded"}
     if selfcheck:
         r.update({"selfcheck_bookkeeping_max": book, "selfcheck_pi_c_max": picc, "motion_max": motion,
                   "selfcheck_pass": book <= 1e-12 and picc <= 1e-12, "history": hist})
