@@ -1816,6 +1816,22 @@ moving:
    pressureCutoff, the subset is automatic, because two-phase mass ≤ total mass. The T8 refusal is
    tested.
 
+**Build `58727204e` (records `ea536a822`), and the owner's decision on the fix-2 patch check
+(2026-11-18, asked directly in this session, after the numbers).** The renormalisation fix works:
+the grid coefficients equal γ_w(H − Y) to 2.4e-14, and the field at every particle (π included) is
+exact to 2.35e-14, where it was off by 1.24e-3 before. The base particle's carried p misses 1e-10
+by 6.0e-6 γ_w H. That is P5a's motion residual: the part of q that the supports, moved by the
+0.044 m settlement, cannot represent. The frozen P5a text keeps it deliberately, because of the
+sealed-column invariant, and reports it without gating it.
+- **Owner decision: the patch check gates what it exists to test, which is fix 2's boundary
+  condition.** The gates are the grid coefficients and the field at the particles, at 1e-10, and
+  both pass on `58727204e`. The particle-carried value (6.0e-6) is recorded beside them as the motion
+  residual, and remains gated by T4p at 0.01 γ_w H. This is recorded as a ruling made after the
+  numbers, with this reasoning.
+- **Item 3 confirmed (orchestrator):** A′ uses π at the epoch's initial drive λ(t₀), since the initial
+  condition is stated at t₀, so a ramp from 0 gives max |π_⊥| = 0. Every later projection and
+  after-step update uses the drive of the step being taken.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
