@@ -1372,7 +1372,7 @@ contract's; they are not the ADR's working defaults O1 and O2.
 | A4 | Certificate repair only by an admissible construction | Sections 17.3, 17.4 |
 | OD1 | Keep the disclosed gap limits and gate meshes: `MAX_GAP_STRIP` 0.05, `MAX_GAP_PRANDTL` 0.10, `MAX_GAP_3D_VM` 0.30, `MAX_GAP_3D_DP` 0.50. They close from this review-fix revision, with the chronology of section 18.3. A miss is a real P0 failure | Sections 11.2, 16.4, 17.8 |
 | OD2 | After the box correction, a 3D Drucker-Prager miss at 30 degrees withholds that 3D claim and is recorded by angle and wall type. Exact-formulation failures still stop P0 | Section 11.3 |
-| OD3 | 2026-11-19, after strip results were seen (disclosed in 19.2.2): continuous P2 (`upper.p2c-vertex.v0`) is a non-binding `control` on the strip cases too, so the jump pair alone decides the strip gates | Section 19.2.2; `tests/limit_cases.txt` |
+| OD3 | 2026-11-19, after strip results were seen (disclosed in 19.2.2): continuous P2 (`upper.p2c-vertex.v0`) is a non-binding `control` on the two Tresca strip cases too, so the jump pair alone decides those gates. The Prandtl thin slabs are not covered | Section 19.2.2; `tests/limit_cases.txt` |
 
 ### 18.2 Orchestrator P0 rulings
 
@@ -1613,7 +1613,7 @@ one-line items m1 to m8 below; each is resolved as that line reads.
 | Item | Change | Sections | Executable form |
 |---|---|---|---|
 | A | Declared apex face `Z` for any Upper formulation: exact "argument = 0" rows, `Z` out of `P`, out of the interior clearance test and out of the inequality recheck; part of the result identity; refused on a Lower; optional dual, diagnostic `z_forced`; no new reason code; calibration watch on `TOL_REPAIR_MAX` | 15.3, 15.9, 17.4, 18.3, 19.2.1 | `validate_apex_zero`, `validate_method_report`, `gate_admissible`, `evaluate_case`; fixtures `apex_zero_omits_a_condition`, `apex_zero_on_lower`, `apex_zero_outside_hash`; amendment-2 tests |
-| B | Owner decision OD3: `upper.p2c-vertex.v0` becomes a `control` line in the four thin-slab strip cases; the jump pair alone decides their gates. Decided after results; disclosed | 18.1, 19.2.2; `limit_cases.txt` | `test_strip_control_miss_does_not_fail_the_gate_and_a_jump_miss_does` |
+| B | Owner decision OD3: `upper.p2c-vertex.v0` becomes a `control` line in the two Tresca strip cases; the jump pair alone decides their gates. The Prandtl thin slabs still bind P2c Decided after results; disclosed | 18.1, 19.2.2; `limit_cases.txt` | `test_strip_control_miss_does_not_fail_the_gate_and_a_jump_miss_does` |
 | m1 | The interior-field hash (and the hash of `Z`) is checked on the gate path: `evaluate_case(..., result_arrays=)` and `gate_admissible(..., result_arrays=)`. A report that names result arrays counts only with them; supplied arrays that do not hash to their result are an invalid record (`hash_mismatch`, kind `result_arrays`) | 15.9, 17.9 | `test_gate_path_checks_the_interior_field_hash`, `test_thirty_degree_face_needs_the_result_arrays_on_the_gate_path` |
 | m2 | The witness field must stay within `TOL_PROJECTION_MOVE` of the offered field and have `W1 > 0` for ray forms; the record carries `witness_projection_move` and `witness_work_reference` | 11.1, 15.5 | `validate_feasibility`; feasibility tests |
 | m3 | The mesh-5 capacity statement moved from 11.2 to 18.3 and tied to ADR kill criterion K1; 11.2 keeps only the rule | 11.2, 18.3 | `test_interface_records_amendment_2` |
@@ -1711,19 +1711,21 @@ system), 17.4 steps 2, 3, 4, 6 and 7, and 17.5 item 2. A result without `Z` is c
 
 #### 19.2.2 Continuous P2 is a control on the strips (item B, owner decision OD3)
 
-**Decision.** The owner decided on 2026-11-19 that `upper.p2c-vertex.v0` is a non-binding `control` on the strip cases,
-as it already was on the true-3D gate (R2, A1). In `tests/limit_cases.txt` its `formulation` line becomes a `control` line
-in four cases, and the jump pair (`lower.p1d-vertex.v0`, `upper.p2d-jump-bernstein.v0`) alone decides their assertions
-and gates (17.9):
+**Decision.** The owner decided on 2026-11-19 that `upper.p2c-vertex.v0` is a non-binding `control` on the two Tresca
+strip cases, as it already was on the true-3D gate (R2, A1). In `tests/limit_cases.txt` its `formulation` line becomes a
+`control` line in those two cases only, and the jump pair (`lower.p1d-vertex.v0`, `upper.p2d-jump-bernstein.v0`) alone
+decides their assertions and gates (17.9):
 
-| Case | Why it is changed |
+| Case | Status |
 |---|---|
-| `tresca_strip_vm_thin_slab` | Named by the decision; the thin-slab strip gate (`MAX_GAP_STRIP`) |
-| `tresca_strip_weighted_insensitive` | Named by the decision; same strip with gravity |
-| `dp_prandtl_cohesion_thin_slab` | A thin-slab strip case where P2c bound the gate (`MAX_GAP_PRANDTL`); the decision covers the strip cases |
-| `dp_prandtl_surcharge_thin_slab` | As above |
+| `tresca_strip_vm_thin_slab` | Changed: named by the decision, with the strip evidence below (`MAX_GAP_STRIP`) |
+| `tresca_strip_weighted_insensitive` | Changed: named by the decision; the same strip with gravity |
+| `dp_prandtl_cohesion_thin_slab` | **Unchanged: P2c still binds** (`MAX_GAP_PRANDTL`). Loosening a gate needs an explicit owner decision per case; none has been made for this case |
+| `dp_prandtl_surcharge_thin_slab` | **Unchanged: P2c still binds**, for the same reason |
 
-The exact, exact-Lower and sandwich cases keep their `formulation upper.p2c-vertex.v0` lines: there the exact or explicit
+The two Prandtl cases still bind P2c pending an owner decision for each; the orchestrator asks separately.
+
+The exact, exact-Lower and sandwich cases also keep their `formulation upper.p2c-vertex.v0` lines: there the exact or explicit
 fields lie in the continuous space, and the control is still tested there. No target, assertion, gate, limit or mesh
 changes. Formulation lines are not problem data (section 8; `build_case_problem` does not read them), so every
 `problem_sha256` is unchanged; `problem_hashes.json` was rebuilt and compared, and it is identical.
@@ -1741,8 +1743,8 @@ augmented system or refuses, leaves `Z` out of `P`, the clearance test and the i
 key in every method report, the witness keys in every feasibility record and the `budget` in every refusal. A caller of
 `evaluate_case` passes `result_arrays` to let interior fields and faces count. The fixture method reports and feasibility
 records were regenerated; no result, problem, case value, limit, mesh, tolerance or gate line changed, and every
-`problem_sha256` is unchanged. The only case-file change is item B: four `formulation upper.p2c-vertex.v0` lines became
-`control` lines.
+`problem_sha256` is unchanged. The only case-file change is item B: two `formulation upper.p2c-vertex.v0` lines, in the
+Tresca strip cases, became `control` lines.
 
 **ADR 237 changes this amendment requires** (the ADR is not edited here): the Upper certificate procedure (11.2) gains the
 declared apex face of 19.2.1 with its soundness note; the capacity-refusal record gains the declared budget; 11.5 gains

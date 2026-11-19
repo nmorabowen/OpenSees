@@ -3017,8 +3017,8 @@ def test_case_inventory_covers_the_required_set():
 def test_reference_case_values_and_assertions(name):
     case = ALL_CASES[name]
     assert case["source"] and case["checked"] and case["units"]
-    if case["class"] == "one_sided_reference":
-        # Amendment 2, item B (OD3): continuous P2 is a control on the strips; the jump pair binds.
+    if name in ("tresca_strip_vm_thin_slab", "tresca_strip_weighted_insensitive"):
+        # Amendment 2, item B (OD3): continuous P2 is a control on the Tresca strips; the jump pair binds.
         assert set(case["formulation"]) == {LOWER_ID, JUMP_ID} and case["control"] == [CONTROL_ID]
     else:
         assert set(case["formulation"]) == {LOWER_ID, CONTROL_ID, JUMP_ID}
@@ -5325,16 +5325,19 @@ def test_lower_objective_is_checked_and_upper_objective_is_not():
     validate_result(upper, arrays, s["problem"], s["arrays"])
 
 
-STRIP_CASES = ("tresca_strip_vm_thin_slab", "tresca_strip_weighted_insensitive", "dp_prandtl_cohesion_thin_slab",
-               "dp_prandtl_surcharge_thin_slab")
+TRESCA_STRIPS = ("tresca_strip_vm_thin_slab", "tresca_strip_weighted_insensitive")
+PRANDTL_SLABS = ("dp_prandtl_cohesion_thin_slab", "dp_prandtl_surcharge_thin_slab")
 
 
-@pytest.mark.parametrize("name", STRIP_CASES)
-def test_strip_cases_bind_the_jump_pair_and_keep_the_control(name):
-    """Amendment 2, item B (owner decision OD3): continuous P2 is a control on the strips."""
+@pytest.mark.parametrize("name", TRESCA_STRIPS + PRANDTL_SLABS)
+def test_only_the_tresca_strips_make_continuous_p2_a_control(name):
+    """Amendment 2, item B (owner decision OD3): continuous P2 is a control on the two Tresca strips; the Prandtl
+    thin slabs still bind it until the owner decides them case by case."""
     case = ALL_CASES[name]
-    assert case["formulation"] == [LOWER_ID, JUMP_ID]
-    assert CONTROL_ID in case["control"]
+    if name in TRESCA_STRIPS:
+        assert case["formulation"] == [LOWER_ID, JUMP_ID] and case["control"] == [CONTROL_ID]
+    else:
+        assert case["formulation"] == [LOWER_ID, CONTROL_ID, JUMP_ID] and not case["control"]
 
 
 def test_strip_control_miss_does_not_fail_the_gate_and_a_jump_miss_does():

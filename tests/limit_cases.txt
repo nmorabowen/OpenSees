@@ -6,8 +6,9 @@
 #         Upper formulation of the phi = 0 cases; those mesh-5 gates stand unchanged and cannot pass until
 #         WP-237d identifies an open, proved route (interface 11.2, 18.3, 17.1).
 #         Amendment 2 (interface 19.2.2, owner decision OD3 of 2026-11-19) turns 'formulation upper.p2c-vertex.v0'
-#         into a 'control' line in the four thin-slab strip cases, so the jump pair alone decides their gates.
+#         into a 'control' line in the two Tresca strip cases, so the jump pair alone decides their gates.
 #         The decision came after strip results were seen; the disclosure is in interface 19.2.2.
+#         The two Drucker-Prager Prandtl thin slabs still bind P2c until the owner decides them case by case.
 #
 # FORMAT (line based, ASCII)
 #   '#' starts a comment line; blank lines are ignored. Tokens are separated by whitespace.
@@ -502,8 +503,8 @@ mesh        32 1 16
 mesh        64 1 32
 nested      0 1
 formulation lower.p1d-vertex.v0
+formulation upper.p2c-vertex.v0
 formulation upper.p2d-jump-bernstein.v0
-control     upper.p2c-vertex.v0
 phi_deg     20
 region      soil drucker_prager k 0.9218910330437573 alpha 0.11184696508828254
 footing     strip xref 0 0.25 0 law bonded
@@ -543,8 +544,8 @@ mesh        32 1 16
 mesh        64 1 32
 nested      0 1
 formulation lower.p1d-vertex.v0
+formulation upper.p2c-vertex.v0
 formulation upper.p2d-jump-bernstein.v0
-control     upper.p2c-vertex.v0
 phi_deg     20
 region      soil drucker_prager k 0 alpha 0.11184696508828254
 footing     strip xref 0 0.25 0 law bonded
