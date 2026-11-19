@@ -86,6 +86,10 @@ def build(ops, s):
         ops.mpm("timeSeries", 77)
     if s.get("rayleigh"):
         ops.mpm("rayleigh", *s["rayleigh"])
+    if s.get("safety"):
+        ops.mpm("safety", s["safety"])
+    if s.get("mode") == "explicit":           # route S: the engine's own loop, no FE analysis
+        return
     ops.constraints("Transformation")
     ops.numberer("RCM")
     ops.system("UmfPack")
@@ -214,6 +218,56 @@ def run_t2(ops, basis, stab, kin="hypo"):
     ok = all(rows[k]["p_err_max"] <= 0.02 and rows[k]["U_err"] <= 0.02 for k in gated)
     return {"basis": basis, "stab": stab, "kin": kin, "rows": rows, "pass_bands_0.02": ok,
             "wall_s": time.time() - t0}
+
+
+# ---------------------------------------------------------------------------
+#  T7 route S time step (U6, A6): T6's Terzaghi column, the drained pencil as the yardstick
+# ---------------------------------------------------------------------------
+def t6_terzaghi_spec(basis, stab, safety=None):
+    w = 2.0 if basis.startswith("bspline") else 1.0
+    return dict(mat=(1.0e4, 0.2, 2.0), h=1.0, cells=(int(w), 10), basis=basis, box=((0.0, 0.0), (w, 10.0)),
+                mode="explicit", fluid=(4444.0, 0.4, 1.0, 1.0e-4, stab),
+                fix=[("xmin", "x"), ("xmax", "x"), ("ymin", "y")], pfix=[("ymax", 0.0)],
+                plate=("ymax", 10.0 * w), path=((0.0, 5.0, 1.0e6), (0.0, 1.0, 1.0)), safety=safety)
+
+
+def run_t7(ops, basis, stab=("auto", 0.25), nsteps=2000):
+    """Stable at 0.9 x the drained pencil for 2000 steps, unstable or refused at 1.5 x (A6). The
+    run-time estimator's safety is opened (`mpm safety 100`) so the pencil, not the estimator, is
+    what is measured; the estimator's own limit and the undrained pencil are reported."""
+    build(ops, t6_terzaghi_spec(basis, stab))
+    dt_d = as_list(ops.mpm("criticalTimeStep", "drainedPencil"))[0]
+    dt_u = as_list(ops.mpm("criticalTimeStep", "undrainedPencil"))[0]
+    dt_est = as_list(ops.mpm("criticalTimeStep"))[0]
+
+    def leg(fac):
+        build(ops, t6_terzaghi_spec(basis, stab, safety=100.0))
+        dt = fac * dt_d
+        vmax = pmax = 0.0
+        for s in range(nsteps):
+            try:
+                ops.mpm("analyze", 1, dt)
+            except Exception:
+                return {"factor": fac, "dt": dt, "steps": s, "refused": True, "blew_up": False,
+                        "vmax": vmax, "pmax": pmax}
+            vm = max(abs(x) for x in pdata(ops, "v"))
+            pm = max(abs(x) for x in pdata(ops, "p"))
+            if not (vm == vm and pm == pm) or vm > 1.0e6 or pm > 1.0e8:
+                return {"factor": fac, "dt": dt, "steps": s + 1, "refused": False, "blew_up": True,
+                        "vmax": vm, "pmax": pm}
+            vmax, pmax = max(vmax, vm), max(pmax, pm)
+        return {"factor": fac, "dt": dt, "steps": nsteps, "refused": False, "blew_up": False,
+                "vmax": vmax, "pmax": pmax}
+
+    t0 = time.time()
+    a, b = leg(0.9), leg(1.5)
+    # stable: 2000 steps, bounded (|v| below 1 m/s, |p| below 10 x the load q = 10 kPa)
+    stable = (a["steps"] == nsteps and not a["blew_up"] and not a["refused"] and a["vmax"] < 1.0
+              and a["pmax"] < 100.0)
+    unstable = b["refused"] or b["blew_up"] or b["vmax"] > 100.0 * max(a["vmax"], 1e-30)
+    return {"basis": basis, "stab": stab, "dt_drained_pencil": dt_d, "dt_undrained_pencil": dt_u,
+            "dt_estimator_h_over_c": dt_est, "undrained_over_drained": dt_u / dt_d, "at_0.9": a,
+            "at_1.5": b, "pass": bool(stable and unstable), "wall_s": time.time() - t0}
 
 
 # ---------------------------------------------------------------------------
@@ -565,6 +619,8 @@ def main(argv=None):
             r = [run_t4(ops, b, s) for b in ("gimp", "bspline2") for s in ("off", AUTO)]
         elif leg == "t4_reported":
             r = [run_t4(ops, b, s, h=1.0) for b in ("gimp", "bspline2") for s in ("off", AUTO)]
+        elif leg == "t7":
+            r = [run_t7(ops, "bspline2"), run_t7(ops, "gimp")]
         elif leg == "t5":
             r = [run_t5(ops, s) for s in (AUTO, "off")]
         elif leg == "patch_fix2":                   # the gate: E 1e4 with the per-step self-check

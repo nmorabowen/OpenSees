@@ -1112,7 +1112,8 @@ int OPS_LadrunoMPM(void)
     std::vector<std::string> a(1, sub);
     if (sub == "particleResponse") {                                   // WP-232k: every token
       while (OPS_GetNumRemainingInputArgs() > 0) a.push_back(OPS_GetString());
-    } else if (sub != "criticalTimeStep" && OPS_GetNumRemainingInputArgs() > 0) {
+    } else if (OPS_GetNumRemainingInputArgs() > 0) {
+      // WP-232l: criticalTimeStep takes an optional drainedPencil | undrainedPencil (interface §5)
       a.push_back(OPS_GetString());
     }
     std::vector<double> out;
