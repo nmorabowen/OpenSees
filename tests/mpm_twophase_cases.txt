@@ -289,8 +289,10 @@ route S
 kinematics small
 flip 1.0
 pblend 1.0
-note no `mpm massCutoff` is given: the u side takes mode F's default 1e-10 and the p side the 5e-2
-note default (interface §7a Q4 as of 5307d4757 makes a given massCutoff the p cutoff too)
+masscut 1.0e-10
+pressurecut 0.05
+note u side: `mpm massCutoff` (mode F default 1e-10); p side: `mpm pressureCutoff` (default 5e-2),
+note its own knob since c84f71fb3 -- massCutoff no longer moves it, so this case may pass both
 dt 1.0e-3
 steps 10
 data tests/data/mpm/twophase/t0_oracle.json
@@ -331,4 +333,31 @@ band A 1e-12 (relative, Frobenius)
 band b 1e-12 (relative, 2-norm)
 band first step u, p 1e-10 (relative)
 ref fork FE, LadrunoUP Q4 / H8, build in the record
+end
+
+# ============================================================================
+# R -- the route comparison: TIMs' first-settlement diagnostic, LadrunoUP (reported, not gated)
+# ============================================================================
+# T2's column (1 x 10, h 1, plate step load q 10 from t = 0, Newmark 0.6 / 0.3025), ratio =
+# plate settlement after the FIRST step / s0, s0 = q L/(Eoed + Qbar) = 0.004500225011250563 m (the
+# closed-form undrained settlement, compressible fluid). TIMs' C0-up: 1.71 stabilized, 0.94 not.
+# legs (rho 2e-6, quasi-static: the diagnostic's own meaning), ratio at dt 1e-3 / 0.02 / 0.2:
+#   off 1.0107 / 1.0217 / 1.0313;  auto 0.1 1.0205 / 1.0312 / 1.0384;  auto 0.25 1.0310 / 1.0415 /
+#   1.0472. On T2's soil (Kf/n = Eoed) the stabilization moves u(0+) by at most 4 %.
+# legs_stiff_fluid (Kf 2.2e6, context): s0 = 1.81e-5 m; off 2.06 / 6.27 / 17.6, auto 0.1 16.7 /
+#   17.5 / 23.8, auto 0.25 25.8 / 26.3 / 30.8 -- near-undrained, H~ dominates the storage block and
+#   inflates the first settlement 8-12x at dt 1e-3 (the TIMs regime, magnified; the off leg's growth
+#   with dt is real drainage in the first step).
+# legs_dynamic (T2's rho 2): the first steps are the compression-wave transient (transit 0.095 s;
+#   ratio 0.13 after one 0.02 s step, 1.85 after ten), so u(0+) is not defined on the dynamic deck.
+# The MPM rows compare against `legs` at the MPM run's dt and stab, same definition.
+case r_ref_first_settlement
+kind reference
+material 1 elastic 1.0e4 0.2 2.0
+twophase 1 4444.0 0.4 1.0 1.0e-4 1.0e-4
+data tests/data/mpm/twophase/r_first_settlement_fe.json
+field legs[k].{stab, dt, rho, Kf, alpha_st, u_undrained, ratio_first_step, history[n].{t, settle, ratio, p_mid_over_p0}}
+field legs_stiff_fluid, legs_dynamic  the same
+band settle0_ratio report
+ref fork FE, LadrunoUP Q4, build in the record; s0 closed form
 end

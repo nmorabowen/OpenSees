@@ -431,6 +431,57 @@ def fe_terzaghi(nx=1, stab="off", t_ramp=0.0, first_small=True, dt=None, tvs=TV_
                 first_small_step=first_small, dt=dt, plate=plate, constants=k, rows=rows)
 
 
+
+# ---------------------------------------------------------------------------------- R: TIMs
+def fe_first_settlement(stab, dt=0.02, nsteps=10, rho=None, Kf=None):
+    """The R row's first-settlement diagnostic (TIMs' C0-up: 1.71 stabilized, 0.94 not) on T2's
+    column (1 x 10, plate, step load from t = 0, Newmark 0.6 / 0.3025): the plate settlement after
+    each of the first nsteps steps of dt, over the closed-form undrained settlement
+    s0 = q L/(Eoed + Qbar) (compressible fluid, alpha 1, Ks inf). rho: the mixture density
+    (default T2's 2.0; a tiny rho removes inertia, so the first step is the quasi-static u(0+))."""
+    ops = fe_engine()
+    c = TERZ
+    rho = c["rho"] if rho is None else rho
+    Kf = c["Kf"] if Kf is None else Kf
+    k = terzaghi_constants(c["E"], c["nu"], Kf, c["poro"], c["kbar"], c["L"], c["q"])
+    L, ny = c["L"], c["nely"]
+    h = L / ny
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 3)
+    nid = {}
+    n = 1
+    for j in range(ny + 1):
+        for i in range(2):
+            ops.node(n, i * h, j * h)
+            nid[(i, j)] = n
+            n += 1
+    ops.nDMaterial("ElasticIsotropic", 1, c["E"], c["nu"], rho)
+    for j in range(ny):
+        ops.element("LadrunoUP", j + 1, nid[(0, j)], nid[(1, j)], nid[(1, j + 1)],
+                    nid[(0, j + 1)], 1, "-Kf", Kf, "-poro", c["poro"], "-rhoF", c["rhoF"],
+                    "-perm", c["kbar"], c["kbar"], "-dynSeepage", "off", *_stab_args(stab))
+    for j in range(ny + 1):
+        for i in range(2):
+            ops.fix(nid[(i, j)], 1, 1 if j == 0 else 0, 1 if j == ny else 0)
+    ops.equalDOF(nid[(0, ny)], nid[(1, ny)], 2)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(nid[(0, ny)], 0.0, -c["q"] * h, 0.0)
+    _transient(c["gamma"], c["beta"])
+    hist = []
+    for s_ in range(nsteps):
+        assert ops.analyze(1, dt) == 0
+        u = -ops.nodeDisp(nid[(0, ny)], 2)
+        hist.append({"t": (s_ + 1) * dt, "settle": u, "ratio": u / k["s0"],
+                     "p_mid_over_p0": ops.nodeDisp(nid[(0, ny // 2)], 3) / k["p0"]})
+    return {"stab": stab if isinstance(stab, str) else list(stab), "dt": dt, "rho": rho, "Kf": Kf,
+            "alpha_st": (0.0 if stab == "off" else
+                         stab_alpha(h, c["E"] / (3 * (1 - 2 * c["nu"])),
+                                    c["E"] / (2 * (1 + c["nu"])), stab[1])),
+            "u_undrained": k["s0"], "u_drained": k["sinf"],
+            "ratio_first_step": hist[0]["ratio"], "history": hist}
+
+
 # ---------------------------------------------------------------------------------------- T3
 def fe_mandel(stab="off", t_ramp=0.0, tvs=None, nx=None, ny=None, dt=None, first_small=True):
     """LadrunoUP Q4 half strip 0 <= x <= a, 0 <= y <= b (h = 1 m): ux = 0 and impervious on x = 0
@@ -1600,6 +1651,25 @@ def main(argv):
         rec["t0_ii"] = t0_modeA(T0A)
         rec["t0_iii"] = t0_routeS(T0S)
         print(_save("t0_oracle", rec))
+        return
+    if leg == "settle0":
+        rec = _provenance("first_settlement_fe", "fe_first_settlement")
+        rec["case"] = dict(TERZ, load="plate step from t = 0")
+        rec["definition"] = ("ratio = plate settlement after the first step / s0, s0 = q L/(Eoed + "
+                             "Qbar) = the closed-form undrained (compressible-fluid) settlement")
+        stabs = ("off", ("auto", 0.1), ("auto", 0.25))
+        # quasi-static (rho 2e-6: no inertia) -- the diagnostic's own meaning
+        rec["legs"] = [fe_first_settlement(st, dt=dt, rho=2.0e-6) for st in stabs
+                       for dt in (1.0e-3, 0.02, 0.2)]
+        # REPORTED context: a near-incompressible fluid (Kf 2.2e6, water), where S -> 0 and the
+        # stabilization dominates the storage block (TIMs' 1.71 regime)
+        rec["legs_stiff_fluid"] = [fe_first_settlement(st, dt=dt, rho=2.0e-6, Kf=2.2e6)
+                                   for st in stabs for dt in (1.0e-3, 0.02, 0.2)]
+        # T2's dynamic deck (rho 2): the first steps are the compression-wave transient (transit
+        # 0.095 s), so the "first settlement" there is inertia, not the undrained response
+        rec["legs_dynamic"] = [fe_first_settlement(st, dt=dt) for st in stabs
+                               for dt in (0.02, 1.0e-3)]
+        print(_save("r_first_settlement_fe", rec))
         return
     if leg == "b4":
         rec = _provenance("b4_fe", "fe_b4")
