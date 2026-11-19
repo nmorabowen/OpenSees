@@ -699,12 +699,17 @@ LadrunoDynamicRelaxation::update(const Vector &U)
         prevKE = kineticEnergy;      // viscous: feed the watchdog, NEVER zero
     }
 
-    // push the (possibly damped) full-step snapshot to the nodes
+    // push the (possibly damped) full-step velocity and acceleration to the nodes.
+    // Ladruno WP-240 (from jaabell/OpenSees c8b0f3bc4, J. Abell): the displacements
+    // are those of newStep(), whose updateDomain() already brought the elements to
+    // them, so the elements are NOT updated again here; a second pass integrated
+    // every material point twice per step. Nothing else is lost: the other half of
+    // AnalysisModel::updateDomain() is ConstraintHandler::update(), which no
+    // handler overrides, and TransformationDOF_Group::setNodeDisp keeps the
+    // prescribed `sp` values that newStep() enforced. An element that reads the
+    // nodal velocity in update() therefore commits the state of v_{n+1/2}, the one
+    // its force in the residual was computed with (quirk WP-240).
     theModel->setResponse(*Ut, *Vfull, aWork);
-    if (theModel->updateDomain() < 0) {
-        opserr << "LadrunoDynamicRelaxation::update() - failed to update domain\n";
-        return -6;
-    }
 
     if (divergenceFactor > 0.0 && prevKE > 0.0) {
         if (kineticEnergy > divergenceFactor * prevKE) {
@@ -826,6 +831,13 @@ double LadrunoDynamicRelaxation::getResidualNorm(void) const
 double LadrunoDynamicRelaxation::getKineticEnergy(void) const
 {
     return kineticEnergy;
+}
+
+// Ladruno WP-240: max |u| over the equation DOFs, global in a parallel run
+double LadrunoDynamicRelaxation::getMaxDisplacement(void) const
+{
+    double m = (Ut != 0) ? Ut->pNorm(0) : 0.0;
+    return Ladruno::drAllreduceMax(m);
 }
 
 // (omega_max*dt/2)^2 for the mass actually in use, measured against the tangent at
