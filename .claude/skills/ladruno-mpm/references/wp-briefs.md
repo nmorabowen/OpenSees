@@ -1683,6 +1683,15 @@ number).**
   with the same tolerance (1e-14), the same iteration cap and the same curvature test. A probe that
   fails refuses the step loudly, naming the rule, with nothing changed. A nonsingular M passes the
   probe, so no answer changes. The probe's cost is reported in the cost row.
+- **Renormalisation beside a folded face (ruled 2026-11-18 on `399ea34c2`, before its build).**
+  S^p is renormalised only when a node with S^p > 0 is dropped by the cutoff. A kept node whose p
+  weight was folded onto its mirror (a ghost behind a drained-only B-spline face) is retained, and its
+  unsigned weight W counts in the sum. Two reasons:
+  - The fold is the boundary condition. An odd image makes the folded weights deliberately not sum
+    to one, so renormalising across it would undo p = 0 on the face.
+  - It matches mode A's B9 rule, which renormalises by the unsigned sums over the kept support,
+    ghosts included.
+  GIMP and linear are unchanged under either reading.
 - **Re-run order after the build:** T3 bspline2, the fix-2 patch check, T8 rank-deficient, T5, a
   re-check of T0/T1/sealed/T10 (cheap), then T2p and T4p.
 
