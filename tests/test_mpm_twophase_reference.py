@@ -247,3 +247,14 @@ def test_t0_iii_section_7c():
     assert all(len(h["grid"]["u_dropped"]) == 5 for h in hist[3:])
     assert all(i[1] == -1 for h in hist for i in h["grid"]["u_dropped"])
     assert d["case_routeS"]["dt"] <= d["t0_iii"]["safety"] * min(d["t0_iii"]["dt_drained_pencil"])
+
+
+def test_r_rows_route_e_record():
+    """Reported rows (never gated): provenance and shape only."""
+    d = _json("r_rows_route_e")
+    _provenance_ok(d)
+    assert d["reported_never_gated"] is True
+    assert len(d["r1_first_settlement"]) == 36
+    assert {(r["basis"], r["pressureBlend"]) for r in d["r2_projection_diffusion"]} == {
+        ("gimp", 1.0), ("gimp", 0.0), ("bspline2", 1.0), ("bspline2", 0.0)}
+    assert len(d["r4_cost"]) == 6

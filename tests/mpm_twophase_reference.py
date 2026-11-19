@@ -1712,6 +1712,189 @@ def fix2_hydrostatic_check(H=2.0, W=1.0, h=0.5, ppc=2, rhoF=1.0, g=9.81, lam=1.0
 
 
 # ==============================================================================================
+# R ROWS, route E (mode A) -- reported, never gated. The MPM is driven only through the public
+# `mpm` commands of tests/mpm_twophase_interface.md (§3-§7c) and the cases file; the MPM C++ is
+# never read. LadrunoUP legs come from the functions above, in the same process (same build).
+# ==============================================================================================
+def _mpm_deck(ops, basis, cells, box, E=1.0e4, nu=0.2, rho=2.0, Kf=4444.0, n=0.4, rhoF=1.0,
+              kbar=1.0e-4, stab="off", fix=(), pfix=(), plate=None, gravity=None, linear=True,
+              blend=None):
+    """One mode-A two-phase deck (ndm 2), Newmark 0.6 / 0.3025, UmfPack, Transformation."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, E, nu, rho)
+    h = (box[1][1] - box[0][1]) / cells[1]
+    ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", h, "-cells", cells[0], cells[1],
+            "-basis", basis)
+    ops.mpm("mode", "implicit")
+    ops.mpm("body", 1, "box", box[0][0], box[0][1], box[1][0], box[1][1], "-ppc", 2, "-mat", 1,
+            "-rho", rho)
+    sa = ["-stab", "off"] if stab == "off" else ["-stab", "auto", float(stab[1])]
+    ops.mpm("twoPhase", 1, "-Kf", Kf, "-poro", n, "-rhoF", rhoF, "-perm", kbar, kbar, *sa)
+    if gravity:
+        ops.mpm("gravity", 0.0, -gravity)
+    for face, comps in fix:
+        ops.mpm("fix", face, comps)
+    for face, p0 in pfix:
+        ops.mpm("pfix", face, p0)
+    if plate:
+        ops.mpm("plate", plate[0], plate[1])
+    if blend is not None:
+        ops.mpm("pressureBlend", blend)
+    ops.constraints("Transformation")
+    ops.numberer("RCM")
+    ops.system("UmfPack")
+    if linear:
+        ops.algorithm("Linear")
+    else:
+        ops.test("NormDispIncr", 1e-10, 25)
+        ops.algorithm("Newton")
+    ops.integrator("Newmark", 0.6, 0.3025)
+    ops.analysis("Transient")
+
+
+def _flat(v):
+    return [float(x) for x in v] if isinstance(v, (list, tuple)) else [float(v)]
+
+
+def _plate_node(ops):
+    grid = set(int(t) for t in _flat(ops.mpm("info", "gridNodeTags")))
+    rest = [t for t in ops.getNodeTags() if t not in grid]
+    return rest[0] if len(rest) == 1 else None
+
+
+def r1_mpm_first_settlement(basis, Kf, stab, dt, nsteps=4, rho=2.0e-6):
+    """Row 1: T2's column under the plate (step), quasi-static (rho 2e-6), the plate settlement
+    after each step over s0 = q L/(Eoed + Kf/n). The plate node carries the step's increment
+    (the grid is rebuilt every step), so U accumulates."""
+    ops = fe_engine()
+    c = TERZ
+    w = 2.0 if basis.startswith("bspline") else 1.0
+    k = terzaghi_constants(c["E"], c["nu"], Kf, c["poro"], c["kbar"], c["L"], c["q"])
+    _mpm_deck(ops, basis, (int(w), 10), ((0.0, 0.0), (w, c["L"])), rho=rho, Kf=Kf, stab=stab,
+              fix=[("xmin", "x"), ("xmax", "x"), ("ymin", "y")], pfix=[("ymax", 0.0)],
+              plate=("ymax", c["q"] * w))
+    U, pt, hist = 0.0, None, []
+    for s_ in range(nsteps):
+        ops.mpm("analyze", 1, dt)
+        if pt is None:
+            pt = _plate_node(ops)
+        U += -ops.nodeDisp(pt, 2)
+        hist.append({"t": (s_ + 1) * dt, "settle": U, "ratio": U / k["s0"]})
+    return {"basis": basis, "Kf": Kf, "stab": stab if isinstance(stab, str) else list(stab),
+            "dt": dt, "rho": rho, "u_undrained": k["s0"], "ratio_first_step": hist[0]["ratio"],
+            "history": hist}
+
+
+def _field_at_particles(ops, tmpdir):
+    """The grid field sum_a S^p_a(x_p) p_a (+ the dump's pi) at every particle, from
+    `mpm debug particleBlocks` (zero pattern scales); nodal p read BEFORE the dumps."""
+    nodal = {int(t): ops.nodeDisp(int(t), 3) for t in _flat(ops.mpm("info", "gridNodeTags"))}
+    n = len(_flat(ops.mpm("particleData", "m")))
+    out = []
+    for p in range(n):
+        path = str(Path(tmpdir) / ("r2_%d.json" % p))
+        ops.mpm("debug", "particleBlocks", p, path, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        d = json.loads(Path(path).read_text())
+        out.append(sum(d["Sp"][j] * nodal.get(d["nodes"][j], 0.0) for j in range(d["nen"]))
+                   + d.get("pi", 0.0))
+    return out
+
+
+def r2_projection_diffusion(basis, blend, dt=0.02, t_end=10.0, samples=(0.5, 1.0, 2.0, 5.0, 10.0)):
+    """Row 2: a motionless, sealed column (every u fixed on gimp's 1-cell column; bspline2's
+    interior x = 1 column cannot be fixed by faces, so E = 1e9 there), kbar 1e-4, no gravity,
+    stab off, p_init = 5 + 2 cos(pi Y/L). Closed form (Neumann diffusion, c = kbar Kf/n with the
+    skeleton held): p = 5 + 2 cos(pi y/L) exp(-c pi^2 t/L^2). Reported, in units of the amplitude
+    2: particle p vs closed form, grid field at the particles vs closed form, particle vs field."""
+    import tempfile
+    ops = fe_engine()
+    L, n, Kf, kb = 10.0, 0.4, 4444.0, 1.0e-4
+    w = 2.0 if basis.startswith("bspline") else 1.0
+    E = 1.0e9 if basis.startswith("bspline") else 1.0e4
+    _mpm_deck(ops, basis, (int(w), 10), ((0.0, 0.0), (w, L)), E=E, Kf=Kf, kbar=kb, stab="off",
+              fix=[("xmin", "xy"), ("xmax", "xy"), ("ymin", "xy"), ("ymax", "xy")],
+              blend=blend)
+    X = [_flat(ops.mpm("particleData", "x"))[i:i + 2]
+         for i in range(0, len(_flat(ops.mpm("particleData", "x"))), 2)]
+    p0 = [5.0 + 2.0 * math.cos(math.pi * x[1] / L) for x in X]
+    ops.mpm("particlePressure", *p0)
+    cdiff = kb * Kf / n
+    rows, t, done = [], 0.0, 0
+    with tempfile.TemporaryDirectory() as tmp:
+        for ts in samples:
+            st = int(round(ts / dt))
+            ops.mpm("analyze", st - done, dt)
+            done = st
+            t = st * dt
+            pp = _flat(ops.mpm("particleData", "p"))
+            xs = _flat(ops.mpm("particleData", "x"))
+            ex = [5.0 + 2.0 * math.cos(math.pi * xs[2 * k + 1] / L)
+                  * math.exp(-cdiff * math.pi ** 2 * t / L ** 2) for k in range(len(pp))]
+            fld = _field_at_particles(ops, tmp)
+            rows.append({"t": t, "amp_exact": 2.0 * math.exp(-cdiff * math.pi ** 2 * t / L ** 2),
+                         "particle_vs_exact": max(abs(a - b) for a, b in zip(pp, ex)) / 2.0,
+                         "field_vs_exact": max(abs(a - b) for a, b in zip(fld, ex)) / 2.0,
+                         "particle_vs_field": max(abs(a - b) for a, b in zip(pp, fld)) / 2.0,
+                         "mean_p": sum(pp) / len(pp)})
+    return {"basis": basis, "pressureBlend": blend, "E": E, "dt": dt, "c": cdiff, "rows": rows,
+            "unit": "the initial amplitude 2 kPa"}
+
+
+def r4_cost(nsteps=900, dt=0.02):
+    """Row 4: wall time per step on T2's column (stab auto 0.25, Newmark 0.6/0.3025, dt 0.02), route
+    E gimp (1 x 10) and bspline2 (2 x 10) against LadrunoUP Q4 1 x 10, Linear and Newton."""
+    import time
+    ops = fe_engine()
+    c = TERZ
+    out = []
+    for algo in ("Linear", "Newton"):
+        for basis in ("gimp", "bspline2"):
+            w = 2.0 if basis.startswith("bspline") else 1.0
+            _mpm_deck(ops, basis, (int(w), 10), ((0.0, 0.0), (w, c["L"])), stab=("auto", 0.25),
+                      fix=[("xmin", "x"), ("xmax", "x"), ("ymin", "y")], pfix=[("ymax", 0.0)],
+                      plate=("ymax", c["q"] * w), linear=(algo == "Linear"))
+            t0 = time.perf_counter()
+            ops.mpm("analyze", nsteps, dt)
+            out.append({"code": "route E", "basis": basis, "algorithm": algo,
+                        "particles": len(_flat(ops.mpm("particleData", "m"))),
+                        "ms_per_step": 1e3 * (time.perf_counter() - t0) / nsteps})
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 3)
+        for j in range(11):
+            for i in range(2):
+                ops.node(1 + 2 * j + i, float(i), float(j))
+        ops.nDMaterial("ElasticIsotropic", 1, c["E"], c["nu"], c["rho"])
+        for j in range(10):
+            ops.element("LadrunoUP", j + 1, 1 + 2 * j, 2 + 2 * j, 4 + 2 * j, 3 + 2 * j, 1,
+                        "-Kf", c["Kf"], "-poro", c["poro"], "-rhoF", c["rhoF"],
+                        "-perm", c["kbar"], c["kbar"], "-dynSeepage", "off",
+                        "-stab", "auto", 0.25)
+        for j in range(11):
+            for i in range(2):
+                ops.fix(1 + 2 * j + i, 1, 1 if j == 0 else 0, 1 if j == 10 else 0)
+        ops.equalDOF(21, 22, 2)
+        ops.timeSeries("Constant", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(21, 0.0, -c["q"], 0.0)
+        ops.system("UmfPack")
+        ops.numberer("RCM")
+        ops.constraints("Transformation")
+        if algo == "Linear":
+            ops.algorithm("Linear")
+        else:
+            ops.test("NormDispIncr", 1e-10, 25)
+            ops.algorithm("Newton")
+        ops.integrator("Newmark", 0.6, 0.3025)
+        ops.analysis("Transient")
+        t0 = time.perf_counter()
+        assert ops.analyze(nsteps, dt) == 0
+        out.append({"code": "LadrunoUP Q4", "basis": "1 x 10", "algorithm": algo,
+                    "ms_per_step": 1e3 * (time.perf_counter() - t0) / nsteps})
+    return out
+
+
+# ==============================================================================================
 def main(argv):
     leg = argv[1] if len(argv) > 1 else "closed"
     if leg == "closed":
@@ -1858,6 +2041,34 @@ def main(argv):
         rec["legs_dynamic"] = [fe_first_settlement(st, dt=dt) for st in stabs
                                for dt in (0.02, 1.0e-3)]
         print(_save("r_first_settlement_fe", rec))
+        return
+    if leg == "rrows_e":
+        # R rows for route E (reported, never gated): rows 1, 2, 4; written to r_rows_route_e.json
+        which = argv[2:] or ["r1", "r2", "r4"]
+        p_ = DATA / "r_rows_route_e.json"
+        rec = json.loads(p_.read_text(encoding="utf-8")) if p_.exists() else {}
+        rec.update(_provenance("r_rows_route_e", "r1_mpm_first_settlement, r2_projection_diffusion, "
+                               "r4_cost (+ fe_first_settlement beside)"))
+        rec["reported_never_gated"] = True
+        stabs = ("off", ("auto", 0.1), ("auto", 0.25))
+        if "r1" in which:
+            rows = []
+            for Kf in (4444.0, 2.2e6):
+                for st in stabs:
+                    for dt in (1.0e-3, 0.02, 0.2):
+                        fe = fe_first_settlement(st, dt=dt, nsteps=4, rho=2.0e-6, Kf=Kf)
+                        for basis in ("gimp", "bspline2"):
+                            r = r1_mpm_first_settlement(basis, Kf, st, dt)
+                            r["ladrunoup_ratio_first_step"] = fe["ratio_first_step"]
+                            r["ladrunoup_history"] = [h["ratio"] for h in fe["history"]]
+                            rows.append(r)
+            rec["r1_first_settlement"] = rows
+        if "r2" in which:
+            rec["r2_projection_diffusion"] = [r2_projection_diffusion(b, bl)
+                                              for b in ("gimp", "bspline2") for bl in (1.0, 0.0)]
+        if "r4" in which:
+            rec["r4_cost"] = r4_cost()
+        print(_save("r_rows_route_e", rec))
         return
     if leg == "b4":
         rec = _provenance("b4_fe", "fe_b4")
