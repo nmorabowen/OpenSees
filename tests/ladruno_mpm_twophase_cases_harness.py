@@ -301,6 +301,109 @@ def run_t5(ops, stab):
             "wall_s": time.time() - t0}
 
 
+#  Diagnostic (orchestrator's ruling B on 25cc9b69e; reported, never gated)
+# ---------------------------------------------------------------------------
+def field_at_particles(ops, tmp, nodal_p):
+    """For every particle: the grid field sum_a S^p_a(x_p) p_a with the supports the next step
+    uses (`mpm debug particleBlocks` at the committed state), and its S^p, V for the projection.
+    nodal_p: tag -> p read BEFORE this call (the call re-seeds the nodes)."""
+    n = len(as_list(ops.mpm("particleData", "m")))
+    out = []
+    for p in range(n):
+        path = str(Path(tmp) / ("diag_%d.json" % p))
+        ops.mpm("debug", "particleBlocks", p, path, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        d = json.loads(Path(path).read_text())
+        miss = [t for k, t in enumerate(d["nodes"]) if t not in nodal_p and d["Sp"][k] != 0.0]
+        f = sum(d["Sp"][k] * nodal_p.get(d["nodes"][k], 0.0) for k in range(d["nen"]))
+        out.append({"field": f, "nodes": d["nodes"], "Sp": d["Sp"], "V": d["V"], "missing": len(miss)})
+    return out
+
+
+def residual_projection(fp, r, skip=()):
+    """max_a |sum_p S^p_pa V_p r_p / sum_p S^p_pa V_p| over the grid nodes (the residual as the
+    grid sees it); `skip`: node tags left out (the drained face, whose p is pinned)."""
+    num, den = {}, {}
+    for q, rr in zip(fp, r):
+        for t, s in zip(q["nodes"], q["Sp"]):
+            num[t] = num.get(t, 0.0) + s * q["V"] * rr
+            den[t] = den.get(t, 0.0) + s * q["V"]
+    return max((abs(num[t] / den[t]) for t in num if den[t] != 0.0 and t not in skip), default=0.0)
+
+
+def nodal_pressure(ops):
+    out = {}
+    for t in as_list(ops.mpm("info", "gridNodeTags")):
+        out[int(t)] = (ops.nodeCoord(int(t)), ops.nodeDisp(int(t), 3))
+    return out
+
+
+def diag_t2(ops, basis, stab, tmp):
+    w = 2.0 if basis.startswith("bspline") else 1.0
+    L, q, dt = 10.0, 10.0, 0.02
+    E, nu, Kf, n, kbar = 1.0e4, 0.2, 4444.0, 0.4, 1.0e-4
+    Eoed = E * (1 - nu) / ((1 + nu) * (1 - 2 * nu))
+    cv = kbar / (1.0 / Eoed + n / Kf)
+    p0 = q * (Kf / n) / (Kf / n + Eoed)
+    spec = dict(mat=(E, nu, 2.0), h=1.0, cells=(int(w), 10), basis=basis, box=((0.0, 0.0), (w, L)),
+                fluid=(Kf, n, 1.0, kbar, stab), fix=[("xmin", "x"), ("xmax", "x"), ("ymin", "y")],
+                pfix=[("ymax", 0.0)], plate=("ymax", q * w))
+    build(ops, spec)
+    Y0 = [x[1] for x in pdata(ops, "x", 2)]
+    rows = {}
+    done = 0
+    for Tv, st in sorted(T2_STEPS.items(), key=lambda kv: kv[1]):
+        ops.mpm("analyze", st - done, dt)
+        done = st
+        Tva = cv * st * dt / (L * L)
+        pp = pdata(ops, "p")
+        nodes = nodal_pressure(ops)
+        fp = field_at_particles(ops, tmp, {t: v[1] for t, v in nodes.items()})
+        ex = [p0 * terzaghi_series((L - Y0[k]) / L, Tva) for k in range(len(pp))]
+        r = [pp[k] - fp[k]["field"] for k in range(len(pp))]
+        node_err = max(abs(v[1] - p0 * terzaghi_series((L - v[0][1]) / L, Tva)) for v in nodes.values()
+                       if v[0][1] <= L + 1e-9) / p0
+        rows[str(Tv)] = {
+            "Tv_actual": Tva,
+            "i_particle_p_err": max(abs(pp[k] - ex[k]) for k in range(len(pp))) / p0,
+            "ii_field_at_particles_err": max(abs(fp[k]["field"] - ex[k]) for k in range(len(pp))) / p0,
+            "iii_grid_node_err": node_err,
+            "residual_amp": max(abs(x) for x in r) / p0,
+            "residual_projected": residual_projection(fp, r) / p0,
+            "residual_projected_free": residual_projection(
+                fp, r, skip={t for t, v in nodes.items() if v[0][1] >= L - 1e-9}) / p0,
+            "missing_nodes": sum(q["missing"] for q in fp)}
+    return {"basis": basis, "stab": stab, "unit": "p0", "rows": rows,
+            "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"}
+
+
+def diag_t4(ops, basis, stab, tmp, h=0.5):
+    H, g, rs, rf = 10.0, 9.81, 2.0, 1.0
+    w = 2 * h if basis.startswith("bspline") else h
+    spec = dict(mat=(1.0e4, 0.2, rs), h=h, cells=(int(round(w / h)), int(round(H / h))), basis=basis,
+                box=((0.0, 0.0), (w, H)), fluid=(4444.0, 0.4, rf, 1.0e-4, stab), gravity=g,
+                fix=[("xmin", "x"), ("xmax", "x"), ("ymin", "y")], pfix=[("ymax", 0.0)])
+    build(ops, spec)
+    ops.mpm("analyze", 900, 1.0)
+    y = [x[1] for x in pdata(ops, "x", 2)]
+    pp = pdata(ops, "p")
+    nodes = nodal_pressure(ops)
+    fp = field_at_particles(ops, tmp, {t: v[1] for t, v in nodes.items()})
+    ex = [rf * g * (H - y[k]) for k in range(len(pp))]
+    r = [pp[k] - fp[k]["field"] for k in range(len(pp))]
+    s = rf * g * H
+    return {"basis": basis, "stab": stab, "h": h, "unit": "rhoF g H",
+            "i_particle_p_err": max(abs(pp[k] - ex[k]) for k in range(len(pp))) / s,
+            "ii_field_at_particles_err": max(abs(fp[k]["field"] - ex[k]) for k in range(len(pp))) / s,
+            "iii_grid_node_err": max(abs(v[1] - rf * g * (H - v[0][1])) for v in nodes.values()
+                                     if -1e-9 <= v[0][1] <= H + 1e-9) / s,
+            "residual_amp": max(abs(x) for x in r) / s,
+            "residual_projected": residual_projection(fp, r) / s,
+            "residual_projected_free": residual_projection(
+                fp, r, skip={t for t, v in nodes.items() if v[0][1] >= H - 1e-9}) / s,
+            "missing_nodes": sum(q["missing"] for q in fp),
+            "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--bin", required=True)
@@ -332,6 +435,11 @@ def main(argv=None):
             r = [run_t4(ops, b, s, h=1.0) for b in ("gimp", "bspline2") for s in ("off", AUTO)]
         elif leg == "t5":
             r = [run_t5(ops, s) for s in (AUTO, "off")]
+        elif leg == "diagnostic":
+            with tempfile.TemporaryDirectory() as tmp:
+                r = {"t2": [diag_t2(ops, b, s, tmp) for b in ("gimp", "bspline2") for s in ("off", AUTO)],
+                     "t4": [diag_t4(ops, b, s, tmp) for b in ("gimp", "bspline2") for s in ("off", AUTO)],
+                     "reported_never_gated": True}
         else:
             raise SystemExit("unknown leg " + leg)
         res[leg] = {"build": build_id, "date": time.strftime("%Y-%m-%d %H:%M"), "wall_s": time.time() - t0,

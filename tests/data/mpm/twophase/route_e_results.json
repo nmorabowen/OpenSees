@@ -620,5 +620,277 @@
     "wall_s": 2.7554571628570557
    }
   ]
+ },
+ "diagnostic": {
+  "build": "fd81cbdd3b1d4330c36a40a9364c4b3daf7d9926",
+  "date": "2026-11-18 20:06",
+  "wall_s": 101.89042091369629,
+  "results": {
+   "t2": [
+    {
+     "basis": "gimp",
+     "stab": "off",
+     "unit": "p0",
+     "rows": {
+      "0.05": {
+       "Tv_actual": 0.04999749987499375,
+       "i_particle_p_err": 0.12458559184056309,
+       "ii_field_at_particles_err": 0.06077962694606055,
+       "iii_grid_node_err": 0.06204212253878236,
+       "residual_amp": 0.128074403067721,
+       "residual_projected": 0.09604367600721662,
+       "residual_projected_free": 0.00892675887474937,
+       "missing_nodes": 0
+      },
+      "0.1": {
+       "Tv_actual": 0.0999949997499875,
+       "i_particle_p_err": 0.08892135134676923,
+       "ii_field_at_particles_err": 0.0015975099112490983,
+       "iii_grid_node_err": 0.0014741473679721802,
+       "residual_amp": 0.0899959835501321,
+       "residual_projected": 0.06797763964493984,
+       "residual_projected_free": 0.004534350919271622,
+       "missing_nodes": 0
+      },
+      "0.2": {
+       "Tv_actual": 0.199989999499975,
+       "i_particle_p_err": 0.06139378479242481,
+       "ii_field_at_particles_err": 0.0017560518220605887,
+       "iii_grid_node_err": 0.0009718378480930035,
+       "residual_amp": 0.06231734608432304,
+       "residual_projected": 0.04746662801558231,
+       "residual_projected_free": 0.003378082795769594,
+       "missing_nodes": 0
+      },
+      "0.5": {
+       "Tv_actual": 0.49997499874993756,
+       "i_particle_p_err": 0.028089208774157666,
+       "ii_field_at_particles_err": 0.0007648479378238352,
+       "iii_grid_node_err": 0.0005567331893665274,
+       "residual_amp": 0.02862434390753197,
+       "residual_projected": 0.022316934777692247,
+       "residual_projected_free": 0.0017062868298229482,
+       "missing_nodes": 0
+      }
+     },
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    },
+    {
+     "basis": "gimp",
+     "stab": [
+      "auto",
+      0.25
+     ],
+     "unit": "p0",
+     "rows": {
+      "0.05": {
+       "Tv_actual": 0.04999749987499375,
+       "i_particle_p_err": 0.12571010003860864,
+       "ii_field_at_particles_err": 0.03989157885650231,
+       "iii_grid_node_err": 0.040721027041113834,
+       "residual_amp": 0.12924913039432268,
+       "residual_projected": 0.0960736935690453,
+       "residual_projected_free": 0.009146617279123559,
+       "missing_nodes": 0
+      },
+      "0.1": {
+       "Tv_actual": 0.0999949997499875,
+       "i_particle_p_err": 0.0898945362233068,
+       "ii_field_at_particles_err": 0.0026308294122391594,
+       "iii_grid_node_err": 0.0030115963494947106,
+       "residual_amp": 0.09132091943261651,
+       "residual_projected": 0.0684366467555345,
+       "residual_projected_free": 0.004560854745074515,
+       "missing_nodes": 0
+      },
+      "0.2": {
+       "Tv_actual": 0.199989999499975,
+       "i_particle_p_err": 0.062090123041320174,
+       "ii_field_at_particles_err": 0.0035314519794538454,
+       "iii_grid_node_err": 0.0018627884786663665,
+       "residual_amp": 0.06305314568703263,
+       "residual_projected": 0.047524342572519584,
+       "residual_projected_free": 0.0033514421070788883,
+       "missing_nodes": 0
+      },
+      "0.5": {
+       "Tv_actual": 0.49997499874993756,
+       "i_particle_p_err": 0.02874547394962453,
+       "ii_field_at_particles_err": 0.0008302693522838849,
+       "iii_grid_node_err": 0.0006431837135022466,
+       "residual_amp": 0.029302847742391926,
+       "residual_projected": 0.02234981819779042,
+       "residual_projected_free": 0.0017072942960843867,
+       "missing_nodes": 0
+      }
+     },
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    },
+    {
+     "basis": "bspline2",
+     "stab": "off",
+     "unit": "p0",
+     "rows": {
+      "0.05": {
+       "Tv_actual": 0.04999749987499375,
+       "i_particle_p_err": 0.15689188747828114,
+       "ii_field_at_particles_err": 0.011557638886918025,
+       "iii_grid_node_err": 0.018403507865390106,
+       "residual_amp": 0.15924249293056436,
+       "residual_projected": 0.10833804735793673,
+       "residual_projected_free": 0.012739976788832008,
+       "missing_nodes": 0
+      },
+      "0.1": {
+       "Tv_actual": 0.0999949997499875,
+       "i_particle_p_err": 0.11052045032442935,
+       "ii_field_at_particles_err": 0.005493847642605436,
+       "iii_grid_node_err": 0.007730076459331406,
+       "residual_amp": 0.11258316580121638,
+       "residual_projected": 0.07737063574743126,
+       "residual_projected_free": 0.006181327422605888,
+       "missing_nodes": 0
+      },
+      "0.2": {
+       "Tv_actual": 0.199989999499975,
+       "i_particle_p_err": 0.07666982338170857,
+       "ii_field_at_particles_err": 0.0021106519065505775,
+       "iii_grid_node_err": 0.0020424350760497967,
+       "residual_amp": 0.07784543488110977,
+       "residual_projected": 0.05356679298076002,
+       "residual_projected_free": 0.004463438557691764,
+       "missing_nodes": 0
+      },
+      "0.5": {
+       "Tv_actual": 0.49997499874993756,
+       "i_particle_p_err": 0.036152480457545474,
+       "ii_field_at_particles_err": 0.0011454479407080863,
+       "iii_grid_node_err": 0.0019618186274259464,
+       "residual_amp": 0.03680917306386704,
+       "residual_projected": 0.02517714154737745,
+       "residual_projected_free": 0.002288613471997386,
+       "missing_nodes": 0
+      }
+     },
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    },
+    {
+     "basis": "bspline2",
+     "stab": [
+      "auto",
+      0.25
+     ],
+     "unit": "p0",
+     "rows": {
+      "0.05": {
+       "Tv_actual": 0.04999749987499375,
+       "i_particle_p_err": 0.1599881376783274,
+       "ii_field_at_particles_err": 0.018734190525442663,
+       "iii_grid_node_err": 0.016795036541569056,
+       "residual_amp": 0.1636887628893317,
+       "residual_projected": 0.1095633612834865,
+       "residual_projected_free": 0.013489425754526487,
+       "missing_nodes": 0
+      },
+      "0.1": {
+       "Tv_actual": 0.0999949997499875,
+       "i_particle_p_err": 0.11118203712453772,
+       "ii_field_at_particles_err": 0.006563898310837137,
+       "iii_grid_node_err": 0.008886047077399335,
+       "residual_amp": 0.11359542178486479,
+       "residual_projected": 0.07790545304613067,
+       "residual_projected_free": 0.006188501788528585,
+       "missing_nodes": 0
+      },
+      "0.2": {
+       "Tv_actual": 0.199989999499975,
+       "i_particle_p_err": 0.07664907397566233,
+       "ii_field_at_particles_err": 0.003879983840774835,
+       "iii_grid_node_err": 0.002219762822963628,
+       "residual_amp": 0.07789251664310301,
+       "residual_projected": 0.05367083596670111,
+       "residual_projected_free": 0.004426264655240665,
+       "missing_nodes": 0
+      },
+      "0.5": {
+       "Tv_actual": 0.49997499874993756,
+       "i_particle_p_err": 0.03601838651739536,
+       "ii_field_at_particles_err": 0.0012382605875577617,
+       "iii_grid_node_err": 0.0022179188008578095,
+       "residual_amp": 0.03670422406412108,
+       "residual_projected": 0.025222406937315974,
+       "residual_projected_free": 0.0022899777358150967,
+       "missing_nodes": 0
+      }
+     },
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    }
+   ],
+   "t4": [
+    {
+     "basis": "gimp",
+     "stab": "off",
+     "h": 0.5,
+     "unit": "rhoF g H",
+     "i_particle_p_err": 0.028766917716351342,
+     "ii_field_at_particles_err": 9.891209904714865e-05,
+     "iii_grid_node_err": 0.00013235932122616085,
+     "residual_amp": 0.028766916803219623,
+     "residual_projected": 0.021985403274980164,
+     "residual_projected_free": 0.018749637904441892,
+     "missing_nodes": 0,
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    },
+    {
+     "basis": "gimp",
+     "stab": [
+      "auto",
+      0.25
+     ],
+     "h": 0.5,
+     "unit": "rhoF g H",
+     "i_particle_p_err": 0.028766734105751573,
+     "ii_field_at_particles_err": 9.890799742392364e-05,
+     "iii_grid_node_err": 0.00013235494287935126,
+     "residual_amp": 0.02876673309610455,
+     "residual_projected": 0.021985402659963193,
+     "residual_projected_free": 0.018749638519572186,
+     "missing_nodes": 0,
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    },
+    {
+     "basis": "bspline2",
+     "stab": "off",
+     "h": 0.5,
+     "unit": "rhoF g H",
+     "i_particle_p_err": 0.05486355909235637,
+     "ii_field_at_particles_err": 0.005279243971156662,
+     "iii_grid_node_err": 0.01357222235455482,
+     "residual_amp": 0.04958431512119971,
+     "residual_projected": 0.030518304463922376,
+     "residual_projected_free": 0.030518304463922376,
+     "missing_nodes": 0,
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    },
+    {
+     "basis": "bspline2",
+     "stab": [
+      "auto",
+      0.25
+     ],
+     "h": 0.5,
+     "unit": "rhoF g H",
+     "i_particle_p_err": 0.05486135963034462,
+     "ii_field_at_particles_err": 0.005279238847788193,
+     "iii_grid_node_err": 0.013572217043953633,
+     "residual_amp": 0.04958212078255687,
+     "residual_projected": 0.030518303882107932,
+     "residual_projected_free": 0.030518303882107932,
+     "missing_nodes": 0,
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    }
+   ],
+   "reported_never_gated": true
+  }
  }
 }
