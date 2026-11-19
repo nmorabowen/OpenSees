@@ -7,7 +7,8 @@ hydrostatic column (block t4_ref_hydro), and for Mandel the record's own p_exact
 
 Standalone:
     python tests/ladruno_mpm_twophase_cases_harness.py --bin <dist\\bin> <leg> [<leg> ...]
-legs: patch, t2, t2_reported, t3_gimp, t3_bspline2, t4, t4_reported, t5
+legs: patch, patch_fix2, patch_fix2_selfcheck, t2, t2_reported, t3_gimp, t3_bspline2, t4,
+      t4_reported, t5, diagnostic
 Every result is appended to tests/data/mpm/twophase/route_e_results.json with ladrunoBuild.
 """
 from __future__ import annotations
@@ -318,6 +319,46 @@ def patch_fix2(ops):
     return {"base_err": err[base], "max_err": max(err), "pass": err[base] <= 1e-10}
 
 
+
+def patch_fix2_selfcheck(ops, tmp, E=1.0e4, steps=200):
+    """The q + pi invariant's self-check (interface 7b, ruling on 89718fdad), numpy-free: the patch
+    column of patch_fix2, and after every step max_p |(p_p - pi(x_p)) - (P c)_p - r_user,p| with
+    r_user = 0, in gamma_w H; gate 1e-12. c is the grid p read after the step (before the dumps,
+    which re-seed the nodes); pi and S^p come from each particle's block dump at the committed
+    positions. Also reported: the same with c the re-seeded projection c^ = M^-1 P^T V q at those
+    positions (q's own invisible part there), and the plain base error."""
+    H, g, rs, rf, h = 10.0, 9.81, 2.0, 1.0, 0.5
+    s = rf * g * H
+    spec = dict(mat=(E, 0.2, rs), h=h, cells=(2, 20), basis="bspline2", box=((0.0, 0.0), (1.0, H)),
+                fluid=(4444.0, 0.4, rf, 1.0, "off"), gravity=g,
+                fix=[("xmin", "x"), ("xmax", "x"), ("ymin", "y")], pfix=[("ymax", 0.0)])
+    build(ops, spec)
+    worst, worst_step, worst_proj, hist = 0.0, -1, 0.0, {}
+    for st in range(1, steps + 1):
+        ops.mpm("analyze", 1, 1.0)
+        pp = pdata(ops, "p")
+        c_step = {t: v[1] for t, v in nodal_pressure(ops).items()}
+        fp = field_at_particles(ops, tmp, c_step)
+        r = max(abs(pp[k] - fp[k]["field"]) for k in range(len(pp))) / s
+        c_proj = {t: v[1] for t, v in nodal_pressure(ops).items()}
+        rp = max(abs(pp[k] - sum(sp * c_proj.get(n, 0.0) for n, sp in zip(q["nodes"], q["Sp"]))
+                     - (q["field"] - sum(sp * c_step.get(n, 0.0) for n, sp in zip(q["nodes"], q["Sp"]))))
+                 for k, q in enumerate(fp)) / s
+        if r > worst:
+            worst, worst_step = r, st
+        worst_proj = max(worst_proj, rp)
+        if st in (1, 2, 5, 20, 100, steps):
+            hist[str(st)] = {"selfcheck": r, "vs_reseeded_projection": rp,
+                             "missing_nodes": sum(q["missing"] for q in fp)}
+    y = [x[1] for x in pdata(ops, "x", 2)]
+    pp = pdata(ops, "p")
+    base = min(range(len(y)), key=lambda k: y[k])
+    return {"E": E, "steps": steps, "unit": "rhoF g H", "selfcheck_max": worst, "at_step": worst_step,
+            "vs_reseeded_projection_max": worst_proj, "history": hist,
+            "base_err": abs(pp[base] - rf * g * (H - y[base])) / s,
+            "pass": worst <= 1e-12}
+
+
 #  Diagnostic (orchestrator's ruling B on 25cc9b69e; reported, never gated)
 # ---------------------------------------------------------------------------
 def field_at_particles(ops, tmp, nodal_p):
@@ -457,6 +498,9 @@ def main(argv=None):
             r = [run_t5(ops, s) for s in (AUTO, "off")]
         elif leg == "patch_fix2":
             r = [patch_fix2(ops)]
+        elif leg == "patch_fix2_selfcheck":         # E = 1e4: the patch column; 1e9: rigid control
+            with tempfile.TemporaryDirectory() as tmp:
+                r = [patch_fix2_selfcheck(ops, tmp, E) for E in (1.0e4, 1.0e9)]
         elif leg == "diagnostic":
             with tempfile.TemporaryDirectory() as tmp:
                 r = {"t2": [diag_t2(ops, b, s, tmp) for b in ("gimp", "bspline2") for s in ("off", AUTO)],

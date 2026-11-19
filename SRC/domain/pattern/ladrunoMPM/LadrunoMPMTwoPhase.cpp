@@ -375,31 +375,43 @@ LadrunoMPMPattern::twoPhaseAdmission(const LadrunoMPMAnalysisRefs &A) const
 //  (interface §1 "Step order, mode A", §2, §3, §7a Q3, Q5). The single-phase path
 //  without them is prepareStep, unchanged.
 // ---------------------------------------------------------------------------
+// The supports, the u-side active set and renormalisation, fix 3's p-activity and S^p, and
+// fix 2's affine coefficients and pi, at the particles' CURRENT positions and the host's current
+// drive (interface 7b). Used by prepareStepUP and, after every accepted step, by the q + pi
+// invariant (ruling on 89718fdad). No side effect on the model.
+struct LadrunoMPMPattern::PSup {
+  std::vector<long> supStart, node;
+  std::vector<double> Sv, dSv, ScG, dScG, aff, SpF, dSpF, piS;
+  std::vector<char> keep, inact;
+  std::set<long> want, pAct;
+  double mmax = 0.0;
+};
+
 int
-LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
+LadrunoMPMPattern::buildPSup(PSup &s, std::string &err)
 {
-  Domain *dom = this->getDomain();
   ladruno_mpm::Particles &P = eng.P;
   const ladruno_mpm::Grid &G = eng.grid;
   const int N = P.size(), nd = eng.ndm(), nc = nd + 1;
   const bool up = anyTwoPhase();
-  const int ndfN = up ? nd + 1 : nd;
-  const double t = dom->getCurrentTime();
   const bool bspl = ladruno_mpm::isBSpline(eng.par.basis);
-  OPS_PROFILE_SCOPE("mpm.a.prepare");
-
   // ---- supports (P9) ----------------------------------------------------------------
-  std::vector<long> supStart(1, 0), node;
-  std::vector<double> Sv, dSv, ScG, dScG;
+  std::vector<long> &supStart = s.supStart, &node = s.node;
+  supStart.assign(1, 0);
+  node.clear();
+  std::vector<double> &Sv = s.Sv, &dSv = s.dSv, &ScG = s.ScG, &dScG = s.dScG;
+  Sv.clear(); dSv.clear(); ScG.clear(); dScG.clear();
   const int NA = nd * (nd + 1);              // fix 2: a_d, grad a_d per axis
-  std::vector<double> aff((size_t)N * NA, 0.0);
+  std::vector<double> &aff = s.aff;
+  aff.assign((size_t)N * NA, 0.0);
   for (int p = 0; p < N; p++) {
     ladruno_mpm::upSupport(G, eng.par.basis, eng.fc, &P.x[nd * p], &P.lp[nd * p], node, Sv, dSv, ScG, dScG,
                            bspl ? &aff[(size_t)NA * p] : 0);
     supStart.push_back((long)node.size());
   }
   std::map<long, double> mass, tpMass;       // fix 3: the two-phase nodal mass, raw W
-  double mmax = 0.0;
+  double &mmax = s.mmax;
+  mmax = 0.0;
   for (int p = 0; p < N; p++) {
     mmax = std::max(mmax, P.m[p]);
     const bool tpp = up && isTwoPhaseParticle(p);
@@ -419,8 +431,11 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
   };
   const double mcut = modeAMassCutoff() * mmax;
   const bool ghost = ghostGamma >= 0.0;
-  std::vector<char> keep(node.size(), 0), inact(node.size(), 0);
-  std::set<long> want;
+  std::vector<char> &keep = s.keep, &inact = s.inact;
+  keep.assign(node.size(), 0);
+  inact.assign(node.size(), 0);
+  std::set<long> &want = s.want;
+  want.clear();
   for (int p = 0; p < N; p++) {
     int nk = 0;
     for (long k = supStart[p]; k < supStart[p + 1]; k++) {
@@ -464,10 +479,11 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
   }
 
   // ---- fix 3 (P4 amended): p-activity on the two-phase nodal mass; S^p renormalised -------
-  std::set<long> pAct;
-  std::vector<double> SpF, dSpF;              // per entry: the final p weight and its gradient
-  std::vector<double> piS(N, 0.0);            // fix 2: pi at the projection, per particle
-  std::map<long, std::vector<double>> pProj;  // P5a: x^ for p, pd, pdd per p-active node
+  std::set<long> &pAct = s.pAct;
+  pAct.clear();
+  std::vector<double> &SpF = s.SpF, &dSpF = s.dSpF;  // per entry: the final p weight, gradient
+  std::vector<double> &piS = s.piS;            // fix 2: pi at the current position, per particle
+  piS.assign(N, 0.0);
   if (up) {
     // ruling 3d3699a50 in full: the mass test AND some two-phase particle with S^p > 0 there (a
     // ghost behind a drained-only face keeps its u mass, but its p weight is folded away)
@@ -526,6 +542,33 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
         for (int d = 0; d < nd; d++) piS[p] += it->second.rhoF * drv[d] * aff[(size_t)NA * p + d * (nd + 1)];
       }
     }
+  }
+  return 0;
+}
+
+int
+LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
+{
+  Domain *dom = this->getDomain();
+  ladruno_mpm::Particles &P = eng.P;
+  const ladruno_mpm::Grid &G = eng.grid;
+  const int N = P.size(), nd = eng.ndm(), nc = nd + 1;
+  const bool up = anyTwoPhase();
+  const int ndfN = up ? nd + 1 : nd;
+  const double t = dom->getCurrentTime();
+  const bool bspl = ladruno_mpm::isBSpline(eng.par.basis);
+  OPS_PROFILE_SCOPE("mpm.a.prepare");
+
+  PSup s;
+  if (buildPSup(s, err) < 0) return -1;
+  std::vector<long> &supStart = s.supStart, &node = s.node;
+  std::vector<double> &Sv = s.Sv, &dSv = s.dSv, &ScG = s.ScG, &dScG = s.dScG;
+  const int NA = nd * (nd + 1);
+  std::vector<double> &aff = s.aff, &SpF = s.SpF, &dSpF = s.dSpF, &piS = s.piS;
+  std::vector<char> &keep = s.keep, &inact = s.inact;
+  std::set<long> &want = s.want, &pAct = s.pAct;
+  std::map<long, std::vector<double>> pProj;  // P5a: x^ for p, pd, pdd per p-active node
+  if (up) {
     // ---- P5a: the consistent L2 projection M x^ = P^T V x_part over the p-active nodes ----
     std::map<long, int> pidx;
     for (long x : pAct) { const int i = (int)pidx.size(); pidx[x] = i; }
@@ -535,7 +578,10 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
     for (int p = 0; p < N; p++) {
       if (!isTwoPhaseParticle(p)) continue;
       const double V = P.V[p];
-      const double xv[3] = {P.pw[p] - piS[p], P.pwd[p], P.pwdd[p]};
+      // the q + pi invariant: the projection fits q = p - pi_c (at the epoch's first projection,
+      // p_init - pi: A' then makes q representable)
+      if ((int)piC.size() != N) piC.assign(N, 0.0);
+      const double xv[3] = {P.pw[p] - (piInitApplied ? piC[p] : piS[p]), P.pwd[p], P.pwdd[p]};
       for (long k = supStart[p]; k < supStart[p + 1]; k++) {
         if (SpF[k] == 0.0 || node[k] < 0) continue;
         const int a = pidx[node[k]];
@@ -606,10 +652,10 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
       for (int a = 0; a < np; a++) bq[a] = std::sin(1.7 * a + 0.3);
       if (!pcg(bq, xs)) { err = singular + " (the probe solve)"; return -1; }
     }
-    // A' (ruling f69e450dd, interface 7b): at the first projection at which pi != 0, each
+    // A' (rulings f69e450dd and 89718fdad, interface 7b): at the epoch's first projection, each
     // two-phase particle's p gains pi's own invisible part, pi_perp = pi - P M^-1 P^T V pi (same
-    // p-active set, M, S^p). pd, pdd unchanged; never again (G2P adds the change of pi in full).
-    // P^T V pi_perp = 0, so the projection below is the same with or without it.
+    // p-active set, M, S^p), i.e. q = p_init - P M^-1 P^T V pi(0). pd, pdd unchanged. A drive that
+    // ramps from 0 has pi(0) = 0: nothing. P^T V pi_perp = 0: the projection below is unchanged.
     std::vector<double> piPerp;
     bool anyPi = false;
     for (int p = 0; p < N; p++) anyPi = anyPi || piS[p] != 0.0;
@@ -639,12 +685,21 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
     for (const auto &kv : pidx)
       pProj[kv.first] = {sol[3 * (size_t)kv.second], sol[3 * (size_t)kv.second + 1],
                          sol[3 * (size_t)kv.second + 2]};
-    if (!piPerp.empty()) {                     // applied once every solve has succeeded
-      for (int p = 0; p < N; p++) {
-        P.pw[p] += piPerp[p];
-        piPerpMax = std::max(piPerpMax, std::fabs(piPerp[p]));
-      }
+    // applied once every solve has succeeded (a refused step changes nothing)
+    if (!piInitApplied) {          // the epoch's first projection: q = p_init - (P M^-1 P^T V pi)
+      if (!piPerp.empty())
+        for (int p = 0; p < N; p++) {
+          P.pw[p] += piPerp[p];
+          piPerpMax = std::max(piPerpMax, std::fabs(piPerp[p]));
+        }
+      piC = piS;
       piInitApplied = true;
+    } else {                       // p <- q + pi(current x, drive): the change of pi since pi_c
+      for (int p = 0; p < N; p++) {
+        if (!isTwoPhaseParticle(p)) continue;
+        P.pw[p] += piS[p] - piC[p];
+        piC[p] = piS[p];
+      }
     }
   }
 
@@ -980,6 +1035,29 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
     nDomainChanges++;
   }
   return 0;
+}
+
+// The q + pi invariant after an accepted step (ruling on 89718fdad): G2P moved the particles
+// and added the FLIP increment of q; p is brought to q + pi at the new positions and the current
+// drive, so output and queries see p_p = q_p + pi(x_p, drive). Only B-spline grids carry pi.
+void
+LadrunoMPMPattern::twoPhaseAfterStep(void)
+{
+  if (!piInitApplied || !ladruno_mpm::isBSpline(eng.par.basis) || !anyTwoPhase()) return;
+  PSup s;
+  std::string err;
+  if (buildPSup(s, err) < 0) {
+    opserr << "WARNING mpm analyze -- the pore-pressure term pi could not be re-evaluated after the"
+              " step (" << err.c_str() << "); the next projection does it\n";
+    return;
+  }
+  const int N = eng.P.size();
+  if ((int)piC.size() != N) piC.assign(N, 0.0);
+  for (int p = 0; p < N; p++) {
+    if (!isTwoPhaseParticle(p)) continue;
+    eng.P.pw[p] += s.piS[p] - piC[p];
+    piC[p] = s.piS[p];
+  }
 }
 
 // ---------------------------------------------------------------------------

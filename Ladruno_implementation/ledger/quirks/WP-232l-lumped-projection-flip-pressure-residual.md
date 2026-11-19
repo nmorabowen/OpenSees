@@ -25,6 +25,13 @@ date: 2026-11-18
   image imposes dp/dn = 0, while zero Darcy flux needs dp/dn = rhoF b.n. Seen: the hydrostatic
   column's base particle on bspline2, 0.055 gamma_w H.
 - **Fix (P9 amended, fix 2):** an affine even image, c_g = c_m + rhoF lambda b_d (X_g - X_m).
+- **Second bite:** the known term pi = rhoF lambda b . (affine image part) is outside the range of
+  P, and it changes as the particles move. Seen on `d06695367` (no compensation, base 1.0e-3) and
+  `89718fdad` (A' once at the start, but G2P did not carry pi's change with motion: base 1.2e-3;
+  a rigid skeleton gave 1.9e-11).
+- **Fix (interface 7b, ruling on `89718fdad`):** the particle carries q = p - pi_c; the
+  projection fits q, G2P is FLIP on q, and after every accepted step the host sets
+  p <- p + pi(x_new, drive) - pi_c, pi_c <- pi. A' is the invariant's Init.
 
 #### A GIMP tail of ~1e-8 makes a near-singular pore-pressure row
 

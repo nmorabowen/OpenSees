@@ -515,7 +515,8 @@ projection.
   π_p = Σ_{g folded} S_g(x_p) ρ_f λ b_f,d (X_g,d − X_m,d), and ∇π_p likewise.
   - In the u rows, the coupling force gains α V_p ∇S_a π_p.
   - In the p rows, H's flux gains V_p (∇S^p_b · k̄ ∇π_p).
-  - The projection fits x_part − π_p, and G2P adds back π at the step's end.
+  - The projection fits x_part − π_p, and G2P adds back π at the step's end. *(Superseded by the q + π invariant below: G2P alone does not add
+    the change of π with particle motion.)*
   - π̇ (from λ̇) is neglected; it is exact for a constant drive, as in T4.
 - **Patch check (before T4p):** a bspline2 hydrostatic column with k̄ = 1, run 200 steps of dt 1 s.
   The base particle's p equals γ_w(H − y) to 1e-10 γ_w H.
@@ -530,7 +531,10 @@ projection.
       refused, nothing is applied.
     - Because Pᵀ V π_⊥ = 0, it leaves that projection's x̂ unchanged.
     - ṗ and p̈ are unchanged.
-  - **Never again.** G2P adds the change of π in full, so the residual stays constant. A drive that
+  - **Never again.** G2P adds the change of π in full, so the residual stays constant. *(Annotation, build
+    `89718fdad`: it did not. G2P added π_end − π_start along the element's own fold, but the
+    change of π with particle motion was not carried into q; the patch base missed by 1.2e-3. The
+    q + π invariant below replaces this bullet's mechanism; A′ itself stands as its Init.)* A drive that
     ramps up from 0 never triggers it, because π = 0 at the first projection.
   - **State.** The flag (applied or not) and max |π_⊥| are in the restart pack (version 5), so a
     restart never re-applies it. `mpm reset` clears both with the particles.
@@ -540,6 +544,30 @@ projection.
     column. User content in the particles' representable part is never erased (A, which would
     have, was declined).
 - **The "field at the particle points" readout** (the T2p/T4p reported column) includes π.
+- **The q + π invariant (frozen, ruling on `89718fdad`).** One invariant; the π_c bookkeeping is
+  accepted as one implementation of it.
+  - **Invariant.** Each two-phase particle carries q_p, the coefficient-space part, and
+    p_p ≡ q_p + π(x_p, drive), evaluated at the CURRENT position and drive wherever p is used:
+    output, queries, and the projection's right side.
+  - **q is FLIP-carried** (P5a in plain space): c = M⁻¹ Pᵀ V q, and G2P adds Σ S^p (c_new − ĉ).
+    The PIC part (α_p < 1) is Σ S^p c_new in q-space.
+  - **Init.** q = p_init − (P M⁻¹ Pᵀ V π(0))_p. This is A′.
+  - **Implementation (π_c).** The particle stores p and π_c, the π of its last evaluation;
+    q = p − π_c at every projection, motion included.
+    - The projection's right side is V (p − π_c); at the epoch's first projection it is
+      V (p_init − π), and A′ then makes q = p_init + π_⊥ − π.
+    - The element's G2P works in q-space and returns p − π_c + π_c (the PIC part adds π_c back).
+    - After every accepted step the host re-evaluates π at the new positions and drive (the same
+      supports, p-activity and S^p as a projection, no side effect on the model) and sets
+      p ← p + π − π_c, π_c ← π. Each projection does the same before it fits (a no-op unless the
+      drive or the positions changed since).
+    - π_c joins the restart pack (version 5, after max |π_⊥|); `mpm reset` clears it.
+  - **Rates.** ṗ and p̈ still neglect π's rate.
+  - **Where π = 0** (GIMP, linear, no normal fluid drive on an impervious B-spline face) nothing
+    changes: π_c = 0 and q = p.
+  - **Self-check (harness, numpy-free).** On the patch column, after every step,
+    max_p |(p_p − π(x_p)) − (P c)_p − r_user,p| ≤ 1e-12 γ_w H, with r_user = 0 here; c is the grid
+    p read after the step, π and S^p from the particle's block dump.
 
 ### P4, amended (defect fix 3): mode A's p-activity is route S's rule
 

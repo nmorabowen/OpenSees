@@ -1464,6 +1464,7 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
     epochSteps++;
     dtLog.push_back(h);
     updateCondForces();
+    twoPhaseAfterStep();                      // WP-232l: p = q + pi at the new positions
     if (writeAfterStep(err) < 0) {
       opserr << "ERROR mpm analyze -- particle output: " << err.c_str() << "\n";
       rc = -1;
@@ -1635,6 +1636,7 @@ LadrunoMPMPattern::packState(Vector &out)
     k.putv(snapshot.pw); k.putv(snapshot.pwd); k.putv(snapshot.pwdd);
     k.put(eng.par.smallKin); k.put(eng.par.pBlend); k.put(eng.par.pCut);
     k.put(piInitApplied ? 1 : 0); k.put(piPerpMax);                   // A' (ruling f69e450dd)
+    k.putv(piC);                                                       // the q + pi invariant (ruling on 89718fdad)
     for (int f = 0; f < 6; f++) {
       k.put(eng.fc.pfixOn[f] ? 1 : 0); k.put(eng.fc.pfixVal[f]);
       k.put(eng.fc.plateOn[f] ? 1 : 0); k.put(eng.fc.plateF[f]); k.put(plateTag[f]);
@@ -1748,6 +1750,7 @@ LadrunoMPMPattern::unpackState(const Vector &in)
   eng.par.pBlend = 1.0;
   piInitApplied = false;
   piPerpMax = 0.0;
+  piC.clear();
   eng.par.pCut = 5.0e-2;
   for (int f = 0; f < 6; f++) {
     eng.fc.pfixOn[f] = false; eng.fc.pfixVal[f] = 0.0;
@@ -1766,6 +1769,7 @@ LadrunoMPMPattern::unpackState(const Vector &in)
     eng.par.pCut = u.get();
     piInitApplied = u.get() != 0.0;                                   // A': a restart never re-applies
     piPerpMax = u.get();
+    u.getv(piC);                                                      // pi_c: p - pi_c is q
     for (int f = 0; f < 6; f++) {
       eng.fc.pfixOn[f] = u.get() != 0.0; eng.fc.pfixVal[f] = u.get();
       eng.fc.plateOn[f] = u.get() != 0.0; eng.fc.plateF[f] = u.get(); plateTag[f] = (int)u.get();

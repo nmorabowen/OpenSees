@@ -619,14 +619,11 @@ LadrunoMPMPoint::g2p(ladruno_mpm::Particles &PP, double flip, bool quasiStatic)
         pic[q] += Sp[k] * val[q];
       }
     }
-    // WP-232l fix 2: the interpolated pressure carries the known affine term pi; the FLIP
-    // increment adds pi_end - pi_start, the PIC part pi_end (pi-dot neglected: interface 7b)
-    if (affOn) {
-      double g3[3];
-      const double piEnd = piNow(g3);
-      inc[0] += piEnd - piStart_;
-      pic[0] += piEnd;
-    }
+    // WP-232l, the q + pi invariant (ruling on 89718fdad): p = q + pi_c on entry, with pi_c the
+    // pi of this step's projection (piStart_). G2P works on q: the FLIP increment carries no pi,
+    // the PIC part is Sum S^p c in q-space, so pi_c is added back to it. The host then moves p to
+    // q + pi at the new positions and drive (twoPhaseAfterStep).
+    if (affOn) pic[0] += piStart_;
     double *tgt[3] = {&PP.pw[p], &PP.pwd[p], &PP.pwdd[p]};
     for (int q = 0; q < 3; q++) {
       if (quasiStatic && q > 0) break;

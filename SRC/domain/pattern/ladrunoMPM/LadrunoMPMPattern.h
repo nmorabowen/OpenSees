@@ -413,6 +413,12 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   std::vector<double>     fdBuf;                   // mpmFluidDrive scratch
   bool                    piInitApplied = false;   // A' (interface 7b): pi_perp added (once per epoch)
   double                  piPerpMax = 0.0;         // A': max |pi_perp| applied
+  // the q + pi invariant (ruling on 89718fdad): pi_c = the pi each two-phase particle's p holds,
+  // so q = p - pi_c is the FLIP-carried coefficient-space part
+  std::vector<double>     piC;
+  struct PSup;
+  int    buildPSup(PSup &s, std::string &err);
+  void   twoPhaseAfterStep(void);                  // p <- q + pi(current x, drive)
   int    prepareStepUP(double h, std::string &err);   // a two-phase epoch or a plate (§2, §3)
   int    tagOfExt(long ext) const;                     // a lattice id or plateId(f) -> live tag
   void   retirePlates(void);
