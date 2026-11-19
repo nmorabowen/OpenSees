@@ -2023,6 +2023,7 @@ int OPS_Integrator()
 	ti = (TransientIntegrator*)OPS_ExplicitBatheLNVDSMSConsistent();
 
     } else if (strcmp(type, "LadrunoDynamicRelaxation") == 0) {   // Ladruno
+	Ladruno::drInstallMPIReductions();   // Ladruno WP-240: global KE / residual in openseesmp
 	ti = (TransientIntegrator*)OPS_LadrunoDynamicRelaxation();
 
     } else {

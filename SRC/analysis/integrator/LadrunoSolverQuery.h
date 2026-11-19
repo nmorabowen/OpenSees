@@ -65,8 +65,40 @@
 #include <elementAPI.h>
 #include <OPS_Globals.h>
 #include <string.h>
+#ifdef _PARALLEL_INTERPRETERS
+#include <mpi.h>     // Ladruno WP-240: drInstallMPIReductions
+#endif
 
 namespace Ladruno {
+
+// Ladruno WP-240 (from jaabell/OpenSees 3c2f585b5, J. Abell): point the
+// LadrunoDynamicRelaxation reductions at MPI_Allreduce. Called where each engine
+// creates the integrator. It compiles to nothing outside the
+// _PARALLEL_INTERPRETERS targets (OpenSeesMP.exe, openseesmp.pyd), which are the
+// only ones that include this header with MPI. One copy for both engines, for
+// the reason at the top of this file. Upstream sets the pointers inline in
+// SRC/tcl/commands.cpp only; this fork also has the Python engine of
+// openseesmp.pyd, which never runs that file.
+inline void drInstallMPIReductions(void)
+{
+#ifdef _PARALLEL_INTERPRETERS
+    int up = 0, down = 0;
+    MPI_Initialized(&up);
+    MPI_Finalized(&down);
+    if (!up || down)
+        return;                 // no MPI to reduce over: keep the identity
+    drAllreduceSum = [](double x) {
+        double y = 0.0;
+        MPI_Allreduce(&x, &y, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        return y;
+    };
+    drAllreduceMax = [](double x) {
+        double y = 0.0;
+        MPI_Allreduce(&x, &y, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        return y;
+    };
+#endif
+}
 
 // ladrunoArcLength [sub [value]] -- runtime control of the active LadrunoArcLength
 // static integrator (Layer-B cut-and-retry, ADR-20 §4.3). Exposes the scalar radius

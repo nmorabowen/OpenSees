@@ -6539,6 +6539,7 @@ ladrunoSpecifyIntegratorImpl(ClientData clientData, Tcl_Interp *interp, int argc
   }
 
   else if (strcmp(argv[1],"LadrunoDynamicRelaxation") == 0) {   // Ladruno
+    Ladruno::drInstallMPIReductions();   // Ladruno WP-240: global KE / residual in OpenSeesMP
     theTransientIntegrator = (TransientIntegrator *)OPS_LadrunoDynamicRelaxation();
 
     if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
