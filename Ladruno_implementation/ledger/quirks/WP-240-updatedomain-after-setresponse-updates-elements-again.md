@@ -1,7 +1,7 @@
 ---
 wp: WP-240
 title: "updateDomain() after setResponse() with unchanged displacements updates every element again"
-pr: ""
+pr: "#1130"
 date: 2026-11-19
 ---
 ### An explicit integrator that calls `updateDomain()` after `setResponse()` in `update()` runs every `Element::update()` a second time, with the same displacements

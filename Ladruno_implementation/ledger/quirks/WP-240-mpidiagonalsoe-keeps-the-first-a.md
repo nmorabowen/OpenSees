@@ -1,7 +1,7 @@
 ---
 wp: WP-240
 title: "MPIDiagonalSOE keeps the A of its first solve; zeroA and addA are then no-ops"
-pr: ""
+pr: "#1130"
 date: 2026-11-19
 ---
 ### `system MPIDiagonal` ignores `zeroA()` / `addA()` after its first solve, so a rebuilt mass never reaches the solve
