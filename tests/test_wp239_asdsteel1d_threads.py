@@ -123,6 +123,10 @@ def test_asdsteel1d_buckling_implex_threaded_equal_serial(capfd):
         digests[n] = d
     text = capfd.readouterr().err
     assert len(set(digests.values())) == 1, digests
-    # the springs really ran on the threads: none serial in place
-    assert "run serially in place" not in text, text
+    # the springs really ran on the threads: all 96 in the update loop, and all
+    # 96 spring FEs in the tangent/residual loops (the serial-in-place FEs there
+    # are the Penalty constraint FEs, not springs)
+    assert "element update loop THREADED" in text and "(%d elements)" % _NSPRING in text, text
     assert "PARTLY threaded" not in text, text
+    assert "%d of %d FE_Elements computed in parallel" % (_NSPRING, 3 * _NSPRING) in text, text
+    assert "first: FE %d, a constraint FE" % _NSPRING in text, text
