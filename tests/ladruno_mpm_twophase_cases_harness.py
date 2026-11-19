@@ -233,15 +233,15 @@ def t6_terzaghi_spec(basis, stab, safety=None):
 
 def run_t7(ops, basis, stab=("auto", 0.25), nsteps=2000):
     """Stable at 0.9 x the drained pencil for 2000 steps, unstable or refused at 1.5 x (A6). The
-    run-time estimator's safety is opened (`mpm safety 100`) so the pencil, not the estimator, is
-    what is measured; the estimator's own limit and the undrained pencil are reported."""
+    run-time estimator runs at its largest safety (`mpm safety 1`, the cap: s in (0, 1]); where
+    the estimator refuses 0.9 x the pencil, a diagnostic leg runs at the estimator's limit."""
     build(ops, t6_terzaghi_spec(basis, stab))
     dt_d = as_list(ops.mpm("criticalTimeStep", "drainedPencil"))[0]
     dt_u = as_list(ops.mpm("criticalTimeStep", "undrainedPencil"))[0]
     dt_est = as_list(ops.mpm("criticalTimeStep"))[0]
 
     def leg(fac):
-        build(ops, t6_terzaghi_spec(basis, stab, safety=100.0))
+        build(ops, t6_terzaghi_spec(basis, stab, safety=1.0))
         dt = fac * dt_d
         vmax = pmax = 0.0
         for s in range(nsteps):
@@ -265,9 +265,14 @@ def run_t7(ops, basis, stab=("auto", 0.25), nsteps=2000):
     stable = (a["steps"] == nsteps and not a["blew_up"] and not a["refused"] and a["vmax"] < 1.0
               and a["pmax"] < 100.0)
     unstable = b["refused"] or b["blew_up"] or b["vmax"] > 100.0 * max(a["vmax"], 1e-30)
-    return {"basis": basis, "stab": stab, "dt_drained_pencil": dt_d, "dt_undrained_pencil": dt_u,
-            "dt_estimator_h_over_c": dt_est, "undrained_over_drained": dt_u / dt_d, "at_0.9": a,
-            "at_1.5": b, "pass": bool(stable and unstable), "wall_s": time.time() - t0}
+    r = {"basis": basis, "stab": stab, "dt_drained_pencil": dt_d, "dt_undrained_pencil": dt_u,
+         "dt_estimator_h_over_c": dt_est, "undrained_over_drained": dt_u / dt_d, "at_0.9": a,
+         "at_1.5": b, "pass": bool(stable and unstable)}
+    if a["refused"] and a["steps"] == 0 and dt_est < 0.9 * dt_d:
+        # the estimator (s = 1) refuses 0.9 x the pencil: diagnostic only, at the estimator's own limit
+        r["diagnostic_at_estimator"] = leg(0.999 * dt_est / dt_d)
+    r["wall_s"] = time.time() - t0
+    return r
 
 
 # ---------------------------------------------------------------------------

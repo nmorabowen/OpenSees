@@ -1,0 +1,81 @@
+{
+ "t7": {
+  "build": "4b74bd335093cc074bd863da887ae5ea4970f07a",
+  "date": "2026-11-18 22:21",
+  "wall_s": 1.985123634338379,
+  "results": [
+   {
+    "basis": "bspline2",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "dt_drained_pencil": 0.01774823938882102,
+    "dt_undrained_pencil": 0.0125502141852342,
+    "dt_estimator_h_over_c": 0.013416407864998736,
+    "undrained_over_drained": 0.7071244595190175,
+    "at_0.9": {
+     "factor": 0.9,
+     "dt": 0.015973415449938917,
+     "steps": 0,
+     "refused": true,
+     "blew_up": false,
+     "vmax": 0.0,
+     "pmax": 0.0
+    },
+    "at_1.5": {
+     "factor": 1.5,
+     "dt": 0.02662235908323153,
+     "steps": 0,
+     "refused": true,
+     "blew_up": false,
+     "vmax": 0.0,
+     "pmax": 0.0
+    },
+    "pass": false,
+    "diagnostic_at_estimator": {
+     "factor": 0.7551730153907998,
+     "dt": 0.013402991457133735,
+     "steps": 2000,
+     "refused": false,
+     "blew_up": false,
+     "vmax": 0.0015336080492753831,
+     "pmax": 5.073825053982363
+    },
+    "wall_s": 1.5547521114349365
+   },
+   {
+    "basis": "gimp",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "dt_drained_pencil": 0.013457894061347508,
+    "dt_undrained_pencil": 0.009516406064394554,
+    "dt_estimator_h_over_c": 0.013416407864998736,
+    "undrained_over_drained": 0.7071244595190176,
+    "at_0.9": {
+     "factor": 0.9,
+     "dt": 0.012112104655212758,
+     "steps": 2000,
+     "refused": false,
+     "blew_up": false,
+     "vmax": 0.0016573050890430732,
+     "pmax": 5.074431988358373
+    },
+    "at_1.5": {
+     "factor": 1.5,
+     "dt": 0.020186841092021263,
+     "steps": 0,
+     "refused": true,
+     "blew_up": false,
+     "vmax": 0.0,
+     "pmax": 0.0
+    },
+    "pass": true,
+    "wall_s": 0.4203672409057617
+   }
+  ],
+  "diagnosis": "STOP (bspline2 row): 0.9 x the drained pencil (0.01597) is REFUSED by the run-time estimator, dt <= s h / max(c_d + |v|) with s capped at 1 (0.013416): the bspline2 pencil (0.017748) is 1.32 x h/c_d, so the gated stable leg cannot run as specified. Diagnostic: at the estimator's own limit (0.755 x the drained pencil = 1.07 x the UNDRAINED pencil 0.01255) route S runs 2000 steps bounded (|v| 1.5e-3, |p| 5.07). gimp passes: stable at 0.9 x its pencil (0.01211, 1.27 x the undrained pencil 0.00952) for 2000 steps; 1.5 x refused by the estimator."
+ }
+}
