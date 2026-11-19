@@ -1399,7 +1399,12 @@ def routeS_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
             mom[a] += S * m * st["v"][k]
             f[a] += S * m * g - V0 * st_k @ dS
             Vw[a] += S * V0
-    active = mass > case["masscut"] * m
+    # §7c (1): in a two-phase step a node is u-active iff m_a > max(massCutoff, pressureCutoff)
+    # m_max; otherwise dropped whole (v^ = v* = v1 = 0, a = 0, M^-1 = 0). Every particle here is
+    # two-phase, so every step is a two-phase step.
+    c_u = max(case["masscut"], case["pcut"])
+    active = mass > c_u * m
+    dropped_u = [a for a in range(nn) if mass[a] > case["masscut"] * m and not active[a]]
     vhat = np.zeros((nn, ndm))
     vhat[active] = mom[active] / mass[active, None]
     vstar = np.zeros((nn, ndm))
@@ -1479,23 +1484,49 @@ def routeS_step(st, grid, case, V0, m, lp, D, a_st, lam=1.0):
         prow = [a for a, _, _ in spr[k]]
         Sp = np.array([s for _, s, _ in spr[k]])
         new["p"][k] = aP * (st["p"][k] + Sp @ (pg[prow] - phat[prow])) + (1 - aP) * (Sp @ pg[prow])
-    mom2 = np.zeros((nn, ndm))
+    # §7c (2): a two-phase particle's skeleton strain comes from the grid velocity v1 (USL), the
+    # conditioned velocity after the correction (0 on fixed and dropped components)
     for k in range(N):
-        for idx, S, _ in sups[k]:
-            mom2[nid[idx]] += S * m * new["v"][k]
-    v2 = np.zeros((nn, ndm))
-    v2[active] = mom2[active] / mass[active, None]
-    for idx in nodes:
-        for c in _fixed_comps(grid, idx, case):
-            v2[nid[idx], c] = 0.0
-    for k in range(N):
-        L = sum(np.outer(v2[nid[i]], dS) for i, _, dS in sups[k])
+        L = sum(np.outer(v1[nid[i]], dS) for i, _, dS in sups[k])
         E = 0.5 * dt * (L + L.T)
         deps = np.array([E[0, 0], E[1, 1], 2 * E[0, 1]])
         new["sig"][k] = st["sig"][k] + D @ deps
     return new, {"nodes": [grid.node_id(nodes[a]) for a in pact],
                  "node_idx": [list(nodes[a]) for a in pact], "p": pval.tolist(),
-                 "phat": ph.tolist(), "M_eigmin": eigmin}
+                 "phat": ph.tolist(), "M_eigmin": eigmin,
+                 "u_dropped": [list(nodes[a]) for a in dropped_u]}
+
+
+def drained_pencil(st, grid, case, V0, m, lp, D):
+    """§7c (3): dt_d = 2/sqrt(lambda_max) of M_L^-1 K_d at the step-start state -- lumped mass on
+    the u-active free components (two-phase rule), K_d = sum_p V Bt D B on the raw supports; fixed
+    and dropped components removed. Dense symmetric eigenproblem (the C++ runs 200 power
+    iterations toward the same lambda_max)."""
+    ndm = grid.ndm
+    sups = [grid.support(x, lp) for x in st["x"]]
+    nodes = sorted({i for sup in sups for i, _, _ in sup}, key=lambda t: t[::-1])
+    nid = {idx: k for k, idx in enumerate(nodes)}
+    nn = len(nodes)
+    mass = np.zeros(nn)
+    K = np.zeros((nn * ndm, nn * ndm))
+    for sup in sups:
+        for idx, S, _ in sup:
+            mass[nid[idx]] += S * m
+        rows = [nid[i] * ndm + c for i, _, _ in sup for c in range(ndm)]
+        B = np.hstack([bmat(dS, ndm) for _, _, dS in sup])
+        K[np.ix_(rows, rows)] += V0 * B.T @ D @ B
+    act = mass > max(case["masscut"], case["pcut"]) * m
+    keep = []
+    for idx in nodes:
+        a = nid[idx]
+        fc = _fixed_comps(grid, idx, case)
+        for c in range(ndm):
+            if act[a] and c not in fc:
+                keep.append(a * ndm + c)
+    Kk = K[np.ix_(keep, keep)]
+    sm = 1.0 / np.sqrt(np.array([mass[r // ndm] for r in keep]))
+    lam = float(np.max(np.linalg.eigvalsh(sm[:, None] * Kk * sm[None, :])))
+    return 2.0 / math.sqrt(lam)
 
 
 def t0_routeS(case=T0S):
@@ -1507,11 +1538,15 @@ def t0_routeS(case=T0S):
     st = t0_initial(X, case)
     keep = ("x", "v", "p", "sig")
     hist = [{"step": 0, "particles": {k: np.asarray(st[k]).tolist() for k in keep}}]
+    dtd = []
     for n in range(case["steps"]):
+        dtd.append(drained_pencil(st, grid, case, V0, m, lp, D))
         st, g = routeS_step(st, grid, case, V0, m, lp, D, a_st)
         hist.append({"step": n + 1, "t": (n + 1) * case["dt"],
                      "particles": {k: np.asarray(st[k]).tolist() for k in keep}, "grid": g})
-    return {"V0": V0, "m": m, "lp": lpv, "alpha_st": a_st, "history": hist}
+    return {"V0": V0, "m": m, "lp": lpv, "alpha_st": a_st, "history": hist,
+            "dt_drained_pencil": dtd, "safety": 0.5,
+            "rules": "interface §1, §7a Q4, §7b P5a/fix 3, §7c (u-activity, USL strain, pencil)"}
 
 
 # --------------------------------------------------------------------------- self-checks

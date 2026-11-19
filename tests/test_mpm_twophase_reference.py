@@ -236,3 +236,14 @@ def test_fix2_affine_image_reproduces_hydrostatics():
     assert max(e) < 1e-13
     bad = R.fix2_hydrostatic_check(affine=False)
     assert bad[0] > 1e-3 and bad[1] > 0.1
+
+
+def test_t0_iii_section_7c():
+    """§7c: the light ghost row is dropped whole (u side), the deck's dt is admitted by
+    s x the drained pencil."""
+    d = _json("t0_oracle")
+    hist = d["t0_iii"]["history"][1:]
+    assert hist[0]["grid"]["u_dropped"] == [] and hist[1]["grid"]["u_dropped"] == []
+    assert all(len(h["grid"]["u_dropped"]) == 5 for h in hist[3:])
+    assert all(i[1] == -1 for h in hist for i in h["grid"]["u_dropped"])
+    assert d["case_routeS"]["dt"] <= d["t0_iii"]["safety"] * min(d["t0_iii"]["dt_drained_pencil"])

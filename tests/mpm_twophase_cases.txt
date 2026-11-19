@@ -279,6 +279,14 @@ end
 # with S^p > 0 is dropped", over the raw unsigned mode-F weights (no folds on GIMP); the record
 # moved by <= 9.7e-16 relative. massCutoff (u side) and pressureCutoff (p side) are separate knobs
 # in mode F; the mode-A refusal massCutoff > pressureCutoff does not apply here.
+# Re-derived for interface §7c (bb1bcbd82; owner decision after the T6 Mandel diagnosis): every
+# step is a two-phase step, so (1) a node is u-active iff m_a > max(massCutoff, pressureCutoff)
+# m_max = 5e-2 m_max, else dropped whole -- the ghost row j = -1 (m_a ~ 1e-8 m_p), u-active before,
+# is dropped from step 3 (3 nodes) and from step 4 on (5 nodes) (record grid.u_dropped); and (2) the
+# skeleton strain is USL, L = sum v1 (x) grad S. Against the pre-7c record: x 2.0e-6, v 2.5e-2,
+# p 1.0e-3, sigma' 0.19 (max relative change over the 10 steps). (3) the run-time limit: the
+# drained pencil dt_d = 0.006840-0.006844 s (record dt_drained_pencil), s dt_d = 0.00342 > dt 1e-3:
+# admitted. T0 (i, ii) unchanged bit for bit.
 case t0_routeS
 kind reference
 ndm 2
