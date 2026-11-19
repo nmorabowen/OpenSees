@@ -14,7 +14,8 @@ Commands::
 
     python solver_study.py job    --case C --mesh M --formulation F --solver S --data DIR [--time-limit s] [--mem-gb g]
     python solver_study.py queue  --file JOBS.txt --data DIR           one job per line: case mesh formulation solver
-    python solver_study.py table  --data DIR --out SUMMARY.json [--md SUMMARY.md]
+    python solver_study.py table  --data DIR --out SUMMARY.json [--md SUMMARY.md] [--base TEXT] [--diag DIR --diag-out FILE]
+    python solver_study.py recheck --old DIR --new DIR [--only TEXT]  stored results through the current checker, no solve
     python solver_study.py sizes  --out FILE                           program sizes without solving (assemble only)
 
 Solvers: ``clarabel-qdldl``, ``clarabel-faer``, ``scs``, ``qoco`` (reported ``not_installed`` when absent).
