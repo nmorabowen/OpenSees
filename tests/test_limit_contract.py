@@ -1671,7 +1671,7 @@ def _withholdable(case, item):
     """Owner decision OD2 (interface 11.3): only the gap limit and missing certificates of the 30-degree cases."""
     if case["class"] != "upper_gate_3d" or case.get("phi_deg") != 30.0 or item["cause"] in NON_WITHHOLDABLE_CAUSES:
         return False
-    if item["kind"] == "gap_le":
+    if item["kind"] == "gap_le":  # amendment 3: no P0 gate line is gap_le MAX_GAP_3D_DP now; the branch is kept
         return True
     return item["kind"] != "kinematic_status" and item["cause"] in WITHHOLDABLE_CAUSES
 
@@ -3122,13 +3122,12 @@ def test_true_3d_gate_cases_are_complete(name):
     assert case["target"] is None
     assert JUMP_ID in case["formulation"] and case["control"] == [CONTROL_ID]
     gates = [tokens[0] for tokens in case["gate"]]
-    for required in ("kinematic_status", "certified_upper", "certified_bracket", "gap_le", "upper_nonincrease",
+    for required in ("kinematic_status", "certified_upper", "certified_bracket", "upper_nonincrease",
                      "lower_nondecrease"):
         assert required in gates, "feasibility alone must not pass"
-    limit = next(tokens[1] for tokens in case["gate"] if tokens[0] == "gap_le")
-    assert limit == ("MAX_GAP_3D_VM" if phi == 0.0 else "MAX_GAP_3D_DP")
-    assert [int(t[2]) for t in case["gate"] if t[0] == "certified_upper"] == list(range(6)), "ADR 10.1: every size"
-    assert case["record"] == [["gap", "mesh", str(i)] for i in range(6)], "the gap trend is recorded"
+    assert "gap_le" not in gates, "amendment 3 (OD5): the 3D gap limits are P4 targets, not P0 gates"
+    assert [int(t[2]) for t in case["gate"] if t[0] == "certified_upper"] == list(range(5)), "amendment 3: meshes 0-4"
+    assert case["record"] == [["gap", "mesh", str(i)] for i in range(6)], "the gap trend is recorded, mesh 5 included"
     stems = gate_mesh_stems(phi)
     assert case["mesh"] == [("file", f"{stem}.mesh.npz", 0) for stem in stems] + [
         ("file", f"{stems[0]}.mesh.npz", 1), ("file", f"{stems[3]}.mesh.npz", 1)]
@@ -3142,6 +3141,36 @@ def test_true_3d_gate_cases_are_complete(name):
     wall = "fixed" if "fixed" in name else "symmetry"
     kinds = {item["name"]: item["kind"] for item in case["boundaries"]}
     assert all(kinds[key] == wall for key in ("xmin", "xmax", "ymin", "ymax", "base"))
+
+
+AMENDMENT_3_GATE = ([["kinematic_status", "formulation_feasible"]]
+                    + [["certified_upper", "mesh", str(i)] for i in range(5)]
+                    + [["certified_bracket", "mesh", str(i)] for i in range(5)]
+                    + [["upper_nonincrease", "0", "4"], ["lower_nondecrease", "0", "4"]])
+
+
+def test_true_3d_gate_is_meshes_0_to_4_after_amendment_3():
+    """Amendment 3 (owner decision OD5): the eight 3D cases gate exactly this set, and no gate line names mesh 5."""
+    expected = sorted(f"upper3d_{wall}_phi{phi:02d}" for wall in ("fixed", "roller") for phi in (0, 10, 20, 30))
+    assert sorted(GATE_3D) == expected
+    for name in GATE_3D:
+        case = ALL_CASES[name]
+        assert [list(tokens) for tokens in case["gate"]] == AMENDMENT_3_GATE, name
+        assert not any("5" in tokens[1:] for tokens in case["gate"]), f"{name}: mesh 5 gates nothing in P0"
+        assert len(case["mesh"]) == 6 and (3, 5) in case["nested"], f"{name}: mesh 5 stays as evidence"
+        assert ["gap", "mesh", "5"] in case["record"], name
+
+
+def test_three_d_gap_limits_are_p4_targets_with_unchanged_values():
+    """Amendment 3: the values stay (certificate tolerance blocks must not churn); no case gates on them in P0."""
+    assert TOLERANCES["MAX_GAP_3D_VM"] == 0.30 and TOLERANCES["MAX_GAP_3D_DP"] == 0.50
+    used = {tokens[1] for case in ALL_CASES.values() for tokens in case["gate"] if tokens[0] == "gap_le"}
+    assert used == {"MAX_GAP_STRIP", "MAX_GAP_PRANDTL"}
+    text = interface_text()
+    table = text[text.index("### 17.8 Named tolerances"):text.index("### 17.9")]
+    for name in ("MAX_GAP_3D_VM", "MAX_GAP_3D_DP"):
+        row = next(line for line in table.splitlines() if line.startswith(f"| `{name}` |"))
+        assert "P4 exit target, not a P0 gate" in row, name
 
 
 @pytest.mark.parametrize("name", [n for n in GATE_3D if ALL_CASES[n]["phi_deg"] > 0.0])
@@ -4043,7 +4072,7 @@ def test_interface_separates_owner_amendments_from_orchestrator_rulings():
     assert owner < rulings
     for item in ("A1", "A2", "A3", "A4"):
         assert f"| {item} |" in text[owner:rulings]
-    for item in ("OD1", "OD2"):
+    for item in ("OD1", "OD2", "OD3", "OD4", "OD5"):
         assert f"| {item} |" in text[owner:rulings]
     for item in ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11"):
         assert f"| {item} |" in text[rulings:]
@@ -4715,11 +4744,38 @@ def gate_verdict(name, low, high, **changes):
     return evaluate_case(case, *synthetic_records(case, low, high, uppers=[JUMP_ID], **changes))
 
 
-def test_thirty_degree_gap_miss_withholds_the_claim_only():
-    verdict = gate_verdict(PHI30, 4.0, 7.0)  # gap 0.545 > MAX_GAP_3D_DP
+def test_thirty_degree_wide_gap_no_longer_gates_p0():
+    """Amendment 3 (OD5): gap 0.545 > MAX_GAP_3D_DP on every mesh passes P0; the gap is only recorded."""
+    verdict = gate_verdict(PHI30, 4.0, 7.0)
+    assert verdict["passed"] and not verdict["claim_withheld"] and not verdict["p0_blocking"]
+    assert not any(item["kind"] == "gap_le" for item in verdict["items"])
+    assert [record["mesh"] for record in verdict["records"]] == list(range(6))
+    assert all(record["gap"] == pytest.approx(3.0 / 5.5) for record in verdict["records"])
+
+
+def test_thirty_degree_gap_branch_of_od2_still_withholds():
+    """OD2's gap branch has no P0 gate line left (amendment 3); `_withholdable` keeps it, shown on a modified copy."""
+    case = copy.deepcopy(ALL_CASES[PHI30])
+    case["gate"].append(["gap_le", "MAX_GAP_3D_DP", "mesh", "4"])
+    verdict = evaluate_case(case, *synthetic_records(case, 4.0, 7.0, uppers=[JUMP_ID]))
+    assert failed(verdict) == {("gap_le", "violated")}
     assert not verdict["passed"] and verdict["claim_withheld"] and not verdict["p0_blocking"]
     program = evaluate_program([verdict])
     assert program["withheld_claims"] == [PHI30] and not program["p0_open"]
+
+
+@pytest.mark.parametrize("name", ["upper3d_fixed_phi00", "upper3d_roller_phi20", PHI30])
+def test_mesh_five_gates_nothing_in_p0(name):
+    """Amendment 3: no certificate on mesh 5, or values there that broke the old (3, 5) pair, leave P0 passed."""
+    case = ALL_CASES[name]
+    certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    sha = load_problem_hashes()[name]["m5"]
+    verdict = evaluate_case(case, [doc for doc in certificates if doc["problem_sha256"] != sha],
+                            [doc for doc in results if doc["problem_sha256"] != sha], feasibility, methods)
+    assert verdict["passed"], failed(verdict)
+    assert next(r for r in verdict["records"] if r["mesh"] == 5)["detail"] == "missing"
+    loose = gate_verdict(name, 4.0, 4.5, values={(5, "lower"): 3.9, (5, "upper"): 4.6})
+    assert loose["passed"], failed(loose)
 
 
 def test_thirty_degree_missing_certificate_withholds_the_claim():
@@ -4729,7 +4785,7 @@ def test_thirty_degree_missing_certificate_withholds_the_claim():
     certificates = [doc for doc in certificates if doc["problem_sha256"] != mesh2]
     results = [doc for doc in results if doc["problem_sha256"] != mesh2]  # no result offered: truly missing
     verdict = evaluate_case(case, certificates, results, feasibility, methods)
-    assert failed(verdict) == {("certified_upper", "missing")}
+    assert failed(verdict) == {("certified_upper", "missing"), ("certified_bracket", "missing")}  # amendment 3
     assert verdict["claim_withheld"] and not verdict["p0_blocking"]
     no_feasibility = [doc for doc in feasibility if doc["problem_sha256"] != mesh2]
     verdict = evaluate_case(case, certificates, results, no_feasibility, methods)
@@ -4738,7 +4794,7 @@ def test_thirty_degree_missing_certificate_withholds_the_claim():
 
 @pytest.mark.parametrize("values,kind", [
     ({(4, "upper"): 4.6}, "upper_nonincrease"),
-    ({(5, "lower"): 3.9}, "lower_nondecrease"),
+    ({(4, "lower"): 3.9}, "lower_nondecrease"),  # amendment 3: the pair is (0, 4); (3, 5) is not checked
 ])
 def test_thirty_degree_monotonicity_failure_keeps_p0_open(values, kind):
     verdict = gate_verdict(PHI30, 4.0, 4.5, values=values)
@@ -4748,6 +4804,7 @@ def test_thirty_degree_monotonicity_failure_keeps_p0_open(values, kind):
 
 
 def test_thirty_degree_contradiction_stops_the_program():
+    """A contradiction stops the program even on mesh 5, which gates nothing since amendment 3: its record finds it."""
     verdict = gate_verdict(PHI30, 4.0, 4.5, values={(5, "lower"): 4.6})
     assert verdict["stop_program"] and not verdict["claim_withheld"]
     assert evaluate_program([verdict])["stop_program"]
@@ -4760,8 +4817,12 @@ def test_thirty_degree_kinematic_failure_is_not_withheld():
     assert not verdict["claim_withheld"] and verdict["p0_blocking"]
 
 
-def test_twenty_degree_gap_miss_keeps_p0_open():
+def test_twenty_degree_wide_gap_passes_p0_and_a_monotonicity_failure_keeps_it_open():
+    """Amendment 3: a gap above MAX_GAP_3D_DP no longer fails a 20-degree case; a (0, 4) violation still does."""
     verdict = gate_verdict("upper3d_fixed_phi20", 4.0, 7.0)
+    assert verdict["passed"] and not verdict["p0_blocking"]
+    verdict = gate_verdict("upper3d_fixed_phi20", 4.0, 4.5, values={(4, "upper"): 4.6})
+    assert ("upper_nonincrease", "violated") in failed(verdict)
     assert not verdict["claim_withheld"] and verdict["p0_blocking"]
 
 
@@ -5057,21 +5118,22 @@ def test_refusal_record_validates_and_is_not_a_certificate():
 
 
 def test_thirty_degree_refusal_is_not_a_missing_certificate():
-    """Amendment 1, item 7: a capacity refusal on mesh 5 keeps P0 open, where a missing certificate would withhold."""
-    case, certificates, results, feasibility, methods, refusal, gone = refused_records(PHI30, 5)
+    """Amendment 1, item 7: a capacity refusal on a gate mesh keeps P0 open, where a missing certificate would withhold.
+    Amendment 3: mesh 4 is the finest gate mesh, so the refusal sits there."""
+    case, certificates, results, feasibility, methods, refusal, gone = refused_records(PHI30, 4)
     missing = evaluate_case(case, certificates, without_result(results, gone), feasibility, methods)
     assert missing["claim_withheld"] and not missing["p0_blocking"], "with no result offered OD2 withholds"
     verdict = evaluate_case(case, certificates, results, feasibility, methods, refusals=[refusal])
     causes = failed(verdict)
     assert ("certified_bracket", "refused") in causes and ("lower_nondecrease", "refused") in causes
-    assert ("gap_le", "refused") in causes and not any(cause == "missing" for _, cause in causes)
+    assert not any(cause == "missing" for _, cause in causes)
     assert not verdict["claim_withheld"] and verdict["p0_blocking"] and not verdict["stop_program"]
     program = evaluate_program([verdict])
     assert program["p0_open"] and program["refused_cases"] == [PHI30] and not program["withheld_claims"]
 
 
 def test_refusal_from_a_reserved_checker_or_beside_a_certificate_does_not_count():
-    case, certificates, results, feasibility, methods, refusal, gone = refused_records(PHI30, 5)
+    case, certificates, results, feasibility, methods, refusal, gone = refused_records(PHI30, 4)
     demo = copy.deepcopy(refusal)
     demo["checker"]["name"] = PROCEDURE_DEMO_CHECKER
     verdict = evaluate_case(case, certificates, results, feasibility, methods, refusals=[demo])
@@ -5081,21 +5143,27 @@ def test_refusal_from_a_reserved_checker_or_beside_a_certificate_does_not_count(
     assert [item["code"] for item in verdict["invalid_records"]] == ["refusal_conflict"] and not verdict["passed"]
 
 
-def test_von_mises_mesh_five_refusal_blocks_the_upper_gate():
-    """Amendment 1, item 8: the gate is unchanged, so a refused jump Upper on mesh 5 fails its gate items."""
-    case, certificates, results, feasibility, methods, refusal, _ = refused_records("upper3d_fixed_phi00", 5, "upper")
+def test_von_mises_refusal_blocks_on_mesh_four_and_not_on_mesh_five():
+    """Amendment 1, item 8, read under amendment 3: a refused jump Upper on gate mesh 4 fails its gate items; on mesh 5,
+    which gates nothing in P0, it fails none and shows only in the gap record."""
+    case, certificates, results, feasibility, methods, refusal, _ = refused_records("upper3d_fixed_phi00", 4, "upper")
     verdict = evaluate_case(case, certificates, results, feasibility, methods, refusals=[refusal])
     kinds = {kind for kind, cause in failed(verdict) if cause == "refused"}
-    assert {"certified_upper", "certified_bracket", "gap_le", "upper_nonincrease"} <= kinds
+    assert {"certified_upper", "certified_bracket", "upper_nonincrease"} <= kinds
     assert verdict["p0_blocking"]
+    case, certificates, results, feasibility, methods, refusal, _ = refused_records("upper3d_fixed_phi00", 5, "upper")
+    verdict = evaluate_case(case, certificates, results, feasibility, methods, refusals=[refusal])
+    assert verdict["passed"] and not verdict["p0_blocking"], failed(verdict)
+    assert next(r for r in verdict["records"] if r["mesh"] == 5)["detail"] == "refused"
+    assert evaluate_program([verdict])["refused_cases"] == [], "a mesh-5 refusal is evidence, not a refused item"
 
 
-def test_thirty_degree_mesh_five_result_without_certificate_or_refusal_is_unchecked():
-    """B1: an offered result that no checker answered is not a missing certificate."""
-    case, certificates, results, feasibility, methods, _, gone = refused_records(PHI30, 5)
+def test_thirty_degree_gate_mesh_result_without_certificate_or_refusal_is_unchecked():
+    """B1: an offered result that no checker answered is not a missing certificate (mesh 4 since amendment 3)."""
+    case, certificates, results, feasibility, methods, _, gone = refused_records(PHI30, 4)
     verdict = evaluate_case(case, certificates, results, feasibility, methods)
     causes = failed(verdict)
-    assert ("certified_bracket", "unchecked") in causes and ("gap_le", "unchecked") in causes
+    assert ("certified_bracket", "unchecked") in causes and ("lower_nondecrease", "unchecked") in causes
     assert not any(cause == "missing" for _, cause in causes)
     assert not verdict["claim_withheld"] and verdict["p0_blocking"]
     missing = evaluate_case(case, certificates, without_result(results, gone), feasibility, methods)
@@ -5106,7 +5174,7 @@ def test_thirty_degree_gate_certificate_without_method_report_is_unproved():
     """B1: a gate certificate whose method report is absent or invalid is unproved, never withheld."""
     case = ALL_CASES[PHI30]
     certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
-    sha = load_problem_hashes()[PHI30]["m5"]
+    sha = load_problem_hashes()[PHI30]["m4"]
     lower = next(doc for doc in certificates if doc["problem_sha256"] == sha and doc["bound"] == "lower")
     kept = [m for m in methods if m["certificate_sha256"] != certificate_hash(lower)]
     verdict = evaluate_case(case, certificates, results, feasibility, kept)
@@ -5119,7 +5187,7 @@ def test_thirty_degree_ill_conditioned_estimate_is_not_withheld():
     """B1: an estimate refused for conditioning keeps P0 open; another estimate at 30 degrees is withheld."""
     case = ALL_CASES[PHI30]
     certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
-    sha = load_problem_hashes()[PHI30]["m5"]
+    sha = load_problem_hashes()[PHI30]["m4"]
     lower = next(doc for doc in certificates if doc["problem_sha256"] == sha and doc["bound"] == "lower")
     for reason, cause, withheld in (("equality_ill_conditioned", "ill_conditioned", False),
                                     ("no_interior_field", "estimate", True)):
@@ -5172,6 +5240,29 @@ def test_interface_records_amendment_2():
     mesh5 = text.index("**Mesh-5 conditioning route")
     assert text.index("### 18.3") < mesh5 < text.index("## 19."), "m3: the capacity statement is evidence (18.3)"
     assert "K1" in text[mesh5:mesh5 + 2500]
+
+
+# Amendment 3 -------------------------------------------------------------------------------------
+
+def test_interface_records_amendment_3():
+    """Owner decision OD5: mesh 5 out of the P0 3D gate, decided after results and disclosed as such."""
+    text = interface_text()
+    assert "**amendment 3** (section 19.3)" in text[:900]
+    log = text[text.index("### 19.3 Amendment 3, 2026-11-19"):]
+    for item in ("A", "B", "C", "D", "E", "F"):
+        assert f"\n| {item} |" in log, item
+    assert "**Disclosure: decided after results.**" in log and "not presented as pre-registered" in log
+    owner = text[text.index("### 18.1"):text.index("### 18.2")]
+    assert "| OD5 | 2026-11-19, after mesh-4 and mesh-5 results were seen" in owner
+    quality = text[text.index("### 11.2 Quality test"):text.index("### 11.3")]
+    assert "They are closed from this\nrevision: a limit does not move" in quality, "OD1 sentence kept"
+    assert "**That closure did not hold for the true-3D gate.**" in quality
+    evidence = text[text.index("### 18.3"):text.index("## 19.")]
+    assert "| Amendment 3, 2026-11-19 |" in evidence
+    for number in ("9.24394", "9.23579", "3.34843", "3.34841", "5.92866", "5.92915", "10,808", "9,475", "`17ee1b4fc`"):
+        assert number in evidence, number
+    mesh5 = evidence[evidence.index("**Mesh-5 conditioning route"):]
+    assert "cannot pass until WP-237d" not in mesh5 and "no longer exist" in mesh5
 
 
 def free_apex_jump():
