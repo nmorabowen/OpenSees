@@ -53,7 +53,7 @@ out-of-family verdict is open (ADR O8).
 | 237a | P0 | frozen mathematics, data contract and cases: a jump-based isochoric Upper or proven alternative, with continuous P2 as control; the true-3D gate; certificate rules; gravity cases; the gap limits closed by the owner on 2026-11-19; all negative-fixture definitions | `tests/limit_interface.md`, `tests/limit_cases.txt`, `tests/data/limit/`, contract tests | Opus · high | owner go | orchestrator freezes it |
 | 237b | P0 | Python reference assembler for the Lower, the control and the admitted Upper formulation | `tests/limit_reference.py`, `tests/test_limit_reference.py` | Opus · high | 237a frozen | L0 and L3 reference gates |
 | 237c | P0 | independent checker: projection, admissible repair, full recheck, whole-facet jump proof and all negative fixtures | `tests/limit_certificate.py`, `tests/test_limit_certificate.py`, fixtures | Fable · high | 237a frozen | L1 gates |
-| 237d | P0 | solver viability, true-3D gate, scale study and `limit-open-solver` lane | `Ladruno_files/testbed/limit_analysis/`, the lane's test and workflow job | Sonnet · medium | 237b and 237c usable | L2, the true-3D gate and K1 decided |
+| 237d | P0 | solver viability, true-3D gate, scale study and `limit-open-solver` lane | `Ladruno_files/testbed/limit_analysis/`, the lane's test and workflow job | Sonnet · medium | 237b and 237c usable | L2, the true-3D gate on meshes 0 to 4, and the K1 evidence recorded (K1 is judged at P4, OD5) |
 | 237f | P1 | C++ kernel, assembler, one command row with run-time refusal, export, writer, adapter, for every P0-admitted formulation | new limit directory, command row, CMake, ledger fragments, manifest row | Opus · high | I1; O2, O3, O4, O8, O9 settled | P1 gates and warrant package |
 | 237g | P3 | V-H-M and 3D query workflow | query code and tests | Opus · high | 237f and bridge usable | P3 gates |
 | 237h | P4 | adaptive 3D study | study driver and gates | re-decided at kickoff | I3 | P4 gates |
@@ -153,7 +153,7 @@ Private memory holds pointers only.
 
 | Gate | Condition |
 |---|---|
-| I1, P0 to C++ | every item of ADR §18.2 is demonstrated, and K1 and K2 did not fire. A 30-degree Drucker-Prager miss is handled by the owner's 2026-11-19 rule, not by K2 |
+| I1, P0 to C++ | every item of ADR §18.2 is demonstrated, and K2 did not fire. K1 is judged at P4 since OD5; I1 needs its evidence recorded, not a K1 verdict. A 30-degree Drucker-Prager miss is handled by the owner's 2026-11-19 rule, not by K2 |
 | I2, fork to apeGmsh | problem and output contracts frozen, with fixtures both sides can read |
 | I3, adaptive | 237g, C2, C3, and ADR 0136 requests R1 (estimator decoupling), R2 (non-`Results` run product), R3 (stop predicate), R4 (3D size-field gate) and R5 (straight tet10 output) |
 | I4, restart | D1 and D2 in a released fork, and apeGmsh pins it |
@@ -237,6 +237,11 @@ Closed on 2026-11-18: amendments A1 to A4 are accepted, and the FEniCSx lane liv
 Closed on 2026-11-19: the gap limits (strip 0.05, Prandtl 0.10, 3D von Mises 0.30, 3D Drucker-Prager 0.50) and their gate meshes are
 kept and closed from the 237a commit `09a0afebe`, and a miss is a real P0 failure. After the box correction, a 30-degree 3D
 Drucker-Prager miss withholds that claim and is recorded by angle and wall type; exact-formulation failures still stop P0.
+
+Decided on 2026-11-19, after results (OD5, contract amendment 3): the true-3D P0 gate uses meshes 0 to 4 only. Mesh 5 is
+evidence for P4 and K1. The 3D limits (von Mises 0.30, Drucker-Prager 0.50) keep their values as P4 exit targets, and K1 is judged
+at P4. This reverses the closure above for the 3D limits; the strip and Prandtl limits stay closed. The ADR's §19.2 records
+the evidence and the disclosure.
 
 Still open:
 

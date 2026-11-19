@@ -48,7 +48,7 @@ updated: 2026-11-18
 | Lower | Discontinuous linear stress on straight tetrahedra (§8) | [proposed] |
 | Upper | `upper.p2d-jump-bernstein.v0` is the P0 Upper formulation; continuous P2 is a **control** (§9) | [owner] the gate and the whole-facet rule; orchestrator ruling for the formulation |
 | True-3D gate | Non-structured meshes, at least three sizes, fixed and roller walls, conformal footprint, rank and residual, then certified quality (§10.1) | [owner] the gate; [proposed] its detail |
-| Gap limits | Strip 0.05, Prandtl 0.10, 3D von Mises 0.30, 3D Drucker-Prager 0.50 on the contract's gate meshes; closed; a miss is a real P0 failure (§18.2) | [owner] 2026-11-19 |
+| Gap limits | Strip 0.05 and Prandtl 0.10 on the contract's gate meshes; closed; a miss is a real P0 failure (§18.2). 3D von Mises 0.30 and 3D Drucker-Prager 0.50 are **P4 exit targets**, not P0 gates, since OD5 (§19.2) | [owner] 2026-11-19; OD5 after results |
 | Certified | An exact affine projection, then admissible inequality repair, then every check again (§11) | [owner] admissible-only repair; [proposed] the procedure |
 | Domain | Each bound carries its own `domain_claim`; box-labelled bounds first (§12) | [owner] per bound; [proposed] O5 |
 | Solvers | No component that needs a licence request. No solver linked by default (§14) | [owner] the rule; [proposed] the mechanism and the toolchain reading |
@@ -431,7 +431,7 @@ rulings R3 and R11.
 | Footing | a bonded unit-square footing, **conformal** on the ground |
 | Meshes | four independent non-structured sizes per angle, plus two refined meshes forming nested pairs |
 | Kinematic test | the **checker**, not the producer, recomputes the flow and jump residual at a **witness** result, and writes the feasibility record with the witness's hash. Rank and nullity are **reported only** and never decide a verdict. `formulation_infeasible` is possible only when every `alpha = 0`. For `alpha > 0` the residual is the witness's own, and **no infeasibility verdict** is issued |
-| Quality test | the kinematic test feasible on every listed mesh; a **certified Upper at every gate size**; a certified bracket on the finest mesh within `MAX_GAP_3D_VM` (0.30) for `phi = 0` or `MAX_GAP_3D_DP` (0.50) otherwise; certified bounds monotone along each nested pair. The gap on every mesh is recorded as the trend and gates nothing |
+| Quality test | the kinematic test feasible on every listed mesh; a **certified Upper and a certified bracket on meshes 0 to 4**; certified bounds monotone along the nested pair `(0, 4)`. The gap on every mesh, mesh 5 included, is recorded as the trend and gates nothing. Since OD5 (contract amendment 3, 2026-11-19, decided after results) mesh 5 and the pair `(3, 5)` gate nothing in P0; they are evidence for P4 and K1. `MAX_GAP_3D_VM` (0.30) and `MAX_GAP_3D_DP` (0.50) keep their values as P4 exit targets for adaptive true-3D. Before OD5 this row asked for a certified Upper at every gate size and a certified bracket on mesh 5 within those limits |
 
 Feasibility alone does not pass. A tolerance may not be relaxed to turn `formulation_infeasible` into a pass, and
 `AlmostSolved` is not success. Only records from a real checker count.
@@ -440,7 +440,8 @@ Feasibility alone does not pass. A tolerance may not be relaxed to turn `formula
 
 - after the box correction, at `phi = 30` degrees **only two failures withhold the 3D Drucker-Prager claim at 30 degrees**: the
   gate `gap_le MAX_GAP_3D_DP`, and a missing certificate, meaning an item that fails because no gate-admissible certificate exists
-  on its mesh. The case is recorded with the claim withheld, by angle and wall type, and does not trigger K2;
+  on its mesh. The case is recorded with the claim withheld, by angle and wall type, and does not trigger K2. Since OD5 no P0 gate
+  is `gap_le MAX_GAP_3D_DP`, so only the missing-certificate branch can act in P0;
 - at **any** angle, a failed monotonicity check between two certified values, a failed or missing kinematic record, or an invalid
   record keeps P0 open, and a contradiction (certified Lower above certified Upper beyond the floors) stops the program;
 - a miss at `phi = 0, 10` or `20` degrees is a P0 failure that keeps P0 open. If no Upper formulation passes them, K2 applies;
@@ -912,7 +913,7 @@ These are touched by more than one program, so changes to them merge one at a ti
 | P1 | 237f | C++ kernel, assembler, command, export, writer, adapter | L0b identity for every P0-admitted formulation; checker certifies engine output; mutation lane fails on operator faults; a build without the engine differs only by the command's refusing entry point, and existing commands are unchanged; shipped interpreters handled or absence recorded |
 | P2 | L1 to L4, apeGmsh | bridge and reader | emitter parity; stock refusal; sidecar atomicity; `Results.limit` fixtures; `live-fork` proof on the pin |
 | P3 | 237g | V-H-M and 3D queries | strip V-H and V-M certified brackets; sliding correct for the stated interface; query reuse measured; one six-component 3D demonstration labelled by criterion and domain |
-| P4 | 237h | adaptive 3D | I3; certified gap falls at fixed budget on references; every counted iteration passes the checker and re-resolution; best bounds tracked correctly; 3D size-field fidelity proven |
+| P4 | 237h | adaptive 3D | I3; certified gap falls at fixed budget on references, and the true-3D cases reach `MAX_GAP_3D_VM` 0.30 and `MAX_GAP_3D_DP` 0.50 at a fixed budget (OD5); K1 is judged here (§18.3); every counted iteration passes the checker and re-resolution; best bounds tracked correctly; 3D size-field fidelity proven |
 | P5 | 237i | semidefinite criteria and richer interfaces | cone maps agree with principal-stress evaluation; rough circular Tresca bracketed against its checked reference [ES60]; Mohr-Coulomb reduces correctly to plane-strain references; open-solver cost measured |
 | P6 | 237j | performance and advanced meshing | each item shows measured gain over P4 |
 
@@ -928,17 +929,21 @@ P0 is complete only when all of these are demonstrated:
    the contract. **A miss is a real P0 failure.** They are closed from the 237a review-fix commit `09a0afebe`: no limit moves and no
    gate mesh changes.
 
+   **That closure did not hold for the 3D limits.** Later on 2026-11-19, after mesh-4 and mesh-5 results had been seen, the owner
+   decided OD5 (contract amendment 3; this ADR's §19.2): the true-3D gate no longer uses mesh 5, and `MAX_GAP_3D_VM` and `MAX_GAP_3D_DP` keep
+   their values as P4 exit targets, not P0 gates. The strip and Prandtl limits and gate meshes did not move.
+
    **Chronology.** This ADR asked for each limit before the first solve of its case. That did not happen. The first contract
    (`7909baa4e`, 2026-11-18) had no limits; uncommitted estimates were then run; the limits and gate meshes first appeared in
    `32c5a1842` (2026-11-18), the same commit that recorded those estimates; `09a0afebe` (2026-11-19) replaced the 3D
    Drucker-Prager gate meshes with per-angle boxes, on which no solve had been run, and the owner accepted the limits as disclosed.
-   The contract's §18.3 is the record.
+   OD5 then moved the 3D limits and the 3D gate meshes after results (contract §19.3). The contract's §18.3 is the record.
 5. The true-3D gate of §10.1 passes at both the kinematic and the certified-quality steps, with the 30-degree Drucker-Prager rule
    of the owner's decision of 2026-11-19.
 6. The gravity cases of §16.1 pass, and the gravity mutants fail.
 7. Every §11.5 fixture is rejected.
 8. Property gates pass for each P0 case where they apply.
-9. The solver study states which open path certifies at what size, and K1 is decided.
+9. The solver study states which open path certifies at what size and records the K1 evidence. K1 itself is judged at P4 (OD5).
 10. Exported programs replay through a second solver path, and the `limit-open-solver` lane is green.
 11. If 237e has started, any mismatch with FEniCSx is resolved or recorded before I1.
 
@@ -946,7 +951,7 @@ P0 is complete only when all of these are demonstrated:
 
 | Kill | Trigger | Action |
 |---|---|---|
-| K1 | no open path certifies 3D Lower and Upper at about 20,000 tetrahedra, within one hour and one workstation's memory, for **each of `phi = 0, 10, 20, 30` degrees** (`phi = 0` is von Mises; the others are plane-strain-matched Drucker-Prager). The size, time and angles are provisional until frozen | stop before C++; reformulate, rescale, prototype a tailored open solver, or reduce scope. A reduced scope that drops `phi = 0` is an owner decision |
+| K1 | no open path certifies 3D Lower and Upper at about 20,000 tetrahedra, within one hour and one workstation's memory, for **each of `phi = 0, 10, 20, 30` degrees** (`phi = 0` is von Mises; the others are plane-strain-matched Drucker-Prager). The size, time and angles are provisional until frozen. **Judged at P4, not at P0 exit**, since OD5 (2026-11-19); P0 records the evidence (§18.2 item 9). The action was written for a P0 judgement, and its meaning at P4 is for the owner to restate | stop before C++; reformulate, rescale, prototype a tailored open solver, or reduce scope. A reduced scope that drops `phi = 0` is an owner decision |
 | K2 | the thin-slab strip fails after operator tests pass, or no Upper formulation passes the true-3D gate at `phi = 0, 10, 20`. A 30-degree Drucker-Prager miss after the box correction withholds that claim instead (§10.1) | stop and rethink the formulation |
 | K3 | certified Lower above certified Upper for one problem | stop the program |
 | K4 | solver integration disturbs the default build | keep or repair the run-time adapter before going on |
@@ -987,6 +992,21 @@ from this ADR's working defaults O1 and O2 below.
 - **OD1.** The gap limits and gate meshes are kept as disclosed and closed (§18.2 item 4). A miss is a real P0 failure.
 - **OD2.** After the box correction, a 30-degree 3D Drucker-Prager miss of the kinds listed in §10.1 withholds that claim, recorded by
   angle and wall type. Exact-formulation failures still stop P0.
+
+**OD5, decided by the owner on 2026-11-19, after results** (contract amendment 3, its §19.3; OD3 and OD4 are in the contract's
+§18.1). The true-3D P0 gate is a certified Upper and a certified bracket on meshes 0 to 4, with monotonicity along `(0, 4)`.
+Mesh 5 gates nothing in P0 and stays as evidence for P4 and K1. `MAX_GAP_3D_VM` 0.30 and `MAX_GAP_3D_DP` 0.50 keep their values
+as P4 exit targets for adaptive true-3D. K1 is judged at P4. Strip and Prandtl limits, OD2 for missing certificates, and the
+refusal rules are unchanged.
+
+*Disclosure.* This was decided **after** results were seen, and it reverses the closure that OD1 stated for the 3D limits. The
+evidence, on `upper3d_{fixed,roller}_phi00` with `clarabel-faer` (Clarabel 0.11.1) and the WP-237d driver `solver_study.py` at
+`17ee1b4fc`: on mesh 4 (1,944 tets) the certified jump Upper is 9.24394 (fixed) and 9.23579 (roller), the certified Lower 3.34843
+and 3.34841 (presets of `00697e62e`), so the certified gap is about 0.94; on mesh 5 (22,720 tets) the jump Upper took 10,808 s and
+31.7 GB (fixed) and 9,475 s and 30.9 GB (roller), the checker refused both for capacity (about 370,000 rows, above its 250,000-row
+limit), and no Lower was solved. Mesh 4 refines mesh 0 and is coarser than mesh 3 (2,840 tets); mesh 5 refines mesh 3. The
+owner's reason: mesh-5 gaps cannot be certified in P0 because of checker capacity and solve cost, and the 3D gap targets belong
+with adaptive meshing (P4), where they mean something at a fixed budget.
 
 **Working defaults, proposed, not decided.**
 
@@ -1092,6 +1112,9 @@ This records the method of the table in §10.1. It is not a reference implementa
   record file names and reserved checker names.
 - **2026-11-19, frozen contract `03f59c1a4`.** Decision labels OD1 and OD2; the narrowed 30-degree withholding scope;
   `literal_zero_violated`, the positive shift-invert shift and `D_scale_int > 0`. The header and §9.2 now name `03f59c1a4`.
+- **2026-11-19, contract amendment 3 (OD5, after results).** The true-3D P0 gate uses meshes 0 to 4 (§10.1); the 3D gap limits
+  are P4 exit targets (decision table, §18.1 P4 row, §18.2 item 4); K1 is judged at P4 (§18.2 item 9, §18.3); OD5 and its
+  disclosure in §19.2.
 
 ## Implementation log
 
