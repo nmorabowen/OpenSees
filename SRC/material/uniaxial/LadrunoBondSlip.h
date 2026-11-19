@@ -28,8 +28,9 @@
 //
 //   Relates local bond stress tau to bar-concrete slip s for the bar-axial slot
 //   of the embedded-reinforcement element (LadrunoEmbeddedRebar, ADR 20 / D4).
-//   v1 = MONOTONIC backbone + elastic unload/reload (cyclic degradation deferred
-//   to v2). Sign-symmetric: tau(-s) = -tau(s).
+//   v1 = MONOTONIC backbone + friction-slider unload/reload (cyclic degradation
+//   deferred to v2). Sign-symmetric: tau(-s) = -tau(s) on the backbone and under
+//   a mirrored slip history.
 //
 //   Backbone (MC2010), with the ADR-D4 must-fix regularizations baked in:
 //     0    <= |s| < s0 : LINEAR  tau = k0*|s|         (D4.1 initial-slip reg.:
@@ -48,9 +49,10 @@
 //   (The element scales tau by perimeter*L_trib for nodal force; feeding Gf here
 //   fixes the per-area dissipation so the embedded response is mesh-objective.)
 //
-//   Unload/reload: elastic with the initial stiffness k0, clamped to the
-//   envelope at the committed peak |slip|. Tangent is finite everywhere (k0 off
-//   the envelope; the branch slope on it). getInitialTangent = k0.
+//   Unload/reload (|s| < committed peak |slip|): friction slider. Stress moves
+//   at k0 from the committed point and |tau| is capped at the envelope stress of
+//   the peak, in both directions. Tangent is finite everywhere (k0 off the
+//   envelope, sliding included; the branch slope on it). getInitialTangent = k0.
 //
 //   classTag MAT_TAG_LadrunoBondSlip = 33002 (Ladruno private uniaxial band,
 //   after LadrunoUniaxialJ2=33000, LadrunoRebarBuckling=33001).
