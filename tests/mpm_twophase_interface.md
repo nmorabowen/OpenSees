@@ -708,6 +708,42 @@ particles; ruling 9064acca3 (2) is amended accordingly).**
   It is recomputed only when the particle-to-cell map changes. That map gives, for every particle,
   the grid cell that holds its centre: floor((x − x₀)/h) per axis. The refusal text of 7c (3) stands.
 
+### 7c (1), corrected after the ready-flip review (2026-11-19; wp-briefs "232l", "Ready-flip review of record on d77caf8fd")
+
+This replaces 7c (1)'s "dropped whole … Particles interpolate 0 from it (mode F does not renormalise
+the u weights)". The cutoff c_u = max(`massCutoff`, `pressureCutoff`) and the u-activity test are
+unchanged. The bug was a broken partition of unity: a free block in rigid translation lost its
+velocity (gimp mean v_x 0.29 after 200 steps at v = (1, 0)).
+
+**Every route-S step renormalises the u weights over each particle's u-active nodes.** This
+applies to two-phase steps and also to a route-S step without a two-phase body, where c_u is
+`massCutoff`. Per particle it is mode A's `renormalize` formula (§7a Q3, step 4) with B9's rule:
+1. Supports: `upSupport` at the step-start position. Each entry carries W, ∇W, S′_c, ∇S′_c
+   (c = u components and p), and plate entries carry their own weights.
+2. Nodal masses: raw, m_a = Σ_p W_pa m_p, folded. A lattice node is u-active iff
+   m_a > c_u · m_max (with `imageCutoffMass`'s 2^k).
+3. Kept entries: the particle's lattice entries on u-active nodes, plus its plate entries. Entries
+   on other nodes are **absent**: they take part in nothing (P2G, predictor, Q, correction, G2P,
+   strain). They are never held at zero.
+4. Sums over the kept **lattice** entries: σ = Σ W, γ = Σ ∇W (unsigned W).
+5. Every kept entry, the plate's included, is rescaled: W ← W/σ, ∇W ← (∇W − W γ)/σ, and for each
+   **u** component S′_c ← S′_c/σ, ∇S′_c ← (∇S′_c − S′_c γ)/σ. This is done always, also when nothing
+   was dropped (σ = 1 to round-off).
+6. The p component and its gradient are **not** rescaled by this pass. p-activity, S^p and its
+   renormalisation follow fix 3 on the raw weights (ruling bb1421559), as before.
+7. Then the step of §1 and §7c (2) runs on the renormalised u weights: P2G of mass
+   (m_a = Σ W m_p over the kept entries), momentum and forces; the predictor; M⁻¹; Q's u rows
+   (∂_i S′_{i,a} renormalised); the correction; MUSL G2P; and L (v₁ for two-phase particles,
+   v** for the rest).
+
+**Consequence for T0 (iii).** From step 3 the ghost row j = −1 (m_a ≈ 1e-8 m_p) is dropped, and each
+particle that touched it is renormalised over its remaining nodes. Steps 1–2 change only by the
+round-off of σ = 1.
+
+**T13 (new gate, pre-registered by the orchestrator): translation patch.** A free two-phase block in
+rigid translation keeps v, σ′ and p to rel 1e-10 for 200 steps. It runs on both routes, gimp and
+bspline2, with and without a `plate` face.
+
 ## 8. Proposed amendments and objections (none applied)
 
 - **A1** (U4): particles carry p̈ as well as p, ṗ (§1, P2).
