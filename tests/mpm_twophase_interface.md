@@ -74,7 +74,7 @@ D1.9) adds P5's update of p, ṗ, p̈.
 
 ## 2. U2 — the grid pressure DOF in mode A
 
-- **P4 (U2).** In a model with any two-phase body, **every** grid node has ndf = nd + 1, p last
+- **P4 (U2; amended (defect fix 3), §7b).** In a model with any two-phase body, **every** grid node has ndf = nd + 1, p last
   (`dofMap`, `LadrunoUPKernel.h:203-216`); a model with none keeps ndf = nd bit for bit (T10). The
   node constructor's literal ndf (`LadrunoMPMImplicit.cpp:885-886`) takes nd + 1, and
   `LadrunoMPMPoint::getNumDOF` (`LadrunoMPMPoint.h:188`) returns nen·(nd + 1) for **every** particle,
@@ -97,7 +97,7 @@ D1.9) adds P5's update of p, ṗ, p̈.
   a body flush with the face: a GIMP support ends at x_p + l_p + h, open). Mode F: p eliminated there.
   On B-spline faces p₀ ≠ 0 is refused in phase 6. Impervious is natural. Drained lines inside the grid
   are not offered: every gated case drains on a grid face (U7).
-- **P9 B-spline images per component.** Today a `fix` face folds every component of its ghosts
+- **P9 B-spline images per component (amended (defect fix 2), §7b).** Today a `fix` face folds every component of its ghosts
   (`foldedSupport`, `LadrunoMPMCore.h:462-527`; signs `:492`). New rule: a face folds **u** iff it
   carries a u condition (`fix` or `plate`), exactly as today; it folds **p** iff it folds u or has a
   `pfix` — odd under `pfix`, even otherwise (impervious). A `pfix`-only face (Mandel's drained,
@@ -124,7 +124,7 @@ D1.9) adds P5's update of p, ṗ, p̈.
 
 ## 4. U4, U5, U9 — projection, integrators, refusals
 
-- **P5 (U4).** Projection: volume-weighted, the row-sum-lumped L2 projection at particle quadrature,
+- **P5 (U4; projection replaced by P5a, §7b).** Projection: volume-weighted, the row-sum-lumped L2 projection at particle quadrature,
   p̂_a = Σ_p S^p_pa V_p p_p / Σ_p S^p_pa V_p over two-phase particles (ṗ̂, p̈̂ alike, mode A). Update:
   p_p ← α_p (p_p + Σ_a S^p_pa (p_a − p̂_a)) + (1 − α_p) Σ_a S^p_pa p_a, the same blend for ṗ, p̈;
   `mpm pressureBlend <α_p>`, default 1 (incremental, FLIP-like). The reference p̂ is the
@@ -389,6 +389,121 @@ Matrices are row-major lists of rows; every number uses 17 significant digits.
 
 **Case notes (no interface change).** T3 and T6 use a 5 s linear ramp, which replaces T3's step
 load and P10's 2 s Terzaghi ramp; it is still ≥ 20 transits. T4 runs at h = H/20.
+
+## 7b. Amendments after route E on `fd81cbdd3` (232l-C, 2026-11-18; proposed for the freeze)
+
+The owner's decision and the ruled defect fixes are in `wp-briefs.md` "232l", block "Route E on
+build fd81cbdd3". P5a replaces P5's projection. Fix 2 amends P9; fix 3 amends P4. Everything else
+in P1–P13 and §7a stands.
+
+### P5a — the particle pressure carrier: FLIP increments on a consistent L2 projection
+
+**The cause, from the diagnostic (`13024db9f`).** P5 projects with the row-sum-lumped matrix,
+p̂ = M_L⁻¹ Pᵀ V p_part, where:
+- P is the particle-by-node matrix of S^p;
+- V = diag(V_p);
+- M_L = diag(Pᵀ V P 1).
+
+Lumping makes projection followed by interpolation lossy: M_L⁻¹ Pᵀ V P ≠ I. Two things follow:
+- **PIC (α_p = 0) is hopeless.** It applies that smoothing on every step, and drained T2 went to
+  −0.83 p₀.
+- **FLIP (α_p = 1) settles on the wrong particle values.** It stops only where the grid increments
+  vanish, i.e. p̂ = g for the grid solution g, including g_c = p₀ at a pinned node. Its particles
+  therefore satisfy M_L⁻¹ Pᵀ V p_part = g. Since M_L⁻¹ Pᵀ V P ≠ I, that solution is
+  p_part = P g + r with a residual r ≠ 0, whose job is to undo the lumping. Near a drained face this
+  is the measured residual: the top particle at −0.044 p₀ where the field is +0.045 p₀. It is
+  70–75 % grid-visible, through the pinned nodes. The grid field itself is accurate, which is the
+  diagnostic's (ii).
+
+**The scheme.** For the p-active nodes of the step (fix 3), each of x ∈ {p, ṗ, p̈}:
+1. **Projection (P2G).** Solve M x̂ = Pᵀ V x_part, with the consistent matrix
+   M_ab = Σ_{two-phase p} V_p S^p_pa S^p_pb. S^p is the renormalised p weight (fix 3), with the
+   B-spline folds of P9 (and fix 2's affine part, see below). This is the least-squares fit of the
+   particle field by the grid field (Burgess, Sulsky & Brackbill 1992, the consistent-mass FLIP
+   transfer; Wallstedt & Guilkey 2011, weighted-least-squares particle-to-grid reconstruction).
+   - The solve: Jacobi-PCG to a relative residual of 1e-14, warm-started from 0. The matrix is SPD
+     whenever the particles of each p-active node's support span its shape functions, which holds
+     for ppc ≥ 2 on gimp, linear and B-spline.
+   - On a solve failure the step is refused, with nothing changed.
+   - x̂ is the unconditioned reference. The committed nodal state takes x̂, except that pinned nodes
+     take p₀, 0, 0 (§7a Q5, unchanged).
+2. **Update (G2P).** Unchanged from P5:
+   x_p ← α_p (x_p + Σ_a S^p_pa (x_a − x̂_a)) + (1 − α_p) Σ_a S^p_pa x_a, with α_p = 1 the
+   default.
+
+**Why the residual cannot survive.** P Pᵀ-type projections are exact here: M⁻¹ Pᵀ V P = I. Split
+any particle field into p_part = P g + r_vis + r_inv, where r_vis = P M⁻¹ Pᵀ V r and Pᵀ V r_inv = 0.
+- **At a free node** the next projection returns g + M⁻¹ Pᵀ V r_vis. The visible part becomes grid
+  history and is evolved by the u-p equations: it is no longer a residual.
+- **At a pinned or prescribed node c** the grid holds p₀, so the increment there is
+  p₀ − x̂_c = −(M⁻¹ Pᵀ V r)_c. FLIP subtracts exactly that component from the particles. After one
+  step the residual has no component the pinned node can see.
+- **The fixed point.** FLIP stops only at x̂ = g, which now means Pᵀ V (p_part − P g) = 0. The
+  particles carry the grid field exactly, plus at most a V-orthogonal r_inv.
+- **The invisible part.**
+  - It never enters a solve, since its projection is zero by definition.
+  - It is never created by an increment, because increments lie in the range of P. The one source
+    is support change under motion: the new step's projection drops the part of p_part outside
+    the new range. That is O(|Δx|/h) per step, a fraction of the step's pressure change.
+  - It is zero whenever the initial field is zero or grid-representable, which covers every gated
+    case (zero excess p).
+  - It is reported, never gated: the row "residual" of T2p/T4p, now
+    `p_p − Σ S^p_pa p_a` after G2P.
+  - Damping it would break the sealed-column invariant below for a non-representable initial
+    field, so P5a does not.
+- **XPIC** (Hammerquist & Nairn 2017) and **APIC-type** transfers (Jiang et al. 2015) target noise
+  in velocity's null space. They do not address this residual, which is lumping bias, not noise,
+  so neither is adopted.
+
+**The sealed-column invariant (guard) holds bit for bit, as P5 claimed.** With no motion, k̄ = 0 and
+ṗ = p̈ = 0, Newmark's p predictor equals x̂ exactly and the right side of every p row is exactly
+zero. The increment x_a − x̂_a is therefore exactly zero, and the particles keep p bit for bit,
+whatever x̂ is.
+
+**Cost.** One sparse SPD solve per step with three right-hand sides, over the p-active nodes. The
+pattern is that of H.
+
+**Both routes.** Route S (§5) projects p̂ the same way. Its step 3's S* p̂ is the consistent
+projection.
+
+**What the oracles must change (232l-V re-derives from this text).**
+- **T0 (ii) and T0 (iii):** replace the lumped projection by solving M x̂ = Pᵀ V x_part for
+  x ∈ {p, ṗ, p̈}. M is over the p-active nodes, which include the pinned ones. Use the
+  renormalised S^p of fix 3 and the particles' step-start V_p. The committed p state and the G2P
+  rule are unchanged. A dense solve is fine at these sizes.
+- **T0 (i)** is unaffected: it uses the committed state before any step.
+- **T1** is affected: its FE nodal p, ṗ, p̈ are "the P5 projection" of the particle values, so
+  t1_fe.json is regenerated with the consistent projection.
+
+### P9, amended (defect fix 2): the affine even image on an impervious face with a fluid drive
+
+- **The flaw.** An impervious B-spline face whose normal component of the fluid drive is non-zero,
+  ρ_f b_f·n ≠ 0, cannot carry zero flux with an even image. Zero flux needs ∂p/∂n = ρ_f b_f·n
+  (Darcy, q = −k̄(∇p − ρ_f b_f)), and the even image imposes ∂p/∂n = 0.
+- **The image.** With d the face's axis, the ghost coefficient is
+  c_g = c_m + ρ_f λ b_f,d (X_g,d − X_m,d). This is the image of p = p_even + ρ_f λ b_f,d (x_d − x_face),
+  and quadratic and cubic B-splines reproduce the linear part exactly.
+- **Where the known term goes.** The interpolated pressure gains
+  π_p = Σ_{g folded} S_g(x_p) ρ_f λ b_f,d (X_g,d − X_m,d), and ∇π_p likewise.
+  - In the u rows, the coupling force gains α V_p ∇S_a π_p.
+  - In the p rows, H's flux gains V_p (∇S^p_b · k̄ ∇π_p).
+  - The projection fits x_part − π_p, and G2P adds back π at the step's end.
+  - π̇ (from λ̇) is neglected; it is exact for a constant drive, as in T4.
+- **Patch check (before T4p):** a bspline2 hydrostatic column with k̄ = 1, run 200 steps of dt 1 s.
+  The base particle's p equals γ_w(H − y) to 1e-10 γ_w H.
+
+### P4, amended (defect fix 3): mode A's p-activity is route S's rule
+
+- **The rule.** A node's p is active only if its two-phase nodal mass exceeds `pressureCutoff`
+  × m_max:
+  - the two-phase nodal mass is Σ_{two-phase p} W_pa m_p, × 2^k on a B-spline face layer;
+  - `pressureCutoff` defaults to 5e-2;
+  - m_max = max over all particles of m_p.
+- **The weights.** Each two-phase particle's S^p and ∇S^p are renormalised over its p-active nodes
+  by B9's rule, σ = Σ W, γ = Σ ∇W. Nothing is done when every kept node is p-active.
+- **Every other node's p** is fixed at 0 by the host SP; such a node is absent from the projection
+  and from G2P.
+- **The T8 stray-p row**, a tail of 1e-8 giving p = −6.7e3 at step 2, becomes a pass.
 
 ## 8. Proposed amendments and objections (none applied)
 
