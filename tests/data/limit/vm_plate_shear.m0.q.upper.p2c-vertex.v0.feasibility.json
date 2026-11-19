@@ -4,7 +4,7 @@
   "version": "0"
  },
  "denominator": 1.0,
- "footing_modes": null,
+ "footing_modes": 1,
  "format": "ladruno-limit-feasibility",
  "format_version": 0,
  "formulation": "upper.p2c-vertex.v0",

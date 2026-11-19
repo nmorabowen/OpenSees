@@ -14,6 +14,11 @@ value stays an ESTIMATE for the limit-analysis program.
 Usage: python certificate_demo.py [--write] [case ...]
 Needs numpy, scipy and clarabel. --write refreshes certificate_demo_record.json beside this file.
 The dense factorisations limit it to a few hundred tetrahedra; the method named for large meshes is interface 17.2.
+
+Contract amendment 1: Upper results carry objective = c^T x and the field value; Lower symmetry rows use the set
+normal; the flow and jump conditions use their own scales, D_scale_vol and D_scale_jump. Its kappa_eq is the ratio of
+computed dense singular values, not the proved bound of interface 17.1, and it writes no method report: the reserved
+checker name keeps it away from every gate.
 """
 import copy
 import json
@@ -182,20 +187,23 @@ def lower_rows(m):
             for c in range(3):
                 rows.add(list(range(sv(e1, a), sv(e1, a) + 6)) + list(range(sv(e2, b), sv(e2, b) + 6)),
                          list(N[c]) + list(-N[c]))
+    set_normal = {}
     for row, e, f, index in m.boundary():
         kind = m.kinds[index]
         n, area = m.facet(e, f)
         N = T.voigt_n(n)
         vertices = T.FACET_VERTICES[f]
+        n_set = set_normal.setdefault(index, n)  # amendment 1, item 3: symmetry rows use the set normal
         if kind in ("free", "traction"):
             for j, a in enumerate(vertices):
                 for c in range(3):
                     rows.add([0] + list(range(sv(e, a), sv(e, a) + 6)), [-m.arrays["t1"][row, j, c]] + list(N[c]),
                              m.arrays["t0"][row, j, c])
         elif kind == "symmetry":
-            for tangent in T.tangent_basis(n):
+            N_set = T.voigt_n(n_set)
+            for tangent in T.tangent_basis(n_set):
                 for a in vertices:
-                    rows.add(list(range(sv(e, a), sv(e, a) + 6)), list(tangent @ N))
+                    rows.add(list(range(sv(e, a), sv(e, a) + 6)), list(tangent @ N_set))
         elif kind == "footing":
             f_index = m.problem["boundary_sets"][index]["footing"]
             x_ref = np.array(m.problem["footings"][f_index]["x_ref"])
@@ -539,10 +547,11 @@ class Jump:
             for b in range(6):
                 c[y_col(index, b)] = facet[7] / 6.0 * facet[9]
         x, status = solve_conic(c, A, g, G, h, dims)
+        self.objective = float(c @ x)  # c^T x of the program (amendment 1, item 2)
         return x[:n_aff], status
 
     def conditions(self, x):
-        """Signed conditions of interface 17.4 and the two dissipation sums."""
+        """Signed conditions of interface 17.4, the dissipation, and D_scale_vol and D_scale_jump (amendment 1)."""
         m = self.m
         d = (self.flow @ x).reshape(-1, 4, 6)
         theta = d[..., 0] + d[..., 1] + d[..., 2]
@@ -555,20 +564,22 @@ class Jump:
             pi_vol = np.where(alpha > 0.0, k * theta / (3.0 * np.where(alpha > 0.0, alpha, 1.0)), T.S2 * k * enorm)
         D = float(np.sum(m.vol[:, None] / 4.0 * pi_vol))
         coefficient = (self.J @ x).reshape(-1, 6, 3)
-        c_jump, size = [], [np.sqrt((d * d).sum(axis=-1)).max(initial=0.0)]
+        frobenius = np.sqrt((d[..., :3] ** 2).sum(axis=-1) + 0.5 * (d[..., 3:] ** 2).sum(axis=-1))
+        size_vol = float(frobenius.max(initial=0.0))
+        c_jump, size_jump = [], 0.0
         for index, facet in enumerate(self.facets):
             n, t1, t2, area, tau, k_j = facet[4], facet[5], facet[6], facet[7], facet[8], facet[9]
             cb = coefficient[index]
             opening, s1, s2 = cb @ n, cb @ t1, cb @ t2
             slip = np.hypot(s1, s2)
-            size.append(float(np.sqrt((cb * cb).sum(axis=1)).max()))
+            size_jump = max(size_jump, float(np.sqrt((cb * cb).sum(axis=1)).max()))
             if tau > 0.0:
                 c_jump.append(tau * slip - opening)
                 D += float(area / 6.0 * np.sum(k_j / tau * opening))
             else:
                 D += float(area / 6.0 * k_j * np.sum(slip))
         c_jump = np.concatenate(c_jump) if c_jump else np.zeros(0)
-        return c_vol, c_jump, D, float(max(size))
+        return c_vol, c_jump, D, size_vol, size_jump
 
     def scale_of(self, x):
         m = self.m
@@ -586,46 +597,59 @@ class Jump:
         move = float(np.max(np.abs(x_p - x_c) / scale))
         if move > TOL["TOL_PROJECTION_MOVE"]:
             return None, "projection_move_too_large", {"projection_move": move}
-        c_vol, c_jump, _, size = self.conditions(x_p)
-        c_all = np.concatenate([c_vol[np.isfinite(c_vol)], c_jump])
-        rho_before = float(np.max(c_all, initial=0.0) / size)
+
+        def split(conditions):
+            """Signed conditions with the scale of their own kind: volume in 1/time, jump in velocity (amendment 1)."""
+            c_vol, c_jump, D, size_vol, size_jump = conditions
+            return [(c_vol[np.isfinite(c_vol)], size_vol), (c_jump, size_jump)], D
+
+        def ratio(values, size):
+            top = float(np.max(values, initial=0.0))
+            return top / size if size > 0.0 else 0.0
+
+        kinds, _ = split(self.conditions(x_p))
+        rho_before = max(ratio(values, size) for values, size in kinds)
         if rho_before > TOL["TOL_FLOW_ACCEPT"]:
             return None, "flow_violation_too_large", {"rho_before": rho_before}
-        margin = TOL["TOL_CONE_MARGIN"] * size
+        active = [values > TOL["TOL_CONE_MARGIN"] * size for values, size in kinds]
         mu = 0.0
         x_f = x_p
         interior_margin = None
-        active = c_all > margin
-        if np.any(active):
+        if any(a.any() for a in active):
             if x_int is None:
                 return None, "no_admissible_correction", {"rho_before": rho_before}
             x_ip, _ = project(A, g, x_int, self.scale_of(x_int))
-            ci_vol, ci_jump, _, size_int = self.conditions(x_ip)
-            ci_all = np.concatenate([ci_vol[np.isfinite(ci_vol)], ci_jump])
-            if not size_int > 0.0:
-                return None, "interior_field_invalid", {"interior_size": size_int}
-            interior_margin = float(np.max(ci_all[active]) / size_int)
-            if ci_all.max() > TOL["TOL_CONE_MARGIN"] * size_int or interior_margin > -TOL["TOL_INTERIOR_MIN"]:
-                return None, "interior_field_invalid", {"interior_margin": interior_margin, "active": int(active.sum())}
-            mu = float(np.max(c_all[active] / (c_all[active] - ci_all[active])))
+            inner, _ = split(self.conditions(x_ip))
+            margins, ratios = [], []
+            for (values, _), (values_int, size_int), a in zip(kinds, inner, active):
+                if a.any() and not size_int > 0.0:
+                    return None, "interior_field_invalid", {"interior_size": size_int}
+                if values_int.size and values_int.max() > TOL["TOL_CONE_MARGIN"] * size_int:
+                    return None, "interior_field_invalid", {"interior_size": size_int}
+                if a.any():
+                    margins.append(float(np.max(values_int[a]) / size_int))
+                    ratios.append(float(np.max(values[a] / (values[a] - values_int[a]))))
+            interior_margin = max(margins)
+            if interior_margin > -TOL["TOL_INTERIOR_MIN"]:
+                return None, "interior_field_invalid", {"interior_margin": interior_margin,
+                                                        "active": int(sum(a.sum() for a in active))}
+            mu = max(ratios)
             if mu > TOL["TOL_REPAIR_MAX"]:
                 return None, "repair_too_large", {"repair_mu": mu}
             x_f = (1.0 - mu) * x_p + mu * x_ip
-        c_vol, c_jump, D, size = self.conditions(x_f)
-        c_all = np.concatenate([c_vol[np.isfinite(c_vol)], c_jump])
+        kinds, D = split(self.conditions(x_f))
         W0, W1 = float(self.W0 @ x_f), float(self.W1 @ x_f)
         w_scale = float(np.abs(self.W1) @ np.abs(x_f))
         omega = backward_error(A, g, x_f, scale)
         tau = T.tau_eq()
         kappa = info["kappa"]
-        n_vol = int(np.isfinite(c_vol).sum())
         metrics = {
             "omega_eq": omega, "tau_eq": tau, "kappa_eq": kappa, "projection_move": move,
-            "rho_flow": float(np.max(c_all[:n_vol], initial=0.0) / size),
-            "rho_jump_cone": float(np.max(c_all[n_vol:], initial=0.0) / size), "repair_mu": mu,
+            "rho_flow": ratio(*kinds[0]), "rho_jump_cone": ratio(*kinds[1]), "repair_mu": mu,
             "work_reference": W1, "rho_before_repair": rho_before, "interior_margin": interior_margin,
-            "repaired_conditions": int(active.sum()), "value_candidate_recomputed": float(value_candidate),
+            "repaired_conditions": int(sum(a.sum() for a in active)), "value_candidate_recomputed": float(value_candidate),
             "rank": info["rank"], "rows": info["rows"], "cols": info["cols"], "literal_zero": info["literal_zero"],
+            "d_scale_vol": kinds[0][1], "d_scale_jump": kinds[1][1],
         }
         if np.any(x_f[info["zero_mask"]] != 0.0):
             return None, "literal_zero_violated", metrics
@@ -633,7 +657,7 @@ class Jump:
             return None, "equality_residual_above_floor", metrics
         if kappa > TOL["TOL_KAPPA_CAP"] or kappa * omega > TOL["TOL_FLOOR_MAX"]:
             return None, "equality_ill_conditioned", metrics
-        if c_all.size and c_all.max() > TOL["TOL_CONE_MARGIN"] * size:
+        if any(values.size and values.max() > TOL["TOL_CONE_MARGIN"] * size for values, size in kinds):
             return None, "flow_violation_too_large", metrics
         if W1 < TOL["TOL_WORK_MIN"] * w_scale or W1 <= 0.0:
             return None, "work_nonpositive", metrics
@@ -663,8 +687,9 @@ def straightness(m):
     return worst
 
 
-def documents(name, problem, arrays, m, bound, formulation, status, candidate, fields, value, reason, metrics):
-    result = T._result(name, problem, bound, candidate, fields, formulation)
+def documents(name, problem, arrays, m, bound, formulation, status, candidate, fields, value, reason, metrics,
+              objective=None):
+    result = T._result(name, problem, bound, candidate, fields, formulation, objective=objective)
     result["producer"] = {"name": "certificate_demo", "version": "0"}
     result["solver"] = {"name": "clarabel", "version": clarabel.__version__, "settings": {"defaults": True}}
     result["solver_status"] = STATUS.get(status, "numerical_error")
@@ -721,7 +746,7 @@ def run_case(name, mesh, coarse):
     fields = T._float_arrays(element_velocity=x[:30 * m.n_e].reshape(m.n_e, 10, 3),
                              footing_velocity=x[30 * m.n_e:].reshape(m.n_f, 6))
     result, certificate = documents(name, problem, arrays, m, "upper", T.JUMP_ID, status, candidate, fields, value,
-                                    reason, metrics)
+                                    reason, metrics, objective=jump.objective)
     out["upper"] = {"result": result, "certificate": certificate, "interior_solver_status": interior_status,
                     "diagnostics": {k: v for k, v in metrics.items() if k not in T.CHECK_KEYS}}
     return out
