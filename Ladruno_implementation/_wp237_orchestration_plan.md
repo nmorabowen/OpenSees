@@ -50,7 +50,7 @@ out-of-family verdict is open (ADR O8).
 | WP | Phase | Delivers | Owned paths | Agent | Starts when | Done when |
 |---|---|---|---|---|---|---|
 | 237 | setup | ADR and this plan | `Ladruno_implementation/237_*`, `_wp237_*` | Opus · high | owner go | owner accepts |
-| 237a | P0 | frozen mathematics, data contract and cases: a jump-based isochoric Upper or proven alternative, with continuous P2 as control; the true-3D gate; certificate rules; gravity cases; frozen maximum gaps; all negative-fixture definitions | `tests/limit_interface.md`, `tests/limit_cases.txt`, `tests/data/limit/`, contract tests | Opus · high | owner go | orchestrator freezes it |
+| 237a | P0 | frozen mathematics, data contract and cases: a jump-based isochoric Upper or proven alternative, with continuous P2 as control; the true-3D gate; certificate rules; gravity cases; the gap limits closed by the owner on 2026-11-19; all negative-fixture definitions | `tests/limit_interface.md`, `tests/limit_cases.txt`, `tests/data/limit/`, contract tests | Opus · high | owner go | orchestrator freezes it |
 | 237b | P0 | Python reference assembler for the Lower, the control and the admitted Upper formulation | `tests/limit_reference.py`, `tests/test_limit_reference.py` | Opus · high | 237a frozen | L0 and L3 reference gates |
 | 237c | P0 | independent checker: projection, admissible repair, full recheck, whole-facet jump proof and all negative fixtures | `tests/limit_certificate.py`, `tests/test_limit_certificate.py`, fixtures | Fable · high | 237a frozen | L1 gates |
 | 237d | P0 | solver viability, true-3D gate, scale study and `limit-open-solver` lane | `Ladruno_files/testbed/limit_analysis/`, the lane's test and workflow job | Sonnet · medium | 237b and 237c usable | L2, the true-3D gate and K1 decided |
@@ -153,7 +153,7 @@ Private memory holds pointers only.
 
 | Gate | Condition |
 |---|---|
-| I1, P0 to C++ | every item of ADR §18.2 is demonstrated, and K1 and K2 did not fire |
+| I1, P0 to C++ | every item of ADR §18.2 is demonstrated, and K1 and K2 did not fire. A 30-degree Drucker-Prager miss is handled by the owner's 2026-11-19 rule, not by K2 |
 | I2, fork to apeGmsh | problem and output contracts frozen, with fixtures both sides can read |
 | I3, adaptive | 237g, C2, C3, and ADR 0136 requests R1 (estimator decoupling), R2 (non-`Results` run product), R3 (stop predicate), R4 (3D size-field gate) and R5 (straight tet10 output) |
 | I4, restart | D1 and D2 in a released fork, and apeGmsh pins it |
@@ -193,7 +193,8 @@ a ready-flip starts none; one critic from the other family; and the ADR-87 D4 ve
 
 ### 6.5 Results
 
-A gate passes only on certified bounds. Every quoted result names build or commit, driver, output path, date, criterion, mesh, solver,
+A gate passes only on certified bounds from a real checker; records whose checker is `schema-fixture` or `procedure-demo` never
+count. Every quoted result names build or commit, driver, output path, date, criterion, mesh, solver,
 `domain_claim` and interface law. A certified Lower above a certified Upper stops the program. Kill criteria K1 to K5 are in ADR §18.3.
 
 ## 7. Protocol
@@ -232,6 +233,10 @@ Rules 4 and 5 restate the owner's licence decision where they say so. Their read
 ## 9. Items for the owner
 
 Closed on 2026-11-18: amendments A1 to A4 are accepted, and the FEniCSx lane lives in a separate private repository.
+
+Closed on 2026-11-19: the gap limits (strip 0.05, Prandtl 0.10, 3D von Mises 0.30, 3D Drucker-Prager 0.50) and their gate meshes are
+kept and closed from the 237a commit `09a0afebe`, and a miss is a real P0 failure. After the box correction, a 30-degree 3D
+Drucker-Prager miss withholds that claim and is recorded by angle and wall type; exact-formulation failures still stop P0.
 
 Still open:
 
