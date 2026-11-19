@@ -1840,6 +1840,42 @@ two-phase B-spline column under gravity in mode F is therefore unavailable in th
 says so. 232l-V re-checked the T0 (iii) oracle against every later ruling (`bc118a60e`): only the
 renormalisation's form changed, by ≤ 9.7e-16.
 
+**Route S on build `4b74bd335` (records `66ce9aa25`, `86bacad2d`).**
+- **T0 (iii): pass,** 1.1e-11 against 1e-9.
+- **T7:**
+  - Drained pencil: bspline2 0.017748, gimp 0.013458.
+  - Undrained pencil: 0.012550 and 0.009516.
+  - The estimator h/c_d, 0.013416, refuses 0.9 × the pencil on bspline2: `mpm safety` is capped at 1,
+    and the pencil is 1.32 × the estimator.
+  - gimp is stable at 0.9 × its pencil (1.27 × undrained), and bspline2 at the estimator limit
+    (1.07 × undrained).
+  - **Owner decision (2026-11-18, asked directly): allow measuring it.** Route S gets a pencil-based
+    run-time limit (documented, warned), and the leg is measured as written.
+- **T6 Terzaghi: pass on all four legs,** worst p 0.0037, U 0.0016, against 0.02.
+- **T6 Mandel: misses on both bases.**
+  - bspline2 gated: off 0.039 and 6.55 at tv 0.2 and 0.4; peak 1.32.
+  - gimp reported: wrong from tv 0.04.
+  - **bspline2 diagnosis:** an x-velocity oscillation grows at the top-right corner, where the plate
+    face meets the drained traction-free face, doubling about every 5 s at Δt 0.005, which is
+    **0.30 × the drained pencil**.
+  - Δt 0.0025 decays, flip 0.98 decays, and the single-phase twin is bounded. So the drained-pencil
+    limit claimed in U6/A6 does not hold for this configuration.
+  - **gimp hypothesis:** light ghost u nodes past the drained face stay active under mode F's 1e-10
+    cutoff, and their pressure correction Δt M⁻¹ Q p grows like 1/δ. This bears directly on the
+    orchestrator's ruling at `3d3699a50` ("do NOT also drop the correction on light u components"),
+    which overrode 232l-V's original proposal and is now under suspicion.
+- **Ruling: diagnose before any design change.** No band moves, and no Δt is chosen to pass:
+  1. **The linearised one-step amplification** of route S on the Mandel bspline2 deck at Δt 0.005,
+     with central differences of `advanceUP` on the full particle state through the existing
+     setters. Report the spectral radius, the unstable mode's localisation (which nodes, u or p,
+     which particles), and the same at Δt 0.0025, plus a single-phase control.
+  2. **The light-node test on gimp Mandel:** the same run with route S's u-side correction
+     restricted to nodes above c_m·m_max. Use the existing `mpm massCutoff` in mode F as a probe if
+     it does exactly that; otherwise say what it does instead.
+  3. **Write it up for the owner:** a miss on T6 Mandel (gated, bspline2) is the owner's decision.
+     The orchestrator brings the diagnosis with the options.
+  The T7 pencil-limit change and any fix that follows go into one batch, after the diagnosis.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
