@@ -1489,6 +1489,43 @@ be worse than twice it, nor worse than the fixed floor. Both quantities are repo
 232l-C's route E → **T0 (i, ii) and T1 are the first two-phase MPM numbers** → T2–T5, T8–T12 on
 route E → route S with T0 (iii) first → T6, T7 → the warrant run on one build.
 
+**Freeze (2026-11-18, orchestrator, on `tests/mpm_twophase_interface.md` @ `6401e5ff9`), before
+any two-phase MPM number.** P1–P13 are frozen as written. Verified in-tree before freezing:
+`FE_Element::setID` returns −3 on a DOF-count mismatch (`FE_Element.cpp:352-358`), so P4's uniform
+ndf + 1 with zero p rows is required, not optional; Newmark re-seeds the committed accel of every
+DOF (`Newmark.cpp:396-416`); ADR-73's §12 P0 item 3 records the rate form as "CD-unstable at any
+Δt" and the L = 0 lane at exactly 1.000× the undrained pencil (`73_…adr.md:1078-1082`); the
+contracts doc reserves the field as additive (`232a_mpm_contracts.md:636`); `MPM_PACK_VERSION = 4`
+(`LadrunoMPMImplicit.cpp:1533`); mode A has only the hypo path (`LadrunoMPMPoint.h:44-49`). The
+orchestrator re-derived route S's step 3 from LadrunoUP's blocks (momentum with p^{n+1} implicit,
+Qᵀv₁ + S*(p − p̂)/Δt + H p = f_seep): it is exact and the operator is SPD. Rulings:
+
+- **A1 accepted:** particles carry p, ṗ and p̈ (Newmark's re-seed reads all three). U4 reads so.
+- **A2 accepted:** `mpm kinematics small | hypo`, default `hypo`, fixed per epoch. T10 adds: with
+  `hypo` (the default), single-phase answers stay bit for bit. T0 and T1 run under `small`; T2–T7
+  run under `hypo` (the shipped default), and `small` is reported beside T2 at one basis.
+- **A3 accepted:** route S is the fractional step's structure (predictor → pressure → correction)
+  on ADR-71's single-velocity u-p equations, an IMEX scheme. Berkeley's two-velocity scheme is cited,
+  not ported. Its drained Δt limit is a claim, which T7 measures.
+- **A4 accepted, with one change:** each new fold (P9's per-component map, P10's affine plate image)
+  gets its patch check (drained elastic block under the plate: uniform σ′_yy, u_y = U at every face
+  node, rel 1e-10) before any T3/T6 number. A failing patch check is a **defect to fix first**; only
+  if it cannot be fixed in this WP do that basis's Mandel legs become a **reported miss with the
+  diagnosis, raised to the program orchestrator** (the owner decides misses). They are never quietly
+  demoted.
+- **A5 accepted:** mode F has no Rayleigh, so route S's T5 leg runs B4 undamped. That is a stated
+  difference from the FE reference, and the CB_lap ≤ 0.3 gate is unchanged.
+- **A6 accepted:** T7's yardstick is the discrete drained pencil (`mpm criticalTimeStep
+  drainedPencil`): stable at 0.9× for 2000 steps, unstable or refused at 1.5×. The undrained pencil
+  is reported beside it.
+- **Plate (P10) as Terzaghi's and Mandel's load: accepted.** 232l-V's FE references tie the top
+  nodes' u_y with `equalDOF` and load the retained node. T2's 1D column under the plate is
+  Terzaghi's uniform load.
+- **`mpm pressureBlend` default 1 (incremental):** accepted; α_p = 0 is reported in the U4 row only.
+- **232l-V's Round-1 numbers** (the FE errors that set the T2/T3/T6 bands, Mandel's parameters and
+  times, and any FE-unreachable row) are ruled here when they arrive, before any MPM number on those
+  rows. T0 and T1 do not depend on them.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
