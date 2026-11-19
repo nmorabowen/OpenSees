@@ -259,9 +259,10 @@ per node or vertex and makes independent assemblies produce identical rows.
 
 *Amendment 2, m6: the formula of `n_S`, exactly.* Take the first row `(e, f)` of `facets` whose `facet_set` is `S`, and
 its vertices `a, b, c` in the order of section 3.2. In IEEE double, `u = x_b - x_a`, `w = x_c - x_a`,
-`c = (u_y w_z - u_z w_y, u_z w_x - u_x w_z, u_x w_y - u_y w_x)` and `n_S = c / sqrt(c_x c_x + c_y c_y + c_z c_z)`, the sum
-taken left to right. On an axis-aligned set this is a unit axis vector exactly. `T1`, `T2` follow from `n_S` by the
-tangent-basis rule above.
+`q = (u_y w_z - u_z w_y, u_z w_x - u_x w_z, u_x w_y - u_y w_x)` and `n_S = q / sqrt(q_x q_x + q_y q_y + q_z q_z)`, the sum
+taken left to right and each component divided by the same root. On an axis-aligned set this is a unit axis vector
+exactly. `T1`, `T2` follow from `n_S` by the tangent-basis rule above. `symmetry_set_normal` in the contract test is the
+executable form; its rows and the demonstration's rows call it, and a test checks it bit for bit on a tilted plane.
 
 **Corners.** Conditions apply per facet in the Lower problem and accumulate per node in the Upper problem.
 
@@ -444,8 +445,10 @@ fixed, so `rho_feas` is the witness's own `rho`.
   to solver accuracy. The projection uses the scales and literal zeros of section 17.1, so the field and its residual
   are reproducible from the problem and result documents alone.
 - **Witness limits (amendment 2, m2).** The witness counts only as the field it was offered as: its step-2 projection
-  move (17.1) is at most `TOL_PROJECTION_MOVE`, and for a ray or fixed-components query its reference work `W1`,
-  evaluated on the witness field, is positive. The record carries both (15.5); `formulation_feasible` needs both.
+  move (17.1) is at most `TOL_PROJECTION_MOVE`, and for a ray or fixed-components query its reference work satisfies
+  the threshold of 17.4 step 5, `W1 >= TOL_WORK_MIN * W_scale`, evaluated on the witness field. The record carries
+  both, the work as `W1 / W_scale` (15.5); `formulation_feasible` needs both. A witness that declares an apex face `Z`
+  (19.2.1) is projected with the augmented rows of 19.2.1 item 4, as its certificate would be (amendment 2 review).
 
 | `status` | Condition |
 |---|---|
@@ -477,8 +480,8 @@ The limits were set late (section 18.3) and the owner accepted them on 2026-11-1
 revision: a limit does not move and no gate mesh changes. A miss is a real P0 failure, recorded.
 
 **Refusals on gate meshes (amendment 1, item 8; amendment 2, m3).** Where the checker writes a capacity or conditioning
-refusal (section 15.8) instead of a certificate, every item resting on that mesh and formulation fails with cause
-`refused`. The gates are **not** weakened: no mesh, limit, tolerance or gate line moves, a refusal never counts as a pass,
+refusal (section 15.8) instead of a certificate, and no gate-admissible certificate exists for that mesh and
+formulation, every item resting on them fails with cause `refused` (as 15.8 and 17.9 state). The gates are **not** weakened: no mesh, limit, tolerance or gate line moves, a refusal never counts as a pass,
 and under OD2 it is not a missing certificate (section 11.3). The statement of the checker's capacity on mesh 5 is evidence,
 not a rule; amendment 2 moved it to section 18.3, where it is tied to ADR kill criterion K1.
 
@@ -496,7 +499,7 @@ verdicts for P0. By owner decision OD2, after the box correction above:
   Upper beyond the floors) stops the program;
 - at **any** angle, an item whose certificate was replaced by a **capacity or conditioning refusal** (section 15.8)
   keeps P0 open. A refusal is **not** a missing certificate under OD2: it says that the checker could not prove the
-  bound, not that no candidate was offered (amendment 1, item 7; orchestrator ruling R12, pending owner confirmation);
+  bound, not that no candidate was offered (amendment 1, item 7; R12, confirmed by the owner on 2026-11-19 as OD4);
 - **"missing" means that no result document was offered** for that mesh and formulation (amendment 1, fix round B1).
   Three other absences keep P0 open at any angle and are never withheld: `unchecked`, a result document with neither a
   certificate nor a refusal; `unproved`, a gate certificate without a valid method report (15.9); and `ill_conditioned`,
@@ -788,7 +791,8 @@ vertex outside the flow cone is not a repair (section 17.4).
 
 *Amendment 2.* An Upper result may also carry the declared apex face `apex_zero` and the optional dual `apex_zero_dual`
 (section 19.2.1); a Lower result carrying either is refused with `apex_zero_lower`. **Whether `objective` is checked
-(m5):** the checker never reads `objective` and never compares it with an Upper `value`. The schema requires it finite
+(m5):** the checker never uses `objective` to form a value or to accept anything, and never compares it with an Upper
+`value`; only the schema reads it. The schema requires it finite
 whenever `value` is, and for a Lower requires `value == -objective` exactly (`result_objective`), the one place where
 the program's sign convention reaches the result.
 
@@ -849,9 +853,10 @@ evaluated at the certified projected field of the witness (11.1). `footing_modes
 footing, and `rank`, `nullity`, `footing_modes` are `null` together when the factorisation is skipped (amendment 1).
 
 *Amendment 2, m2.* Two more keys: `witness_projection_move`, the `projection_move` of section 17.1 for the witness, and
-`witness_work_reference`, its `W1`. Both are `null` together with the witness, and `witness_work_reference` is also `null`
-for a `support` query. `formulation_feasible` requires `witness_projection_move <= TOL_PROJECTION_MOVE` and, for a ray or
-fixed-components query, `witness_work_reference > 0`.
+`witness_work_reference`, its `W1 / W_scale` with `W_scale` of 17.4 step 5. Both are `null` together with the witness,
+and `witness_work_reference` is also `null` for a `support` query. `formulation_feasible` requires
+`witness_projection_move <= TOL_PROJECTION_MOVE` and, for a ray or fixed-components query,
+`witness_work_reference >= TOL_WORK_MIN`, the threshold of 17.4 step 5.
 
 ### 15.6 Certificate and bracket
 
@@ -911,7 +916,9 @@ classification. A result with both a certificate and a refusal is an invalid rec
 *Amendment 2, m4.* A refusal also carries `budget` `{memory_bytes, wall_s, exceeded}`: the memory and wall-time budget the
 checker declared **before** the run, both positive numbers, and `exceeded`, which is `memory` or `time` for `kind:
 capacity` and `null` for `kind: conditioning` (that run finished within its budget and proved nothing). A malformed
-budget is `refusal_budget`. A capacity refusal therefore says which declared limit the computation did not fit.
+budget is `refusal_budget`. A capacity refusal therefore says which declared limit the computation did not fit. The
+budget is the checker's **attestation**: no reader can verify that it was declared before the run or that it was
+exceeded; the validator checks only its form.
 
 **Meaning.** A refusal is **not** an estimate of the bound and **not** a missing certificate. A case item whose mesh and
 formulation have a refusal from a gate checker, and no gate-admissible certificate, fails with cause `refused`. Under OD2
@@ -1283,6 +1290,7 @@ A `certified_bound` must show, as finite numbers within their limits: `omega_eq 
 `rho_cone = max g / S_ref <= 0`. Upper: `rho_flow <= TOL_CONE_MARGIN`; for the jump formulation
 `rho_jump_cone <= TOL_CONE_MARGIN`; for ray forms `work_reference = W1 > 0`. And
 `floor == max(FLOOR_MIN_REL, kappa_eq * omega_eq) * |value_certified|`. `certified_check_failures` is the executable form.
+*Amendment 2:* `checks` also holds `rho_apex` (19.2.1 items 6 and 9), `null` unless the result declares `Z`.
 
 ### 17.8 Named tolerances
 
@@ -1361,8 +1369,8 @@ arguments.
 
 ### 18.1 Accepted owner amendments
 
-The owner accepted A1 to A4 for ADR 237 on 2026-11-18, and decided OD1 and OD2 on 2026-11-19. The `OD` ids are this
-contract's; they are not the ADR's working defaults O1 and O2.
+The owner accepted A1 to A4 for ADR 237 on 2026-11-18, and decided OD1, OD2, OD3 and OD4 on 2026-11-19 (OD3 and OD4
+recorded by amendment 2). The `OD` ids are this contract's; they are not the ADR's working defaults O1 and O2.
 
 | Id | Amendment | In this contract |
 |---|---|---|
@@ -1373,6 +1381,7 @@ contract's; they are not the ADR's working defaults O1 and O2.
 | OD1 | Keep the disclosed gap limits and gate meshes: `MAX_GAP_STRIP` 0.05, `MAX_GAP_PRANDTL` 0.10, `MAX_GAP_3D_VM` 0.30, `MAX_GAP_3D_DP` 0.50. They close from this review-fix revision, with the chronology of section 18.3. A miss is a real P0 failure | Sections 11.2, 16.4, 17.8 |
 | OD2 | After the box correction, a 3D Drucker-Prager miss at 30 degrees withholds that 3D claim and is recorded by angle and wall type. Exact-formulation failures still stop P0 | Section 11.3 |
 | OD3 | 2026-11-19, after strip results were seen (disclosed in 19.2.2): continuous P2 (`upper.p2c-vertex.v0`) is a non-binding `control` on the two Tresca strip cases too, so the jump pair alone decides those gates. The Prandtl thin slabs are not covered | Section 19.2.2; `tests/limit_cases.txt` |
+| OD4 | 2026-11-19: confirms R12. A checker capacity or conditioning failure is not an OD2 miss; it keeps P0 open | Sections 11.3, 15.8, 19.2.1 item 5 |
 
 ### 18.2 Orchestrator P0 rulings
 
@@ -1392,7 +1401,7 @@ owner decisions.**
 | R9 | The Upper work normalisation is not a projection row, unlike ADR 11.2 step 3: the value is `(D - W0) / W1`, so no exact normalisation is needed, and a row would only move the field | Section 17.4 |
 | R10 | Equality acceptance is row-normwise with literal zeros, `tau_eq` carries no `kappa` factor, and `TOL_KAPPA_CAP` replaces the ADR's `TOL_EQ_CAP` | Sections 17.1, 17.2 |
 | R11 | Per-angle Drucker-Prager boxes; a certified Upper at every size with the gap trend recorded; kinematic verdicts written by the checker from a witness | Section 11 |
-| R12 | A checker capacity or conditioning failure is not an OD2 miss; it keeps P0 open. Orchestrator ruling of 2026-11-19, **pending owner confirmation**; not an owner decision | Sections 11.3, 15.8 |
+| R12 | A checker capacity or conditioning failure is not an OD2 miss; it keeps P0 open. Orchestrator ruling of 2026-11-19, **confirmed by the owner the same day as OD4** (18.1; recorded by amendment 2) | Sections 11.3, 15.8 |
 
 ### 18.3 Evidence notes and chronology
 
@@ -1477,10 +1486,12 @@ is evidence toward K1, never an OD2 withholding.
 
 **Implicit apex conditions on the jump Upper (amendment 2, item A; the evidence behind section 19.2.1).** Orchestrator
 diagnostic of 2026-11-19 with the WP-237d producer and checker at `0a1ed41a0` (branch `wp/237d`), solver Clarabel with its
-faer back end (`clarabel-faer`), drivers `diag1.py` to `diag4.py`, outputs `fixed30_m0.diag1.txt` to
-`fixed30_m0.diag4.txt`, `fixed30_m0_uniform.json`, `fixed30_m0_facial.json` and the per-case `*_facial.json` files, in the
-orchestrator's scratch directory `diag_interior/`, outside this repository and not committed. All numbers are estimates
-or diagnostics, not certified bounds.
+faer back end (`clarabel-faer`). **Reproducing driver:** the `wp/237d` driver `solver_study.py`, job on case
+`upper3d_fixed_phi30` mesh 0, `clarabel-faer`, 2026-11-19, reproduces the result and its outcome (`estimate`,
+`interior_field_invalid`). **The 305-condition analysis below is a scratch diagnosis** (orchestrator scripts and outputs
+in a scratch directory outside this repository), **not committed** and not reproducible from either repository; it is
+cited as the reason for 19.2.1, not as a record a gate or the ADR can rest on. All numbers are estimates or
+diagnostics, not certified bounds.
 
 - `upper3d_fixed_phi30`, mesh 0 (323 tets), jump Upper: the checker ends with `estimate`, reason `interior_field_invalid`.
   Of the 4,278 inequality conditions that the rows do not force (1,244 flow, 3,034 jump), **305** (26 flow, 279 jump, in
@@ -1613,13 +1624,13 @@ one-line items m1 to m8 below; each is resolved as that line reads.
 | Item | Change | Sections | Executable form |
 |---|---|---|---|
 | A | Declared apex face `Z` for any Upper formulation: exact "argument = 0" rows, `Z` out of `P`, out of the interior clearance test and out of the inequality recheck; part of the result identity; refused on a Lower; optional dual, diagnostic `z_forced`; no new reason code; calibration watch on `TOL_REPAIR_MAX` | 15.3, 15.9, 17.4, 18.3, 19.2.1 | `validate_apex_zero`, `validate_method_report`, `gate_admissible`, `evaluate_case`; fixtures `apex_zero_omits_a_condition`, `apex_zero_on_lower`, `apex_zero_outside_hash`; amendment-2 tests |
-| B | Owner decision OD3: `upper.p2c-vertex.v0` becomes a `control` line in the two Tresca strip cases; the jump pair alone decides their gates. The Prandtl thin slabs still bind P2c Decided after results; disclosed | 18.1, 19.2.2; `limit_cases.txt` | `test_strip_control_miss_does_not_fail_the_gate_and_a_jump_miss_does` |
+| B | Owner decision OD3: `upper.p2c-vertex.v0` becomes a `control` line in the two Tresca strip cases; the jump pair alone decides their gates. The Prandtl thin slabs still bind P2c. Decided after results; disclosed | 18.1, 19.2.2; `limit_cases.txt` | `test_strip_control_miss_does_not_fail_the_gate_and_a_jump_miss_does` |
 | m1 | The interior-field hash (and the hash of `Z`) is checked on the gate path: `evaluate_case(..., result_arrays=)` and `gate_admissible(..., result_arrays=)`. A report that names result arrays counts only with them; supplied arrays that do not hash to their result are an invalid record (`hash_mismatch`, kind `result_arrays`) | 15.9, 17.9 | `test_gate_path_checks_the_interior_field_hash`, `test_thirty_degree_face_needs_the_result_arrays_on_the_gate_path` |
-| m2 | The witness field must stay within `TOL_PROJECTION_MOVE` of the offered field and have `W1 > 0` for ray forms; the record carries `witness_projection_move` and `witness_work_reference` | 11.1, 15.5 | `validate_feasibility`; feasibility tests |
+| m2 | The witness field must stay within `TOL_PROJECTION_MOVE` of the offered field and meet `W1 >= TOL_WORK_MIN * W_scale` for ray forms (review fix); the record carries `witness_projection_move` and `witness_work_reference` (`W1 / W_scale`); a `Z`-declaring witness is projected with the augmented rows | 11.1, 15.5 | `validate_feasibility`; feasibility tests |
 | m3 | The mesh-5 capacity statement moved from 11.2 to 18.3 and tied to ADR kill criterion K1; 11.2 keeps only the rule | 11.2, 18.3 | `test_interface_records_amendment_2` |
 | m4 | A refusal declares its `budget` `{memory_bytes, wall_s, exceeded}`; `exceeded` names the limit for `capacity` and is `null` for `conditioning` | 15.8 | `validate_refusal`; `test_capacity_refusal_declares_its_budget` |
-| m5 | `objective` is never read by the checker; a Lower must have `value == -objective` exactly (`result_objective`); an Upper `objective` is not compared with anything | 15.3 | `validate_result`; `test_lower_objective_is_checked_and_upper_objective_is_not` |
-| m6 | The formula of `n_S` stated exactly, with the evaluation order | 5 | `symmetry_set_normal`; `test_symmetry_set_normal_formula_is_exact` |
+| m5 | `objective` is never used by the checker to form a value or accept anything, and only the schema reads it; a Lower must have `value == -objective` exactly (`result_objective`); an Upper `objective` is not compared with anything | 15.3 | `validate_result`; `test_lower_objective_is_checked_and_upper_objective_is_not` |
+| m6 | The formula of `n_S` stated exactly, with the evaluation order | 5 | `symmetry_set_normal`; `test_symmetry_set_normal_formula_is_exact`, `test_symmetry_set_normal_is_the_stated_formula_bitwise_on_a_tilted_plane` |
 | m7 | The stale sentence saying the file is not frozen now says it was not frozen before `03f59c1a4` | 19 | `test_interface_records_the_freeze_and_amendment_1` |
 | m8 | The demonstration's repair count change under amendment 1 (478 to 480 conditions) is recorded with its source | 18.3 | text |
 
@@ -1637,10 +1648,11 @@ system), 17.4 steps 2, 3, 4, 6 and 7, and 17.5 item 2. A result without `Z` is c
 
    The declaration says that the **full cone argument** of each listed condition is zero: `d_ei = 0` (all six Voigt
    components, engineering shear) or `c_B = 0` (all three Cartesian components). No array means `Z` is empty; an empty
-   array is refused, so one field has one identity. A malformed `Z` is `apex_zero_invalid`.
+   array is refused, so one field has one identity. A result with no field (a `solver_status` without a value, 15.3)
+   declares no face: `apex_zero` on it is refused. A malformed `Z` is `apex_zero_invalid`.
 2. **Identity.** `apex_zero` is a result array, so `result_sha256` covers it (15.1): a different `Z` is a different
    result, and a `Z` changed after hashing is `hash_mismatch`. The certificate binds the result by that hash. The method
-   report names `Z` in its key `apex_zero` (item 11).
+   report names `Z` in its key `apex_zero` (item 12).
 3. **Not for a Lower.** A Lower result carrying `apex_zero` or `apex_zero_dual` is refused with `apex_zero_lower`. The
    Lower keeps its own rules (17.3); this amendment does not extend them.
 4. **Projection (17.4 step 2).** The checker appends exact rows to the rows of step 2, in `Z` order: six rows
@@ -1651,20 +1663,34 @@ system), 17.4 steps 2, 3, 4, 6 and 7, and 17.5 item 2. A result without `Z` is c
    dense singular values on disjoint row blocks, an explicit null-space basis; a proved `sigma_min_lower`). Rows that `Z`
    makes dependent are skipped only when proved. When no route proves the bound, the checker writes a capacity or
    conditioning refusal (15.8, stage `dependent_rows` or `kappa_bound`), never a certificate carrying the `kappa_eq` of
-   the system without `Z`. Under OD2 and R12 that refusal is cause `refused` and keeps P0 open at every angle.
+   the system without `Z`. Under OD2 and OD4 (R12, confirmed by the owner) that refusal is cause `refused` and keeps P0
+   open at every angle.
 6. **Conditions (17.4 step 3).** `c~` is computed at every condition. `D_scale_vol` and `D_scale_jump` keep their
-   definition over every condition of their kind, `Z` included (`Z` conditions are at rounding level after projection).
-   `rho_flow` and `rho_jump_cone` are taken over the conditions **not** in `Z`.
+   definition over every condition of their kind, `Z` included (after projection the `Z` arguments are at `omega` level).
+   `rho_flow` and `rho_jump_cone` are taken over the conditions **not** in `Z`. The `Z` conditions are reported by a new
+   `checks` key (review fix M3), kind-wise over the scale of the condition's kind:
+
+   ```text
+   rho_apex = max( max over flow entries of Z of |d_ei|_F / D_scale_vol,  max over jump entries of |c_B| / D_scale_jump )
+   ```
+
+   `null` when the result declares no `Z`; a certified `Z`-declaring result must show it, and the method report checks
+   that it is present exactly when `apex_zero` is not `null` (`method_apex_zero`).
 7. **Repair (17.4 step 4).** `P` contains no condition of `Z`. The interior field is projected by step 2 with the **same
    augmented rows**, so it lies on the face that `Z` declares; its tests (`c~_int <= m_int` everywhere and
    `c~_int <= -TOL_INTERIOR_MIN * D_scale_int` on `P`) run over the conditions not in `Z`. Its identity rule (15.9,
    amendment 1) is unchanged: the hash of the interior arrays the result supplies.
-8. **Value (17.4 step 6).** `D` includes the terms of the `Z` conditions at their computed values, with the formulas of
-   step 1 and without testing the domain. They are at rounding level, because the argument is at `omega` level.
+8. **Value (17.4 step 6).** `D` includes the terms of the `Z` conditions as `max(0, pi)`, with `pi` the formula of step 1
+   evaluated without testing the domain (review fix M3): for `alpha > 0`, `k theta / (3 alpha)` or `k o / (3 alpha)` can be
+   negative at `omega` level, and a negative charge is never credited. The terms are at `omega` level, because the
+   argument is.
 9. **Recheck (17.4 step 7 and 17.5 item 2).** The `Z` rows are rows of the final equality test, held under
    `omega <= tau_eq` with the `kappa_eq` of the augmented system, exactly like the isochory rows at `alpha = 0`.
    `c~ <= TOL_CONE_MARGIN * D_scale` is required at every condition not in `Z`; a `Z` condition is an equality and is not
-   tested again as an inequality.
+   tested again as an inequality. Its size is bounded instead: `rho_apex <= TOL_CONE_MARGIN`, the same rounding allowance
+   as the cones, which an argument held at `omega <= tau_eq` is expected to meet (the 18.3 diagnosis found the signed
+   condition on the 305 conditions after repair at 3.8e-15 of its scale; `rho_apex` itself was not measured there, so this
+   limit joins the calibration watch of item 14). `certified_check_failures` is the executable form.
 10. **Why this is sound.** The Upper theorem needs one admissible field and charges its dissipation. A field that satisfies
     the augmented rows has the zero argument, the cone's apex, at every `Z` condition, which lies in every cone and
     dissipates nothing, and it satisfies every other condition as before. So `Z` only restricts the admissible set: a
@@ -1678,9 +1704,15 @@ system), 17.4 steps 2, 3, 4, 6 and 7, and 17.5 item 2. A result without `Z` is c
     `M^T y = A^T lambda` and `lambda^T g = 0` for some `lambda`, with `A x = g` those rows and `M` the linear map from `x`
     to the stacked arguments of `Z`. Then every admissible field has the zero argument at
     every `Z` condition. The checker **may** verify it with its own operators (`lambda` by least squares, relative
-    residual at most `TOL_FEAS_OK`, and each `y_z` strictly inside its dual cone) and reports `z_forced`: `proved`,
-    `unproved`, or `absent` when no dual is attached. **`z_forced` is never a gate**: by item 10 a certificate never
-    depends on it.
+    residual at most `TOL_FEAS_OK`, and each `y_z` strictly inside its dual cone) and reports `z_forced`: `proved` when it
+    verified the dual, `unproved` when a dual is attached and was not verified or failed, and `absent` when no dual is
+    attached. **`z_forced` is never a gate**: by item 10 a certificate never depends on it, and nothing validates a
+    `proved` claim beyond its form.
+
+    **Stated limitation.** The dual covers only `Z` entries. It can express a one-step facial reduction whose exposing
+    vector lives on the `Z` cones alone; it cannot express a reduction in which other cones take part, which is the
+    mechanism of 18.3 (cones **together with** rows forcing the apex). The check is therefore sufficient only: `proved`
+    shows `Z` is forced, while `unproved` says nothing either way.
 12. **Method report (15.9).** New required key `apex_zero`: `null` when the result declares no `Z`, otherwise
     `{count, sha256, z_forced}` with `count = n_Z`, `sha256` the section 15.1 hash of the empty document `{}` with the single
     array `apex_zero`, and `z_forced` as in item 11, `absent` exactly when the result has no `apex_zero_dual`. It is
@@ -1701,6 +1733,8 @@ system), 17.4 steps 2, 3, 4, 6 and 7, and 17.5 item 2. A result without `Z` is c
     | Id | Stage | Defect | Expect |
     |---|---|---|---|
     | `apex_zero_omits_a_condition` | `checker` | The free Drucker-Prager cube with one side of the plane `x = y` opened and one vertex copy moved by `1e-8`. `Z` lists every jump condition off that plane except one condition of `P`; the interior field, the unperturbed field, has the zero argument there. After projection onto the `Z` rows that condition is still in `P` and the interior cannot clear it; with it added to `Z`, `P` is empty | `interior_field_invalid` |
+    | `apex_zero_hides_violation` | `checker` | Review fix M1, the soundness fixture. The same cube moved by `1e-4` at the same vertex copy; `Z` lists every jump condition off the plane, so `Z` covers conditions violated at about `1e-3 D_scale_jump`. The `Z` rows must move the field past `TOL_PROJECTION_MOVE`. A checker that drops `Z` from the tests but forgets the `Z` rows would certify it | `projection_move_too_large` |
+    | `apex_zero_full_face` | `certify` | Review fix M1, the positive companion: the omission fixture's field with the full face. The projection is small, `P` is empty, `rho_apex` is within the margin, `W1 > 0`; a correct checker certifies it, so a checker that ignores `Z` (and ends `interior_field_invalid` or `flow_violation_too_large`) fails a test | `certified_bound` |
     | `apex_zero_on_lower` | `schema` | `apex_zero` on a Lower result | `apex_zero_lower` |
     | `apex_zero_outside_hash` | `schema` | `apex_zero` added to a valid jump result without rehashing | `hash_mismatch` |
 
@@ -1708,6 +1742,16 @@ system), 17.4 steps 2, 3, 4, 6 and 7, and 17.5 item 2. A result without `Z` is c
     fixture-sized problem a dense route always proves the bound. It is tested at the evaluator level
     (`test_face_that_makes_the_equalities_unprovable_is_refused_and_keeps_p0_open`): the checker's conditioning refusal for
     a `Z`-declaring result is cause `refused`, keeps P0 open at 30 degrees, and is listed in `refused_cases`.
+
+    Stage `certify` (review fix M1) is new: the full procedure of 17.4, with 19.2.1, must end `certified_bound`.
+
+**What changes downstream.** A producer that finds conditions forced onto the apex declares them in `apex_zero`, builds its
+interior field on that face, and may attach `apex_zero_dual`. The checker adds the `Z` rows, proves `kappa_eq` on the
+augmented system or refuses, leaves `Z` out of `P`, the clearance test and the inequality recheck, writes the `apex_zero`
+key in every method report, the witness keys in every feasibility record and the `budget` in every refusal. A caller of
+`evaluate_case` passes `result_arrays` to let interior fields and faces count. The fixture method reports and feasibility
+records, and the fixture certificates (for the new `checks` key `rho_apex`), were regenerated; no result, problem, case value, limit, mesh, tolerance or gate line changed, and every
+`problem_sha256` is unchanged.
 
 #### 19.2.2 Continuous P2 is a control on the strips (item B, owner decision OD3)
 
@@ -1728,7 +1772,9 @@ The two Prandtl cases still bind P2c pending an owner decision for each; the orc
 The exact, exact-Lower and sandwich cases also keep their `formulation upper.p2c-vertex.v0` lines: there the exact or explicit
 fields lie in the continuous space, and the control is still tested there. No target, assertion, gate, limit or mesh
 changes. Formulation lines are not problem data (section 8; `build_case_problem` does not read them), so every
-`problem_sha256` is unchanged; `problem_hashes.json` was rebuilt and compared, and it is identical.
+`problem_sha256` is unchanged; `problem_hashes.json` was rebuilt and compared, and it is identical. This is the only
+case-file change of amendment 2: two `formulation upper.p2c-vertex.v0` lines, in the Tresca strip cases, became
+`control` lines.
 
 **Disclosure: decided after results.** This decision was taken **after** strip results were seen, not before the first
 solve (ADR 18.2 item 4). The results that preceded it, all estimates: `tresca_strip_vm_thin_slab` mesh 3 (the gate mesh),
@@ -1737,16 +1783,23 @@ jump pair `estimate: L=5.00525, U=5.18571`, gap 0.0354 against `MAX_GAP_STRIP` 0
 (recheck), 2026-11-19. The decision therefore turns a strip gate that the binding control would have failed into one that
 the jump pair passes. It is recorded so that a reader can weigh it; it is not presented as pre-registered.
 
-**What changes downstream.** A producer that finds conditions forced onto the apex declares them in `apex_zero`, builds its
-interior field on that face, and may attach `apex_zero_dual`. The checker adds the `Z` rows, proves `kappa_eq` on the
-augmented system or refuses, leaves `Z` out of `P`, the clearance test and the inequality recheck, writes the `apex_zero`
-key in every method report, the witness keys in every feasibility record and the `budget` in every refusal. A caller of
-`evaluate_case` passes `result_arrays` to let interior fields and faces count. The fixture method reports and feasibility
-records were regenerated; no result, problem, case value, limit, mesh, tolerance or gate line changed, and every
-`problem_sha256` is unchanged. The only case-file change is item B: two `formulation upper.p2c-vertex.v0` lines, in the
-Tresca strip cases, became `control` lines.
+**Review fix round, 2026-11-19** (independent review of `4f250a57c..d2e1eb39c`; no blocking finding; hashes, cases,
+limits, meshes, tolerances and gates unchanged).
+
+| Finding | Change | Sections | Executable form |
+|---|---|---|---|
+| M1 | Soundness fixture `apex_zero_hides_violation` and positive companion `apex_zero_full_face` (new stage `certify`) | 19.2.1 item 15 | `assert_full_face_certifies`; the live-fixture test |
+| M2 | `evaluate_case` runs `validate_result`, `validate_apex_zero` included, on every supplied `result_arrays` entry; a failure is an invalid record | 15.9, 17.9 | `test_gate_path_validates_the_declared_face` (von Mises element, index out of range, unsorted rows) |
+| M3 | `Z` dissipation charged as `max(0, pi)`; new `checks` key `rho_apex <= TOL_CONE_MARGIN`, required exactly for a certified `Z`-declaring result | 17.7, 19.2.1 items 6, 8, 9 | `certified_check_failures`, `validate_method_report`; `test_rho_apex_is_reported_and_bounded` |
+| M4 | 11.2 restores the qualifier "and no gate-admissible certificate" | 11.2 | text |
+| M5 | Cross product renamed `q`; `symmetry_set_normal` moved to the module helpers and used by the row checks and the demonstration's rows; bitwise test on a tilted plane | 5 | `test_symmetry_set_normal_is_the_stated_formula_bitwise_on_a_tilted_plane`; the demonstration rerun gave an identical record apart from `rho_apex: null` |
+| minor | `omega` level in items 6 and 8; item 2 cites item 12; the dual's limitation and `unproved` for an unverified dual; m2 threshold `TOL_WORK_MIN * W_scale` and the augmented-row witness; m5 wording; m4 budget is an attestation; no-field rule in item 1; OD3 and OD4 in the 18.1 intro; period in row B; "What changes downstream" moved under item A; R12 confirmed by the owner as OD4; 18.3 cites the reproducing driver and marks the 305-condition analysis as an uncommitted scratch diagnosis | 5, 11.1, 11.3, 15.3, 15.5, 15.8, 18.1, 18.2, 18.3, 19.2 | text; feasibility tests |
+
+The demonstration was rerun with `Ladruno_files/testbed/limit_analysis/certificate_demo.py --write`, Clarabel 0.11.1,
+2026-11-19, after its symmetry rows were switched to `symmetry_set_normal`: `certificate_demo_record.json` differs only
+by the new `rho_apex: null` key in its six certificates.
 
 **ADR 237 changes this amendment requires** (the ADR is not edited here): the Upper certificate procedure (11.2) gains the
 declared apex face of 19.2.1 with its soundness note; the capacity-refusal record gains the declared budget; 11.5 gains
-the three fixtures above; the risk "No strictly admissible repair field" names the implicit apex face and `Z` as its
+the fixtures of 19.2.1 item 15; the risk "No strictly admissible repair field" names the implicit apex face and `Z` as its
 stated construction; the strip gate binds the jump pair only, with OD3 and its after-results disclosure.

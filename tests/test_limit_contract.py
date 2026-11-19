@@ -111,7 +111,7 @@ REASON_CODES = {
 CHECK_KEYS = {
     "rho_div", "rho_jump", "rho_bc", "rho_resultant", "projection_move", "omega_eq", "kappa_eq",
     "tau_eq", "rho_cone", "repair_mu", "straightness_max", "rho_flow", "rho_jump_cone",
-    "work_reference",
+    "work_reference", "rho_apex",  # rho_apex: amendment 2, M3
 }
 FEASIBILITY_STATUS = {"formulation_feasible", "formulation_infeasible", "inconclusive"}
 SCHEMA_FIXTURE_CHECKER = "schema-fixture"
@@ -251,6 +251,21 @@ def tangent_basis(n):
     t1 = np.cross(e, n)
     t1 /= np.linalg.norm(t1)
     return t1, np.cross(n, t1)
+
+
+def symmetry_set_normal(problem, arrays, set_index):
+    """n_S of interface 5, exactly as amendment 2 (m6, M5) states it: the first facet of the set in `facets` order,
+    its vertices a, b, c in 3.2 order, u = x_b - x_a, w = x_c - x_a, q = u x w by components, and
+    n_S = q / sqrt(q_x q_x + q_y q_y + q_z q_z), summed left to right, all in IEEE double. Every set-normal row
+    builder here and in the demonstration calls it."""
+    row = int(np.nonzero(arrays["facet_set"] == set_index)[0][0])
+    e, f = (int(v) for v in arrays["facets"][row])
+    xa, xb, xc = (arrays["nodes"][arrays["tets"][e][v]].tolist() for v in FACET_VERTICES[f])
+    u = [xb[0] - xa[0], xb[1] - xa[1], xb[2] - xa[2]]
+    w = [xc[0] - xa[0], xc[1] - xa[1], xc[2] - xa[2]]
+    q = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
+    norm = math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2])
+    return np.array([q[0] / norm, q[1] / norm, q[2] / norm])
 
 
 def tet_gradients(x):
@@ -1200,7 +1215,7 @@ def validate_feasibility(doc, problem):
     frictional = any(region.get("alpha", 0.0) > 0.0 for region in problem["regions"])
     ok, locked = TOLERANCES["TOL_FEAS_OK"], TOLERANCES["TOL_FEAS_LOCKED"]
     witness_passes = (residual is not None and residual <= ok and move <= TOLERANCES["TOL_PROJECTION_MOVE"]
-                      and (not is_ray or work > 0.0))
+                      and (not is_ray or work >= TOLERANCES["TOL_WORK_MIN"]))  # W1 / W_scale, as 17.4 step 5
     if frictional:
         # The minimisation is conic here, so the verdict rests on the witness alone (interface 11.1).
         require(residual is None or math.isclose(rho, residual, rel_tol=1e-12, abs_tol=1e-300), "feasibility_ratio")
@@ -1288,6 +1303,11 @@ def certified_check_failures(doc, query_form=None):
             limits.append(("rho_jump_cone", numbers["rho_jump_cone"] <= t["TOL_CONE_MARGIN"]))
         if numbers["work_reference"] is not None or query_form in ("ray", "fixed_components"):
             limits.append(("work_reference", (numbers["work_reference"] or 0.0) > 0.0))
+    if checks.get("rho_apex") is not None:
+        # Amendment 2, M3: the Z arguments, kind-wise over D_scale, within the cone rounding margin (19.2.1 item 9).
+        rho_apex = numbers["rho_apex"]
+        limits.append(("rho_apex", doc["bound"] == "upper" and rho_apex is not None
+                       and 0.0 <= rho_apex <= t["TOL_CONE_MARGIN"]))
     failures = [key for key, passed in limits if not passed]
     expected = max(t["FLOOR_MIN_REL"], kappa * omega) * abs(doc["value_certified"])
     if not math.isclose(doc["floor"], expected, rel_tol=1e-9, abs_tol=1e-300):
@@ -1471,10 +1491,15 @@ def validate_method_report(doc, certificate, problem=None, result=None, result_a
 
     # Amendment 2 (interface 19.2.1): the declared apex face, its identity and the non-gating z_forced diagnostic.
     face = doc["apex_zero"]
+    certified = certificate["classification"] == "certified_bound"
     if face is None:
         require(result_arrays is None or "apex_zero" not in result_arrays, "method_apex_zero",
                 "the result declares Z and the report does not")
+        require(certificate["checks"].get("rho_apex") is None, "method_apex_zero", "rho_apex without a face")
     else:
+        # M3: a certificate of a Z-declaring result reports rho_apex.
+        require(not certified or _check_number(certificate["checks"], "rho_apex") is not None, "method_apex_zero",
+                "a certified Z-declaring result reports rho_apex")
         require(isinstance(face, dict), "method_apex_zero")
         _keys(face, {"count", "sha256", "z_forced"}, code="method_apex_zero")
         require(doc["bound"] == "upper", "method_apex_zero", "Z is refused for a Lower")
@@ -1694,6 +1719,15 @@ def evaluate_case(case, certificates=(), results=(), feasibility=(), methods=(),
         result = by_result.get(sha)
         if result is None or document_hash(result, arrays, "result_sha256") != sha:
             invalid("result_arrays", {"result_sha256": sha}, "hash_mismatch")
+            continue
+        mesh = mesh_of.get(result.get("problem_sha256"))
+        if mesh is None:
+            invalid("result_arrays", {"result_sha256": sha}, "hash_mismatch")
+            continue
+        try:  # Amendment 2, M2: the full result schema, the declared face included, before any gate reads it.
+            validate_result(result, arrays, *load(mesh))
+        except ContractError as error:
+            invalid("result_arrays", {"result_sha256": sha}, error.code)
             continue
         arrays_of[sha] = arrays
 
@@ -2285,7 +2319,7 @@ def _first_violating_direction(problem, arrays, base, node, amount):
     fail("negative_fixture", "no violating direction")
 
 
-APEX_FIXTURE_DELTA, APEX_FIXTURE_EPS = 0.1, 1e-8
+APEX_FIXTURE_DELTA, APEX_FIXTURE_EPS, APEX_FIXTURE_HIDE = 0.1, 1e-8, 1e-4
 
 
 def apex_fixture_fields(problem_arrays, base, side, direction, element, local_node, perturbation):
@@ -2397,6 +2431,7 @@ def build_negative_fixtures(documents):
     opening = [-1.0 / S2, 1.0 / S2, 0.0]
     a_problem = documents[f"{A}.problem"][0]
     omission = _apex_omission(a_problem, a_arrays, documents[AU][1]["element_velocity"], side, opening)
+    z_full = sorted(omission["apex_zero"] + [omission["omitted"]])
 
     entries = [
         ("perturbed_stress_component", "one perturbed stress component", P, L, "checker",
@@ -2460,6 +2495,18 @@ def build_negative_fixtures(documents):
         ("apex_zero_omits_a_condition", "a declared apex face that omits a needed condition", A, AU, "checker",
          {"kind": "apex_zero_omits", "elements": side, "direction": opening, "amount": APEX_FIXTURE_DELTA, **omission},
          "interior_field_invalid"),
+        # M1: Z lists a condition violated at about 1e-3 D_scale; the Z rows must move the field (soundness).
+        ("apex_zero_hides_violation", "a declared apex face over a violated condition", A, AU, "checker",
+         {"kind": "apex_zero_hides", "elements": side, "direction": opening, "amount": APEX_FIXTURE_DELTA,
+          "element": omission["element"], "local_node": omission["local_node"],
+          "perturbation": [APEX_FIXTURE_HIDE if v else 0.0 for v in omission["perturbation"]], "apex_zero": z_full},
+         "projection_move_too_large"),
+        # M1, positive companion: the omission fixture with the full face certifies.
+        ("apex_zero_full_face", "a declared apex face that covers every needed condition", A, AU, "certify",
+         {"kind": "apex_zero_full", "elements": side, "direction": opening, "amount": APEX_FIXTURE_DELTA,
+          "element": omission["element"], "local_node": omission["local_node"],
+          "perturbation": omission["perturbation"], "apex_zero": z_full},
+         "certified_bound"),
         ("apex_zero_on_lower", "a declared apex face on a Lower bound", P, L, "schema",
          {"kind": "add_apex_zero", "apex_zero": [[0, 0]]}, "apex_zero_lower"),
         ("apex_zero_outside_hash", "a declared apex face not covered by the result hash", A, AU, "schema",
@@ -3861,6 +3908,7 @@ def test_feasibility_from_a_real_checker_is_gate_admissible():
     # Amendment 2, m2: the witness keeps its projection move within the limit and does positive reference work.
     ({"witness_projection_move": 2e-6}, "feasibility_verdict"),
     ({"witness_work_reference": 0.0}, "feasibility_verdict"),
+    ({"witness_work_reference": 1e-13}, "feasibility_verdict"),  # below TOL_WORK_MIN, as 17.4 step 5
     ({"witness_work_reference": None}, "feasibility_witness"),
     ({"witness_projection_move": -1.0}, "feasibility_witness"),
     ({"witness_residual": 1e-3}, "feasibility_verdict"),
@@ -4040,7 +4088,8 @@ ADR_11_5 = {
     "a finite dissipation charge offered in place of restoring a violated cone": ["dissipation_charge_as_repair"],
 }
 RECOMPUTED_VALUE = {"perturb_velocity", "perturb_element_velocity", "edge_normal_jump", "side_opening", "negate_velocity",
-                    "dissipation_charge", "side_translation", "restrained_shear", "apex_zero_omits"}
+                    "dissipation_charge", "side_translation", "restrained_shear", "apex_zero_omits", "apex_zero_hides",
+                    "apex_zero_full"}
 
 
 def apply_negative(entry):
@@ -4106,7 +4155,7 @@ def apply_negative(entry):
         value = fixture_upper_value(problem, problem_arrays, arrays["velocity"], arrays["footing_velocity"],
                                     quadrature=m["quadrature"], body=m["body"])
         result["value"] = result["objective"] = value
-    elif kind == "apex_zero_omits":
+    elif kind in ("apex_zero_omits", "apex_zero_hides", "apex_zero_full"):
         candidate, interior = apex_fixture_fields(problem_arrays, arrays["element_velocity"], m["elements"],
                                                   m["direction"], m["element"], m["local_node"], m["perturbation"])
         arrays["element_velocity"] = candidate
@@ -4143,6 +4192,8 @@ def test_negative_fixtures_cover_the_harness_and_every_adr_row():
         if entry["stage"] == "schema":
             assert entry["expect"] in ("result_wrong_bound_arrays", "element_curved", "hash_mismatch",
                                        "unsupported_domain_claim", "apex_zero_lower")
+        elif entry["stage"] == "certify":  # amendment 2, M1: a positive companion
+            assert entry["expect"] == "certified_bound"
         else:
             assert entry["expect"] in REASON_CODES
 
@@ -4179,7 +4230,7 @@ def assert_rows_untouched(problem, problem_arrays, field, footing_velocity):
     for (e, f), index in zip(problem_arrays["facets"], problem_arrays["facet_set"]):
         e, f, item = int(e), int(f), problem["boundary_sets"][int(index)]
         normal, _ = facet_geometry(nodes[tets[e][:4]], f)
-        n_set = normals.setdefault(int(index), normal)
+        n_set = normals.setdefault(int(index), symmetry_set_normal(problem, problem_arrays, int(index)))
         local = per_element[e][list(FACET_NODES[f])]
         if item["kind"] == "fixed":
             np.testing.assert_array_equal(local, 0.0)
@@ -4304,8 +4355,48 @@ def test_checker_negative_fixture_is_well_formed_and_live(entry):
         assert max(float(coefficient.max()) for _, coefficient in rows) >= 0.9 * m["amount"], "fails across a facet"
     elif fixture == "apex_zero_omits_a_condition":
         assert_apex_omission_is_live(problem, problem_arrays, arrays, m)
+    elif fixture == "apex_zero_hides_violation":
+        # Amendment 2, M1: a checker that drops Z from the tests but forgets the Z rows would certify this field.
+        rows = apex_zero_rows(arrays)
+        field = arrays["element_velocity"]
+        signed, scale = signed_jump_coefficients(problem, problem_arrays, field)
+        worst = max(signed[index] for _, index in rows) / scale
+        assert 1e-4 < worst < 1e-2, "Z hides a condition violated at about 1e-3 D_scale"
+        others = [i for i in range(len(signed)) if (1, i) not in rows]
+        assert max(signed[i] for i in others) <= 0.0, "outside Z every condition holds"
+        flow, size = signed_flow_conditions(problem, problem_arrays, field)
+        assert flow.max() < -0.1 * size
+        projected = project_onto_apex_rows(problem_arrays, field, rows)
+        move = float(np.max(np.abs(projected - field))) / float(np.max(np.abs(field)))
+        assert move > TOLERANCES["TOL_PROJECTION_MOVE"], "the Z rows move the field past the limit"
+    elif fixture == "apex_zero_full_face":
+        assert_full_face_certifies(problem, problem_arrays, arrays, result)
     else:
         fail("negative_fixture", fixture)
+
+
+def assert_full_face_certifies(problem, problem_arrays, arrays, result):
+    """Amendment 2, M1 positive companion: with every apex condition in Z, the step-2 projection is small, every
+    condition outside Z holds within the margin (P empty, no repair), the Z arguments are at rounding level,
+    W1 is positive and the value of the projected field agrees with the candidate's within TOL_VALUE_MATCH."""
+    margin = TOLERANCES["TOL_CONE_MARGIN"]
+    field = arrays["element_velocity"]
+    rows = apex_zero_rows(arrays)
+    projected = project_onto_apex_rows(problem_arrays, field, rows)
+    move = float(np.max(np.abs(projected - field))) / float(np.max(np.abs(field)))
+    assert 0.0 < move <= TOLERANCES["TOL_PROJECTION_MOVE"]
+    signed, scale = signed_jump_coefficients(problem, problem_arrays, projected)
+    outside = [i for i in range(len(signed)) if (1, i) not in rows]
+    assert max(signed[i] for i in outside) <= margin * scale, "P is empty"
+    _, coefficients = facet_coefficients(problem_arrays, projected)
+    rho_apex = max(float(np.linalg.norm(coefficients[i // 6, i % 6])) for _, i in rows) / scale
+    assert rho_apex <= margin, "rho_apex within the cone rounding margin"
+    flow, size = signed_flow_conditions(problem, problem_arrays, projected)
+    assert flow.max() < -0.1 * size
+    _, _, w1 = fixture_upper_terms(problem, problem_arrays, projected, arrays["footing_velocity"])
+    assert w1 > 0.0
+    value = fixture_upper_value(problem, problem_arrays, projected, arrays["footing_velocity"])
+    assert abs(value - result["value"]) <= TOLERANCES["TOL_VALUE_MATCH"] * abs(value)
 
 
 def assert_apex_omission_is_live(problem, problem_arrays, arrays, m):
@@ -5170,9 +5261,48 @@ def faced_method(z_forced="absent", dual=None):
     faced, faced_arrays = with_face(result, arrays, [[0, 0], [1, 0]], dual)
     certificate = _certificate(problem, problem_arrays, faced)
     certificate["checker"] = {"name": "independent-checker", "version": "1"}
+    certificate["checks"]["rho_apex"] = 1e-15  # M3
     method = _method_report(certificate)
     method["apex_zero"] = {"count": 2, "sha256": apex_zero_sha256(faced_arrays), "z_forced": z_forced}
     return problem, problem_arrays, faced, faced_arrays, certificate, method
+
+
+def test_rho_apex_is_reported_and_bounded():
+    """Amendment 2, M3: a certified Z-declaring result reports rho_apex <= TOL_CONE_MARGIN; without Z it is null."""
+    problem, problem_arrays, faced, faced_arrays, certificate, method = faced_method()
+    assert not certified_check_failures(certificate, "ray")
+    for value in (2e-12, -1.0, None):
+        broken = copy.deepcopy(certificate)
+        broken["checks"]["rho_apex"] = value
+        if value is None:
+            report = copy.deepcopy(method)
+            report["certificate_sha256"] = certificate_hash(broken)
+            with pytest.raises(ContractError) as error:
+                validate_method_report(report, broken, problem, None, faced_arrays, problem_arrays)
+            assert error.value.code == "method_apex_zero"
+        else:
+            assert "rho_apex" in certified_check_failures(broken, "ray"), value
+    _, plain, plain_method = method_case()
+    plain["checks"]["rho_apex"] = 1e-15
+    plain_method["certificate_sha256"] = certificate_hash(plain)
+    with pytest.raises(ContractError) as error:
+        validate_method_report(plain_method, plain)
+    assert error.value.code == "method_apex_zero"
+
+
+@pytest.mark.parametrize("rows", [[[0, 0]], [[0, 10 ** 9]], [[0, 1], [0, 0]]],
+                         ids=["von_mises_element", "index_out_of_range", "unsorted"])
+def test_gate_path_validates_the_declared_face(rows):
+    """Amendment 2, M2: supplied result arrays go through validate_result, so a malformed Z never reaches a gate."""
+    name = STRIP if rows == [[0, 0]] else PHI30  # the strip is von Mises: no flow condition can be declared
+    case = ALL_CASES[name]
+    uppers = None if name == STRIP else [JUMP_ID]
+    low, high = (5.05, 5.25) if name == STRIP else (4.0, 4.5)
+    real = real_upper_records(case, 0, high, rows=rows)
+    records = swap_mesh_upper(case, synthetic_records(case, low, high, uppers=uppers), 0, real)
+    verdict = evaluate_case(case, *records, result_arrays={real[0]["result_sha256"]: real[1]})
+    assert {"kind": "result_arrays", "id": real[0]["result_sha256"], "code": "apex_zero_invalid"} in verdict["invalid_records"]
+    assert not verdict["passed"] and verdict["p0_blocking"]
 
 
 def test_method_report_names_the_declared_face():
@@ -5219,6 +5349,8 @@ def real_upper_records(case, mesh, value, rows=None, z_forced="absent"):
     certificate = _certificate(problem, problem_arrays, result)
     certificate["checker"] = {"name": "independent-checker", "version": "1"}
     certificate["checks"]["repair_mu"] = 1e-7
+    if rows is not None:
+        certificate["checks"]["rho_apex"] = 1e-15  # M3
     method = _method_report(certificate)
     method["interior_field"] = {"source": "result", "sha256": interior_field_sha256("upper", JUMP_ID, arrays)}
     if rows is not None:
@@ -5359,15 +5491,21 @@ def test_strip_control_miss_does_not_fail_the_gate_and_a_jump_miss_does():
     assert not miss["passed"] and ("gap_le", "violated") in failed(miss) and miss["p0_blocking"]
 
 
-def symmetry_set_normal(problem, arrays, set_index):
-    """n_S of interface 5 as amendment 2 (m6) states it: the first facet of the set in `facets` order, its three
-    vertices in 3.2 order, c = (x_b - x_a) x (x_c - x_a) by components, n_S = c / sqrt(c_x^2 + c_y^2 + c_z^2)."""
-    row = int(np.nonzero(arrays["facet_set"] == set_index)[0][0])
-    e, f = (int(v) for v in arrays["facets"][row])
-    a, b, c = (arrays["nodes"][arrays["tets"][e][v]] for v in FACET_VERTICES[f])
-    u, w = b - a, c - a
-    cross = np.array([u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]])
-    return cross / math.sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2])
+def test_symmetry_set_normal_is_the_stated_formula_bitwise_on_a_tilted_plane():
+    """Amendment 2, M5: a tilted facet, the formula evaluated independently in scalar IEEE double, identical bits."""
+    nodes = np.array([[0.1, 0.2, 0.3], [1.3, 0.1, 0.7], [0.2, 1.1, 0.9], [0.3, 0.4, 1.9]])
+    tets = np.array([list(range(4)) + [0] * 6])
+    arrays = {"nodes": nodes, "tets": tets, "facets": np.array([[0, 3]]), "facet_set": np.array([0])}
+    xa, xb, xc = (nodes[v].tolist() for v in FACET_VERTICES[3])
+    u = [xb[i] - xa[i] for i in range(3)]
+    w = [xc[i] - xa[i] for i in range(3)]
+    q = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
+    norm = math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2])
+    expected = [q[i] / norm for i in range(3)]
+    normal = symmetry_set_normal({}, arrays, 0)
+    assert np.count_nonzero(normal) == 3, "the plane is tilted"
+    assert normal.tobytes() == np.array(expected).tobytes()
+    np.testing.assert_allclose(normal, facet_geometry(nodes, 3)[0], rtol=0, atol=4 * UNIT_ROUNDOFF)
 
 
 def test_symmetry_set_normal_formula_is_exact():

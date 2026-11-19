@@ -9,6 +9,7 @@
   "omega_eq": 0.0,
   "projection_move": 0.0,
   "repair_mu": 0.0,
+  "rho_apex": null,
   "rho_bc": null,
   "rho_cone": 0.0,
   "rho_div": null,

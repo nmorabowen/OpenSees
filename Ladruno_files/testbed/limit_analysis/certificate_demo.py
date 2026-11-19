@@ -193,7 +193,8 @@ def lower_rows(m):
         n, area = m.facet(e, f)
         N = T.voigt_n(n)
         vertices = T.FACET_VERTICES[f]
-        n_set = set_normal.setdefault(index, n)  # amendment 1, item 3: symmetry rows use the set normal
+        # amendment 1, item 3: symmetry rows use the set normal; amendment 2, M5: computed by the exact formula
+        n_set = set_normal.setdefault(index, T.symmetry_set_normal(m.problem, m.arrays, index))
         if kind in ("free", "traction"):
             for j, a in enumerate(vertices):
                 for c in range(3):
@@ -400,7 +401,7 @@ class Jump:
         normals = {}
         for _, e, f, index in m.boundary():
             sets[index].update((e, a) for a in T.FACET_NODES[f])
-            normals.setdefault(index, m.facet(e, f)[0])
+            normals.setdefault(index, T.symmetry_set_normal(m.problem, m.arrays, index))
         fixed = set().union(*[s for s, kind in zip(sets, m.kinds) if kind == "fixed"], set())
         for e, a in sorted(fixed):
             for c in range(3):
