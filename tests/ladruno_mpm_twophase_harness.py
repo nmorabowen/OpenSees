@@ -161,6 +161,67 @@ def run_t0_ii(ops, rec):
 # ---------------------------------------------------------------------------
 #  T1: FE identity (case t1_ref_fe_identity)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+#  T0 (iii): mode F, route S (case t0_routeS)
+# ---------------------------------------------------------------------------
+def build_t0_routeS(ops, rec):
+    c = rec["case_routeS"]
+    fl = c["fluid"]
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, c["E"], c["nu"], c["rho"])
+    ops.mpm("grid", 232, "-origin", c["x0"][0], c["x0"][1], "-h", c["h"], "-cells", c["cells"][0],
+            c["cells"][1], "-basis", "gimp")
+    ops.mpm("mode", "explicit")
+    ops.mpm("kinematics", "small")
+    ops.mpm("body", 1, "box", c["box"][0][0], c["box"][0][1], c["box"][1][0], c["box"][1][1],
+            "-ppc", c["ppc"], "-mat", 1, "-rho", c["rho"])
+    stab = fl["stab"]
+    stab_args = ["-stab", "off"] if stab[0] == "off" else ["-stab", "auto", float(stab[1])]
+    ops.mpm("twoPhase", 1, "-Kf", fl["Kf"], "-poro", fl["poro"], "-rhoF", fl["rhoF"],
+            "-perm", fl["perm"][0], fl["perm"][1], *stab_args)
+    ops.mpm("gravity", c["gravity"][0], c["gravity"][1])
+    for face, comps in c["fix"]:
+        ops.mpm("fix", face, "".join("xyz"[i] for i in comps))
+    for face, p0 in c["pfix"]:
+        ops.mpm("pfix", face, float(p0))
+    ops.mpm("flip", c["flip"])
+    ops.mpm("pressureBlend", c["pblend"])
+    ops.mpm("massCutoff", c["masscut"])
+    ops.mpm("pressureCutoff", c["pcut"])
+    h0 = rec["t0_iii"]["history"][0]["particles"]
+    ops.mpm("particlePressure", *list(h0["p"]))
+
+
+def run_t0_iii(ops, rec):
+    """T0 (iii): ten route-S steps; every particle's x, v, sig, p and the grid p, p^ on the
+    p-active nodes (by node id) after each (history[k])."""
+    build_t0_routeS(ops, rec)
+    hist = rec["t0_iii"]["history"]
+    dt = rec["case_routeS"]["dt"]
+    rows = []
+    for k, h in enumerate(hist):
+        if k > 0:
+            ops.mpm("analyze", 1, dt)
+        mine = particle_fields(ops)
+        row = {"step": k}
+        for f in ("x", "v", "sig", "p"):
+            if f in h["particles"]:
+                row[f] = rel_max(mine[f], h["particles"][f])
+        g = h.get("grid")
+        if k > 0 and g:
+            flat = as_list(ops.mpm("info", "gridPressure"))
+            got = {int(flat[i]): (flat[i + 1], flat[i + 2]) for i in range(0, len(flat), 3)}
+            row["grid_nodes_match"] = sorted(got) == sorted(int(x) for x in g["nodes"])
+            row["grid_p"] = rel_max([got.get(int(x), (float("nan"),) * 2)[0] for x in g["nodes"]], g["p"])
+            row["grid_phat"] = rel_max([got.get(int(x), (float("nan"),) * 2)[1] for x in g["nodes"]], g["phat"])
+            if not row["grid_nodes_match"]:
+                row["grid_p"] = float("inf")
+        row["max"] = max(v for kk, v in row.items() if kk not in ("step", "grid_nodes_match"))
+        rows.append(row)
+    return rows
+
+
 def build_t1(ops, rec, leg):
     L = rec["legs"][leg]
     c = rec["case"]
@@ -264,6 +325,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--bin", required=True, help="dist\\bin holding opensees.pyd")
     ap.add_argument("--out", default=str(DATA / "t0_t1_mpm.json"))
+    ap.add_argument("--only", choices=["t0_iii"], help="run one leg alone (route S: T0 (iii) first)")
     a = ap.parse_args(argv)
     if hasattr(os, "add_dll_directory"):
         os.add_dll_directory(a.bin)
@@ -271,6 +333,12 @@ def main(argv=None):
     import opensees as ops  # noqa: E402
     build = ops.ladrunoBuild() if hasattr(ops, "ladrunoBuild") else "unknown"
     r0, r1 = load(T0_REC), load(T1_REC)
+    if a.only == "t0_iii":
+        res = {"leg": "t0_iii_mpm", "build": build, "bands": {"t0": T0_TOL}, "t0_iii": run_t0_iii(ops, r0)}
+        res["t0_iii_pass"] = all(r["max"] <= T0_TOL for r in res["t0_iii"])
+        Path(a.out).write_text(json.dumps(res, indent=1))
+        print(json.dumps({k: res[k] for k in ("build", "t0_iii_pass")}))
+        return 0
     with tempfile.TemporaryDirectory() as tmp:
         res = {"leg": "t0_t1_mpm", "build": build, "bands": {"t0": T0_TOL, "t1_A": T1_A_TOL,
                "t1_b": T1_B_TOL, "t1_step": T1_STEP_TOL},

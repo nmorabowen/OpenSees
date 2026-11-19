@@ -66,6 +66,7 @@
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <limits>
 #include <set>
 
 namespace {
@@ -1109,6 +1110,251 @@ LadrunoMPMPattern::twoPhaseAfterStep(void)
   }
   piC = piNew;
   if (pendFirst) piInitApplied = true;
+}
+
+// ---------------------------------------------------------------------------
+//  Route S (mode F): interface §1 "Route S (mode F) step", §5 P11, §7a Q4
+// ---------------------------------------------------------------------------
+bool
+LadrunoMPMPattern::routeSOn(void) const
+{
+  bool pf = false;
+  for (int f = 0; f < 6; f++) pf = pf || eng.fc.pfixOn[f];
+  return anyTwoPhase() || anyPlate() || pf || !tractions.empty();
+}
+
+// The configurations route S admits in this build; everything else is refused loudly (P7)
+std::string
+LadrunoMPMPattern::routeSAdmission(void) const
+{
+  const int nd = eng.ndm();
+  const bool tp = anyTwoPhase();
+  for (int f = 0; f < 2 * nd; f++) {
+    if (eng.fc.plateOn[f] && (eng.fc.fixMask[f] & (1u << (f / 2))))
+      return std::string("face ") + faceName(f) + " has a plate and fixes its normal component: refused";
+    if (eng.fc.wallMu[f] >= 0.0)
+      return "`mpm wall` is refused with a two-phase body, a plate or a traction in route S (interface"
+             " §7a Q4: a conditional wall has no fixed M^-1)";
+  }
+  if (eng.par.antiLocking)
+    return "`mpm antiLocking fbar` is refused with a two-phase body, a plate or a traction (no tested"
+           " composition with the u-p coupling; interface P7 (5))";
+  const bool bspl = ladruno_mpm::isBSpline(eng.par.basis);
+  if (bspl && !tractions.empty())
+    return "`mpm traction` on a B-spline basis is refused in phase 6 (interface P10b)";
+  for (int f = 0; f < 2 * nd; f++)
+    if (bspl && eng.fc.pfixOn[f] && eng.fc.pfixVal[f] != 0.0)
+      return "`mpm pfix` with p0 != 0 on a B-spline face is refused in phase 6 (interface P8)";
+  if (!tp) return "";
+  const int nv = eng.nv();
+  for (int p = 0; p < eng.P.size(); p++) {
+    if (!isTwoPhaseParticle(p)) continue;
+    for (int k = 0; k < nv; k++)
+      if (eng.P.sig0[nv * p + k] != 0.0)
+        return "particle " + std::to_string((long long)eng.P.id[p]) + " of two-phase body " +
+               std::to_string(eng.P.body[p]) + " carries an initial-stress offset: refused (Q2; interface"
+               " P7 (6)); start from zero excess pressure, or stage under gravity";
+  }
+  // fix 2's affine term (interface 7b) is route E's: an impervious B-spline face with a normal fluid
+  // drive needs pi, which route S does not carry in this build
+  if (bspl)
+    for (const auto &kv : twoPhase) {
+      const ladruno_mpm::TwoPhaseProps &t = kv.second;
+      for (int f = 0; f < 2 * nd; f++) {
+        const int d = f / 2;
+        const double drv = t.fluidBodyGiven ? t.fluidBody[d] : eng.par.gravity[d];
+        if (ladruno_mpm::foldsU(eng.fc, f) && !eng.fc.pfixOn[f] && drv != 0.0)
+          return std::string("an impervious B-spline face (") + faceName(f) + ") with a normal fluid drive"
+                 " needs fix 2's affine image term pi (interface 7b), which route S does not carry in this"
+                 " build: refused. Use mode A (route E), gimp / linear, or drain the face";
+      }
+    }
+  return "";
+}
+
+// Per analyze: each particle's fluid constants and alpha_st (P1 / §1, as the mode-A element),
+// the cutoff and the blend
+int
+LadrunoMPMPattern::routeSConstants(ladruno_mpm::UPStep &u, std::string &err)
+{
+  const int N = eng.P.size(), nd = eng.ndm();
+  u.tp.assign(N, 0);
+  u.alphaSt.assign(N, 0.0);
+  u.pCut = eng.par.pCut;
+  u.pBlend = eng.par.pBlend;
+  for (int p = 0; p < N; p++) {
+    const auto it = twoPhase.find(eng.P.body[p]);
+    if (it == twoPhase.end()) continue;
+    const ladruno_mpm::TwoPhaseProps *tp = &it->second;
+    u.tp[p] = tp;
+    if (tp->stabMode == 2) {
+      u.alphaSt[p] = tp->stabValue;
+    } else if (tp->stabMode == 1) {
+      NDMaterial *m = (p < (int)mats.size()) ? mats[p] : 0;
+      if (m == 0) { err = "particle " + std::to_string(p) + " has no material"; return -1; }
+      const Matrix &D0 = m->getInitialTangent();
+      const double Gd = (nd == 2) ? D0(2, 2) : D0(3, 3);
+      const double lam = D0(0, 1);
+      const double Kd = lam + 2.0 * Gd / 3.0;
+      if (Kd + 4.0 * Gd / 3.0 > 0.0)
+        u.alphaSt[p] = tp->stabValue * eng.grid.h * eng.grid.h / (Kd + 4.0 * Gd / 3.0);
+    }
+  }
+  return 0;
+}
+
+// Per step, after applyLoad: the plates' forces and the tractions' consistent nodal forces x lambda
+void
+LadrunoMPMPattern::routeSLoads(ladruno_mpm::UPStep &u)
+{
+  const ladruno_mpm::Grid &G = eng.grid;
+  const int nd = eng.ndm();
+  for (int f = 0; f < 6; f++)
+    u.plateLoad[f] = (f < 2 * nd && eng.fc.plateOn[f]) ? lambda * ((f % 2) ? -eng.fc.plateF[f] : eng.fc.plateF[f])
+                                                       : 0.0;
+  u.nodeForce.clear();
+  for (const Traction &tr : tractions) {
+    const int d = tr.face / 2, row = (tr.face % 2) ? G.n[d] : 0;
+    int ijk[3] = {0, 0, 0}, hi[3] = {0, 0, 0};
+    for (int e = 0; e < nd; e++) hi[e] = (e == d) ? 0 : G.n[e];
+    for (ijk[2] = 0; ijk[2] <= ((nd == 3) ? hi[2] : 0); ijk[2]++)
+      for (ijk[1] = 0; ijk[1] <= hi[1]; ijk[1]++)
+        for (ijk[0] = 0; ijk[0] <= hi[0]; ijk[0]++) {
+          int q[3] = {ijk[0], ijk[1], ijk[2]};
+          q[d] = row;
+          double w = 1.0;
+          for (int e = 0; e < nd; e++)
+            if (e != d) w *= hatIntegral(G.x0[e] + q[e] * G.h, G.h, tr.lo[e], tr.hi[e]);
+          if (w == 0.0) continue;
+          ladruno_mpm::UPStep::NodeForce nf;
+          nf.node = G.extId(q);
+          for (int a = 0; a < 3; a++) nf.f[a] = (a < nd) ? lambda * w * tr.t[a] : 0.0;
+          u.nodeForce.push_back(nf);
+        }
+  }
+}
+
+// `mpm criticalTimeStep drainedPencil | undrainedPencil` (interface §5, A6): 2 / omega_max of the
+// pencil M_L^-1 K at the committed state (lumped W grid mass; K = sum_p V B^T D B from the particles'
+// tangents on the per-component folded supports; fixed, stray and inactive components removed),
+// by 200 power iterations. undrained: D + alpha^2 Qbar m m^T at every two-phase particle.
+double
+LadrunoMPMPattern::pencilTimeStep(bool undrained, std::string &err)
+{
+  const ladruno_mpm::Grid &G = eng.grid;
+  const ladruno_mpm::Particles &P = eng.P;
+  const int N = P.size(), nd = eng.ndm(), nc = nd + 1, nvv = eng.nv();
+  if (N == 0) return std::numeric_limits<double>::infinity();
+  std::vector<long> sS(1, 0), sNode;
+  std::vector<double> sW, sdW, sSc, sdSc;
+  for (int p = 0; p < N; p++) {
+    ladruno_mpm::upSupport(G, eng.par.basis, eng.fc, &P.x[nd * p], &P.lp[nd * p], sNode, sW, sdW, sSc, sdSc, 0);
+    sS.push_back((long)sNode.size());
+  }
+  std::map<long, int> loc;                       // lattice node -> local; plates: nl + f
+  for (long x : sNode) if (x >= 0 && !loc.count(x)) { const int i = (int)loc.size(); loc[x] = i; }
+  const int nl = (int)loc.size(), nu = nd * nl + 6;
+  auto row = [&](long k, int c) -> int {
+    const long x = sNode[k];
+    if (x >= 0) return nd * loc[x] + c;
+    const int f = (int)(-x - 2);
+    return (c == f / 2) ? nd * nl + f : -1;
+  };
+  std::vector<double> mass(nu, 0.0), mnode(nl, 0.0);
+  double mmax = 0.0;
+  for (int p = 0; p < N; p++) {
+    mmax = std::max(mmax, P.m[p]);
+    for (long k = sS[p]; k < sS[p + 1]; k++) {
+      if (sNode[k] >= 0) mnode[loc[sNode[k]]] += sW[k] * P.m[p];
+      else mass[nd * nl + (int)(-sNode[k] - 2)] += sW[k] * P.m[p];
+    }
+  }
+  std::vector<char> freeC(nu, 0);
+  for (const auto &kv : loc) {
+    const int i = kv.second;
+    if (!(mnode[i] > 0.0 && ladruno_mpm::imageCutoffMass(G, eng.par.basis, eng.fc, kv.first, mnode[i]) >
+                                eng.par.masscut * mmax)) continue;
+    int ijk[3];
+    G.extIJK(kv.first, ijk);
+    for (int c = 0; c < nd; c++) {
+      bool fixed = false;
+      for (int f = 0; f < 2 * nd; f++) {
+        const int d = f / 2;
+        const bool on = (f % 2 == 0) ? ijk[d] <= 0 : ijk[d] >= G.n[d];
+        if (on && (eng.fc.fixMask[f] & (1u << c))) fixed = true;
+        if (eng.fc.plateOn[f] && c == d && ijk[d] == ((f % 2) ? G.n[d] : 0)) fixed = true;
+      }
+      mass[nd * i + c] = mnode[i];
+      freeC[nd * i + c] = fixed ? 0 : 1;
+    }
+  }
+  for (int f = 0; f < 2 * nd; f++) if (eng.fc.plateOn[f] && mass[nd * nl + f] > 0.0) freeC[nd * nl + f] = 1;
+  // the particles' tangents (plane strain 3 x 3 / 3D 6 x 6), undrained term added
+  std::vector<double> D((size_t)N * nvv * nvv, 0.0);
+  for (int p = 0; p < N; p++) {
+    NDMaterial *m = (p < (int)mats.size()) ? mats[p] : 0;
+    if (m == 0) { err = "particle " + std::to_string(p) + " has no material"; return -1.0; }
+    const Matrix &T = m->getTangent();
+    if (T.noRows() != nvv || T.noCols() != nvv) { err = "a particle tangent is not " + std::to_string(nvv) + " x " +
+                                                       std::to_string(nvv); return -1.0; }
+    for (int a = 0; a < nvv; a++) for (int b = 0; b < nvv; b++) D[((size_t)p * nvv + a) * nvv + b] = T(a, b);
+    const auto it = twoPhase.find(P.body[p]);
+    if (undrained && it != twoPhase.end()) {
+      const double q = it->second.alpha * it->second.alpha / it->second.oneOverQbar();
+      for (int a = 0; a < nd; a++) for (int b = 0; b < nd; b++) D[((size_t)p * nvv + a) * nvv + b] += q;
+    }
+  }
+  auto applyK = [&](const std::vector<double> &x, std::vector<double> &y) {
+    y.assign(nu, 0.0);
+    for (int p = 0; p < N; p++) {
+      double L[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+      for (long k = sS[p]; k < sS[p + 1]; k++)
+        for (int c = 0; c < nd; c++) {
+          const int r = row(k, c);
+          if (r < 0 || !freeC[r]) continue;
+          for (int j = 0; j < nd; j++) L[nd * c + j] += x[r] * sdSc[(nc * k + c) * nd + j];
+        }
+      double e[6], s[6];
+      if (nd == 2) { e[0] = L[0]; e[1] = L[3]; e[2] = L[1] + L[2]; }
+      else { e[0] = L[0]; e[1] = L[4]; e[2] = L[8]; e[3] = L[1] + L[3]; e[4] = L[5] + L[7]; e[5] = L[2] + L[6]; }
+      for (int a = 0; a < nvv; a++) {
+        s[a] = 0.0;
+        for (int b = 0; b < nvv; b++) s[a] += D[((size_t)p * nvv + a) * nvv + b] * e[b];
+      }
+      double t[3][3];
+      if (nd == 2) { t[0][0] = s[0]; t[1][1] = s[1]; t[0][1] = t[1][0] = s[2]; }
+      else { t[0][0] = s[0]; t[1][1] = s[1]; t[2][2] = s[2]; t[0][1] = t[1][0] = s[3];
+             t[1][2] = t[2][1] = s[4]; t[0][2] = t[2][0] = s[5]; }
+      const double V = P.V[p];
+      for (long k = sS[p]; k < sS[p + 1]; k++)
+        for (int c = 0; c < nd; c++) {
+          const int r = row(k, c);
+          if (r < 0 || !freeC[r]) continue;
+          double v = 0.0;
+          for (int j = 0; j < nd; j++) v += t[c][j] * sdSc[(nc * k + c) * nd + j];
+          y[r] += V * v;
+        }
+    }
+  };
+  std::vector<double> x(nu, 0.0), y;
+  for (int r = 0; r < nu; r++) if (freeC[r]) x[r] = std::sin(1.7 * r + 0.3) + 1.1;
+  double lam = 0.0;
+  for (int it = 0; it < 200; it++) {
+    applyK(x, y);
+    double num = 0.0, den = 0.0, nrm = 0.0;
+    for (int r = 0; r < nu; r++) {
+      if (!freeC[r]) continue;
+      num += x[r] * y[r];
+      den += x[r] * mass[r] * x[r];
+      x[r] = y[r] / mass[r];
+      nrm = std::max(nrm, std::fabs(x[r]));
+    }
+    if (!(den > 0.0) || !(nrm > 0.0)) { err = "the pencil has no free component"; return -1.0; }
+    lam = num / den;
+    for (int r = 0; r < nu; r++) x[r] /= nrm;
+  }
+  if (!(lam > 0.0)) return std::numeric_limits<double>::infinity();
+  return 2.0 / std::sqrt(lam);
 }
 
 // ---------------------------------------------------------------------------

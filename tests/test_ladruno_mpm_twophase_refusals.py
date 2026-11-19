@@ -4,7 +4,7 @@
   `mpm info twoPhase` reports it.
 - Loud refusals at `mpm analyze`: a symmetric-storage system, mode quasiStatic, HHT, an
   initial-stress offset on a two-phase particle, `mpm antiLocking fbar`, `-dynSeepage on`.
-- Mode F refuses a two-phase body until route S lands (nothing is ignored silently).
+- Route S (mode F) runs the admitted deck and refuses a wall, F-bar and fix 2's term.
 """
 from __future__ import annotations
 
@@ -110,10 +110,37 @@ def test_dynseepage_on_refused():
                 "-dynSeepage", "on")
 
 
-def test_mode_f_refuses_until_route_s():
+def test_route_s_admitted_deck_runs():
+    """Route S (mode F) runs the admitted two-phase deck (gimp, pfix top, base fixed)."""
     ops = _ops()
     _deck(ops, mode="explicit")
-    _refused(ops)
+    ops.mpm("analyze", 2, 1.0e-3)
+    p = _as_list(ops.mpm("particleData", "p"))
+    assert len(p) == 16 and all(x == x for x in p)
+    assert _as_list(ops.mpm("info", "twoPhase", 1))[0] == 2.0            # route S
+
+
+@pytest.mark.parametrize("why", ["wall", "fbar", "fix2"])
+def test_route_s_refusals(why):
+    """Route S refuses what it does not carry (P7): a wall, F-bar, and fix 2's affine term (a
+    B-spline impervious face with a normal fluid drive)."""
+    ops = _ops()
+    if why == "fix2":
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        ops.nDMaterial("ElasticIsotropic", 1, 1.0e4, 0.2, 2.0)
+        ops.mpm("grid", 232, "-origin", 0.0, 0.0, "-h", 0.5, "-cells", 2, 4, "-basis", "bspline2")
+        ops.mpm("mode", "explicit")
+        ops.mpm("body", 1, "box", 0.0, 0.0, 1.0, 2.0, "-ppc", 2, "-mat", 1, "-rho", 2.0)
+        ops.mpm("twoPhase", 1, "-Kf", 4444.0, "-poro", 0.4, "-rhoF", 1.0, "-perm", 0.01, 0.01)
+        ops.mpm("gravity", 0.0, -9.81)
+        ops.mpm("fix", "ymin", "y")
+        ops.mpm("pfix", "ymax", 0.0)
+    else:
+        _deck(ops, mode="explicit",
+              extra=[("wall", "xmax", 0.0)] if why == "wall" else [("antiLocking", "fbar")])
+    with pytest.raises(Exception):
+        ops.mpm("analyze", 1, 1.0e-3)
 
 
 def test_generalized_alpha_refused():

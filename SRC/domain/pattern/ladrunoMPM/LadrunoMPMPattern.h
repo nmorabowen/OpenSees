@@ -420,6 +420,16 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   // accepted (twoPhaseAfterStep); a refused step and the debug hooks leave the state unchanged
   bool                    pendValid = false, pendFirst = false;
   std::vector<double>     pendPiPerp, pendPiC;    // A''s pi_perp (first projection); the pi_c used
+  // WP-232l route S (mode F, interface §1 "Route S", §5 P11, §7a Q4)
+  std::vector<double>     lastGridP;               // the last route-S step: [id, p, p^] per p-active node
+  bool        routeSOn(void) const;                // a two-phase body, a plate, pfix or a traction
+  std::string routeSAdmission(void) const;
+  int         routeSConstants(ladruno_mpm::UPStep &u, std::string &err);
+  void        routeSLoads(ladruno_mpm::UPStep &u);
+ public:
+  double      pencilTimeStep(bool undrained, std::string &err);   // `criticalTimeStep drainedPencil`
+  const std::vector<double> &gridPressure(void) const { return lastGridP; }
+ private:
   struct PSup;
   int    buildPSup(PSup &s, std::string &err);
   double driveFactorAt(double t) const;            // finding 3: the series value a step at t uses

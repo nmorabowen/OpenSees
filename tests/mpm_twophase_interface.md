@@ -603,6 +603,25 @@ projection.
   and from G2P.
 - **The T8 stray-p row**, a tail of 1e-8 giving p = −6.7e3 at step 2, becomes a pass.
 
+### Route S as built (232l-C, 2026-11-18; implementation notes, nothing frozen moves)
+
+- `Engine::advanceUP` (`LadrunoMPMRouteS.h`) runs every mode-F step of a model with a two-phase body,
+  a plate, a `pfix` or a traction; any other model keeps `advance` bit for bit (T10).
+- The supports are mode A's per-component folded ones (`upSupport`: P9, P10). M⁻¹ is §7a Q4's rule,
+  the plate unknown included. The u side keeps mode F's cutoff and no renormalisation.
+- p-activity, S^p and P5a are the rulings of mode A: the two-phase nodal mass against
+  `pressureCutoff`, raw-weight renormalisation with folded-away entries retained (bb1421559), and
+  the probe-guarded consistent projection. Particles carry p only (no ṗ, p̈ in mode F).
+- The pressure solve: Jacobi-PCG on the free p-active rows, ||r|| ≤ 1e-13 ||b||, 4 n + 1000
+  iterations, warm start p̂; drained p₀ on the right side. Non-convergence refuses the step.
+- `mpm info gridPressure` returns [id, p, p̂] per p-active node of the last accepted step
+  (T0 iii). `mpm criticalTimeStep drainedPencil | undrainedPencil`: 200 power iterations on
+  M_L⁻¹K at the committed state; the undrained one adds α²Q̄ m mᵀ at two-phase particles.
+- **Proposed amendment A7 (not applied silently):** route S refuses fix 2's affine image term
+  (an impervious B-spline face with a normal fluid drive) in this build. No gated route-S case
+  (T0 iii, T5, T6, T7) has one. Carrying π and the q + π invariant into mode F is offered as a
+  follow-up.
+
 ## 8. Proposed amendments and objections (none applied)
 
 - **A1** (U4): particles carry p̈ as well as p, ṗ (§1, P2).

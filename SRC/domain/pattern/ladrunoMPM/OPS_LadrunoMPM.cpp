@@ -725,14 +725,31 @@ int ladrunoMPMDoubleQuery(Domain *dom, const std::vector<std::string> &a, std::v
                  sub == "particleResponse" ||                          // WP-232k (D16)
                  (sub == "info" && a.size() > 1 && (a[1] == "time" || a[1] == "summary" ||
                                                      a[1] == "dtHistory" || a[1] == "gridNodeTags" ||
-                                                     a[1] == "materials"));
+                                                     a[1] == "materials" ||
+                                                     a[1] == "gridPressure"));   // WP-232l route S
   if (!q) return 0;
   if (ladruno_parallelBuild())
     return fail("-- refused in OpenSeesSP / OpenSeesMP: v1 MPM is serial (ADR 232 §5.1)");
   LadrunoMPMPattern *h = host(dom, sub.c_str());
   if (h == 0) return -1;
   ladruno_mpm::Engine &E = h->engine();
-  if (sub == "criticalTimeStep") { out.assign(1, h->criticalTimeStep()); return 1; }
+  if (sub == "criticalTimeStep") {
+    // WP-232l (interface §5, A6): the discrete drained / undrained pencil, 2 / omega_max
+    if (a.size() > 1 && (a[1] == "drainedPencil" || a[1] == "undrainedPencil")) {
+      std::string err;
+      const double v = h->pencilTimeStep(a[1] == "undrainedPencil", err);
+      if (!err.empty()) return fail("criticalTimeStep " + a[1] + " -- " + err);
+      out.assign(1, v);
+      return 1;
+    }
+    if (a.size() > 1) return fail("criticalTimeStep [drainedPencil | undrainedPencil]");
+    out.assign(1, h->criticalTimeStep());
+    return 1;
+  }
+  if (sub == "info" && a.size() > 1 && a[1] == "gridPressure") {   // WP-232l: [id, p, p^] per node
+    out = h->gridPressure();
+    return 1;
+  }
   if (sub == "particleData") {
     if (a.size() < 2) return fail("particleData <field>");
     if (a[1] == "sigZZ") {                // WP-232k (D16)

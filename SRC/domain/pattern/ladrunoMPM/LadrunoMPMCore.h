@@ -823,6 +823,22 @@ struct Particles {
 //  The engine                                                                  //
 // --------------------------------------------------------------------------- //
 
+// WP-232l route S (tests/mpm_twophase_interface.md §1 "Route S", §5 P11, §7a Q4, §7b): what the
+// host hands one mode-F u-p step (Engine::advanceUP, LadrunoMPMRouteS.h), and what it reads back.
+struct UPStep {
+  std::vector<const TwoPhaseProps *> tp;   // per particle; null = single phase
+  std::vector<double> alphaSt;             // per particle: the stabilization alpha_st
+  double pCut = 5.0e-2;                    // `mpm pressureCutoff` (route S's own knob)
+  double pBlend = 1.0;                     // `mpm pressureBlend` alpha_p
+  double plateLoad[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};   // lambda x the plate force, along +axis
+  struct NodeForce { long node; double f[3]; };
+  std::vector<NodeForce> nodeForce;        // tractions' consistent nodal forces (x lambda)
+  // read back after an accepted step: the p-active nodes (sorted), their p and projection
+  std::vector<long> gNode;
+  std::vector<double> gP, gPhat;
+  int pcgIter = 0;
+};
+
 class Engine {
  public:
   Grid           grid;
@@ -1057,6 +1073,9 @@ class Engine {
   // host's). Returns 0 (committed), -1 (the step failed before any material
   // committed: every particle keeps its committed state, materials reverted),
   // -2 (a material refused at commit: the run must be aborted — W17).
+  // WP-232l route S: the u-p step of a two-phase (or plate / traction) epoch in mode F
+  int advanceUP(double dt, double lambda, MaterialPoints &mats, UPStep &u, std::string &err);
+
   int advance(double dt, double lambda, MaterialPoints &mats, std::string &err)
   {
     const int N = P.size(), nd = grid.ndm, nvv = nv();
@@ -1601,5 +1620,7 @@ class Engine {
 };
 
 } // namespace ladruno_mpm
+
+#include "LadrunoMPMRouteS.h"     // WP-232l: Engine::advanceUP (route S)
 
 #endif

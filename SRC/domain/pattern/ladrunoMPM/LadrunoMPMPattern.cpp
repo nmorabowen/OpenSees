@@ -834,15 +834,19 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
                   " \"Soil particles\"). Mode A admits it on every basis (quasi-static runs).\n";
         return -1;
       }
-  // WP-232l: route S (mode F) is a later batch of this WP; until it lands, mode F refuses a
-  // two-phase body and the conditions only route E reads, rather than ignore them
-  {
-    bool pf = false;
-    for (int f = 0; f < 6; f++) pf = pf || eng.fc.pfixOn[f];
-    if (anyTwoPhase() || anyPlate() || pf || !tractions.empty()) {
-      opserr << "ERROR mpm analyze -- a two-phase body, `mpm pfix`, `mpm plate` and `mpm traction`"
-                " run in mode A (route E) in this build; route S (mode F, tests/mpm_twophase_interface.md"
-                " §5) is not built yet. Refused rather than ignored.\n";
+  // WP-232l route S (interface §1 "Route S", §5 P11): a two-phase body, a plate, pfix or a
+  // traction runs the semi-implicit u-p step (Engine::advanceUP); the rest is refused loudly
+  const bool routeS = routeSOn();
+  ladruno_mpm::UPStep upStep;
+  if (routeS) {
+    const std::string why = routeSAdmission();
+    if (!why.empty()) {
+      opserr << "ERROR mpm analyze -- " << why.c_str() << "\n";
+      return -1;
+    }
+    std::string err;
+    if (routeSConstants(upStep, err) < 0) {
+      opserr << "ERROR mpm analyze -- route S: " << err.c_str() << "\n";
       return -1;
     }
   }
@@ -922,7 +926,20 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       adapter->setTimer(&matTmr);
 #endif
       adapter->trialFail = -1;                       // WP-232k (D14)
-      res = eng.advance(dt, lambda, *adapter, err);
+      if (routeS) {                                  // WP-232l route S
+        routeSLoads(upStep);
+        res = eng.advanceUP(dt, lambda, *adapter, upStep, err);
+        if (res == 0) {
+          lastGridP.clear();
+          for (size_t a = 0; a < upStep.gNode.size(); a++) {
+            lastGridP.push_back((double)upStep.gNode[a]);
+            lastGridP.push_back(upStep.gP[a]);
+            lastGridP.push_back(upStep.gPhat[a]);
+          }
+        }
+      } else {
+        res = eng.advance(dt, lambda, *adapter, err);
+      }
 #ifndef OPS_PROFILE_DISABLE
       adapter->setTimer(0);
 #endif
