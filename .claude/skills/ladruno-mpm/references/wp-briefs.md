@@ -1587,6 +1587,14 @@ quoted from them.
   cutoff to 1e-10 and readmit the ill-conditioned rows. The p cutoff is `mpm pressureCutoff <c>`,
   default 5e-2, reported by `mpm info twoPhase`; T8 tests that `massCutoff` leaves it unchanged.
   In mode A the p rows already follow `renormalize` (P4), so there is no separate knob there.
+- **R's first-settlement comparison runs on two decks (2026-11-18, before any MPM number; reported
+  row, no gate moves).** 232l-V's LadrunoUP ratios (`r_first_settlement_fe.json`, b751dcbfe): on T2's
+  soil (K_f/n ≈ E_oed) the storage block outweighs H̃, and the ratio is 1.01–1.05 for α₀ off–0.25 at
+  dt 1e-3–0.2. On a stiff fluid (K_f = 2.2e6, s0 = 1.81e-5 m, dt 1e-3) it is 2.06 off, 16.7 at
+  α₀ 0.1 and 25.8 at 0.25: TIMs' regime, magnified. The route comparison therefore reports both
+  decks, so it can see the defect it exists to compare. Both are on the quasi-static deck (ρ = 2e-6;
+  on T2's ρ = 2, u(0⁺) is undefined while the compression wave transits), each MPM leg against the
+  FE leg at the same dt and stabilization.
 
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
