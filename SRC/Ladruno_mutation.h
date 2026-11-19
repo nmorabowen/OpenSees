@@ -141,7 +141,8 @@
 // Element accessor, so its gates sit in the engine step itself
 // (LadrunoMPMCore.h, which repeats this default to stay OpenSees-free): ZERO
 // drops the P2G internal force, SCALE multiplies the G2P position increment by
-// SCALE_FACTOR (ADR 232 §8).
+// SCALE_FACTOR (ADR 232 §8). WP-232l (T11): IDENT cuts the two-phase u-p coupling (Q
+// never assembled, the P5a pressure projection skipped), so the two-phase oracles go red.
 #ifndef LADRUNO_MUTATE_MPM
 #  define LADRUNO_MUTATE_MPM LADRUNO_MUT_NONE
 #endif

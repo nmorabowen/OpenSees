@@ -70,6 +70,10 @@ namespace ladruno_mpm {
 
 const int    MUT_ZERO = 1;         // ZERO : the P2G internal force is dropped
 const int    MUT_SCALE = 2;        // SCALE: the G2P position increment is x1.5
+// WP-232l (T11): IDENT, unused by the single-phase engine, cuts the u-p coupling -- Q is never
+// assembled (mode A's particle element and route S) and the P5a pressure projection is skipped
+// (p^ = 0). T0 (i) and T1 at one cell must go red under it.
+const int    MUT_IDENT = 3;
 const double MUT_SCALE_FACTOR = 1.5;
 
 // WP-232i (tests/mpm_bspline_interface.md B4): node-centred uniform B-splines,

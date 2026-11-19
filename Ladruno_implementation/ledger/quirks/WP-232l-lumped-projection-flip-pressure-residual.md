@@ -60,3 +60,22 @@ date: 2026-11-18
 - **Fix (interface 7c, owner's decision):** two-phase particles take L from v1 (USL for the
   skeleton). Light u nodes (m_a <= max(massCutoff, pressureCutoff) m_max) are dropped whole in a
   two-phase step; their correction dt M^-1 Q p grows like 1/delta on a GIMP tail (gimp Mandel).
+
+#### FLIP on a consistent projection keeps a motion residual it never damps
+
+- **Bites:** P5a carries p with FLIP increments on a consistent L2 projection. When the supports move,
+  the next projection drops the part of the particle field that leaves the range of P. P5a never
+  damps that part (doing so would break the sealed-column invariant).
+- **Seen:** the fix-2 patch column, E 1e4. The grid coefficients and the field at the particles were
+  exact to 5e-14, but the base particle's own p was 6.0e-6 gamma_w H off (build `58727204e`).
+- **Rule (owner, d064f5b7e):** gate the grid field and the field at the particles; record the
+  particle-carried value as the motion residual (T4p gates it at 0.01).
+
+#### A dangling `else` after an inserted `if` doubled a ghost's weight
+
+- **Bites:** `upSupport` once read `if (fold) add(mirror); if (affine...) {...} else add(ghost);`. The
+  inserted affine `if` captured the fold's `else`, so on a face with a u fold and `pfix` (a plate on a
+  drained face) the ghost's W went to the mirror AND to the ghost. Sum W was 1.03125, and the plate
+  moved as 0.97 U.
+- **Fix (Fable audit finding 1):** restore the pairing. Test: `test_plate_pfix_face_weights_sum_to_one`
+  (`emptyNodes exclude`, `massCutoff 0`, so no renormalisation hides it).

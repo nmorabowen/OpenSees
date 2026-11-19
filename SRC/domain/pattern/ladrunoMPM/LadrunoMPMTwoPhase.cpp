@@ -731,6 +731,7 @@ LadrunoMPMPattern::prepareStepUP(double hStep, std::string &err)
       if (!pcg(bq, xs)) { err = singular; return -1; }
       for (int a = 0; a < np; a++) sol[3 * (size_t)a + q] = xs[a];
     }
+    if (LADRUNO_MUTATE_MPM == ladruno_mpm::MUT_IDENT) std::fill(sol.begin(), sol.end(), 0.0);   // T11
     for (const auto &kv : pidx)
       pProj[kv.first] = {sol[3 * (size_t)kv.second], sol[3 * (size_t)kv.second + 1],
                          sol[3 * (size_t)kv.second + 2]};

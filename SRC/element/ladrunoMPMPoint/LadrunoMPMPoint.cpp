@@ -1388,7 +1388,8 @@ LadrunoMPMPoint::setTwoPhase(int ndfNode, const ladruno_mpm::TwoPhaseProps *tp, 
   Sb.assign(nen * nen, 0.0);
   Htb.assign(nen * nen, 0.0);
   Gs.assign(nen * ndm, 0.0);
-  ladruno_up::addQ(dNu.data(), Sp.data(), nen, nen, ndm, tp->alpha, Vp, Qb.data(), nen);
+  if (LADRUNO_MUTATE_MPM != LADRUNO_MUT_IDENT)           // WP-232l T11: IDENT cuts the coupling Q
+    ladruno_up::addQ(dNu.data(), Sp.data(), nen, nen, ndm, tp->alpha, Vp, Qb.data(), nen);
   ladruno_up::addH(dSp.data(), nen, ndm, tp->kbar, Vp, Hb.data(), nen);
   ladruno_up::addS(Sp.data(), nen, ladruno_up::oneOverQbar(tp->n, tp->Kf, tp->alpha, tp->Ks), Vp,
                    Sb.data(), nen);

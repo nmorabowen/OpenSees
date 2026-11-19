@@ -469,6 +469,75 @@ Interface `tests/mpm_soil_interface.md` (D1–D23); results [[232k_mpm_soil_mode
 - **Local damping is not Galilean invariant** (`mpm damping local` acts on the absolute grid
   velocity): turn it off for a rigid translation and back on to settle.
 
+## Two-phase particles — saturated Biot u-p (WP-232l)
+
+Interface `tests/mpm_twophase_interface.md` (P1–P13, §7a, §7b, §7c); results [[232l_mpm_two_phase]].
+
+```tcl
+mpm twoPhase <body> -Kf <Kf> -poro <n> -rhoF <rhoF> -perm <k1> <k2> [<k3>] \
+    [-alpha <a>] [-Ks <Ks>] [-stab off | auto <a0> | <alpha>] [-fluidBody <bx> <by> [<bz>]]
+```
+
+- **The flags are LadrunoUP's.** `-perm` is k̄ = k_hydraulic/γ_w per axis. The body's `-rho` is the
+  saturated mixture density. The default stabilization is `auto 0.25`, with α_st = α₀h²/(K_d + 4G_d/3)
+  and h the grid spacing. `-dynSeepage on` is refused.
+- **Signs.** p is compression-positive excess pore pressure. A particle's `sig` is σ′. The fluid drive
+  is λ·(`-fluidBody`, by default `mpm gravity`).
+- **Route by mode.**
+  - **Route E, mode A (`mpm mode implicit`):** a monolithic u-p step. Every grid node carries
+    ndf = ndm + 1 in a two-phase epoch. **Newmark only**: HHT and GeneralizedAlpha are refused, as
+    are `quasiStatic` (no S or Qᵀ terms, so it cannot consolidate) and symmetric-storage systems.
+  - **Route S, mode F (`mpm mode explicit`):** an explicit skeleton with an implicit pressure solve
+    (Jacobi-PCG) and a velocity correction. Two-phase particles take the skeleton strain from the
+    corrected grid velocity v₁ (USL, §7c). Particles carry p only.
+- **Conditions.**
+  - `mpm pfix <face> <p0>`: a drained face. On B-spline faces only p0 = 0 is accepted.
+  - `mpm plate <face> <F>`: a rigid, frictionless plate, one normal unknown. F is the total force,
+    positive into the body, × λ.
+  - `mpm traction <name> <face> <lo..> <hi..> <t..>`: consistent nodal forces, GIMP / linear only.
+  - A face without `pfix` is impervious.
+- **Cutoffs.** `mpm pressureCutoff <c>` (default 5e-2) sets p-activity: a node's p is active only if
+  its two-phase nodal mass is above c·m_max and some two-phase particle has S^p > 0 there.
+  `mpm massCutoff` is the u side's cutoff.
+  - Mode A refuses `massCutoff` > `pressureCutoff` with a two-phase body.
+  - In a route-S step of a two-phase model, a u node below max(massCutoff, pressureCutoff)·m_max is
+    dropped whole: no momentum, force or correction.
+- **Route S's time step.** The step must satisfy dt ≤ s·Δt_d, where Δt_d is the drained pencil
+  (`mpm criticalTimeStep drainedPencil`) and s is `mpm safety`.
+  - s defaults to 0.5. Values in (0.5, 0.7] run with a warning once per epoch, and s > 0.7 is
+    refused (T7's measured USL limit: gimp 0.7×, bspline2 0.8×).
+  - Δt_d is computed once per epoch and again when a particle changes cell.
+  - `mpm criticalTimeStep undrainedPencil` reports the undrained limit, which route S does not need.
+- **Queries and state.**
+  - `mpm particleData p | pd | pdd`.
+  - `mpm particlePressure <p..> [<pd..> <pdd..>]` and `mpm porePressure <body> uniform <p>` set the
+    initial field; setting p by command re-arms A′.
+  - `mpm info twoPhase <body>` returns [route, constants, α_st, pressureCutoff, max |π_⊥|].
+  - `mpm info gridPressure` returns [id, p, p̂] for route S's last step.
+  - `mpm kinematics small | hypo` (default `hypo`); `mpm pressureBlend <α_p>` (default 1).
+  - Output: the `PORE_PRESSURE` particle field (additive). Restart: mode A pack 5. Mode F keeps
+    refusing a database save with particles.
+- **Serial.** No new threaded code. Mode A prints the existing serial warning, and the route-S
+  pressure assembly and PCG are serial.
+- **Refused.**
+  - `mpm antiLocking fbar` with a two-phase body.
+  - A non-zero `mpm stress` offset on a two-phase particle (stage under gravity instead).
+  - Porous materials at particles (PDMY, PIMY, FluidSolidPorous).
+  - Walls in route S; restart packs < 5 with a two-phase body.
+  - A singular pressure projection, for example one particle per cell on B-spline.
+- **Known limits.**
+  - **A7:** route S refuses fix 2's term. An impervious B-spline face under a normal fluid drive,
+    such as gravity over a fixed base, needs mode A, gimp / linear, or a drained face.
+  - **T7 is a recorded miss:** with the USL skeleton, route S is stable only to 0.7× (gimp) / 0.8×
+    (bspline2) the drained pencil, hence the cap above.
+  - **No drainage switch:** a face is drained or impervious for the whole epoch.
+  - Porosity is constant (no J-update).
+- **The particle-pressure motion residual.** Particles carry p with FLIP increments on a consistent
+  L2 projection (P5a). When supports move, the part of the particle field outside the new supports'
+  range stays on the particles and is never damped. The grid field and the field at the particles
+  are accurate; the particle's own p can differ by a small residual (6e-6 γ_wH on the 0.044 m
+  settlement patch column). Read the field at the particles when that matters.
+
 ## Verification
 
 - `tests/test_mpm_engine_core_cpp.py` — the pure core (`LadrunoMPMCore.h`) and the kernel entry,

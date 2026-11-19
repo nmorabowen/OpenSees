@@ -61,6 +61,7 @@
 // The core mirrors the mutation mode codes so it can stay OpenSees-free.
 static_assert(ladruno_mpm::MUT_ZERO == LADRUNO_MUT_ZERO, "MPM mutation code ZERO drifted");
 static_assert(ladruno_mpm::MUT_SCALE == LADRUNO_MUT_SCALE, "MPM mutation code SCALE drifted");
+static_assert(ladruno_mpm::MUT_IDENT == LADRUNO_MUT_IDENT, "MPM mutation code IDENT drifted");   // WP-232l T11
 
 // ---------------------------------------------------------------------------
 //  The material seam: one owned NDMaterial copy per particle

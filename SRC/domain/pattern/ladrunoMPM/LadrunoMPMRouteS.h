@@ -3,6 +3,27 @@
 **          Pacific Earthquake Engineering Research Center            **
 ** ****************************************************************** */
 
+// LADRUNO-HEADER-START
+// ==========================================================================
+//
+//   ▄█          ▄████████ ████████▄     ▄████████ ███    █▄  ███▄▄▄▄    ▄██████▄
+//  ███         ███    ███ ███   ▀███   ███    ███ ███    ███ ███▀▀▀██▄ ███    ███
+//  ███         ███    ███ ███    ███   ███    ███ ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███  ▄███▄▄▄▄██▀ ███    ███ ███   ███ ███    ███
+//  ███       ▀███████████ ███    ███ ▀▀███▀▀▀▀▀   ███    ███ ███   ███ ███    ███
+//  ███         ███    ███ ███    ███ ▀███████████ ███    ███ ███   ███ ███    ███
+//  ███▌    ▄   ███    ███ ███   ▄███   ███    ███ ███    ███ ███   ███ ███    ███
+//  █████▄▄██   ███    █▀  ████████▀    ███    ███ ████████▀   ▀█   █▀   ▀██████▀
+//  ▀                                   ███    ███
+//
+//  Ladruno — a research fork of OpenSees
+//  Created by:  Nicolas Mora Bowen  ·  Patricio Palacios  ·  José Abell  ·  Guppi
+//
+// Header auto-stamped by Ladruno_scripts/stamp_headers.py (art: banner_ASCII.txt).
+// Do not hand-edit between the markers; edit the script/art and re-run instead.
+// ==========================================================================
+// LADRUNO-HEADER-END
+
 // Ladruno: WP-232l route S -- the semi-implicit u-p step of mode F (tests/mpm_twophase_interface.md
 // §1 "Route S (mode F) step", §5 P11, §7a Q4, §7b P5a and P4 amended; wp-briefs "232l" rulings
 // 9064acca3 (1, 2), 3d3699a50, c84f71fb3, bb1421559). Included by LadrunoMPMCore.h only.
@@ -145,7 +166,8 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
         double s = 0.0;
         for (int j = 0; j < nd; j++) s += sg[c][j] * g[j];
         const double mom = S * mp * P.v[nd * p + c];
-        const double frc = S * mp * (bfp ? b[c] + bfp[c] : b[c]) - Vp * s;
+        const double frc = S * mp * (bfp ? b[c] + bfp[c] : b[c]) -
+                           ((LADRUNO_MUTATE_MPM == MUT_ZERO) ? 0.0 : Vp * s);   // ADR-87 D2 ZERO
         if (i >= 0) { gp[nd * i + c] += mom; gf[nd * i + c] += frc; }
         else if (c == (-i - 1) / 2) { pU[-i - 1] += mom; fU[-i - 1] += frc; }
       }
@@ -300,7 +322,7 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
         " the particles no longer span the p-active nodes' shape functions (e.g. one particle per cell"
         " on a B-spline grid); step refused, nothing changed";
     phat.assign(np, 0.0);
-    if (np > 0) {
+    if (np > 0 && LADRUNO_MUTATE_MPM != MUT_IDENT) {          // T11: IDENT skips the projection
       if (routeSPcg(Mp, rp, phat, 1e-14, true) < 0) { err = singular; return -1; }
       std::vector<double> bq(np), xq;                     // the probe (guard (a), ruled)
       for (int a = 0; a < np; a++) bq[a] = std::sin(1.7 * a + 0.3);
@@ -339,7 +361,7 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
             const int e = eIdx[l];
             if (e < 0 && i != (-e - 1) / 2) continue;
             const double g = sdSc[(nc * l + i) * nd + i];
-            if (g == 0.0) continue;
+            if (g == 0.0 || LADRUNO_MUTATE_MPM == MUT_IDENT) continue;   // T11: IDENT cuts Q
             const int row = (e >= 0) ? nd * e + i : e;
             Q[row][a] += tp->alpha * V * g * SpF[k];
           }
@@ -431,7 +453,9 @@ inline int Engine::advanceUP(double dt, double lambda, MaterialPoints &mats, UPS
     }
     for (int c = 0; c < nd; c++) {
       tv[nd * p + c] = par.flip * (P.v[nd * p + c] + dt * sa[c]) + (1.0 - par.flip) * sv[c];
-      tx[nd * p + c] = P.x[nd * p + c] + dt * sv[c];
+      double dx = dt * sv[c];
+      if (LADRUNO_MUTATE_MPM == MUT_SCALE) dx *= MUT_SCALE_FACTOR;          // ADR-87 D2 SCALE
+      tx[nd * p + c] = P.x[nd * p + c] + dx;
     }
   }
   {
