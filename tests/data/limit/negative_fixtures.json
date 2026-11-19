@@ -210,19 +210,52 @@
   {
    "expect": "projection_move_too_large",
    "harness_item": "non-zero normal jump at one facet node under isochoric flow",
-   "id": "normal_jump_one_node",
+   "id": "normal_jump_isochoric",
    "mutation": {
     "amount": 0.001,
-    "element": 2,
-    "facet": [
-     0,
-     1
-    ],
-    "kind": "node_normal",
-    "local_node": 6
+    "edge": 3,
+    "element": 0,
+    "kind": "edge_normal_jump"
    },
    "problem": "vm_plate_shear.m0",
    "result": "vm_plate_shear.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "a von Mises jump that opens, admissible only if read as the cone with tau = 0",
+   "id": "vm_jump_opening",
+   "mutation": {
+    "amount": 0.001,
+    "direction": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "elements": [
+     2,
+     3,
+     5
+    ],
+    "kind": "side_translation"
+   },
+   "problem": "vm_uniaxial_tension.m0",
+   "result": "vm_uniaxial_tension.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "a non-zero velocity on a restrained footing component",
+   "id": "restrained_footing_component",
+   "mutation": {
+    "amount": 0.001,
+    "axis": 1,
+    "component": 2,
+    "footing": 0,
+    "kind": "restrained_shear"
+   },
+   "problem": "vm_plate_shear_restrained.m0",
+   "result": "vm_plate_shear_restrained.m0.q.upper.p2c-vertex.v0.result",
    "stage": "checker"
   },
   {

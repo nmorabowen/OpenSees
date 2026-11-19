@@ -34,7 +34,7 @@
  "problem_sha256": "1eb426a796a8811d70e5bf9067db02ed2dab5aeb8d58c086145cd3fa7ca0e32b",
  "query_id": "q",
  "reasons": [],
- "result_sha256": "30b71f3c613003bc409608bbcfdf9d5c93213c3b377cbc9720a1518a6e406cf9",
+ "result_sha256": "db7fcde59b7ec0242536c5e227b3b544f8a5f0a6fc928512271650cb129844ba",
  "tolerances": {
   "FLOOR_MIN_REL": 1e-12,
   "MAX_GAP_3D_DP": 0.5,
