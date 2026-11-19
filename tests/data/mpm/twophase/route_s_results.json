@@ -536,5 +536,718 @@
   "verdict": "STOP at T6 Mandel (bspline2 gated: off misses at tv 0.2 / 0.4, auto at tv 0.2 / 0.4; gimp reported, misses from tv 0.04). Terzaghi passes on both bases and both stabs (p <= 0.0068, U <= 0.0030 against 0.02).",
   "bspline2": "A growing x-velocity oscillation at the top-right particles (9.25, 3.75): the corner of the plate face and the drained traction-free face. |v| doubles about every 5 s at dt 0.005 (1.7e-3 at t 2.5 s, 9.0e-2 at 42.5 s, 3.7 at 75 s); p follows. dt 0.005 is 0.30 x the deck's drained pencil (0.01686; undrained 0.01158; estimator 0.01398), so the A6 claim does not bound route S here. Controls: dt 0.0025 decays (5.5e-4 at 50 s); a 2 % velocity PIC fraction (flip 0.98) decays; the same deck single-phase (no twoPhase) stays bounded (2.5e-4); pressureBlend 0.98 changes nothing (p stays representable).",
   "gimp": "Fails fast at dt 0.005 (p -88 at (8.76, 0.25) by t 5 s) and still wrong at dt 0.0025 (p turns negative): particles at the drained free face (x 9.75, lp 0.25) creep past x = 9.75 and give the ghost column beyond it a GIMP tail S = d^2 / (4 h lp); that u node is active (mode F's u cutoff 1e-10) and its correction dt M^-1 Q p scales as dS/S = 2/d (hypothesis, not yet isolated)."
+ },
+ "t6_mandel_diagnostics_4b74bd335": {
+  "build": "4b74bd335093cc074bd863da887ae5ea4970f07a",
+  "method": "tests/mpm_twophase_routeS_amplification.py: the setters act only before step 1, so the one-step Jacobian cannot be built column by column mid-run; two runs from the initial state +/- delta (v 1e-7, p 1e-5, sin patterns) give the central difference D(t), carried through the full state (x, v, sigma', p) by route S; its late-window growth is the step map's spectral radius, D(end) its mode.",
+  "amplification": {
+   "bspline2_dt0.0025_up": {
+    "basis": "bspline2",
+    "dt": 0.0025,
+    "t_end": 75.0,
+    "twin_single_phase": false,
+    "masscut": null,
+    "failed_at": null,
+    "growth_per_step": 1.0000067393586356,
+    "doubling_time_s": 257.12740400185993,
+    "energy_split_end": {
+     "step": 30000,
+     "t": 75.0,
+     "energy": 5.405313539495486e-13,
+     "kin": 4.010470274969957e-13,
+     "strain": 4.7666201624480363e-14,
+     "fluid": 9.181812482807256e-14
+    },
+    "top_particles_by_dv": [
+     {
+      "x0": [
+       9.252238253067535,
+       3.746747482979427
+      ],
+      "dv": [
+       -1.5499141931300461e-07,
+       -9.588727677428151e-08
+      ],
+      "dp": -8.575814821137895e-06,
+      "share_v2": 0.020706243676183414
+     },
+     {
+      "x0": [
+       7.752033063284854,
+       1.748483032680685
+      ],
+      "dv": [
+       -1.5388887422977844e-07,
+       -6.623334144729356e-08
+      ],
+      "dp": -3.530327565282043e-06,
+      "share_v2": 0.017497100842614157
+     },
+     {
+      "x0": [
+       7.7520330049954005,
+       1.2489165503058595
+      ],
+      "dv": [
+       -1.499989239897104e-07,
+       7.173695855972796e-08
+      ],
+      "dp": 1.1183145474491507e-05,
+      "share_v2": 0.017233557741353756
+     },
+     {
+      "x0": [
+       8.752193929806404,
+       3.7467475071955785
+      ],
+      "dv": [
+       1.3563798635868665e-07,
+       9.379177107913804e-08
+      ],
+      "dp": -7.180633023295968e-06,
+      "share_v2": 0.01695222617365268
+     },
+     {
+      "x0": [
+       9.252237474910324,
+       1.7484828948645244
+      ],
+      "dv": [
+       -1.3544836502854714e-07,
+       -3.413347214060122e-08
+      ],
+      "dp": -1.2493981529138054e-05,
+      "share_v2": 0.012162759085295748
+     },
+     {
+      "x0": [
+       7.752033455841515,
+       3.7467475434589614
+      ],
+      "dv": [
+       -1.0373935416469263e-07,
+       9.244255629933462e-08
+      ],
+      "dp": -8.07994542134649e-06,
+      "share_v2": 0.012035670690644765
+     }
+    ],
+    "plate_dvy_toprow_mean": -2.480420007695395e-10,
+    "grid_dp_top": [
+     {
+      "node_ij": [
+       9,
+       0
+      ],
+      "dp": 1.0973917245235554e-05
+     },
+     {
+      "node_ij": [
+       9,
+       4
+      ],
+      "dp": 9.41771563031657e-06
+     },
+     {
+      "node_ij": [
+       9,
+       1
+      ],
+      "dp": 8.26772621187466e-06
+     },
+     {
+      "node_ij": [
+       9,
+       3
+      ],
+      "dp": 7.240500004640493e-06
+     },
+     {
+      "node_ij": [
+       9,
+       2
+      ],
+      "dp": 5.067537799607891e-06
+     }
+    ]
+   },
+   "bspline2_dt0.005_twin": {
+    "basis": "bspline2",
+    "dt": 0.005,
+    "t_end": 75.0,
+    "twin_single_phase": true,
+    "masscut": null,
+    "failed_at": null,
+    "growth_per_step": 0.9999996565524156,
+    "doubling_time_s": null,
+    "energy_split_end": {
+     "step": 15000,
+     "t": 75.0,
+     "energy": 3.714031812536894e-13,
+     "kin": 3.580104233817504e-13,
+     "strain": 1.3392757871939018e-14,
+     "fluid": 0.0
+    },
+    "top_particles_by_dv": [
+     {
+      "x0": [
+       7.750838106358625,
+       2.747279972635217
+      ],
+      "dv": [
+       1.3146242796666248e-07,
+       -4.367604659667355e-08
+      ],
+      "dp": 0.0,
+      "share_v2": 0.01340042479206133
+     },
+     {
+      "x0": [
+       7.750837987393821,
+       1.7482681144931242
+      ],
+      "dv": [
+       -1.223444588500846e-07,
+       -6.367428100090982e-08
+      ],
+      "dp": 0.0,
+      "share_v2": 0.01328353829241648
+     },
+     {
+      "x0": [
+       7.750837951397424,
+       1.2487631501859577
+      ],
+      "dv": [
+       -1.1032773333238604e-07,
+       7.699718102549919e-08
+      ],
+      "dp": 0.0,
+      "share_v2": 0.01263983772955301
+     },
+     {
+      "x0": [
+       7.750837914402804,
+       0.24975269219045354
+      ],
+      "dv": [
+       1.2829006264220244e-07,
+       3.2896056899469604e-08
+      ],
+      "dp": 0.0,
+      "share_v2": 0.012248589417164646
+     },
+     {
+      "x0": [
+       7.750837927106922,
+       0.7492580422434739
+      ],
+      "dv": [
+       8.54953301906926e-09,
+       1.2894950393255347e-07
+      ],
+      "dp": 0.0,
+      "share_v2": 0.011662418178735014
+     },
+     {
+      "x0": [
+       1.2501344361606472,
+       3.7462895691963154
+      ],
+      "dv": [
+       -9.03445895896176e-08,
+       9.15960555581785e-08
+      ],
+      "dp": 0.0,
+      "share_v2": 0.011558310303918027
+     }
+    ],
+    "plate_dvy_toprow_mean": 1.385449997204336e-09,
+    "grid_dp_top": []
+   },
+   "bspline2_dt0.005_up": {
+    "basis": "bspline2",
+    "dt": 0.005,
+    "t_end": 75.0,
+    "twin_single_phase": false,
+    "masscut": null,
+    "failed_at": null,
+    "growth_per_step": 1.000933831730803,
+    "doubling_time_s": 3.7130392379779846,
+    "energy_split_end": {
+     "step": 15000,
+     "t": 75.0,
+     "energy": 7.585763952386474e-06,
+     "kin": 3.1753979987663093e-06,
+     "strain": 4.036898266300729e-06,
+     "fluid": 3.734676873194346e-07
+    },
+    "top_particles_by_dv": [
+     {
+      "x0": [
+       9.32453659078642,
+       0.2511770550817806
+      ],
+      "dv": [
+       0.0008868512774344861,
+       1.3189372863333618e-06
+      ],
+      "dp": -0.023027604127435097,
+      "share_v2": 0.061921917204419336
+     },
+     {
+      "x0": [
+       9.32451884187149,
+       0.7535349989932583
+      ],
+      "dv": [
+       0.0008868351827455712,
+       -1.9816725926198034e-06
+      ],
+      "dp": -0.02296235552012149,
+      "share_v2": 0.06191984191329675
+     },
+     {
+      "x0": [
+       9.32452661271949,
+       1.2559190131336608
+      ],
+      "dv": [
+       0.0008866389352506499,
+       -4.624237321356226e-06
+      ],
+      "dp": -0.0229902206748136,
+      "share_v2": 0.06189381499410795
+     },
+     {
+      "x0": [
+       9.324558472145968,
+       1.7583132223960023
+      ],
+      "dv": [
+       0.0008861432541718006,
+       -6.25441260006048e-06
+      ],
+      "dp": -0.023127082341119376,
+      "share_v2": 0.06182602817790534
+     },
+     {
+      "x0": [
+       9.32456653394753,
+       2.2606070347523195
+      ],
+      "dv": [
+       0.0008854768619470654,
+       -6.849485162881402e-06
+      ],
+      "dp": -0.02316926915153772,
+      "share_v2": 0.06173369360275941
+     },
+     {
+      "x0": [
+       9.32454284893236,
+       2.7628272744174365
+      ],
+      "dv": [
+       0.0008847432218714868,
+       -6.877007629055342e-06
+      ],
+      "dp": -0.023112375106336458,
+      "share_v2": 0.06163147597447672
+     }
+    ],
+    "plate_dvy_toprow_mean": -1.2299314469533515e-05,
+    "grid_dp_top": [
+     {
+      "node_ij": [
+       8,
+       2
+      ],
+      "dp": 0.0698289932668672
+     },
+     {
+      "node_ij": [
+       8,
+       0
+      ],
+      "dp": 0.06981168422646178
+     },
+     {
+      "node_ij": [
+       8,
+       3
+      ],
+      "dp": 0.06965210276393918
+     },
+     {
+      "node_ij": [
+       8,
+       1
+      ],
+      "dp": 0.06949485085501905
+     },
+     {
+      "node_ij": [
+       8,
+       4
+      ],
+      "dp": 0.06884190816516877
+     }
+    ]
+   },
+   "gimp_dt0.005_up": {
+    "basis": "gimp",
+    "dt": 0.005,
+    "t_end": 75.0,
+    "twin_single_phase": false,
+    "masscut": null,
+    "failed_at": null,
+    "growth_per_step": 0.9999969689350946,
+    "doubling_time_s": null,
+    "energy_split_end": {
+     "step": 15000,
+     "t": 75.0,
+     "energy": 6.444781469459583e-10,
+     "kin": 3.9465366102002996e-10,
+     "strain": 1.5713949232901352e-10,
+     "fluid": 9.268499359691477e-11
+    },
+    "top_particles_by_dv": [
+     {
+      "x0": [
+       9.747105703478795,
+       1.250003860731436
+      ],
+      "dv": [
+       9.81373163242566e-06,
+       -1.2421581952193339e-05
+      ],
+      "dp": -1.313147982862084e-05,
+      "share_v2": 0.15874996959397794
+     },
+     {
+      "x0": [
+       9.749223922299215,
+       0.7504963491718397
+      ],
+      "dv": [
+       -1.1070511139299466e-05,
+       5.8969139229286816e-06
+      ],
+      "dp": 9.016749519075162e-05,
+      "share_v2": 0.09966321501563284
+     },
+     {
+      "x0": [
+       9.24893759734411,
+       2.748050989576417
+      ],
+      "dv": [
+       -3.1825601506732526e-06,
+       -1.0320632074331537e-05
+      ],
+      "dp": -0.000330851562351131,
+      "share_v2": 0.07389018970766256
+     },
+     {
+      "x0": [
+       9.2498870369006,
+       0.7476082090947589
+      ],
+      "dv": [
+       2.597598875858642e-06,
+       8.196144857613996e-06
+      ],
+      "dp": -0.00028930283781747335,
+      "share_v2": 0.04682859792544946
+     },
+     {
+      "x0": [
+       8.747156436858475,
+       1.2487645456602912
+      ],
+      "dv": [
+       9.113714741354473e-07,
+       -8.450856780972682e-06
+      ],
+      "dp": -9.966033408304042e-06,
+      "share_v2": 0.045766443740599794
+     },
+     {
+      "x0": [
+       9.249187089603534,
+       1.2467327585461083
+      ],
+      "dv": [
+       -4.3504735436211694e-06,
+       7.06715027842808e-06
+      ],
+      "dp": 0.00018697844694703925,
+      "share_v2": 0.04362764109018262
+     }
+    ],
+    "plate_dvy_toprow_mean": 6.053842539584166e-08,
+    "grid_dp_top": [
+     {
+      "node_ij": [
+       9,
+       0
+      ],
+      "dp": 0.00023901560317618475
+     },
+     {
+      "node_ij": [
+       9,
+       1
+      ],
+      "dp": 7.262875635616339e-05
+     },
+     {
+      "node_ij": [
+       8,
+       1
+      ],
+      "dp": 4.67696149968333e-05
+     },
+     {
+      "node_ij": [
+       8,
+       0
+      ],
+      "dp": 3.92348028062095e-05
+     },
+     {
+      "node_ij": [
+       7,
+       0
+      ],
+      "dp": 2.1011793286618285e-05
+     }
+    ]
+   }
+  },
+  "light_node_probe": {
+   "bspline2_0.05": {
+    "build": "4b74bd335093cc074bd863da887ae5ea4970f07a",
+    "results": [
+     {
+      "case": "mandel",
+      "basis": "bspline2",
+      "stab": "off",
+      "dt": 0.005,
+      "rows": {
+       "0.04": {
+        "p_center": 1.0401153230038305,
+        "p_exact_quarter": 1.0558445383763104,
+        "err": 0.015729215372479954,
+        "band": 0.02137446446872931,
+        "fe_err": 0.010631664369628088
+       },
+       "0.078": {
+        "p_center": 1.0710795301673102,
+        "p_exact_quarter": 1.0779021748463973,
+        "err": 0.006822644679087109,
+        "band": 0.02629284422119754,
+        "fe_err": 0.012414650765058
+       },
+       "0.12": {
+        "p_center": 1.044811456188429,
+        "p_exact_quarter": 1.053443944851871,
+        "err": 0.008632488663442128,
+        "band": 0.02,
+        "fe_err": 0.0004908368228619217
+       },
+       "0.2": {
+        "p_center": 0.9794107320608508,
+        "p_exact_quarter": 0.9405762048811774,
+        "err": 0.038834527179673395,
+        "band": 0.02,
+        "fe_err": 0.00028171202326461234
+       },
+       "0.4": {
+        "p_center": -5.8953923112892,
+        "p_exact_quarter": 0.656208369414482,
+        "err": 6.551600680703682,
+        "band": 0.02,
+        "fe_err": 0.0006400696414679973
+       }
+      },
+      "peak": 1.3204131539835304,
+      "peak_gate": 1.0390679304096313,
+      "pass": false,
+      "gated": true,
+      "wall_s": 43.08169865608215,
+      "probe_massCutoff": 0.05
+     },
+     {
+      "case": "mandel",
+      "basis": "bspline2",
+      "stab": [
+       "auto",
+       0.25
+      ],
+      "dt": 0.005,
+      "rows": {
+       "0.04": {
+        "p_center": 1.0391079064240338,
+        "p_exact_quarter": 1.0558445383763104,
+        "err": 0.016736631952276593,
+        "band": 0.022733593208528677,
+        "fe_err": 0.011344014287811744
+       },
+       "0.078": {
+        "p_center": 1.0674774888992122,
+        "p_exact_quarter": 1.0779021748463973,
+        "err": 0.010424685947185042,
+        "band": 0.02,
+        "fe_err": 0.008411890500916437
+       },
+       "0.12": {
+        "p_center": 1.049510877117309,
+        "p_exact_quarter": 1.053443944851871,
+        "err": 0.003933067734562146,
+        "band": 0.02,
+        "fe_err": 0.006311521706645278
+       },
+       "0.2": {
+        "p_center": 0.9180433215747774,
+        "p_exact_quarter": 0.9405762048811774,
+        "err": 0.02253288330640002,
+        "band": 0.02,
+        "fe_err": 0.00445325042057548
+       },
+       "0.4": {
+        "p_center": -4.447282223244936,
+        "p_exact_quarter": 0.656208369414482,
+        "err": 5.103490592659417,
+        "band": 0.02,
+        "fe_err": 0.0018679891940352347
+       }
+      },
+      "peak": 1.1811572359153901,
+      "peak_gate": 1.0390679304096313,
+      "pass": false,
+      "gated": true,
+      "wall_s": 41.08037304878235,
+      "probe_massCutoff": 0.05
+     }
+    ]
+   },
+   "gimp_0.05": {
+    "build": "4b74bd335093cc074bd863da887ae5ea4970f07a",
+    "results": [
+     {
+      "case": "mandel",
+      "basis": "gimp",
+      "stab": "off",
+      "dt": 0.005,
+      "rows": {
+       "0.04": {
+        "p_center": 1.0419160852912936,
+        "p_exact_quarter": 1.0558445383763104,
+        "err": 0.013928453085016779,
+        "band": 0.02137446446872931,
+        "fe_err": 0.010631664369628088
+       },
+       "0.078": {
+        "p_center": 1.079813561928104,
+        "p_exact_quarter": 1.0779021748463973,
+        "err": 0.0019113870817066836,
+        "band": 0.02629284422119754,
+        "fe_err": 0.012414650765058
+       },
+       "0.12": {
+        "p_center": 1.04918625745631,
+        "p_exact_quarter": 1.053443944851871,
+        "err": 0.004257687395561094,
+        "band": 0.02,
+        "fe_err": 0.0004908368228619217
+       },
+       "0.2": {
+        "p_center": 0.9417204148823289,
+        "p_exact_quarter": 0.9405762048811774,
+        "err": 0.0011442100011515022,
+        "band": 0.02,
+        "fe_err": 0.00028171202326461234
+       },
+       "0.4": {
+        "p_center": 0.6563420246467498,
+        "p_exact_quarter": 0.656208369414482,
+        "err": 0.00013365523226782638,
+        "band": 0.02,
+        "fe_err": 0.0006400696414679973
+       }
+      },
+      "peak": 1.094488696084904,
+      "peak_gate": 1.0390679304096313,
+      "pass": true,
+      "gated": false,
+      "wall_s": 34.81454133987427,
+      "probe_massCutoff": 0.05
+     },
+     {
+      "case": "mandel",
+      "basis": "gimp",
+      "stab": [
+       "auto",
+       0.25
+      ],
+      "dt": 0.005,
+      "rows": {
+       "0.04": {
+        "p_center": 1.0408115217938252,
+        "p_exact_quarter": 1.0558445383763104,
+        "err": 0.015033016582485237,
+        "band": 0.022733593208528677,
+        "fe_err": 0.011344014287811744
+       },
+       "0.078": {
+        "p_center": 1.0739271737958056,
+        "p_exact_quarter": 1.0779021748463973,
+        "err": 0.0039750010505916755,
+        "band": 0.02,
+        "fe_err": 0.008411890500916437
+       },
+       "0.12": {
+        "p_center": 1.0465334573329967,
+        "p_exact_quarter": 1.053443944851871,
+        "err": 0.006910487518874353,
+        "band": 0.02,
+        "fe_err": 0.006311521706645278
+       },
+       "0.2": {
+        "p_center": 0.9416335818039543,
+        "p_exact_quarter": 0.9405762048811774,
+        "err": 0.0010573769227768537,
+        "band": 0.02,
+        "fe_err": 0.00445325042057548
+       },
+       "0.4": {
+        "p_center": 0.6554260055102522,
+        "p_exact_quarter": 0.656208369414482,
+        "err": 0.0007823639042298103,
+        "band": 0.02,
+        "fe_err": 0.0018679891940352347
+       }
+      },
+      "peak": 1.0924542263351285,
+      "peak_gate": 1.0390679304096313,
+      "pass": true,
+      "gated": false,
+      "wall_s": 32.70240640640259,
+      "probe_massCutoff": 0.05
+     }
+    ]
+   }
+  },
+  "probe_note": "`mpm massCutoff 5e-2` in mode F is a STRONGER probe than the ruled one: a node below the cutoff is dropped whole (v = 0, no momentum, no force, no correction; mode F does not renormalise the u weights), not only its correction. A harness-only probe of the correction alone is not possible.",
+  "summary": {
+   "bspline2_dt0.005": "rho = 1.00093 per step (doubling 3.7 s); mode = the particle column next to the drained free face (x ~ 9.25), x-velocity uniform along y (each of the top 6 particles 6.2 % of |dv|^2), grid dp peaks on node column i = 8; plate dv_y 1e-5 vs dv_x 9e-4 (plate not involved); energy kinetic 42 %, strain 53 %, fluid 5 %.",
+   "bspline2_dt0.0025": "rho = 1.0000067 (doubling 257 s, near neutral); no column mode.",
+   "bspline2_twin_single_phase": "rho = 0.9999997: stable.",
+   "bspline2_massCutoff_5e-2": "T6 Mandel unchanged to every digit (no node is below 5e-2): not light nodes.",
+   "gimp_dt0.005": "rho = 0.999997: linearly stable; the failure is the light-node events themselves.",
+   "gimp_massCutoff_5e-2": "T6 Mandel PASSES both stabs (off: worst 0.0139 / 0.0214 at tv 0.04, peak 1.0945; auto: 0.0150 / 0.0227, peak 1.0925): the light-node hypothesis holds on gimp, and the 3d3699a50 rule (keep the correction on light u components) is the cause there."
+  }
  }
 }
