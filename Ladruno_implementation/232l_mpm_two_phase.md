@@ -41,7 +41,7 @@ record carries `ladrunoBuild`.
 | T9 restart bit for bit | pass | pass | cd503bdbb |
 | T10 single-phase bit for bit against cfe478254 | 24 cases | 24/24 | cd503bdbb |
 | T11 mutation: MPM IDENT (joint Q + projection cut) | the two-phase oracle and T1 go red | 14/14 red (`_twophase_oracle` + `_fe_identity` on `dist/mut_MPM_IDENT`; green on the normal build) | cd503bdbb |
-| T11 mutation: MPM ZERO ≥ 0.46, SCALE ≥ 0.38 (family floors) | CI lane | **judged on the established suite: ZERO 0.500 / SCALE 0.398 (232k reproduced, run 44555570302)**; the two-phase gates file is reported beside it: ZERO 7/15, SCALE 1/15 killed (combined 0.495 / 0.350). Owner's decision, 2026-11-19 | fa4087122 |
+| T11 mutation: MPM ZERO ≥ 0.500, SCALE ≥ 0.398 (232k's scores; family floors 0.46 / 0.38) | CI lane | **judged on the established suite (owner's decision, 2026-11-19): ZERO 44/88 = 0.500, SCALE 35/88 = 0.398, 232k reproduced exactly.** Beside it, the two-phase gates file after T13 gained its position check: ZERO 7/15, SCALE 9/15 (it was 1/15 before). Combined: 0.495 / 0.427. Run 44575552581. | 9e581576f |
 | T13 translation patch (free block, both routes, gimp / bspline2, with / without a plate) | v, σ′, p, x (against X + v₀t) rel 1e-10 | 8/8; worst v 1.0e-13 (route E), 7.9e-17 (route S); positions ≤ 1.5e-13 | cd503bdbb |
 | T12 engines agree (Tcl, Python) | pass | pass | cd503bdbb |
 | Two-phase test files (incl. `_gates`: zone_a 16, slow full forms 21) | — | all pass; T7 2 xfailed | cd503bdbb |
