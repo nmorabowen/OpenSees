@@ -1596,6 +1596,50 @@ quoted from them.
   on T2's ρ = 2, u(0⁺) is undefined while the compression wave transits), each MPM leg against the
   FE leg at the same dt and stabilization.
 
+**Route E on build `fd81cbdd3` (records `25cc9b69e`, diagnostic `13024db9f`).** Pass: A4 patch checks
+(≤ 1.6e-12), T3 Mandel 4/4 (≤ 0.0117 against 0.02; peaks 1.079–1.085 against 1.039), T5 (CB_lap
+0.095 auto, 0.621 off), T9 bit for bit, T12 to 1e-12, T8 except the stray-p rule, and T2's settlement
+(≤ 0.006). **Misses, on the particle-carried pore pressure:**
+- **T2:** 0.089–0.111 p₀ at Tv 0.1 (0.028–0.036 at Tv 0.5) against 0.02.
+- **T4:** 0.029 (gimp) and 0.055 (bspline2) against 0.01.
+
+Diagnostic (reported, never gated): the grid field read at the particle points meets every T2 band
+at Tv 0.1–0.5 (0.0008–0.0066; gimp at or better than LadrunoUP's 0.008–0.0095), and T4 gimp's field
+is exact to 1e-4. The miss is the particle-minus-field residual, which the incremental update never
+reconciles with the pinned drained-face nodes. Projected to the grid, it is 70–75 % visible over all
+nodes and 4–8 % over the free nodes in T2. In T4 it is also visible on free nodes (0.019 projected),
+so it enters the solve every step: a scheme defect, not an output artifact.
+
+**Defect fixes ruled by the orchestrator (no band or reference moves):**
+- **Fix 2:** a B-spline impervious face with a normal fluid drive takes an affine even p image,
+  ∂p/∂n = ρ_f b_f·n (zero flux). P9's plain even image imposed ∂p/∂n = 0, which is wrong under
+  gravity.
+- **Fix 3:** mode A's p-activity follows the route-S rule (`3d3699a50`): two-phase nodal mass
+  > c_m·m_max, with S^p renormalised over the p-active nodes. The T8 stray-p row (p = −6.7e3 at a
+  1e-8 tail) becomes a pass.
+
+**Owner decision (2026-11-18, asked directly in this session): fix the carrier in this WP under a
+new gate; the `fd81cbdd3` misses stay on record as the evidence.** Pre-registered here, before any
+carrier design or number:
+- **T2p:** on every T2 leg (gimp, bspline2; `-stab off` and `auto 0.25`), the particle-carried p
+  error ≤ 0.02 p₀ at Tv 0.1, 0.2 and 0.5 (T2's band, on T2's observable). The grid field at the
+  particle points also stays ≤ 0.02, and U ≤ 0.02. Tv 0.05 is reported.
+- **T4p:** particle-carried p within 0.01 γ_w H of γ_w (H − Y), and σ′_yy within 0.03 ρ′gH, at
+  every particle, gimp and bspline2, h = H/20.
+- **Residual, reported:** max |p_p − Σ S^p_a p_a| per row, beside the T2p and T4p numbers.
+- **Guards on the fix** (each must hold, or it is a miss):
+  - P5's own invariant: a motionless, sealed, k̄ = 0 column keeps p bit for bit.
+  - T0 (ii) at rel 1e-9 against 232l-V's oracle, re-derived from the amended interface text, never
+    from the C++.
+  - T1, T3, T5 and T9 re-run and still pass.
+  - T10: single-phase answers bit for bit.
+- **Process:**
+  1. 232l-C writes the carrier as an amendment P5a to `tests/mpm_twophase_interface.md`: the
+     scheme, its argument, and why the residual cannot survive at a pinned or prescribed node.
+  2. The orchestrator freezes P5a.
+  3. 232l-V updates the oracle from the text.
+  4. 232l-C implements P5a with fixes 2 and 3, for one build.
+
 ### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
 
 ```text
