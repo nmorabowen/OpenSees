@@ -111,7 +111,7 @@ REASON_CODES = {
 CHECK_KEYS = {
     "rho_div", "rho_jump", "rho_bc", "rho_resultant", "projection_move", "omega_eq", "kappa_eq",
     "tau_eq", "rho_cone", "repair_mu", "straightness_max", "rho_flow", "rho_jump_cone",
-    "work_reference",
+    "work_reference", "rho_apex",  # rho_apex: amendment 2, M3
 }
 FEASIBILITY_STATUS = {"formulation_feasible", "formulation_infeasible", "inconclusive"}
 SCHEMA_FIXTURE_CHECKER = "schema-fixture"
@@ -125,6 +125,10 @@ DEPENDENT_ROUTES = {"shape_forced_zeros", "dense_svd_blocks", "null_space_basis"
 INTERIOR_SOURCES = {"none", "zero", "result"}
 REFUSAL_KINDS = {"capacity", "conditioning"}
 REFUSAL_STAGES = {"projection", "dependent_rows", "kappa_bound"}
+APEX_KINDS = {0: "flow", 1: "jump"}  # amendment 2, interface 19.2.1: declared apex face Z
+APEX_ROWS = {0: 6, 1: 3}  # exact rows added per condition: the strain rate d_ei, or the coefficient c_B
+Z_FORCED = {"proved", "unproved", "absent"}
+BUDGET_EXCEEDED = {"memory", "time"}  # amendment 2, m4
 
 EDGES = ((0, 1), (1, 2), (2, 0), (0, 3), (1, 3), (2, 3))
 FACET_VERTICES = ((1, 2, 3), (0, 3, 2), (0, 1, 3), (0, 2, 1))
@@ -247,6 +251,21 @@ def tangent_basis(n):
     t1 = np.cross(e, n)
     t1 /= np.linalg.norm(t1)
     return t1, np.cross(n, t1)
+
+
+def symmetry_set_normal(problem, arrays, set_index):
+    """n_S of interface 5, exactly as amendment 2 (m6, M5) states it: the first facet of the set in `facets` order,
+    its vertices a, b, c in 3.2 order, u = x_b - x_a, w = x_c - x_a, q = u x w by components, and
+    n_S = q / sqrt(q_x q_x + q_y q_y + q_z q_z), summed left to right, all in IEEE double. Every set-normal row
+    builder here and in the demonstration calls it."""
+    row = int(np.nonzero(arrays["facet_set"] == set_index)[0][0])
+    e, f = (int(v) for v in arrays["facets"][row])
+    xa, xb, xc = (arrays["nodes"][arrays["tets"][e][v]].tolist() for v in FACET_VERTICES[f])
+    u = [xb[0] - xa[0], xb[1] - xa[1], xb[2] - xa[2]]
+    w = [xc[0] - xa[0], xc[1] - xa[1], xc[2] - xa[2]]
+    q = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
+    norm = math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2])
+    return np.array([q[0] / norm, q[1] / norm, q[2] / norm])
 
 
 def tet_gradients(x):
@@ -1013,14 +1032,20 @@ def validate_result(doc, arrays, problem, problem_arrays):
                    "strain_rate": (n_e, 4, 6), "dissipation": (n_e, 4)}),
     }
     required, allowed = shapes[bound]
+    # Amendment 2 (interface 19.2.1): the declared apex face is an Upper declaration; a Lower never carries one.
+    face = {"apex_zero", "apex_zero_dual"} & set(arrays)
+    require(not face or bound == "upper", "apex_zero_lower", str(sorted(face)))
     other = "upper" if bound == "lower" else "lower"
     foreign = (set(shapes[other][0]) | set(shapes[other][1]) | wrong_velocity) & set(arrays)
     require(not foreign, "result_wrong_bound_arrays", str(sorted(foreign)))
-    unknown = set(arrays) - set(required) - set(allowed)
+    unknown = set(arrays) - set(required) - set(allowed) - face
     require(not unknown, "array_names", str(sorted(unknown)))
     if status in SOLVER_STATUS_WITH_VALUE:
         _finite_number(doc["value"], "result_value")
         _finite_number(doc["objective"], "result_value")
+        if bound == "lower":
+            # Amendment 2, m5: the one schema rule on `objective` (interface 15.3, item 2 of amendment 1).
+            require(doc["value"] == -doc["objective"], "result_objective", "Lower value = objective_sign * objective")
         for name, shape in required.items():
             _array(arrays, name, "<f8", shape)
     else:
@@ -1031,7 +1056,48 @@ def validate_result(doc, arrays, problem, problem_arrays):
             _array(arrays, name, "<f8", shape)
     require(("interior_sigma" in arrays) == ("interior_value" in doc), "result_interior")
     require((f"interior_{velocity_name}" in arrays) == ("interior_footing_velocity" in arrays), "result_interior")
+    validate_apex_zero(doc, arrays, problem, problem_arrays)
     require(doc["result_sha256"] == document_hash(doc, arrays, "result_sha256"), "hash_mismatch", "result")
+
+
+def apex_zero_rows(arrays):
+    """The declared apex face Z as sorted (kind, index) pairs, or [] (amendment 2, interface 19.2.1)."""
+    if "apex_zero" not in arrays:
+        return []
+    return [(int(kind), int(index)) for kind, index in arrays["apex_zero"]]
+
+
+def validate_apex_zero(doc, arrays, problem, problem_arrays):
+    """Amendment 2 (interface 19.2.1): Z is an `<i8` array (n_Z, 2) of (kind, index), sorted and unique, n_Z >= 1.
+    kind 0 is the flow condition at (e, i), index 4 e + i, alpha_e > 0; kind 1 is the jump condition at (F, B),
+    index 6 F + B with F in the interior-facet order of 3.4, jump formulation only, tau > 0 from the region of e-.
+    The optional producer dual `apex_zero_dual` (n_Z, 6) is a diagnostic; a jump row uses its first three entries."""
+    if "apex_zero" not in arrays:
+        require("apex_zero_dual" not in arrays, "apex_zero_invalid", "a dual without a declared face")
+        return
+    require(doc["solver_status"] in SOLVER_STATUS_WITH_VALUE, "apex_zero_invalid", "no field, no face")
+    z = arrays["apex_zero"]
+    require(z.dtype.str == "<i8" and z.ndim == 2 and z.shape[1:] == (2,) and z.shape[0] >= 1, "apex_zero_invalid",
+            f"{z.dtype.str} {z.shape}")
+    rows = apex_zero_rows(arrays)
+    require(rows == sorted(set(rows)), "apex_zero_invalid", "rows sorted lexicographically and unique")
+    tets, regions, region_of = problem_arrays["tets"], problem["regions"], problem_arrays["element_region"]
+    interior = mesh_facets(tets)[0] if any(kind == 1 for kind, _ in rows) else []
+    for kind, index in rows:
+        if kind == 0:
+            require(0 <= index < 4 * len(tets), "apex_zero_invalid", f"flow index {index}")
+            element = index // 4
+        else:
+            require(kind == 1, "apex_zero_invalid", f"kind {kind}")
+            require(doc["formulation"] == JUMP_ID, "apex_zero_invalid", "jump conditions exist in the jump formulation")
+            require(0 <= index < 6 * len(interior), "apex_zero_invalid", f"jump index {index}")
+            element = interior[index // 6][0][0]
+        require(regions[int(region_of[element])].get("alpha", 0.0) > 0.0, "apex_zero_invalid",
+                "Z holds inequality conditions only: alpha > 0 and tau > 0")
+    if "apex_zero_dual" in arrays:
+        dual = _array(arrays, "apex_zero_dual", "<f8", (len(rows), 6))
+        for (kind, _), row in zip(rows, dual):
+            require(kind == 0 or not np.any(row[3:]), "apex_zero_invalid", "a jump dual has three components")
 
 
 def expected_program_shape(problem, arrays, query, bound, formulation):
@@ -1107,10 +1173,11 @@ def validate_feasibility(doc, problem):
     _keys(doc, {
         "format", "format_version", "problem_sha256", "query_id", "formulation", "status", "rho_feas",
         "numerator", "denominator", "n_unknowns", "n_rows", "rank", "nullity", "footing_modes", "method",
-        "witness_result_sha256", "witness_residual", "checker", "tolerances",
+        "witness_result_sha256", "witness_residual", "witness_projection_move", "witness_work_reference",
+        "checker", "tolerances",
     })
     require(doc["problem_sha256"] == problem["problem_sha256"], "hash_mismatch")
-    query_by_id(problem, doc["query_id"])
+    query = query_by_id(problem, doc["query_id"])
     validate_formulation("upper", doc["formulation"], problem)
     _keys(doc["checker"], {"name", "version"})
     require(doc["status"] in FEASIBILITY_STATUS, "feasibility_status", repr(doc["status"]))
@@ -1132,13 +1199,23 @@ def validate_feasibility(doc, problem):
         require(isinstance(footing_modes, int) and not isinstance(footing_modes, bool) and footing_modes >= 0,
                 "feasibility_rank", "computed together with the rank")
     witness, residual = doc["witness_result_sha256"], doc["witness_residual"]
-    require((witness is None) == (residual is None), "feasibility_witness")
+    move, work = doc["witness_projection_move"], doc["witness_work_reference"]
+    require((witness is None) == (residual is None) == (move is None), "feasibility_witness")
+    is_ray = query["form"] in ("ray", "fixed_components")
     if residual is not None:
         _finite_number(residual, "feasibility_witness")
         require(isinstance(witness, str) and re.fullmatch("[0-9a-f]{64}", witness) is not None, "feasibility_witness")
+        # Amendment 2, m2: the witness is a field the certificate procedure would accept as the same field.
+        _finite_number(move, "feasibility_witness")
+        require(move >= 0.0, "feasibility_witness")
+        if is_ray:
+            _finite_number(work, "feasibility_witness")
+    if residual is None or not is_ray:
+        require(work is None, "feasibility_witness", "W1 only for a ray witness")
     frictional = any(region.get("alpha", 0.0) > 0.0 for region in problem["regions"])
     ok, locked = TOLERANCES["TOL_FEAS_OK"], TOLERANCES["TOL_FEAS_LOCKED"]
-    witness_passes = residual is not None and residual <= ok
+    witness_passes = (residual is not None and residual <= ok and move <= TOLERANCES["TOL_PROJECTION_MOVE"]
+                      and (not is_ray or work >= TOLERANCES["TOL_WORK_MIN"]))  # W1 / W_scale, as 17.4 step 5
     if frictional:
         # The minimisation is conic here, so the verdict rests on the witness alone (interface 11.1).
         require(residual is None or math.isclose(rho, residual, rel_tol=1e-12, abs_tol=1e-300), "feasibility_ratio")
@@ -1226,6 +1303,11 @@ def certified_check_failures(doc, query_form=None):
             limits.append(("rho_jump_cone", numbers["rho_jump_cone"] <= t["TOL_CONE_MARGIN"]))
         if numbers["work_reference"] is not None or query_form in ("ray", "fixed_components"):
             limits.append(("work_reference", (numbers["work_reference"] or 0.0) > 0.0))
+    if checks.get("rho_apex") is not None:
+        # Amendment 2, M3: the Z arguments, kind-wise over D_scale, within the cone rounding margin (19.2.1 item 9).
+        rho_apex = numbers["rho_apex"]
+        limits.append(("rho_apex", doc["bound"] == "upper" and rho_apex is not None
+                       and 0.0 <= rho_apex <= t["TOL_CONE_MARGIN"]))
     failures = [key for key, passed in limits if not passed]
     expected = max(t["FLOOR_MIN_REL"], kappa * omega) * abs(doc["value_certified"])
     if not math.isclose(doc["floor"], expected, rel_tol=1e-9, abs_tol=1e-300):
@@ -1308,7 +1390,8 @@ def validate_method_report(doc, certificate, problem=None, result=None, result_a
     require(doc.get("format_version") == FORMAT_VERSION, "format_version")
     _keys(doc, {
         "format", "format_version", "problem_sha256", "result_sha256", "certificate_sha256", "query_id", "bound",
-        "formulation", "checker", "kappa", "dependent_rows", "rows_skipped", "interior_field", "tolerances",
+        "formulation", "checker", "kappa", "dependent_rows", "rows_skipped", "interior_field", "apex_zero",
+        "tolerances",
     })
     require(doc["certificate_sha256"] == certificate_hash(certificate), "method_certificate_hash")
     for key in ("problem_sha256", "result_sha256", "query_id", "bound", "formulation", "checker"):
@@ -1405,8 +1488,43 @@ def validate_method_report(doc, certificate, problem=None, result=None, result_a
             names = interior_array_names(doc["bound"], doc["formulation"])
             require(all(name in result_arrays for name in names), "method_interior", "no interior arrays in the result")
             require(sha == interior_field_sha256(doc["bound"], doc["formulation"], result_arrays), "method_interior")
+
+    # Amendment 2 (interface 19.2.1): the declared apex face, its identity and the non-gating z_forced diagnostic.
+    face = doc["apex_zero"]
+    certified = certificate["classification"] == "certified_bound"
+    if face is None:
+        require(result_arrays is None or "apex_zero" not in result_arrays, "method_apex_zero",
+                "the result declares Z and the report does not")
+        require(certificate["checks"].get("rho_apex") is None, "method_apex_zero", "rho_apex without a face")
+    else:
+        # M3: a certificate of a Z-declaring result reports rho_apex.
+        require(not certified or _check_number(certificate["checks"], "rho_apex") is not None, "method_apex_zero",
+                "a certified Z-declaring result reports rho_apex")
+        require(isinstance(face, dict), "method_apex_zero")
+        _keys(face, {"count", "sha256", "z_forced"}, code="method_apex_zero")
+        require(doc["bound"] == "upper", "method_apex_zero", "Z is refused for a Lower")
+        _count(face["count"], "method_apex_zero", minimum=1)
+        require(isinstance(face["sha256"], str) and re.fullmatch("[0-9a-f]{64}", face["sha256"]) is not None,
+                "method_apex_zero")
+        require(face["z_forced"] in Z_FORCED, "method_apex_zero", repr(face["z_forced"]))
+        if result_arrays is not None:
+            require("apex_zero" in result_arrays, "method_apex_zero", "a face the result does not declare")
+            require(face["count"] == len(result_arrays["apex_zero"]), "method_apex_zero", "count")
+            require(face["sha256"] == apex_zero_sha256(result_arrays), "method_apex_zero", "identity")
+            require((face["z_forced"] == "absent") == ("apex_zero_dual" not in result_arrays), "method_apex_zero",
+                    "z_forced is absent exactly when no dual is attached")
     if result is not None:
         require(result["result_sha256"] == doc["result_sha256"], "hash_mismatch", "result")
+
+
+def apex_zero_sha256(arrays):
+    """Identity of Z in a method report (amendment 2): the 15.1 hash of {} with the single array `apex_zero`."""
+    return document_hash({}, {"apex_zero": arrays["apex_zero"]}, None)
+
+
+def method_needs_result_arrays(method):
+    """Amendment 2, m1: a report that names result arrays (interior field or Z) is verified only against them."""
+    return method["interior_field"].get("source") == "result" or method.get("apex_zero") is not None
 
 
 def validate_refusal(doc, problem, result):
@@ -1415,7 +1533,7 @@ def validate_refusal(doc, problem, result):
     require(doc.get("format_version") == FORMAT_VERSION, "format_version")
     _keys(doc, {
         "format", "format_version", "problem_sha256", "result_sha256", "query_id", "bound", "formulation", "kind",
-        "stage", "detail", "resources", "checker", "tolerances",
+        "stage", "detail", "resources", "budget", "checker", "tolerances",
     })
     require(doc["problem_sha256"] == problem["problem_sha256"], "hash_mismatch", "problem")
     require(doc["result_sha256"] == result["result_sha256"], "hash_mismatch", "result")
@@ -1429,6 +1547,17 @@ def validate_refusal(doc, problem, result):
     _keys(doc["resources"], {"n_rows", "n_unknowns", "nnz"}, code="refusal_resources")
     for value in doc["resources"].values():
         _count(value, "refusal_resources")
+    # Amendment 2, m4: the budget the checker declared before it ran, and which one a capacity refusal exceeded.
+    budget = doc["budget"]
+    require(isinstance(budget, dict), "refusal_budget")
+    _keys(budget, {"memory_bytes", "wall_s", "exceeded"}, code="refusal_budget")
+    for key in ("memory_bytes", "wall_s"):
+        _finite_number(budget[key], "refusal_budget")
+        require(budget[key] > 0.0, "refusal_budget", key)
+    if doc["kind"] == "capacity":
+        require(budget["exceeded"] in BUDGET_EXCEEDED, "refusal_budget", "a capacity refusal names the budget exceeded")
+    else:
+        require(budget["exceeded"] is None, "refusal_budget", "a conditioning refusal ran within its budget")
     _keys(doc["checker"], {"name", "version"})
     require(doc["tolerances"] == TOLERANCES, "tolerances")
 
@@ -1437,10 +1566,12 @@ def is_gate_checker(record):
     return record["checker"]["name"] not in NON_GATE_CHECKERS
 
 
-def gate_admissible(record, query_form="ray", method=None):
+def gate_admissible(record, query_form="ray", method=None, result_arrays=None):
     """Only a real checker's certified bound or feasibility verdict can satisfy a gate. Every case query is a ray.
 
     Amendment 1: a certificate also needs a valid method report bound to it (interface 15.6, 15.9).
+    Amendment 2, m1: a report that names result arrays (a `result` interior field, or a declared face Z) counts only
+    when checked against the result's arrays, which must be supplied.
     """
     if not is_gate_checker(record):
         return False
@@ -1451,10 +1582,10 @@ def gate_admissible(record, query_form="ray", method=None):
     if method is None:
         return False
     try:
-        validate_method_report(method, record)
+        validate_method_report(method, record, result_arrays=result_arrays)
     except ContractError:
         return False
-    return True
+    return result_arrays is not None or not method_needs_result_arrays(method)
 
 
 def bracket_claim(lower_claim, upper_claim):
@@ -1540,13 +1671,13 @@ def _withholdable(case, item):
     """Owner decision OD2 (interface 11.3): only the gap limit and missing certificates of the 30-degree cases."""
     if case["class"] != "upper_gate_3d" or case.get("phi_deg") != 30.0 or item["cause"] in NON_WITHHOLDABLE_CAUSES:
         return False
-    if item["kind"] == "gap_le":
+    if item["kind"] == "gap_le":  # amendment 3: no P0 gate line is gap_le MAX_GAP_3D_DP now; the branch is kept
         return True
     return item["kind"] != "kinematic_status" and item["cause"] in WITHHOLDABLE_CAUSES
 
 
 def evaluate_case(case, certificates=(), results=(), feasibility=(), methods=(), *, brackets=(), refusals=(),
-                  problem_loader=None, hashes=None):
+                  result_arrays=None, problem_loader=None, hashes=None):
     """Verdict of one case from checker records (interface 17.9).
 
     Records are matched to meshes by problem hash and validated against the problem built from the case: a
@@ -1582,13 +1713,31 @@ def evaluate_case(case, certificates=(), results=(), feasibility=(), methods=(),
         verdict["invalid_records"].append({"kind": kind, "id": doc.get("result_sha256") or doc.get("problem_sha256"),
                                            "code": code})
 
+    # Amendment 2, m1: result arrays, by result_sha256, let the gate path check the interior field and Z by hash.
+    arrays_of = {}
+    for sha, arrays in (result_arrays or {}).items():
+        result = by_result.get(sha)
+        if result is None or document_hash(result, arrays, "result_sha256") != sha:
+            invalid("result_arrays", {"result_sha256": sha}, "hash_mismatch")
+            continue
+        mesh = mesh_of.get(result.get("problem_sha256"))
+        if mesh is None:
+            invalid("result_arrays", {"result_sha256": sha}, "hash_mismatch")
+            continue
+        try:  # Amendment 2, M2: the full result schema, the declared face included, before any gate reads it.
+            validate_result(result, arrays, *load(mesh))
+        except ContractError as error:
+            invalid("result_arrays", {"result_sha256": sha}, error.code)
+            continue
+        arrays_of[sha] = arrays
+
     method_of = {}
     for doc in methods:
         if isinstance(doc, dict) and isinstance(doc.get("certificate_sha256"), str):
             method_of.setdefault(doc["certificate_sha256"], doc)
         else:
             invalid("method", doc, "format")
-    by_key, by_sha, kinematic, refused, gate_method = {}, {}, {}, set(), {}
+    by_key, by_sha, kinematic, refused, gate_method, gate_arrays = {}, {}, {}, set(), {}, {}
     for doc in certificates:
         mesh = locate(doc, "certificate")
         if mesh is None:
@@ -1602,13 +1751,15 @@ def evaluate_case(case, certificates=(), results=(), feasibility=(), methods=(),
             invalid("certificate", doc, error.code)
             continue
         method = method_of.get(certificate_hash(doc))
+        found = arrays_of.get(doc["result_sha256"])
         if method is not None:
             try:
-                validate_method_report(method, doc, problem, result, problem_arrays=arrays)
+                validate_method_report(method, doc, problem, result, found, problem_arrays=arrays)
             except ContractError as error:
                 invalid("method", method, error.code)
                 method = None
         gate_method[id(doc)] = method
+        gate_arrays[id(doc)] = found
         by_key.setdefault((mesh, doc["formulation"]), []).append(doc)
         by_sha[doc["result_sha256"]] = doc
     for doc in refusals:
@@ -1654,7 +1805,8 @@ def evaluate_case(case, certificates=(), results=(), feasibility=(), methods=(),
     def certified(mesh, formulation):
         """A gate-admissible certificate, or the cause of its absence (interface 11.3, 17.9; amendment 1)."""
         docs = by_key.get((mesh, formulation), [])
-        good = [doc for doc in docs if gate_admissible(doc, method=gate_method.get(id(doc)))]
+        good = [doc for doc in docs
+                if gate_admissible(doc, method=gate_method.get(id(doc)), result_arrays=gate_arrays.get(id(doc)))]
         if good:
             return good[0], ""
         if (mesh, formulation) in refused:
@@ -1713,7 +1865,11 @@ def evaluate_case(case, certificates=(), results=(), feasibility=(), methods=(),
     for tokens in case["gate"]:
         kind = tokens[0]
         if kind == "kinematic_status":
-            for mesh, upper in itertools.product(meshes, uppers):
+            # Bare form: every listed mesh. 'mesh i' form: mesh i only (amendment 3).
+            scope = [int(tokens[3])] if len(tokens) == 4 and tokens[2] == "mesh" else meshes
+            if len(tokens) not in (2, 4):
+                fail("case_format", str(tokens))
+            for mesh, upper in itertools.product(scope, uppers):
                 docs = [d for d in kinematic.get((mesh, upper), []) if d["status"] == tokens[1] and gate_admissible(d)]
                 add(kind, mesh, upper, bool(docs), "missing")
         elif kind == "certified_upper":
@@ -1942,6 +2098,50 @@ def signed_jump_conditions(problem, arrays, element_velocity):
     return rows
 
 
+def facet_coefficients(problem_arrays, element_velocity):
+    """Normals (F, 3) and Bernstein jump coefficients (F, 6, 3) on every interior facet, in 3.4 order."""
+    nodes, tets = problem_arrays["nodes"], problem_arrays["tets"]
+    normals, coefficients = [], []
+    for (e1, f1), (e2, _) in mesh_facets(tets)[0]:
+        normals.append(facet_geometry(nodes[tets[e1][:4]], f1)[0])
+        coefficients.append(bernstein_from_nodal(facet_nodal_jump(tets, element_velocity, e1, f1, e2)))
+    return np.array(normals), np.array(coefficients)
+
+
+def apex_zero_row_values(problem_arrays, element_velocity, rows):
+    """The exact rows Z adds (amendment 2, 19.2.1): d_ei (6) per flow entry, c_B (3, Cartesian) per jump entry."""
+    nodes, tets = problem_arrays["nodes"], problem_arrays["tets"]
+    _, coefficients = facet_coefficients(problem_arrays, element_velocity)
+    out = []
+    for kind, index in rows:
+        if kind == 0:
+            e, i = divmod(index, 4)
+            out.extend(strain_rate_at_vertex(nodes[tets[e]], element_velocity[e], i))
+        else:
+            out.extend(coefficients[index // 6, index % 6])
+    return np.array(out)
+
+
+def project_onto_apex_rows(problem_arrays, element_velocity, rows):
+    """Minimum-norm projection of a broken field onto the Z rows alone, for a fixture whose problem has no other
+    equality row. Every unknown has the same scale v_ref, so this is the scaled correction of 17.1. Fixture tooling."""
+    shape = element_velocity.shape
+    x = element_velocity.reshape(-1)
+    matrix = np.column_stack([apex_zero_row_values(problem_arrays, unit.reshape(shape), rows)
+                              for unit in np.eye(x.size)])
+    correction = np.linalg.lstsq(matrix, matrix @ x, rcond=None)[0]
+    return (x - correction).reshape(shape)
+
+
+def signed_jump_coefficients(problem, problem_arrays, element_velocity):
+    """c~_FB = tau |c_t| - n . c_B at every (F, B), flattened as 6 F + B, and D_scale_jump (17.4 step 3)."""
+    tau, _ = jump_constants(problem["regions"][0].get("alpha", 0.0))
+    normals, coefficients = facet_coefficients(problem_arrays, element_velocity)
+    opening = np.einsum("fbk,fk->fb", coefficients, normals)
+    slip = np.linalg.norm(coefficients - opening[..., None] * normals[:, None, :], axis=2)
+    return (tau * slip - opening).reshape(-1), float(np.max(np.linalg.norm(coefficients, axis=2)))
+
+
 def _result(name, problem, bound, value, arrays, formulation=None, mesh=0, objective=None):
     """objective is c^T x: -lambda for Lower, D - W0 for Upper; it equals value only when W1 = 1 (amendment 1)."""
     formulation = formulation or (LOWER_ID if bound == "lower" else CONTROL_ID)
@@ -2005,6 +2205,7 @@ def _method_report(certificate, n_rows=4, n_unknowns=10):
         "dependent_rows": {"n_rows": n_rows, "n_unknowns": n_unknowns, "rank": n_rows, "proofs": []},
         "rows_skipped": 0,
         "interior_field": {"source": "none", "sha256": None},
+        "apex_zero": None,
         "tolerances": dict(TOLERANCES),
     }
 
@@ -2031,6 +2232,7 @@ def _feasibility(problem, witness):
         "n_unknowns": 10, "n_rows": 4, "rank": 4, "nullity": 6, "footing_modes": 1 if problem["footings"] else None,
         "method": "analytic witness; counts and denominator are schema-only",
         "witness_result_sha256": witness["result_sha256"], "witness_residual": 0.0,
+        "witness_projection_move": 0.0, "witness_work_reference": 1.0,
         "checker": {"name": SCHEMA_FIXTURE_CHECKER, "version": "0"}, "tolerances": dict(TOLERANCES),
     }
 
@@ -2121,6 +2323,53 @@ def _first_violating_direction(problem, arrays, base, node, amount):
     fail("negative_fixture", "no violating direction")
 
 
+APEX_FIXTURE_DELTA, APEX_FIXTURE_EPS, APEX_FIXTURE_HIDE = 0.1, 1e-8, 1e-4
+
+
+def apex_fixture_fields(problem_arrays, base, side, direction, element, local_node, perturbation):
+    """(candidate, interior) of the amendment-2 omission fixture: the free Drucker-Prager cube v = x with one side of
+    the plane x = y translated so that plane opens, then one vertex copy of one element moved by `perturbation`.
+    The interior field is the unperturbed one: its jump is exactly zero on every other interior facet."""
+    interior = base.copy()
+    interior[np.array(side)] += APEX_FIXTURE_DELTA * np.array(direction)
+    candidate = interior.copy()
+    candidate[element, local_node] += np.array(perturbation)
+    return candidate, interior
+
+
+def _apex_omission(problem, problem_arrays, base, side, direction):
+    """Search the smallest instance of a Z that omits one needed condition (amendment 2, 19.2.1).
+
+    Z_full is every jump condition the interior field leaves at the apex (all interior facets off the opening
+    plane). With Z_full the projected candidate has no condition in P; with Z = Z_full minus one condition of P, that
+    condition is still in P after projection while the interior field sits at the apex there."""
+    margin = TOLERANCES["TOL_CONE_MARGIN"]
+    normals, _ = facet_coefficients(problem_arrays, base)
+    plane = np.abs(normals @ np.array(direction)) > 1.0 - 1e-12
+    z_full = [(1, 6 * f + b) for f in range(len(normals)) if not plane[f] for b in range(6)]
+    for element in range(len(problem_arrays["tets"])):
+        for local_node in range(4):
+            for axis in range(3):
+                perturbation = [0.0, 0.0, 0.0]
+                perturbation[axis] = APEX_FIXTURE_EPS
+                candidate, _ = apex_fixture_fields(problem_arrays, base, side, direction, element, local_node,
+                                                   perturbation)
+                signed, scale = signed_jump_coefficients(problem, problem_arrays, candidate)
+                in_p = [(1, int(index)) for index in np.nonzero(signed > margin * scale)[0]]
+                full = project_onto_apex_rows(problem_arrays, candidate, z_full)
+                signed_full, scale_full = signed_jump_coefficients(problem, problem_arrays, full)
+                if not in_p or np.max(signed_full) > margin * scale_full:
+                    continue
+                for omitted in in_p:
+                    rows = [row for row in z_full if row != omitted]
+                    projected = project_onto_apex_rows(problem_arrays, candidate, rows)
+                    after, after_scale = signed_jump_coefficients(problem, problem_arrays, projected)
+                    if after[omitted[1]] > 1e3 * margin * after_scale:
+                        return {"element": element, "local_node": local_node, "perturbation": perturbation,
+                                "apex_zero": [list(row) for row in rows], "omitted": list(omitted)}
+    fail("negative_fixture", "no apex omission instance")
+
+
 def build_negative_fixtures(documents):
     P = case_stem("vm_plate_shear")
     D = case_stem("dp_uniaxial_tension")
@@ -2184,6 +2433,9 @@ def build_negative_fixtures(documents):
     a_centroids = a_arrays["nodes"][a_arrays["tets"][:, :4]].mean(axis=1)
     side = [int(e) for e in np.nonzero(a_centroids[:, 1] > a_centroids[:, 0])[0]]
     opening = [-1.0 / S2, 1.0 / S2, 0.0]
+    a_problem = documents[f"{A}.problem"][0]
+    omission = _apex_omission(a_problem, a_arrays, documents[AU][1]["element_velocity"], side, opening)
+    z_full = sorted(omission["apex_zero"] + [omission["omitted"]])
 
     entries = [
         ("perturbed_stress_component", "one perturbed stress component", P, L, "checker",
@@ -2243,6 +2495,26 @@ def build_negative_fixtures(documents):
         ("equality_just_above_floor", "an equality residual just above the floor", P, L, "final_check",
          {"kind": "perturb_sigma", "element": 0, "vertex": vertex, "component": 0, "amount": amount,
           "tau_multiple": 3.0}, "equality_residual_above_floor"),
+        # Amendment 2 (interface 19.2.1): the declared apex face Z.
+        ("apex_zero_omits_a_condition", "a declared apex face that omits a needed condition", A, AU, "checker",
+         {"kind": "apex_zero_omits", "elements": side, "direction": opening, "amount": APEX_FIXTURE_DELTA, **omission},
+         "interior_field_invalid"),
+        # M1: Z lists a condition violated at about 1e-3 D_scale; the Z rows must move the field (soundness).
+        ("apex_zero_hides_violation", "a declared apex face over a violated condition", A, AU, "checker",
+         {"kind": "apex_zero_hides", "elements": side, "direction": opening, "amount": APEX_FIXTURE_DELTA,
+          "element": omission["element"], "local_node": omission["local_node"],
+          "perturbation": [APEX_FIXTURE_HIDE if v else 0.0 for v in omission["perturbation"]], "apex_zero": z_full},
+         "projection_move_too_large"),
+        # M1, positive companion: the omission fixture with the full face certifies.
+        ("apex_zero_full_face", "a declared apex face that covers every needed condition", A, AU, "certify",
+         {"kind": "apex_zero_full", "elements": side, "direction": opening, "amount": APEX_FIXTURE_DELTA,
+          "element": omission["element"], "local_node": omission["local_node"],
+          "perturbation": omission["perturbation"], "apex_zero": z_full},
+         "certified_bound"),
+        ("apex_zero_on_lower", "a declared apex face on a Lower bound", P, L, "schema",
+         {"kind": "add_apex_zero", "apex_zero": [[0, 0]]}, "apex_zero_lower"),
+        ("apex_zero_outside_hash", "a declared apex face not covered by the result hash", A, AU, "schema",
+         {"kind": "add_apex_zero_unhashed", "apex_zero": [[0, 0]]}, "hash_mismatch"),
     ]
     assert plate_doc["format"] == FORMAT_PROBLEM
     return {
@@ -2796,7 +3068,11 @@ def test_case_inventory_covers_the_required_set():
 def test_reference_case_values_and_assertions(name):
     case = ALL_CASES[name]
     assert case["source"] and case["checked"] and case["units"]
-    assert set(case["formulation"]) == {LOWER_ID, CONTROL_ID, JUMP_ID}
+    if name in ("tresca_strip_vm_thin_slab", "tresca_strip_weighted_insensitive"):
+        # Amendment 2, item B (OD3): continuous P2 is a control on the Tresca strips; the jump pair binds.
+        assert set(case["formulation"]) == {LOWER_ID, JUMP_ID} and case["control"] == [CONTROL_ID]
+    else:
+        assert set(case["formulation"]) == {LOWER_ID, CONTROL_ID, JUMP_ID}
     assert case["target"] == pytest.approx(TARGET_FORMULAS[case["formula"]](case["formula_params"]), rel=1e-14)
     kinds = {tokens[0] for tokens in case["assert"]}
     assert {"lower_le_target", "upper_ge_target"} <= kinds, "both one-sided assertions are required"
@@ -2850,13 +3126,12 @@ def test_true_3d_gate_cases_are_complete(name):
     assert case["target"] is None
     assert JUMP_ID in case["formulation"] and case["control"] == [CONTROL_ID]
     gates = [tokens[0] for tokens in case["gate"]]
-    for required in ("kinematic_status", "certified_upper", "certified_bracket", "gap_le", "upper_nonincrease",
+    for required in ("kinematic_status", "certified_upper", "certified_bracket", "upper_nonincrease",
                      "lower_nondecrease"):
         assert required in gates, "feasibility alone must not pass"
-    limit = next(tokens[1] for tokens in case["gate"] if tokens[0] == "gap_le")
-    assert limit == ("MAX_GAP_3D_VM" if phi == 0.0 else "MAX_GAP_3D_DP")
-    assert [int(t[2]) for t in case["gate"] if t[0] == "certified_upper"] == list(range(6)), "ADR 10.1: every size"
-    assert case["record"] == [["gap", "mesh", str(i)] for i in range(6)], "the gap trend is recorded"
+    assert "gap_le" not in gates, "amendment 3 (OD5): the 3D gap limits are P4 targets, not P0 gates"
+    assert [int(t[2]) for t in case["gate"] if t[0] == "certified_upper"] == list(range(5)), "amendment 3: meshes 0-4"
+    assert case["record"] == [["gap", "mesh", str(i)] for i in range(6)], "the gap trend is recorded, mesh 5 included"
     stems = gate_mesh_stems(phi)
     assert case["mesh"] == [("file", f"{stem}.mesh.npz", 0) for stem in stems] + [
         ("file", f"{stems[0]}.mesh.npz", 1), ("file", f"{stems[3]}.mesh.npz", 1)]
@@ -2870,6 +3145,36 @@ def test_true_3d_gate_cases_are_complete(name):
     wall = "fixed" if "fixed" in name else "symmetry"
     kinds = {item["name"]: item["kind"] for item in case["boundaries"]}
     assert all(kinds[key] == wall for key in ("xmin", "xmax", "ymin", "ymax", "base"))
+
+
+AMENDMENT_3_GATE = ([["kinematic_status", "formulation_feasible", "mesh", str(i)] for i in range(5)]
+                    + [["certified_upper", "mesh", str(i)] for i in range(5)]
+                    + [["certified_bracket", "mesh", str(i)] for i in range(5)]
+                    + [["upper_nonincrease", "0", "4"], ["lower_nondecrease", "0", "4"]])
+
+
+def test_true_3d_gate_is_meshes_0_to_4_after_amendment_3():
+    """Amendment 3 (owner decision OD5): the eight 3D cases gate exactly this set, and no gate line names mesh 5."""
+    expected = sorted(f"upper3d_{wall}_phi{phi:02d}" for wall in ("fixed", "roller") for phi in (0, 10, 20, 30))
+    assert sorted(GATE_3D) == expected
+    for name in GATE_3D:
+        case = ALL_CASES[name]
+        assert [list(tokens) for tokens in case["gate"]] == AMENDMENT_3_GATE, name
+        assert not any("5" in tokens[1:] for tokens in case["gate"]), f"{name}: mesh 5 gates nothing in P0"
+        assert len(case["mesh"]) == 6 and (3, 5) in case["nested"], f"{name}: mesh 5 stays as evidence"
+        assert ["gap", "mesh", "5"] in case["record"], name
+
+
+def test_three_d_gap_limits_are_p4_targets_with_unchanged_values():
+    """Amendment 3: the values stay (certificate tolerance blocks must not churn); no case gates on them in P0."""
+    assert TOLERANCES["MAX_GAP_3D_VM"] == 0.30 and TOLERANCES["MAX_GAP_3D_DP"] == 0.50
+    used = {tokens[1] for case in ALL_CASES.values() for tokens in case["gate"] if tokens[0] == "gap_le"}
+    assert used == {"MAX_GAP_STRIP", "MAX_GAP_PRANDTL"}
+    text = interface_text()
+    table = text[text.index("### 17.8 Named tolerances"):text.index("### 17.9")]
+    for name in ("MAX_GAP_3D_VM", "MAX_GAP_3D_DP"):
+        row = next(line for line in table.splitlines() if line.startswith(f"| `{name}` |"))
+        assert "P4 exit target, not a P0 gate" in row, name
 
 
 @pytest.mark.parametrize("name", [n for n in GATE_3D if ALL_CASES[n]["phi_deg"] > 0.0])
@@ -3603,6 +3908,10 @@ def test_bracket_order_within_floor_is_not_a_bracket():
     validate_bracket(doc, low, high)
 
 
+NO_WITNESS = {"witness_result_sha256": None, "witness_residual": None, "witness_projection_move": None,
+              "witness_work_reference": None}
+
+
 def feasibility_doc(**changes):
     s = load_set("vm_plate_shear")
     doc = copy.deepcopy(s["feasibility"])
@@ -3612,7 +3921,7 @@ def feasibility_doc(**changes):
 
 def test_feasibility_failure_is_a_recordable_result():
     problem, doc = feasibility_doc(status="formulation_infeasible", numerator=0.1, denominator=1.0,
-                                   rho_feas=0.1, witness_result_sha256=None, witness_residual=None)
+                                   rho_feas=0.1, **NO_WITNESS)
     validate_feasibility(doc, problem)
     assert not gate_admissible(doc)
 
@@ -3627,7 +3936,14 @@ def test_feasibility_from_a_real_checker_is_gate_admissible():
 
 @pytest.mark.parametrize("changes,code", [
     ({"status": "formulation_feasible", "numerator": 0.1, "denominator": 1.0, "rho_feas": 0.1}, "feasibility_verdict"),
-    ({"witness_result_sha256": None, "witness_residual": None}, "feasibility_verdict"),
+    (NO_WITNESS, "feasibility_verdict"),
+    ({"witness_result_sha256": None, "witness_residual": None}, "feasibility_witness"),
+    # Amendment 2, m2: the witness keeps its projection move within the limit and does positive reference work.
+    ({"witness_projection_move": 2e-6}, "feasibility_verdict"),
+    ({"witness_work_reference": 0.0}, "feasibility_verdict"),
+    ({"witness_work_reference": 1e-13}, "feasibility_verdict"),  # below TOL_WORK_MIN, as 17.4 step 5
+    ({"witness_work_reference": None}, "feasibility_witness"),
+    ({"witness_projection_move": -1.0}, "feasibility_witness"),
     ({"witness_residual": 1e-3}, "feasibility_verdict"),
     ({"witness_residual": None}, "feasibility_witness"),
     ({"witness_result_sha256": "abc"}, "feasibility_witness"),
@@ -3760,7 +4076,7 @@ def test_interface_separates_owner_amendments_from_orchestrator_rulings():
     assert owner < rulings
     for item in ("A1", "A2", "A3", "A4"):
         assert f"| {item} |" in text[owner:rulings]
-    for item in ("OD1", "OD2"):
+    for item in ("OD1", "OD2", "OD3", "OD4", "OD5"):
         assert f"| {item} |" in text[owner:rulings]
     for item in ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11"):
         assert f"| {item} |" in text[rulings:]
@@ -3805,7 +4121,8 @@ ADR_11_5 = {
     "a finite dissipation charge offered in place of restoring a violated cone": ["dissipation_charge_as_repair"],
 }
 RECOMPUTED_VALUE = {"perturb_velocity", "perturb_element_velocity", "edge_normal_jump", "side_opening", "negate_velocity",
-                    "dissipation_charge", "side_translation", "restrained_shear"}
+                    "dissipation_charge", "side_translation", "restrained_shear", "apex_zero_omits", "apex_zero_hides",
+                    "apex_zero_full"}
 
 
 def apply_negative(entry):
@@ -3871,6 +4188,15 @@ def apply_negative(entry):
         value = fixture_upper_value(problem, problem_arrays, arrays["velocity"], arrays["footing_velocity"],
                                     quadrature=m["quadrature"], body=m["body"])
         result["value"] = result["objective"] = value
+    elif kind in ("apex_zero_omits", "apex_zero_hides", "apex_zero_full"):
+        candidate, interior = apex_fixture_fields(problem_arrays, arrays["element_velocity"], m["elements"],
+                                                  m["direction"], m["element"], m["local_node"], m["perturbation"])
+        arrays["element_velocity"] = candidate
+        arrays["interior_element_velocity"] = interior
+        arrays["interior_footing_velocity"] = arrays["footing_velocity"].copy()
+        arrays["apex_zero"] = np.array(m["apex_zero"], dtype="<i8").reshape(-1, 2)
+    elif kind in ("add_apex_zero", "add_apex_zero_unhashed"):
+        arrays["apex_zero"] = np.array(m["apex_zero"], dtype="<i8").reshape(-1, 2)
     else:
         fail("negative_fixture", kind)
     if kind in RECOMPUTED_VALUE:
@@ -3879,7 +4205,7 @@ def apply_negative(entry):
         result["objective"] = fixture_upper_objective(problem, problem_arrays, arrays[name], arrays["footing_velocity"])
     if "sigma" in arrays and kind in ("perturb_sigma", "element_offset", "zero_gravity_lower"):
         arrays["resultant"] = fixture_resultant(problem, problem_arrays, arrays["sigma"]).astype("<f8")
-    if result is not None and kind != "problem_hash":
+    if result is not None and kind not in ("problem_hash", "add_apex_zero_unhashed"):
         result["result_sha256"] = document_hash(result, arrays, "result_sha256")
         if certificate is not None:
             certificate["result_sha256"] = result["result_sha256"]
@@ -3898,7 +4224,9 @@ def test_negative_fixtures_cover_the_harness_and_every_adr_row():
         assert isinstance(entry["expect"], str), "one expected code per fixture"
         if entry["stage"] == "schema":
             assert entry["expect"] in ("result_wrong_bound_arrays", "element_curved", "hash_mismatch",
-                                       "unsupported_domain_claim")
+                                       "unsupported_domain_claim", "apex_zero_lower")
+        elif entry["stage"] == "certify":  # amendment 2, M1: a positive companion
+            assert entry["expect"] == "certified_bound"
         else:
             assert entry["expect"] in REASON_CODES
 
@@ -3935,7 +4263,7 @@ def assert_rows_untouched(problem, problem_arrays, field, footing_velocity):
     for (e, f), index in zip(problem_arrays["facets"], problem_arrays["facet_set"]):
         e, f, item = int(e), int(f), problem["boundary_sets"][int(index)]
         normal, _ = facet_geometry(nodes[tets[e][:4]], f)
-        n_set = normals.setdefault(int(index), normal)
+        n_set = normals.setdefault(int(index), symmetry_set_normal(problem, problem_arrays, int(index)))
         local = per_element[e][list(FACET_NODES[f])]
         if item["kind"] == "fixed":
             np.testing.assert_array_equal(local, 0.0)
@@ -4058,8 +4386,77 @@ def test_checker_negative_fixture_is_well_formed_and_live(entry):
         rows = signed_jump_conditions(problem, problem_arrays, field)
         assert max(float(nodal.max()) for nodal, _ in rows) <= 1e-12 * m["amount"], "passes at all six nodes of every facet"
         assert max(float(coefficient.max()) for _, coefficient in rows) >= 0.9 * m["amount"], "fails across a facet"
+    elif fixture == "apex_zero_omits_a_condition":
+        assert_apex_omission_is_live(problem, problem_arrays, arrays, m)
+    elif fixture == "apex_zero_hides_violation":
+        # Amendment 2, M1: a checker that drops Z from the tests but forgets the Z rows would certify this field.
+        rows = apex_zero_rows(arrays)
+        field = arrays["element_velocity"]
+        signed, scale = signed_jump_coefficients(problem, problem_arrays, field)
+        worst = max(signed[index] for _, index in rows) / scale
+        assert 1e-4 < worst < 1e-2, "Z hides a condition violated at about 1e-3 D_scale"
+        others = [i for i in range(len(signed)) if (1, i) not in rows]
+        assert max(signed[i] for i in others) <= 0.0, "outside Z every condition holds"
+        flow, size = signed_flow_conditions(problem, problem_arrays, field)
+        assert flow.max() < -0.1 * size
+        projected = project_onto_apex_rows(problem_arrays, field, rows)
+        move = float(np.max(np.abs(projected - field))) / float(np.max(np.abs(field)))
+        assert move > TOLERANCES["TOL_PROJECTION_MOVE"], "the Z rows move the field past the limit"
+    elif fixture == "apex_zero_full_face":
+        assert_full_face_certifies(problem, problem_arrays, arrays, result)
     else:
         fail("negative_fixture", fixture)
+
+
+def assert_full_face_certifies(problem, problem_arrays, arrays, result):
+    """Amendment 2, M1 positive companion: with every apex condition in Z, the step-2 projection is small, every
+    condition outside Z holds within the margin (P empty, no repair), the Z arguments are at rounding level,
+    W1 is positive and the value of the projected field agrees with the candidate's within TOL_VALUE_MATCH."""
+    margin = TOLERANCES["TOL_CONE_MARGIN"]
+    field = arrays["element_velocity"]
+    rows = apex_zero_rows(arrays)
+    projected = project_onto_apex_rows(problem_arrays, field, rows)
+    move = float(np.max(np.abs(projected - field))) / float(np.max(np.abs(field)))
+    assert 0.0 < move <= TOLERANCES["TOL_PROJECTION_MOVE"]
+    signed, scale = signed_jump_coefficients(problem, problem_arrays, projected)
+    outside = [i for i in range(len(signed)) if (1, i) not in rows]
+    assert max(signed[i] for i in outside) <= margin * scale, "P is empty"
+    _, coefficients = facet_coefficients(problem_arrays, projected)
+    rho_apex = max(float(np.linalg.norm(coefficients[i // 6, i % 6])) for _, i in rows) / scale
+    assert rho_apex <= margin, "rho_apex within the cone rounding margin"
+    flow, size = signed_flow_conditions(problem, problem_arrays, projected)
+    assert flow.max() < -0.1 * size
+    _, _, w1 = fixture_upper_terms(problem, problem_arrays, projected, arrays["footing_velocity"])
+    assert w1 > 0.0
+    value = fixture_upper_value(problem, problem_arrays, projected, arrays["footing_velocity"])
+    assert abs(value - result["value"]) <= TOLERANCES["TOL_VALUE_MATCH"] * abs(value)
+
+
+def assert_apex_omission_is_live(problem, problem_arrays, arrays, m):
+    """Amendment 2: with Z the projection is small, the volume conditions stay strictly inside, and exactly the
+    omitted condition is in P where the interior field (on the face) is at the apex; with Z plus it, P is empty."""
+    margin, move_limit = TOLERANCES["TOL_CONE_MARGIN"], TOLERANCES["TOL_PROJECTION_MOVE"]
+    field, interior = arrays["element_velocity"], arrays["interior_element_velocity"]
+    rows = apex_zero_rows(arrays)
+    omitted = tuple(m["omitted"])
+    assert omitted not in rows and rows == sorted(rows)
+    assert not any(item["kind"] in ("fixed", "symmetry", "footing") for item in problem["boundary_sets"]), \
+        "the Z rows are the only projection rows"
+    projected = project_onto_apex_rows(problem_arrays, field, rows)
+    v_ref = float(np.max(np.abs(field)))
+    assert 0.0 < float(np.max(np.abs(projected - field))) / v_ref <= move_limit
+    flow, size = signed_flow_conditions(problem, problem_arrays, projected)
+    assert flow.max() < -0.1 * size, "every volume condition stays strictly inside"
+    signed, scale = signed_jump_coefficients(problem, problem_arrays, projected)
+    assert margin < signed[omitted[1]] / scale < TOLERANCES["TOL_FLOW_ACCEPT"], "the omitted condition is in P"
+    assert np.max(np.abs(apex_zero_row_values(problem_arrays, projected, rows))) <= 1e-12 * scale, "Z rows hold"
+    np.testing.assert_array_equal(apex_zero_row_values(problem_arrays, interior, rows + [omitted]), 0.0)
+    signed_int, scale_int = signed_jump_coefficients(problem, problem_arrays, interior)
+    assert scale_int > 0.0 and signed_int.max() <= 0.0
+    assert signed_int[omitted[1]] > -TOLERANCES["TOL_INTERIOR_MIN"] * scale_int, "the interior cannot clear it"
+    full = project_onto_apex_rows(problem_arrays, field, sorted(rows + [omitted]))
+    signed_full, scale_full = signed_jump_coefficients(problem, problem_arrays, full)
+    assert signed_full.max() <= margin * scale_full, "with the omitted condition declared, P is empty"
 
 
 def test_good_halfspace_and_apex_fixtures_are_admissible():
@@ -4210,6 +4607,7 @@ def synthetic_refusal(case, mesh, result, checker="independent-checker", kind="c
         "formulation": result["formulation"], "kind": kind, "stage": stage,
         "detail": "dense blocks of the reduced system did not fit; no lower bound on sigma_r was proved",
         "resources": {"n_rows": 1000, "n_unknowns": 2000, "nnz": 9000},
+        "budget": {"memory_bytes": 6.4e10, "wall_s": 3600.0, "exceeded": "memory" if kind == "capacity" else None},
         "checker": {"name": checker, "version": "1"}, "tolerances": dict(TOLERANCES),
     }
 
@@ -4350,11 +4748,71 @@ def gate_verdict(name, low, high, **changes):
     return evaluate_case(case, *synthetic_records(case, low, high, uppers=[JUMP_ID], **changes))
 
 
-def test_thirty_degree_gap_miss_withholds_the_claim_only():
-    verdict = gate_verdict(PHI30, 4.0, 7.0)  # gap 0.545 > MAX_GAP_3D_DP
+def test_thirty_degree_wide_gap_no_longer_gates_p0():
+    """Amendment 3 (OD5): gap 0.545 > MAX_GAP_3D_DP on every mesh passes P0; the gap is only recorded."""
+    verdict = gate_verdict(PHI30, 4.0, 7.0)
+    assert verdict["passed"] and not verdict["claim_withheld"] and not verdict["p0_blocking"]
+    assert not any(item["kind"] == "gap_le" for item in verdict["items"])
+    assert [record["mesh"] for record in verdict["records"]] == list(range(6))
+    assert all(record["gap"] == pytest.approx(3.0 / 5.5) for record in verdict["records"])
+
+
+def test_thirty_degree_gap_branch_of_od2_still_withholds():
+    """OD2's gap branch has no P0 gate line left (amendment 3); `_withholdable` keeps it, shown on a modified copy."""
+    case = copy.deepcopy(ALL_CASES[PHI30])
+    case["gate"].append(["gap_le", "MAX_GAP_3D_DP", "mesh", "4"])
+    verdict = evaluate_case(case, *synthetic_records(case, 4.0, 7.0, uppers=[JUMP_ID]))
+    assert failed(verdict) == {("gap_le", "violated")}
     assert not verdict["passed"] and verdict["claim_withheld"] and not verdict["p0_blocking"]
     program = evaluate_program([verdict])
     assert program["withheld_claims"] == [PHI30] and not program["p0_open"]
+
+
+def test_kinematic_gate_is_scoped_to_meshes_0_to_4_in_3d_cases():
+    """Amendment 3: no mesh-5 feasibility record still passes; a missing mesh-3 record fails the kinematic gate."""
+    case = ALL_CASES[PHI30]
+    certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    hashes = load_problem_hashes()[PHI30]
+    no_five = [doc for doc in feasibility if doc["problem_sha256"] != hashes["m5"]]
+    assert len(no_five) < len(feasibility)
+    verdict = evaluate_case(case, certificates, results, no_five, methods)
+    assert verdict["passed"], failed(verdict)
+    assert sorted(item["mesh"] for item in verdict["items"] if item["kind"] == "kinematic_status") == list(range(5))
+    no_three = [doc for doc in feasibility if doc["problem_sha256"] != hashes["m3"]]
+    verdict = evaluate_case(case, certificates, results, no_three, methods)
+    assert failed(verdict) == {("kinematic_status", "missing")} and verdict["p0_blocking"]
+    assert [item["mesh"] for item in verdict["items"] if item["status"] == "fail"] == [3]
+
+
+def test_bare_kinematic_gate_still_requires_every_listed_mesh():
+    """The bare form keeps its meaning: on a copy of a 3D case with the bare line, a missing mesh-5 record fails."""
+    case = copy.deepcopy(ALL_CASES[PHI30])
+    case["gate"] = [["kinematic_status", "formulation_feasible"]] + [
+        tokens for tokens in case["gate"] if tokens[0] != "kinematic_status"]
+    certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    sha = load_problem_hashes()[PHI30]["m5"]
+    verdict = evaluate_case(case, certificates, results, feasibility, methods)
+    assert verdict["passed"], failed(verdict)
+    assert sorted(item["mesh"] for item in verdict["items"] if item["kind"] == "kinematic_status") == list(range(6))
+    verdict = evaluate_case(case, certificates, results,
+                            [doc for doc in feasibility if doc["problem_sha256"] != sha], methods)
+    assert failed(verdict) == {("kinematic_status", "missing")}
+    bare_cases = [name for name in ACTIVE if ["kinematic_status", "formulation_feasible"] in ALL_CASES[name]["gate"]]
+    assert not set(bare_cases) & set(GATE_3D)
+
+
+@pytest.mark.parametrize("name", ["upper3d_fixed_phi00", "upper3d_roller_phi20", PHI30])
+def test_mesh_five_gates_nothing_in_p0(name):
+    """Amendment 3: no certificate on mesh 5, or values there that broke the old (3, 5) pair, leave P0 passed."""
+    case = ALL_CASES[name]
+    certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
+    sha = load_problem_hashes()[name]["m5"]
+    verdict = evaluate_case(case, [doc for doc in certificates if doc["problem_sha256"] != sha],
+                            [doc for doc in results if doc["problem_sha256"] != sha], feasibility, methods)
+    assert verdict["passed"], failed(verdict)
+    assert next(r for r in verdict["records"] if r["mesh"] == 5)["detail"] == "missing"
+    loose = gate_verdict(name, 4.0, 4.5, values={(5, "lower"): 3.9, (5, "upper"): 4.6})
+    assert loose["passed"], failed(loose)
 
 
 def test_thirty_degree_missing_certificate_withholds_the_claim():
@@ -4364,7 +4822,7 @@ def test_thirty_degree_missing_certificate_withholds_the_claim():
     certificates = [doc for doc in certificates if doc["problem_sha256"] != mesh2]
     results = [doc for doc in results if doc["problem_sha256"] != mesh2]  # no result offered: truly missing
     verdict = evaluate_case(case, certificates, results, feasibility, methods)
-    assert failed(verdict) == {("certified_upper", "missing")}
+    assert failed(verdict) == {("certified_upper", "missing"), ("certified_bracket", "missing")}  # amendment 3
     assert verdict["claim_withheld"] and not verdict["p0_blocking"]
     no_feasibility = [doc for doc in feasibility if doc["problem_sha256"] != mesh2]
     verdict = evaluate_case(case, certificates, results, no_feasibility, methods)
@@ -4373,7 +4831,7 @@ def test_thirty_degree_missing_certificate_withholds_the_claim():
 
 @pytest.mark.parametrize("values,kind", [
     ({(4, "upper"): 4.6}, "upper_nonincrease"),
-    ({(5, "lower"): 3.9}, "lower_nondecrease"),
+    ({(4, "lower"): 3.9}, "lower_nondecrease"),  # amendment 3: the pair is (0, 4); (3, 5) is not checked
 ])
 def test_thirty_degree_monotonicity_failure_keeps_p0_open(values, kind):
     verdict = gate_verdict(PHI30, 4.0, 4.5, values=values)
@@ -4383,6 +4841,7 @@ def test_thirty_degree_monotonicity_failure_keeps_p0_open(values, kind):
 
 
 def test_thirty_degree_contradiction_stops_the_program():
+    """A contradiction stops the program even on mesh 5, which gates nothing since amendment 3: its record finds it."""
     verdict = gate_verdict(PHI30, 4.0, 4.5, values={(5, "lower"): 4.6})
     assert verdict["stop_program"] and not verdict["claim_withheld"]
     assert evaluate_program([verdict])["stop_program"]
@@ -4395,8 +4854,12 @@ def test_thirty_degree_kinematic_failure_is_not_withheld():
     assert not verdict["claim_withheld"] and verdict["p0_blocking"]
 
 
-def test_twenty_degree_gap_miss_keeps_p0_open():
+def test_twenty_degree_wide_gap_passes_p0_and_a_monotonicity_failure_keeps_it_open():
+    """Amendment 3: a gap above MAX_GAP_3D_DP no longer fails a 20-degree case; a (0, 4) violation still does."""
     verdict = gate_verdict("upper3d_fixed_phi20", 4.0, 7.0)
+    assert verdict["passed"] and not verdict["p0_blocking"]
+    verdict = gate_verdict("upper3d_fixed_phi20", 4.0, 4.5, values={(4, "upper"): 4.6})
+    assert ("upper_nonincrease", "violated") in failed(verdict)
     assert not verdict["claim_withheld"] and verdict["p0_blocking"]
 
 
@@ -4416,7 +4879,7 @@ def test_interface_records_the_freeze_and_amendment_1():
     assert "`03f59c1a4`" in log
     for item in range(1, 11):
         assert f"\n| {item} |" in log, item
-    assert "The file is not frozen, so the 2026-11-19 review-fix round is recorded here" in text, "earlier record intact"
+    assert "the 2026-11-19 review-fix round was recorded here" in text, "earlier record intact (wording: amendment 2, m7)"
     for term in ("certificate_sha256", "rows_skipped", "interior_field", "D_scale_vol", "D_scale_jump", "n_S",
                  "refused", "refusal_conflict", "method_report_missing"):
         assert f"`{term}`" in text, term
@@ -4692,21 +5155,22 @@ def test_refusal_record_validates_and_is_not_a_certificate():
 
 
 def test_thirty_degree_refusal_is_not_a_missing_certificate():
-    """Amendment 1, item 7: a capacity refusal on mesh 5 keeps P0 open, where a missing certificate would withhold."""
-    case, certificates, results, feasibility, methods, refusal, gone = refused_records(PHI30, 5)
+    """Amendment 1, item 7: a capacity refusal on a gate mesh keeps P0 open, where a missing certificate would withhold.
+    Amendment 3: mesh 4 is the finest gate mesh, so the refusal sits there."""
+    case, certificates, results, feasibility, methods, refusal, gone = refused_records(PHI30, 4)
     missing = evaluate_case(case, certificates, without_result(results, gone), feasibility, methods)
     assert missing["claim_withheld"] and not missing["p0_blocking"], "with no result offered OD2 withholds"
     verdict = evaluate_case(case, certificates, results, feasibility, methods, refusals=[refusal])
     causes = failed(verdict)
     assert ("certified_bracket", "refused") in causes and ("lower_nondecrease", "refused") in causes
-    assert ("gap_le", "refused") in causes and not any(cause == "missing" for _, cause in causes)
+    assert not any(cause == "missing" for _, cause in causes)
     assert not verdict["claim_withheld"] and verdict["p0_blocking"] and not verdict["stop_program"]
     program = evaluate_program([verdict])
     assert program["p0_open"] and program["refused_cases"] == [PHI30] and not program["withheld_claims"]
 
 
 def test_refusal_from_a_reserved_checker_or_beside_a_certificate_does_not_count():
-    case, certificates, results, feasibility, methods, refusal, gone = refused_records(PHI30, 5)
+    case, certificates, results, feasibility, methods, refusal, gone = refused_records(PHI30, 4)
     demo = copy.deepcopy(refusal)
     demo["checker"]["name"] = PROCEDURE_DEMO_CHECKER
     verdict = evaluate_case(case, certificates, results, feasibility, methods, refusals=[demo])
@@ -4716,21 +5180,27 @@ def test_refusal_from_a_reserved_checker_or_beside_a_certificate_does_not_count(
     assert [item["code"] for item in verdict["invalid_records"]] == ["refusal_conflict"] and not verdict["passed"]
 
 
-def test_von_mises_mesh_five_refusal_blocks_the_upper_gate():
-    """Amendment 1, item 8: the gate is unchanged, so a refused jump Upper on mesh 5 fails its gate items."""
-    case, certificates, results, feasibility, methods, refusal, _ = refused_records("upper3d_fixed_phi00", 5, "upper")
+def test_von_mises_refusal_blocks_on_mesh_four_and_not_on_mesh_five():
+    """Amendment 1, item 8, read under amendment 3: a refused jump Upper on gate mesh 4 fails its gate items; on mesh 5,
+    which gates nothing in P0, it fails none and shows only in the gap record."""
+    case, certificates, results, feasibility, methods, refusal, _ = refused_records("upper3d_fixed_phi00", 4, "upper")
     verdict = evaluate_case(case, certificates, results, feasibility, methods, refusals=[refusal])
     kinds = {kind for kind, cause in failed(verdict) if cause == "refused"}
-    assert {"certified_upper", "certified_bracket", "gap_le", "upper_nonincrease"} <= kinds
+    assert {"certified_upper", "certified_bracket", "upper_nonincrease"} <= kinds
     assert verdict["p0_blocking"]
+    case, certificates, results, feasibility, methods, refusal, _ = refused_records("upper3d_fixed_phi00", 5, "upper")
+    verdict = evaluate_case(case, certificates, results, feasibility, methods, refusals=[refusal])
+    assert verdict["passed"] and not verdict["p0_blocking"], failed(verdict)
+    assert next(r for r in verdict["records"] if r["mesh"] == 5)["detail"] == "refused"
+    assert evaluate_program([verdict])["refused_cases"] == [], "a mesh-5 refusal is evidence, not a refused item"
 
 
-def test_thirty_degree_mesh_five_result_without_certificate_or_refusal_is_unchecked():
-    """B1: an offered result that no checker answered is not a missing certificate."""
-    case, certificates, results, feasibility, methods, _, gone = refused_records(PHI30, 5)
+def test_thirty_degree_gate_mesh_result_without_certificate_or_refusal_is_unchecked():
+    """B1: an offered result that no checker answered is not a missing certificate (mesh 4 since amendment 3)."""
+    case, certificates, results, feasibility, methods, _, gone = refused_records(PHI30, 4)
     verdict = evaluate_case(case, certificates, results, feasibility, methods)
     causes = failed(verdict)
-    assert ("certified_bracket", "unchecked") in causes and ("gap_le", "unchecked") in causes
+    assert ("certified_bracket", "unchecked") in causes and ("lower_nondecrease", "unchecked") in causes
     assert not any(cause == "missing" for _, cause in causes)
     assert not verdict["claim_withheld"] and verdict["p0_blocking"]
     missing = evaluate_case(case, certificates, without_result(results, gone), feasibility, methods)
@@ -4741,7 +5211,7 @@ def test_thirty_degree_gate_certificate_without_method_report_is_unproved():
     """B1: a gate certificate whose method report is absent or invalid is unproved, never withheld."""
     case = ALL_CASES[PHI30]
     certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
-    sha = load_problem_hashes()[PHI30]["m5"]
+    sha = load_problem_hashes()[PHI30]["m4"]
     lower = next(doc for doc in certificates if doc["problem_sha256"] == sha and doc["bound"] == "lower")
     kept = [m for m in methods if m["certificate_sha256"] != certificate_hash(lower)]
     verdict = evaluate_case(case, certificates, results, feasibility, kept)
@@ -4754,7 +5224,7 @@ def test_thirty_degree_ill_conditioned_estimate_is_not_withheld():
     """B1: an estimate refused for conditioning keeps P0 open; another estimate at 30 degrees is withheld."""
     case = ALL_CASES[PHI30]
     certificates, results, feasibility, methods = synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID])
-    sha = load_problem_hashes()[PHI30]["m5"]
+    sha = load_problem_hashes()[PHI30]["m4"]
     lower = next(doc for doc in certificates if doc["problem_sha256"] == sha and doc["bound"] == "lower")
     for reason, cause, withheld in (("equality_ill_conditioned", "ill_conditioned", False),
                                     ("no_interior_field", "estimate", True)):
@@ -4787,6 +5257,397 @@ def test_feasibility_without_a_footing_has_no_footing_modes():
     assert error.value.code == "feasibility_rank"
     doc.update(rank=None, nullity=None)
     validate_feasibility(doc, plate["problem"])
+
+
+# Amendment 2 -------------------------------------------------------------------------------------
+
+def test_interface_records_amendment_2():
+    text = interface_text()
+    assert "**amendment 2**" in text[:900]
+    log = text[text.index("### 19.2 Amendment 2"):]
+    for item in ("A", "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"):
+        assert f"\n| {item} |" in log, item
+    assert "The file is not frozen, so" not in text, "m7: the stale wording is gone"
+    for term in ("apex_zero", "apex_zero_dual", "z_forced", "apex_zero_lower", "apex_zero_invalid", "method_apex_zero",
+                 "witness_projection_move", "witness_work_reference", "budget", "refusal_budget", "result_objective",
+                 "interior_field_invalid", "TOL_REPAIR_MAX"):
+        assert f"`{term}`" in text, term
+    for value in sorted(Z_FORCED):
+        assert f"`{value}`" in log, value
+    mesh5 = text.index("**Mesh-5 conditioning route")
+    assert text.index("### 18.3") < mesh5 < text.index("## 19."), "m3: the capacity statement is evidence (18.3)"
+    assert "K1" in text[mesh5:mesh5 + 2500]
+
+
+# Amendment 3 -------------------------------------------------------------------------------------
+
+def test_interface_records_amendment_3():
+    """Owner decision OD5: mesh 5 out of the P0 3D gate, decided after results and disclosed as such."""
+    text = interface_text()
+    assert "**amendment 3** (section 19.3)" in text[:900]
+    log = text[text.index("### 19.3 Amendment 3, 2026-11-19"):]
+    for item in ("A", "B", "C", "D", "E", "F"):
+        assert f"\n| {item} |" in log, item
+    assert "**Disclosure: decided after results.**" in log and "not presented as pre-registered" in log
+    owner = text[text.index("### 18.1"):text.index("### 18.2")]
+    assert "| OD5 | 2026-11-19, after mesh-4 and mesh-5 results were seen" in owner
+    quality = text[text.index("### 11.2 Quality test"):text.index("### 11.3")]
+    assert "They are closed from this\nrevision: a limit does not move" in quality, "OD1 sentence kept"
+    assert "**That closure did not hold for the true-3D gate.**" in quality
+    evidence = text[text.index("### 18.3"):text.index("## 19.")]
+    assert "| Amendment 3, 2026-11-19 |" in evidence
+    for number in ("9.24394", "9.23579", "3.34843", "3.34841", "5.92866", "5.92915", "10,808", "9,475", "`17ee1b4fc`"):
+        assert number in evidence, number
+    mesh5 = evidence[evidence.index("**Mesh-5 conditioning route"):]
+    assert "cannot pass until WP-237d" not in mesh5 and "no longer exist" in mesh5
+
+
+def free_apex_jump():
+    problem, problem_arrays = load_document(DATA / f"{case_stem('dp_free_hydrostatic')}.problem.json")
+    result, arrays = load_document(DATA / f"{record_stem('dp_free_hydrostatic', JUMP_ID)}.result.json")
+    return problem, problem_arrays, result, arrays
+
+
+def with_face(result, arrays, rows, dual=None, rehash=True):
+    result, arrays = copy.deepcopy(result), {k: v.copy() for k, v in arrays.items()}
+    arrays["apex_zero"] = np.array(rows, dtype="<i8").reshape(-1, 2)
+    if dual is not None:
+        arrays["apex_zero_dual"] = np.array(dual, dtype="<f8")
+    if rehash:
+        result["result_sha256"] = document_hash(result, arrays, "result_sha256")
+    return result, arrays
+
+
+def test_declared_apex_face_validates_and_is_hashed():
+    problem, problem_arrays, result, arrays = free_apex_jump()
+    n_e, n_f = len(problem_arrays["tets"]), len(mesh_facets(problem_arrays["tets"])[0])
+    rows = [[0, 0], [0, 4 * n_e - 1], [1, 0], [1, 6 * n_f - 1]]
+    faced, faced_arrays = with_face(result, arrays, rows, dual=[[1, 1, 1, 0, 0, 0]] * 2 + [[1, 0, 0, 0, 0, 0]] * 2)
+    validate_result(faced, faced_arrays, problem, problem_arrays)
+    assert faced["result_sha256"] != result["result_sha256"], "Z is part of the result identity"
+    stale, stale_arrays = with_face(result, arrays, rows, rehash=False)
+    with pytest.raises(ContractError) as error:
+        validate_result(stale, stale_arrays, problem, problem_arrays)
+    assert error.value.code == "hash_mismatch"
+
+
+@pytest.mark.parametrize("rows,dual", [
+    ([[0, 4], [0, 0]], None),  # unsorted
+    ([[0, 0], [0, 0]], None),  # duplicate
+    (np.zeros((0, 2)), None),  # empty: an absent face is no array, so the identity is unique
+    ([[2, 0]], None),  # unknown kind
+    ([[0, 24]], None),  # flow index past 4 E
+    ([[1, 36]], None),  # jump index past 6 F
+    ([[0, 0]], [[1.0, 0, 0, 0, 0]]),  # dual of the wrong shape
+    ([[1, 0]], [[1.0, 0, 0, 1.0, 0, 0]]),  # a jump dual has three components
+], ids=["unsorted", "duplicate", "empty", "kind", "flow_index", "jump_index", "dual_shape", "jump_dual"])
+def test_malformed_apex_face_is_refused(rows, dual):
+    problem, problem_arrays, result, arrays = free_apex_jump()
+    faced, faced_arrays = with_face(result, arrays, rows, dual)
+    with pytest.raises(ContractError) as error:
+        validate_result(faced, faced_arrays, problem, problem_arrays)
+    assert error.value.code in ("apex_zero_invalid", "array_shape")
+
+
+def test_apex_face_needs_inequality_conditions_of_its_formulation():
+    plate = load_set("vm_plate_shear")
+    jump, jump_arrays = load_document(DATA / f"{record_stem('vm_plate_shear', JUMP_ID)}.result.json")
+    control = load_document(DATA / f"{record_stem('dp_uniaxial_tension', CONTROL_ID)}.result.json")
+    tension = load_document(DATA / f"{case_stem('dp_uniaxial_tension')}.problem.json")
+    for (result, arrays), (problem, problem_arrays), rows in (
+            ((jump, jump_arrays), (plate["problem"], plate["arrays"]), [[0, 0]]),  # von Mises: alpha = 0
+            ((jump, jump_arrays), (plate["problem"], plate["arrays"]), [[1, 0]]),  # von Mises: tau = 0
+            (control, tension, [[1, 0]])):  # no jump condition in the control
+        faced, faced_arrays = with_face(result, arrays, rows)
+        with pytest.raises(ContractError) as error:
+            validate_result(faced, faced_arrays, problem, problem_arrays)
+        assert error.value.code == "apex_zero_invalid", rows
+    faced, faced_arrays = with_face(*control, [[0, 0]])
+    validate_result(faced, faced_arrays, *tension)  # a flow condition of the control may be declared
+    dual_only = {**control[1], "apex_zero_dual": np.zeros((1, 6))}
+    with pytest.raises(ContractError) as error:
+        validate_result(control[0], dual_only, *tension)
+    assert error.value.code == "apex_zero_invalid"
+
+
+def test_apex_face_is_refused_on_a_lower():
+    s = load_set("vm_plate_shear")
+    faced, faced_arrays = with_face(s["lower"], s["lower_arrays"], [[0, 0]])
+    with pytest.raises(ContractError) as error:
+        validate_result(faced, faced_arrays, s["problem"], s["arrays"])
+    assert error.value.code == "apex_zero_lower"
+    _, certificate, method = method_case("lower")
+    method["apex_zero"] = {"count": 1, "sha256": "0" * 64, "z_forced": "absent"}
+    with pytest.raises(ContractError) as error:
+        validate_method_report(method, certificate)
+    assert error.value.code == "method_apex_zero"
+
+
+def faced_method(z_forced="absent", dual=None):
+    """A jump result with Z, its schema certificate under a gate checker name, and a matching method report."""
+    problem, problem_arrays, result, arrays = free_apex_jump()
+    faced, faced_arrays = with_face(result, arrays, [[0, 0], [1, 0]], dual)
+    certificate = _certificate(problem, problem_arrays, faced)
+    certificate["checker"] = {"name": "independent-checker", "version": "1"}
+    certificate["checks"]["rho_apex"] = 1e-15  # M3
+    method = _method_report(certificate)
+    method["apex_zero"] = {"count": 2, "sha256": apex_zero_sha256(faced_arrays), "z_forced": z_forced}
+    return problem, problem_arrays, faced, faced_arrays, certificate, method
+
+
+def test_rho_apex_is_reported_and_bounded():
+    """Amendment 2, M3: a certified Z-declaring result reports rho_apex <= TOL_CONE_MARGIN; without Z it is null."""
+    problem, problem_arrays, faced, faced_arrays, certificate, method = faced_method()
+    assert not certified_check_failures(certificate, "ray")
+    for value in (2e-12, -1.0, None):
+        broken = copy.deepcopy(certificate)
+        broken["checks"]["rho_apex"] = value
+        if value is None:
+            report = copy.deepcopy(method)
+            report["certificate_sha256"] = certificate_hash(broken)
+            with pytest.raises(ContractError) as error:
+                validate_method_report(report, broken, problem, None, faced_arrays, problem_arrays)
+            assert error.value.code == "method_apex_zero"
+        else:
+            assert "rho_apex" in certified_check_failures(broken, "ray"), value
+    _, plain, plain_method = method_case()
+    plain["checks"]["rho_apex"] = 1e-15
+    plain_method["certificate_sha256"] = certificate_hash(plain)
+    with pytest.raises(ContractError) as error:
+        validate_method_report(plain_method, plain)
+    assert error.value.code == "method_apex_zero"
+
+
+@pytest.mark.parametrize("rows", [[[0, 0]], [[0, 10 ** 9]], [[0, 1], [0, 0]]],
+                         ids=["von_mises_element", "index_out_of_range", "unsorted"])
+def test_gate_path_validates_the_declared_face(rows):
+    """Amendment 2, M2: supplied result arrays go through validate_result, so a malformed Z never reaches a gate."""
+    name = STRIP if rows == [[0, 0]] else PHI30  # the strip is von Mises: no flow condition can be declared
+    case = ALL_CASES[name]
+    uppers = None if name == STRIP else [JUMP_ID]
+    low, high = (5.05, 5.25) if name == STRIP else (4.0, 4.5)
+    real = real_upper_records(case, 0, high, rows=rows)
+    records = swap_mesh_upper(case, synthetic_records(case, low, high, uppers=uppers), 0, real)
+    verdict = evaluate_case(case, *records, result_arrays={real[0]["result_sha256"]: real[1]})
+    assert {"kind": "result_arrays", "id": real[0]["result_sha256"], "code": "apex_zero_invalid"} in verdict["invalid_records"]
+    assert not verdict["passed"] and verdict["p0_blocking"]
+
+
+def test_method_report_names_the_declared_face():
+    problem, problem_arrays, faced, faced_arrays, certificate, method = faced_method()
+    validate_method_report(method, certificate, problem, faced, faced_arrays, problem_arrays)
+    assert gate_admissible(certificate, method=method, result_arrays=faced_arrays)
+    assert not gate_admissible(certificate, method=method), "m1: Z is verified against the result arrays only"
+    dual = [[1.0, 0, 0, 0, 0, 0], [1.0, 0, 0, 0, 0, 0]]
+    for change, arrays in (({"count": 1}, faced_arrays), ({"sha256": "0" * 64}, faced_arrays),
+                           ({"z_forced": "maybe"}, faced_arrays), ({"z_forced": "proved"}, faced_arrays),
+                           ({}, with_face(faced, faced_arrays, [[0, 0], [1, 0]], dual)[1])):
+        broken = copy.deepcopy(method)
+        broken["apex_zero"].update(change)
+        with pytest.raises(ContractError) as error:
+            validate_method_report(broken, certificate, problem, None, arrays, problem_arrays)
+        assert error.value.code == "method_apex_zero", change
+    silent = copy.deepcopy(method)
+    silent["apex_zero"] = None
+    with pytest.raises(ContractError) as error:
+        validate_method_report(silent, certificate, problem, None, faced_arrays, problem_arrays)
+    assert error.value.code == "method_apex_zero"
+
+
+@pytest.mark.parametrize("z_forced", ["proved", "unproved"])
+def test_z_forced_is_a_diagnostic_never_a_gate(z_forced):
+    """A wrong Z only makes the Upper worse, never unsound, so `proved` and `unproved` are both admissible."""
+    dual = [[1.0, 0, 0, 0, 0, 0], [1.0, 0, 0, 0, 0, 0]]
+    problem, problem_arrays, faced, faced_arrays, certificate, method = faced_method(z_forced, dual)
+    validate_method_report(method, certificate, problem, faced, faced_arrays, problem_arrays)
+    assert gate_admissible(certificate, method=method, result_arrays=faced_arrays)
+
+
+def real_upper_records(case, mesh, value, rows=None, z_forced="absent"):
+    """A jump Upper result with arrays (an interior field, and Z when `rows` is given), its certificate under a gate
+    checker name and a method report naming both by hash. The field is schema-only: the evaluator never reads it."""
+    problem, problem_arrays = case_problem_cached(case, mesh)
+    n_e, n_f = len(problem_arrays["tets"]), len(problem["footings"])
+    arrays = _float_arrays(element_velocity=np.zeros((n_e, 10, 3)), footing_velocity=np.zeros((n_f, 6)),
+                           interior_element_velocity=np.zeros((n_e, 10, 3)),
+                           interior_footing_velocity=np.zeros((n_f, 6)))
+    if rows is not None:
+        arrays["apex_zero"] = np.array(rows, dtype="<i8")
+    result = _result(case["name"], problem, "upper", value, arrays, JUMP_ID, mesh)
+    certificate = _certificate(problem, problem_arrays, result)
+    certificate["checker"] = {"name": "independent-checker", "version": "1"}
+    certificate["checks"]["repair_mu"] = 1e-7
+    if rows is not None:
+        certificate["checks"]["rho_apex"] = 1e-15  # M3
+    method = _method_report(certificate)
+    method["interior_field"] = {"source": "result", "sha256": interior_field_sha256("upper", JUMP_ID, arrays)}
+    if rows is not None:
+        method["apex_zero"] = {"count": len(rows), "sha256": apex_zero_sha256(arrays), "z_forced": z_forced}
+    return result, arrays, certificate, method
+
+
+def swap_mesh_upper(case, records, mesh, real):
+    """Replace the synthetic jump Upper of one mesh by a real record set."""
+    certificates, results, feasibility, methods = records
+    sha = load_problem_hashes()[case["name"]][f"m{mesh}"]
+    drop = {doc["result_sha256"] for doc in certificates
+            if doc["problem_sha256"] == sha and doc["formulation"] == JUMP_ID}
+    result, _, certificate, method = real
+    certificates = [doc for doc in certificates if doc["result_sha256"] not in drop] + [certificate]
+    results = [doc for doc in results if doc["result_sha256"] not in drop] + [result]
+    methods = [doc for doc in methods if doc["result_sha256"] not in drop] + [method]
+    for record in feasibility:
+        if record["problem_sha256"] == sha and record["witness_result_sha256"] in drop:
+            record["witness_result_sha256"] = result["result_sha256"]
+    return certificates, results, feasibility, methods
+
+
+def test_gate_path_checks_the_interior_field_hash():
+    """Amendment 2, m1: on the gate path a `result` interior field is checked against the result's arrays."""
+    case = ALL_CASES[STRIP]
+    real = real_upper_records(case, 0, 5.25)
+    records = swap_mesh_upper(case, synthetic_records(case, 5.05, 5.25), 0, real)
+    result, arrays = real[0], real[1]
+    unseen = evaluate_case(case, *records)
+    assert not unseen["passed"] and not unseen["invalid_records"], "an unverified report is not counted, not invalid"
+    assert any(item["cause"] == "unproved" and item["mesh"] == 0 for item in unseen["items"])
+    seen = evaluate_case(case, *records, result_arrays={result["result_sha256"]: arrays})
+    assert seen["passed"], failed(seen)
+    tampered = {k: v.copy() for k, v in arrays.items()}
+    tampered["interior_element_velocity"][0, 0, 0] = 1e-9
+    verdict = evaluate_case(case, *records, result_arrays={result["result_sha256"]: tampered})
+    assert {"kind": "result_arrays", "id": result["result_sha256"], "code": "hash_mismatch"} in verdict["invalid_records"]
+    assert not verdict["passed"]
+
+
+def test_thirty_degree_face_needs_the_result_arrays_on_the_gate_path():
+    case = ALL_CASES[PHI30]
+    real = real_upper_records(case, 0, 4.5, rows=[[0, 0], [0, 1]])
+    records = swap_mesh_upper(case, synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID]), 0, real)
+    verdict = evaluate_case(case, *records)
+    assert ("certified_upper", "unproved") in failed(verdict)
+    assert not verdict["claim_withheld"] and verdict["p0_blocking"], "unproved is never withheld under OD2"
+    verdict = evaluate_case(case, *records, result_arrays={real[0]["result_sha256"]: real[1]})
+    assert verdict["passed"], failed(verdict)
+
+
+def test_face_that_makes_the_equalities_unprovable_is_refused_and_keeps_p0_open():
+    """Amendment 2: kappa_eq is proved on the augmented system; when no route proves it the checker refuses."""
+    case = ALL_CASES[PHI30]
+    real = real_upper_records(case, 0, 4.5, rows=[[0, 0], [0, 1]])
+    certificates, results, feasibility, methods = swap_mesh_upper(
+        case, synthetic_records(case, 4.0, 4.5, uppers=[JUMP_ID]), 0, real)
+    result, certificate = real[0], real[2]
+    certificates = [doc for doc in certificates if doc is not certificate]
+    refusal = synthetic_refusal(case, 0, result, kind="conditioning", stage="dependent_rows")
+    validate_refusal(refusal, case_problem_cached(case, 0)[0], result)
+    verdict = evaluate_case(case, certificates, results, feasibility, methods, refusals=[refusal],
+                            result_arrays={result["result_sha256"]: real[1]})
+    assert ("certified_upper", "refused") in failed(verdict)
+    assert not verdict["claim_withheld"] and verdict["p0_blocking"]
+    program = evaluate_program([verdict])
+    assert program["p0_open"] and program["refused_cases"] == [PHI30]
+
+
+@pytest.mark.parametrize("change,code", [
+    ({"budget": None}, "refusal_budget"),
+    ({"budget": {"memory_bytes": 1.0, "wall_s": 1.0}}, "missing_key"),
+    ({"budget": {"memory_bytes": 0.0, "wall_s": 1.0, "exceeded": "memory"}}, "refusal_budget"),
+    ({"budget": {"memory_bytes": 1.0, "wall_s": 1.0, "exceeded": None}}, "refusal_budget"),
+    ({"budget": {"memory_bytes": 1.0, "wall_s": 1.0, "exceeded": "patience"}}, "refusal_budget"),
+    ({"kind": "conditioning"}, "refusal_budget"),
+], ids=["absent", "no_exceeded", "zero_memory", "capacity_without_exceeded", "unknown_exceeded",
+        "conditioning_with_exceeded"])
+def test_capacity_refusal_declares_its_budget(change, code):
+    """Amendment 2, m4."""
+    case, _, results, _, _, refusal, gone = refused_records(PHI30, 5)
+    problem = case_problem_cached(case, 5)[0]
+    result = next(doc for doc in results if doc["result_sha256"] == gone["result_sha256"])
+    broken = copy.deepcopy(refusal)
+    broken.update(change)
+    with pytest.raises(ContractError) as error:
+        validate_refusal(broken, problem, result)
+    assert error.value.code == code
+
+
+def test_lower_objective_is_checked_and_upper_objective_is_not():
+    """Amendment 2, m5."""
+    s = load_set("vm_plate_shear")
+    lower, arrays = copy.deepcopy(s["lower"]), s["lower_arrays"]
+    lower["objective"] = -lower["value"] * (1.0 + 1e-15)
+    lower["result_sha256"] = document_hash(lower, arrays, "result_sha256")
+    with pytest.raises(ContractError) as error:
+        validate_result(lower, arrays, s["problem"], s["arrays"])
+    assert error.value.code == "result_objective"
+    upper, arrays = copy.deepcopy(s["upper"]), s["upper_arrays"]
+    upper["objective"] = 123.0
+    upper["result_sha256"] = document_hash(upper, arrays, "result_sha256")
+    validate_result(upper, arrays, s["problem"], s["arrays"])
+
+
+TRESCA_STRIPS = ("tresca_strip_vm_thin_slab", "tresca_strip_weighted_insensitive")
+PRANDTL_SLABS = ("dp_prandtl_cohesion_thin_slab", "dp_prandtl_surcharge_thin_slab")
+
+
+@pytest.mark.parametrize("name", TRESCA_STRIPS + PRANDTL_SLABS)
+def test_only_the_tresca_strips_make_continuous_p2_a_control(name):
+    """Amendment 2, item B (owner decision OD3): continuous P2 is a control on the two Tresca strips; the Prandtl
+    thin slabs still bind it until the owner decides them case by case."""
+    case = ALL_CASES[name]
+    if name in TRESCA_STRIPS:
+        assert case["formulation"] == [LOWER_ID, JUMP_ID] and case["control"] == [CONTROL_ID]
+    else:
+        assert case["formulation"] == [LOWER_ID, CONTROL_ID, JUMP_ID] and not case["control"]
+
+
+def test_strip_control_miss_does_not_fail_the_gate_and_a_jump_miss_does():
+    """OD3: on the strip the P2c pair may miss MAX_GAP_STRIP (gap 0.079 as recorded in 19.2.2) without failing the
+    gate; a jump-pair miss still fails it."""
+    case = ALL_CASES[STRIP]
+    lower, jump_upper, control_upper = 5.00525, 5.18571, 5.4168
+    assert (control_upper - lower) / (0.5 * (control_upper + lower)) > TOLERANCES["MAX_GAP_STRIP"]
+    certificates, results, feasibility, methods = synthetic_records(case, lower, jump_upper)
+    for mesh in range(len(case["mesh"])):
+        result, certificate, method = synthetic_pair(case, mesh, "upper", CONTROL_ID, control_upper)
+        results.append(result)
+        certificates.append(certificate)
+        methods.append(method)
+    verdict = evaluate_case(case, certificates, results, feasibility, methods)
+    assert verdict["passed"], failed(verdict)
+    assert not any(CONTROL_ID in item["formulation"] for item in verdict["items"]), "the control binds nothing"
+    miss = evaluate_case(case, *synthetic_records(case, lower, 5.3))
+    assert not miss["passed"] and ("gap_le", "violated") in failed(miss) and miss["p0_blocking"]
+
+
+def test_symmetry_set_normal_is_the_stated_formula_bitwise_on_a_tilted_plane():
+    """Amendment 2, M5: a tilted facet, the formula evaluated independently in scalar IEEE double, identical bits."""
+    nodes = np.array([[0.1, 0.2, 0.3], [1.3, 0.1, 0.7], [0.2, 1.1, 0.9], [0.3, 0.4, 1.9]])
+    tets = np.array([list(range(4)) + [0] * 6])
+    arrays = {"nodes": nodes, "tets": tets, "facets": np.array([[0, 3]]), "facet_set": np.array([0])}
+    xa, xb, xc = (nodes[v].tolist() for v in FACET_VERTICES[3])
+    u = [xb[i] - xa[i] for i in range(3)]
+    w = [xc[i] - xa[i] for i in range(3)]
+    q = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]]
+    norm = math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2])
+    expected = [q[i] / norm for i in range(3)]
+    normal = symmetry_set_normal({}, arrays, 0)
+    assert np.count_nonzero(normal) == 3, "the plane is tilted"
+    assert normal.tobytes() == np.array(expected).tobytes()
+    np.testing.assert_allclose(normal, facet_geometry(nodes, 3)[0], rtol=0, atol=4 * UNIT_ROUNDOFF)
+
+
+def test_symmetry_set_normal_formula_is_exact():
+    for name in ("tresca_strip_vm_thin_slab", "upper3d_roller_phi30"):
+        problem, arrays = case_problem_cached(ALL_CASES[name], 0)
+        for index, item in enumerate(problem["boundary_sets"]):
+            if item["kind"] != "symmetry":
+                continue
+            normal = symmetry_set_normal(problem, arrays, index)
+            row = int(np.nonzero(arrays["facet_set"] == index)[0][0])
+            e, f = (int(v) for v in arrays["facets"][row])
+            np.testing.assert_allclose(normal, facet_geometry(arrays["nodes"][arrays["tets"][e][:4]], f)[0],
+                                       rtol=0, atol=4 * UNIT_ROUNDOFF)
+            assert np.count_nonzero(normal) == 1 and abs(normal).max() == 1.0, "an axis-aligned set gets a unit axis"
 
 
 if __name__ == "__main__":
