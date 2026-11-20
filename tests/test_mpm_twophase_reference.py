@@ -202,15 +202,18 @@ def _assert_close(got, ref, path="", rel=1e-12, floor=1e-14):
 
 
 def test_t0_record_is_the_oracle():
-    """A self-consistency check of the stored reference (not a gated band): a fresh oracle run
-    equals t0_oracle.json to rel 1e-12, with an absolute floor of 1e-14 x the field's max |value|
-    for entries at zero. Exact equality is not portable: the record was frozen with Windows numpy,
-    and Linux numpy differs in the last 1-3 ulps (Zone-A)."""
+    """The stored reference's cross-platform reproducibility (not a gate band): a fresh oracle run
+    equals t0_oracle.json to rel 1e-10, with an absolute floor of 1e-14 x the field's max |value|
+    for entries at zero. The record was frozen with Windows numpy. Linux numpy/libm rounding,
+    amplified through the mode-A history, measured up to rel 1.6e-12 (Zone-A run 44632772528:
+    t0_ii.history[2].particles.pd[0], abs 9.1e-11), so 1e-10 is about 60 x the measured drift.
+    It still catches a 1e-9 relative change in any entry (verified), and the IDENT mutant's
+    changes are orders of magnitude larger."""
     d = _json("t0_oracle")
     assert d["source"].startswith("tests/mpm_twophase_interface.md")
     fresh = {"t0_i": R.t0_particle_dump(R.T0A), "t0_ii": R.t0_modeA(R.T0A),
              "t0_iii": R.t0_routeS(R.T0S)}
-    _assert_close(json.loads(json.dumps(fresh)), {k: d[k] for k in fresh})
+    _assert_close(json.loads(json.dumps(fresh)), {k: d[k] for k in fresh}, rel=1e-10)
 
 
 def test_t0_drained_nodes_and_p_activity():
