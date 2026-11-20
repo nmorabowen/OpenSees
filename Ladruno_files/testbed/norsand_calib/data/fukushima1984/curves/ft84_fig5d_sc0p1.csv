@@ -1,0 +1,138 @@
+# id: ft84_fig5d_sc0p1
+# kind: TC
+# sigma3_kPa: 9.8
+# e0: 0.866
+# e0_definition: e_0.3 = void ratio at sigma_c' = 0.3 kgf/cm2 (29.4 kPa), the paper's density label (figure legend); for sigma_c' != 0.3 the void ratio at the shear stress is NOT reported (p. 35, Fig. 4)
+# source: Fukushima & Tatsuoka (1984) Soils and Foundations 24(4):30-48, Fig. 5(d), journal p. 36 (PDF page 7), loose, sigma_c' 0.02-0.1 kgf/cm2; Table 1 test 33 (p. 32)
+# eps_v_convention: dilation_negative
+# eps_a_sign: 1
+# phi_peak_deg: 38.0
+# eps_peak_pct: 14.0
+# phi_peak_note: Table 1 phi (mid-height, UNCORRECTED for membrane forces, t0 = 0.3 mm); the digitised maximum sr 4.206 vs 4.204 from Table 1 (difference +0.002) is the calibration check of the digitisation
+# sigma3_f_kPa: 11.56
+# material: Toyoura sand (D50 0.16 mm, Uc 1.46, Gs 2.64, e_max 0.977, e_min 0.605), saturated, air-pluviated, 7 cm diameter x 15 cm, lubricated ends (p. 33)
+# test: drained isotropically consolidated triaxial compression, axial strain rate 0.25 %/min; sr = sigma1'/sigma3' at the MID-HEIGHT of the sample, UNCORRECTED for membrane forces (the figure title says so); eps_a = axial strain
+# caveat_membrane: membrane t0 = 0.3 mm, latex, E_m 15.2 kgf/cm2: at sigma_c' <= 0.1 kgf/cm2 the uncorrected stress ratios are biased (paper Figs. 7, 12-17); at the lowest stresses sigma3' drifted during the test: (sigma3')_f = 11.56 kPa vs sigma_c' = 9.80 kPa
+# uncertainty: sr +-0.05 (1 px = 0.01; calibration cross-checked against Table 1 phi, see phi_peak_note), +-0.1 where markers of neighbouring curves merge; eps_a +-0.1 %; eps_v +-0.15 % (scan skew handled by a bilinear map between the frame lines)
+# digitisation: marker-chain / column-cluster tracker on the native 1-bit scan (data/_digitise); rows fill ONE of sr / eps_v (the two traces are digitised at different eps_a); the first row (0,1,0) is the assumed isotropic start, not digitised
+# units: eps_a_pct [%] compression positive | sr [-] | eps_v_pct [%] dilation negative
+# trace_note: shared 'low' trace (see 5d_0.05); beyond ~9.5 % it is the 0.1 test alone
+eps_a_pct,sr,eps_v_pct
+0,1,0
+0.6247,2.6,
+0.6431,2.7,
+0.7999,2.8,
+0.9863,2.9,
+1,,0.0508
+1.064,3,
+1.25,,0.0674
+1.3097,3.1,
+1.5,3.1388,
+1.5,,0.0842
+1.6443,3.2,
+1.75,,0.0514
+1.8603,3.3,
+2,3.3832,
+2,,0.0188
+2.1455,3.4,
+2.25,,0.0946
+2.5,,0.0324
+2.5887,3.5,
+2.75,3.55,
+2.75,,0.0392
+3,3.5858,
+3,,0.046
+3.18,3.6,
+3.25,,0.043
+3.5,3.6526,
+3.5,,-0.0192
+3.75,3.718,
+3.75,,-0.0518
+4,3.744,
+4,,-0.1042
+4.2343,3.8,
+4.25,,-0.1466
+4.5,3.8206,
+4.5,,-0.1596
+4.75,,-0.143
+4.8109,3.9,
+5,3.8528,
+5,,-0.1262
+5.25,3.8788,
+5.25,,-0.2278
+5.5,3.9097,
+5.5,,-0.2702
+5.75,3.8962,
+5.75,,-0.3522
+6,3.95,
+6,,-0.32
+6.25,3.9629,
+6.25,,-0.3582
+6.5,3.9741,
+6.5,,-0.3908
+6.75,4.0198,
+6.75,,-0.3742
+7,4.026,
+7,,-0.4362
+7.25,4.0667,
+7.25,,-0.528
+7.5,4.0188,
+7.5,,-0.472
+7.75,4.03,
+7.75,,-0.5438
+8,4.051,
+8,,-0.6158
+8.25,4.0819,
+8.25,,-0.5794
+8.5,4.1324,
+8.5,,-0.6712
+8.75,4.0993,
+8.75,,-0.6446
+9,,-0.6674
+9.25,4.0921,
+9.25,,-0.7294
+9.5,4.1131,
+9.5,,-0.6832
+9.75,4.1439,
+9.75,,-0.7748
+10,4.1206,
+10,,-0.8172
+10.25,4.1515,
+10.25,,-0.84
+10.5,4.1626,
+10.5,,-0.8232
+10.75,4.1541,
+10.75,,-0.8854
+11,4.1948,
+11,,-0.908
+11.25,4.1961,
+11.25,,-0.9208
+11.5,4.1826,
+11.5,,-0.9534
+11.75,,-0.976
+12,4.0819,
+12,,-1.0086
+12.25,4.157,
+12.25,,-1.0608
+12.5,4.1633,
+12.5,,-1.0736
+12.75,4.1794,
+12.75,,-1.1062
+13,4.1905,
+13,,-1.119
+13.25,4.1967,
+13.25,,-1.1318
+13.5,4.198,
+13.5,,-1.1348
+13.75,4.2043,
+13.75,,-1.2264
+14,4.2056,
+14,,-1.2214
+14.25,4.1921,
+14.25,,-1.2716
+14.5,4.1443,
+14.5,,-1.2844
+14.75,,-1.2678
+15,4.1567,
+15,,-1.2806
+15.25,4.2023,

@@ -1,0 +1,51 @@
+# Lam & Tatsuoka (1988) Fig. 21(a), p. 101.  phi [deg] of air-pluviated Toyoura, e0.3 = 0.70, sigma3' = 98 kPa.  tolerance +-0.25 deg (reading).
+# TC/PSC: omega = angle of sigma1' from the deposition axis n; xi = angle of the n-axis projection (Fig. 1).  For TE the abscissa is theta (sin theta = sin omega sin xi): sectors 1-2 theta = xi / omega, sector 3 theta = 0 (flat lines).
+# Empty = marker hidden/not legible.  PSC-1 (earlier Tatsuoka et al. 1986 data, omega 56-67 deg) not transcribed.
+series,category_k,category_label,omega_deg,xi_deg,phi_deg
+TC-3 (H/W=1.0),0,xi=0@omega=90,90,0,38.52
+TC-3 (H/W=1.0),1,xi=30@omega=90,90,30,38.31
+TC-3 (H/W=1.0),2,xi=60@omega=90,90,60,38.34
+TC-3 (H/W=1.0),3,xi=90@omega=90,90,90,38.34
+TC-3 (H/W=1.0),4,omega=60@xi=90,60,90,38.34
+TC-3 (H/W=1.0),5,omega=30@xi=90,30,90,39.76
+TC-3 (H/W=1.0),6,omega=0@xi=90,0,90,41.74
+TC-3 (H/W=1.0),7,omega=30@xi=0,30,0,39.85
+TC-3 (H/W=1.0),8,omega=60@xi=0,60,0,38.47
+TC-3 (H/W=1.0),9,omega=90@xi=0,90,0,38.39
+PSC-3 (H/W=1.9),0,xi=0@omega=90,90,0,43.7
+PSC-3 (H/W=1.9),1,xi=30@omega=90,90,30,43.98
+PSC-3 (H/W=1.9),2,xi=60@omega=90,90,60,41.28
+PSC-3 (H/W=1.9),3,xi=90@omega=90,90,90,40.0
+PSC-3 (H/W=1.9),4,omega=60@xi=90,60,90,39.7
+PSC-3 (H/W=1.9),5,omega=30@xi=90,30,90,42.78
+PSC-3 (H/W=1.9),6,omega=0@xi=90,0,90,45.32
+PSC-3 (H/W=1.9),7,omega=30@xi=0,30,0,44.49
+PSC-3 (H/W=1.9),8,omega=60@xi=0,60,0,43.69
+PSC-3 (H/W=1.9),9,omega=90@xi=0,90,0,43.76
+TE double (Fig.16),0,xi=0@omega=90,90,0,48.38
+TE double (Fig.16),1,xi=30@omega=90,90,30,46.34
+TE double (Fig.16),2,xi=60@omega=90,90,60,42.0
+TE double (Fig.16),3,xi=90@omega=90,90,90,43.5
+TE double (Fig.16),4,omega=60@xi=90,60,90,42.0
+TE double (Fig.16),5,omega=30@xi=90,30,90,46.4
+TE double (Fig.16),6,omega=0@xi=90,0,90,48.4
+TE double (Fig.16),7,omega=30@xi=0,30,0,48.4
+TE double (Fig.16),8,omega=60@xi=0,60,0,48.4
+TE double (Fig.16),9,omega=90@xi=0,90,0,48.4
+TE single (Fig.16),0,xi=0@omega=90,90,0,46.5
+TE single (Fig.16),1,xi=30@omega=90,90,30,43.7
+TE single (Fig.16),2,xi=60@omega=90,90,60,38.97
+TE single (Fig.16),4,omega=60@xi=90,60,90,38.97
+TE single (Fig.16),5,omega=30@xi=90,30,90,43.77
+TE single (Fig.16),6,omega=0@xi=90,0,90,46.53
+TE single (Fig.16),7,omega=30@xi=0,30,0,46.5
+TE single (Fig.16),8,omega=60@xi=0,60,0,46.5
+TE single (Fig.16),9,omega=90@xi=0,90,0,46.5
+TE no (Fig.16),0,xi=0@omega=90,90,0,42.8
+TE no (Fig.16),2,xi=60@omega=90,90,60,36.9
+TE no (Fig.16),3,xi=90@omega=90,90,90,38.3
+TE no (Fig.16),4,omega=60@xi=90,60,90,36.9
+TE no (Fig.16),6,omega=0@xi=90,0,90,42.9
+TE no (Fig.16),7,omega=30@xi=0,30,0,42.9
+TE no (Fig.16),8,omega=60@xi=0,60,0,42.9
+TE no (Fig.16),9,omega=90@xi=0,90,0,42.9

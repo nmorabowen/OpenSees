@@ -1,0 +1,104 @@
+{
+  "name": "toyoura_K3_start11_20261110_G0x0.3333",
+  "status": "DIAGNOSTIC 2026-11-12: K3 file with elastic_map.G0 = 125 x 0.3333; nothing else changed. K3 fit (fit/K3_20261106, best start 11, cost 6245.31, 15 of 16 starts, DM04 CSL, HAR, cap smooth c1 0.05 c2 0.15, unified pi_i0). Written 2026-11-11 from ns_params_toyoura.json; only the six fitted constants and the cap flags differ.",
+  "energy": "HAR",
+  "energy_note": "HAR (Houlsby-Amorosi-Rojas 2005, n = 1/2) for TIMs/Toyoura (owner decision (a) 2026-10-02). BA06 stays the material's default and the paper mode: --energy BA06 maps the SAME DM04 targets onto the BA06 flags (needs elastic_map.p_rep / --p-rep). The deck never edits the other flags for either.",
+  "elastic_map": {
+    "targets": "DM04 Table 1 Toyoura: G = G0 p_a (2.97 - e)^2/(1 + e) (p/p_a)^n_exp, K = 2(1 + nu) G/(3(1 - 2 nu)), nu constant",
+    "G0": 41.6625,
+    "nu": 0.05,
+    "n_exp": 0.5,
+    "e_rep": null,
+    "p_rep": 100.0,
+    "note": "e_rep null = the deck's own void ratio (e_init from --dr / --kimura), so the stiffness follows e (the harness's ElasticPolicy('global') with e_rep = the BVP body's e). HAR: k = K(p_a, e)/p_a, g = G(p_a, e)/p_a, n = n_exp: G and K follow the targets at every p (exact on the axis, sheet 2.3); p_a is the -p_a flag below. BA06 (--energy BA06): p0 = -p_rep, kappa_hat = p_rep/K(p_rep, e), mu0 = G(p_rep, e) (sheet 15); p_rep 100 kPa reproduces the 2026-10-02 placeholder matching point, and with alpha0 = 0 the shear modulus does not scale with sqrt(p)."
+  },
+  "K0": null,
+  "K0_note": "null = the deck's mode default: toyoura_campaign / campaign: the campaign's nu* = 0.312885 gives K0 = nu*/(1 - nu*) = 0.4554 (ref_campaign/footing_ab.py:111-112, 'Jaky, 33 deg'); Kimura mode (--sand toyoura): 0.5 (Loukidis & Salgado 2011). The prescribed K0 field is the end state of the campaign's elastic nu* stage in a laterally confined column (K0 = nu*/(1 - nu*) exactly); --k0 or a number here overrides.",
+  "e_init": null,
+  "e_init_note": "null = take the deck's own void ratio (e = e_max - Dr (e_max - e_min), e_max 0.977, e_min 0.597, ladder deck TYR_EMAX/TYR_EMIN; --dr sets Dr; --kimura V85.6|V75.1|V64.6 sets Dr, gamma and B from tests_meta.csv). v0 = 1 + e. A number here overrides.",
+  "pmin": null,
+  "pmin_note": "null = the kernel's default p_min = 5e-3 p_ref (p_ref = p_a under HAR: 0.505 kPa at 101; |p0| under BA06: 0.5 kPa at 100). --pmin <kPa> overrides, 0 switches the floor off (sheet 9.7). The deck passes -pmin through and counts floor events from the material responses 'floor'/'floorInit' when the build has them.",
+  "material_flags": [
+    [
+      "-M",
+      1.25
+    ],
+    [
+      "-N",
+      0.4686136860640983
+    ],
+    [
+      "-N_bar",
+      0.16034970350694513
+    ],
+    [
+      "-rho",
+      0.5828981510111576
+    ],
+    [
+      "-rho_bar",
+      0.7213710496292179
+    ],
+    [
+      "-chi",
+      -2.8923322243122183
+    ],
+    [
+      "-h",
+      308.3223484879116
+    ],
+    [
+      "-csl",
+      "fork"
+    ],
+    [
+      "-e0",
+      0.934
+    ],
+    [
+      "-lambda_c",
+      0.019
+    ],
+    [
+      "-xi",
+      0.7
+    ],
+    [
+      "-p_a",
+      101.0
+    ],
+    [
+      "-cap",
+      "smooth"
+    ],
+    [
+      "-c1",
+      0.05
+    ],
+    [
+      "-c2",
+      0.15
+    ]
+  ],
+  "material_flags_notes": {
+    "all": "M, CSL and p_a as in ns_params_toyoura.json; N, N_bar, rho, rho_bar, chi, h = K3 best theta; cap = the K3 Setup"
+  },
+  "cap_note": "cap smooth c1 0.05 c2 0.15, the calibration Setup of K3",
+  "pi0": {
+    "mode": "unified",
+    "margin": 0.02,
+    "ratio": null,
+    "note": "unified (default): the yield surface through (p_init, max(eta_init, c2 M)), sheet 5.4 (S.53), owner decision (d), by the closed form in the deck at the K0 state (eta_init = 3(1 - K0)/(1 + 2 K0) at the compression corner; no cap -> c2 = 0 -> the surface passes THROUGH the initial stress, F = 0, for every row). A row below the p' floor (S.53 needs the floored stress) is handed to the kernel's -pi0_auto. auto: -pi0_auto for every row (cross-checked against the deck's closed form). on_surface: the 2026-10-02 rule (smallest |pi_i0| the constructor accepts x (1 + margin)); margin used by on_surface only. ratio: pi_i0 = -ratio x p."
+  },
+  "p_floor_report_kPa": [
+    0.5,
+    0.25
+  ],
+  "p_floor_note": "Deck-side census (steps.csv n_p_lt_F, first value; summary.json): Gauss points with p' below each value. Independent of the material's own floor (-pmin), whose counters are reported at checkpoints and in summary.json norsand.floor_end when the build has them.",
+  "sources": {
+    "K2": "AB06 sec.6.1 as recorded in tests/test_ladruno_norsand_element.py (_P0.._PI0) and ladrunonorsand plan 144 sec.5",
+    "DM04_Toyoura": "Dafalias & Manzari 2004 Table 1, as transcribed in Esmeralda ~/ladruno_wp152/deck_toyoura_ladder/footing_ab.py (TYR dict, lines 662-665; copy: ~/wp144/deck/ref_ladder/footing_ab.py)",
+    "geometry": "TIMs Workbench Tries/2d-model/04 -- How the Strip Is Built.md (read-only)",
+    "sheet": "Ladruno_implementation/144a_norsand_equation_sheet.md at 428aa1489 (round 3b): 2.3-2.4, 5.4 (S.53), 9.7"
+  }
+}

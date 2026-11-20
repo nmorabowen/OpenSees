@@ -1,0 +1,101 @@
+# id: lt88_fig5b_w00_hw0p25
+# kind: TC
+# sigma3_kPa: 98.0
+# e0: 0.657
+# e0_definition: e_0.3 = void ratio at sigma3' = 0.3 kgf/cm2 (29.4 kPa), the paper's density label (legend); the specimen was then consolidated to 1.0 kgf/cm2 = 98 kPa and the void ratio at the start of shear is NOT reported (lower than e_0.3 by an unknown amount)
+# source: Lam & Tatsuoka (1988) Soils and Foundations 28(1):89-106, Fig. 5(b), journal p. 94 (PDF page 6), TC-3, H/W = 0.25, omega = 0 deg
+# eps_v_convention: dilation_negative
+# eps_a_sign: 1
+# material: Toyoura sand (D50 0.16 mm, Uc 1.46, Gs 2.64, e_max 0.977, e_min 0.605), saturated, air-pluviated, prismatic specimens, lubricated rigid planes + flexible planes (mixed boundaries, Type 4 lubrication)
+# test: drained isotropically consolidated triaxial compression (TC-3), sigma3' = 98 kPa held, axial strain rate 0.25 %/min; sr = sigma1'/sigma3'
+# omega_deg: 0
+# xi_deg: n/a (TC: sigma2 = sigma3)
+# H_over_W: 0.25
+# x_conversion: paper abscissa D = eps1 - eps3 = (3 eps1 - eps_v)/2  ->  eps_a = (2 D + eps_v)/3 with eps_v(D) interpolated from this test's eps_v trace
+# uncertainty: sr +-0.04 (62 px per unit); D +-0.1 % (31 px per %), eps_v +-0.1 %, eps_a +-0.15 % after conversion; the initial rise (D < ~2 %) of sr is NOT resolved (the four curves overlap): the first row is the assumed isotropic start
+# caveat_bedding_error: strains not corrected for bedding error at the lubrication layers (text p. 94): eps_a overestimated; the relative error is larger for H/W = 0.25
+# digitisation: column-cluster family tracker on the native scan (data/_digitise/run_lt5.py); rows fill ONE of sr / eps_v
+# units: eps_a_pct [%] compression positive | sr [-] | eps_v_pct [%] dilation negative
+# caveat_H_over_W: H/W = 0.25: strong end restraint (paper Figs. 4(b), 8(b)): phi larger than for H/W 1.0-2.0; use for the omega/anisotropy effect, not as an element test
+# phi_peak_deg: 44.78
+# eps_peak_pct: 12.12
+eps_a_pct,sr,eps_v_pct
+0,1,0
+3.0001,4.6983,
+3.3002,4.7863,
+3.6002,4.8984,
+3.9002,4.9622,
+4.2002,5.0825,
+4.5002,5.1464,
+4.8002,5.1822,
+5.1002,5.2421,
+5.4003,5.29,
+5.7003,5.354,
+5.7003,,-1.8992
+6.0077,5.37,
+6.0077,,-1.977
+6.2882,5.4176,
+6.2882,,-2.1354
+6.5687,5.4333,
+6.5687,,-2.2938
+6.8438,5.4813,
+7.1189,5.497,
+7.1189,,-2.6434
+7.3885,5.5288,
+7.3885,,-2.8344
+7.6582,5.5526,
+7.6582,,-3.0254
+7.917,5.5845,
+7.917,,-3.249
+8.2189,5.6002,
+8.2189,,-3.3432
+8.4885,5.6241,
+8.4885,,-3.5346
+8.7607,5.6317,
+9.0329,5.6556,
+9.0329,,-3.9014
+9.3131,5.6713,
+9.3131,,-4.0606
+9.5987,5.679,
+9.5987,,-4.2038
+9.8789,5.711,
+9.8789,,-4.3632
+10.164,5.7187,
+10.164,,-4.5066
+10.445,5.7264,
+10.445,,-4.666
+10.741,5.726,
+10.741,,-4.7772
+10.999,5.7499,
+10.999,,-5.0016
+11.285,5.7495,
+11.285,,-5.1452
+11.56,5.7572,
+11.56,,-5.32
+11.84,5.7487,
+11.84,,-5.4812
+12.12,5.7645,
+12.12,,-5.6412
+12.4,5.756,
+12.4,,-5.8012
+12.68,5.7475,
+12.68,,-5.9614
+12.981,5.7228,
+12.981,,-6.0566
+13.239,5.7548,
+13.239,,-6.282
+13.525,5.7463,
+13.525,,-6.426
+13.81,5.7297,
+13.81,,-6.5702
+14.084,5.6968,
+14.084,,-6.747
+14.37,5.7045,
+14.37,,-6.8914
+14.649,5.6878,
+14.649,,-7.052
+14.94,5.663,
+14.94,,-7.1802
+15.279,5.6545,
+15.279,,-7.1622
+15.947,,-7.1586

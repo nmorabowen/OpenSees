@@ -37,6 +37,7 @@
 
 #include <LogStrain2D.h>
 #include <LogStrainNDMaterial.h>
+#include <LadrunoMaterialStatus.h>   // Ladruno WP-144 (G2 close): LADRUNO_MATERIAL_REFUSED
 #include <classTags.h>
 #include <ID.h>
 #include <Channel.h>
@@ -98,6 +99,7 @@ void *OPS_LogStrain2D(void)
     return 0;
   }
   delete probe;
+  ladrunoWarnStagedProviderInner("LogStrain2D", iData[0], *inner);   // Ladruno WP-144 (G2 close)
   return new LogStrain2D(iData[0], *inner, planeType);
 }
 
@@ -160,8 +162,12 @@ int LogStrain2D::setTrialF(const Matrix &F)
     return -1;
   }
 
+  // Ladruno WP-144 (G2 close): a REFUSING inner (LADRUNO_MATERIAL_REFUSED out of the composed 3D
+  // adaptor) is returned AS IS, not flattened to -1: the element tests `< 0` either way, and the
+  // sentinel stays recognisable for any host that narrows it. Other failures keep their -1.
+  int rc = 0;
   if (planeType == PlaneStrain) {
-    if (driveLifted(F, 1.0) < 0) return -1;
+    if ((rc = driveLifted(F, 1.0)) < 0) return (rc == LADRUNO_MATERIAL_REFUSED) ? rc : -1;
     lamTrial = 1.0;
     return buildOutputs(F, /*condense=*/false);
   }
@@ -176,7 +182,7 @@ int LogStrain2D::setTrialF(const Matrix &F)
   double lam = (lam_n > 0.0) ? lam_n : 1.0;
   bool converged = false;
   for (int it = 0; it <= maxit; it++) {
-    if (driveLifted(F, lam) < 0) return -1;
+    if ((rc = driveLifted(F, lam)) < 0) return (rc == LADRUNO_MATERIAL_REFUSED) ? rc : -1;
     const Vector &s = the3D->getStress();               // Cauchy σ (6): σ₃₃ = s(2)
     double r = s(2);
     double sref = 1.0;
@@ -186,7 +192,7 @@ int LogStrain2D::setTrialF(const Matrix &F)
     if (it == maxit) break;                             // no updates left to try
 
     double h = 1.0e-8 * ((fabs(lam) > 1.0) ? fabs(lam) : 1.0);
-    if (driveLifted(F, lam + h) < 0) return -1;
+    if ((rc = driveLifted(F, lam + h)) < 0) return (rc == LADRUNO_MATERIAL_REFUSED) ? rc : -1;
     double rp = the3D->getStress()(2);
     double drdl = (rp - r) / h;
     if (drdl == 0.0) {
@@ -204,7 +210,7 @@ int LogStrain2D::setTrialF(const Matrix &F)
 
   // re-evaluate at the converged λ so the cached trial state (Bᵉᵗʳ, inner τ/D) is
   // the accepted one before reading σ / tangent
-  if (driveLifted(F, lam) < 0) return -1;
+  if ((rc = driveLifted(F, lam)) < 0) return (rc == LADRUNO_MATERIAL_REFUSED) ? rc : -1;
   lamTrial = lam;
   return buildOutputs(F, /*condense=*/true);
 }
@@ -337,8 +343,13 @@ const Matrix &LogStrain2D::getInitialTangent(void)
 // =========================================================================== //
 int LogStrain2D::commitState(void)
 {
+  // Ladruno WP-144 (G2 close): the composed 3D adaptor commits FIRST and lam_n advances only if it
+  // accepted (a refusing commit leaves the thickness stretch where it was, like bᵉ_n). Same value on
+  // every non-refusing path.
+  int rc = the3D->commitState();
+  if (rc == LADRUNO_MATERIAL_REFUSED) return rc;
   lam_n = lamTrial;
-  return the3D->commitState();
+  return rc;
 }
 
 int LogStrain2D::revertToLastCommit(void)

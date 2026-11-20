@@ -1,0 +1,63 @@
+16:08:45 config rho_pinned: 4 starts, 4 workers
+16:12:41 start 2 evals 25 cost 4.465855e+02
+16:14:35 start 1 evals 25 cost 1.097974e+04
+16:17:07 start 2 evals 50 cost 1.877324e+01
+16:17:31 start 0 evals 25 cost 1.114837e+02
+16:19:05 start 0 evals 50 cost 9.272829e+00
+16:20:38 start 0 evals 75 cost 1.602772e+00
+16:20:57 start 2 evals 75 cost 1.090147e+01
+16:20:58 start 3 evals 25 cost 4.620455e+04
+16:22:06 start 0 evals 100 cost 1.921818e-01
+16:23:05 start 0 evals 125 cost 7.410481e-03
+16:24:11 start 0 evals 150 cost 1.894045e-05
+16:24:53 start 2 evals 100 cost 1.064963e+01
+16:40:33 start 3 evals 50 cost 1.635499e+04
+16:44:58 start profile x0.95 evals 25 cost 9.996192e+00
+16:45:54 start profile x0.95 evals 50 cost 7.961111e+00
+16:46:57 start profile x1.05 evals 25 cost 1.034265e+01
+16:48:09 start profile x1.05 evals 50 cost 7.860404e+00
+16:49:43 start profile x0.95 evals 25 cost 4.236206e-01
+16:49:48 start profile x1.05 evals 25 cost 8.361810e-01
+16:50:45 start profile x0.95 evals 50 cost 3.671629e-01
+16:50:48 start profile x1.05 evals 50 cost 6.367704e-01
+16:51:19 config six: 4 starts, 4 workers
+16:53:01 start 1 evals 25 cost 5.504442e+02
+16:53:59 start 3 evals 25 cost 9.035862e+00
+16:54:42 start 2 evals 25 cost 7.598760e+03
+16:55:47 start 1 evals 50 cost 3.578451e+00
+16:56:36 start 0 evals 25 cost 6.451792e+01
+16:56:49 start 2 evals 50 cost 8.827413e+02
+16:58:39 start 2 evals 75 cost 5.993927e+02
+16:59:02 start 1 evals 75 cost 9.351343e-01
+16:59:58 start 2 evals 100 cost 5.770023e+02
+17:00:45 start 1 evals 100 cost 3.653849e-01
+17:00:47 start 3 evals 50 cost 3.994551e+04
+17:01:38 start 2 evals 125 cost 2.747795e+02
+17:01:42 start 1 evals 125 cost 2.785627e-02
+17:02:40 start 1 evals 150 cost 8.209659e-04
+17:03:45 start 1 evals 175 cost 1.791677e-05
+17:04:28 start 2 evals 150 cost 9.177529e+00
+17:04:51 start 1 evals 200 cost 4.513629e-03
+17:05:24 start 0 evals 50 cost 5.088189e+01
+17:08:21 start 2 evals 175 cost 3.320061e+00
+17:08:57 start 3 evals 75 cost 7.592388e+00
+17:10:58 start 2 evals 200 cost 2.251458e-01
+17:11:59 start 2 evals 225 cost 9.364008e-03
+17:12:59 start 2 evals 250 cost 9.062434e-04
+17:14:06 start 2 evals 275 cost 3.087820e-03
+17:14:55 start 0 evals 75 cost 4.166624e+01
+17:17:12 start 3 evals 100 cost 7.584671e+00
+17:18:00 start 0 evals 100 cost 6.467114e+04
+17:22:13 start 0 evals 125 cost 3.987669e+01
+17:25:09 start 3 evals 125 cost 3.994579e+04
+17:27:05 start 0 evals 150 cost 3.976956e+01
+17:29:30 start profile x0.95 evals 25 cost 8.636711e+00
+17:30:49 start profile x1.05 evals 25 cost 8.028142e+00
+17:31:13 start profile x0.95 evals 50 cost 7.447351e+00
+17:32:19 start profile x1.05 evals 50 cost 6.290439e+00
+17:33:43 start profile x1.05 evals 75 cost 5.553973e+00
+17:35:03 start profile x1.05 evals 25 cost 4.962562e-01
+17:35:03 start profile x0.95 evals 25 cost 8.091934e-01
+17:36:04 start profile x1.05 evals 50 cost 3.333141e-01
+17:36:07 start profile x0.95 evals 50 cost 3.574847e-01
+17:37:04 start profile x1.05 evals 75 cost 3.264352e-01

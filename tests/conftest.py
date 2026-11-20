@@ -60,7 +60,14 @@ def pytest_collection_modifyitems(config, items):
         # LS-DYNA / etc. guards itself with pytest.importorskip — we only gate on
         # gmsh here so a gmsh-only case (e.g. the notched-bend crack-band study)
         # runs on a box that has gmsh but not the apeGmsh wrapper.
-        if "zone_b" in zones and not _has("gmsh"):
+        #
+        # EXEMPTION (`@pytest.mark.no_gmsh`, WP-144 G2): a zone_b case that never meshes
+        # (oracle / numpy / scipy work, e.g. Ladruno_files/testbed/norsand_oracle/g2) opts out
+        # of this gate.  This hook is SESSION-WIDE, not directory-scoped: before the marker it
+        # skipped every zone_b item of the session, wherever it lived, so a gmsh-free zone_b
+        # folder collected from the repo root skipped silently.  Every other zone_b test is
+        # unchanged (still gated).
+        if "zone_b" in zones and not _has("gmsh") and not item.get_closest_marker("no_gmsh"):
             item.add_marker(
                 pytest.mark.skip(reason="zone_b meshing dep (gmsh) not installed")
             )

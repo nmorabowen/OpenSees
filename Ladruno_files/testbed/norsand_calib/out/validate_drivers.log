@@ -1,0 +1,36 @@
+PS: O1 ok (1.2 s); O2 n=[25, 50, 100, 200, 400] status {'ok'}
+    e_sig: 1.451e-02  7.501e-03  3.859e-03  1.950e-03  9.799e-04   order 0.9720217028256609
+    e_pi: 2.007e-02  1.038e-02  5.345e-03  2.702e-03  1.358e-03   order 0.9714642667097426
+    e_eps: 9.682e-03  5.204e-03  2.690e-03  1.369e-03  6.898e-04   order 0.9549291375999592
+    O2 seconds: 0.74 0.98 0.60 0.84 1.41   -> PASS
+TC: O1 ok (0.9 s); O2 n=[25, 50, 100, 200, 400] status {'ok'}
+    e_sig: 4.508e-03  2.294e-03  1.158e-03  5.823e-04  2.917e-04   order 0.987793857749906
+    e_pi: 7.414e-03  3.776e-03  1.907e-03  9.590e-04  4.805e-04   order 0.9872619427309336
+    e_eps: 4.046e-03  2.216e-03  1.160e-03  5.943e-04  3.001e-04   order 0.9404438642793757
+    O2 seconds: 0.47 0.37 0.46 0.73 1.24   -> PASS
+TE: O1 ok (0.8 s); O2 n=[25, 50, 100, 200, 400] status {'ok'}
+    e_sig: 1.320e-03  6.627e-04  3.324e-04  1.668e-04  8.346e-05   order 0.9956756093880088
+    e_pi: 4.531e-03  2.280e-03  1.145e-03  5.750e-04  2.878e-04   order 0.9941670842097823
+    e_eps: 1.105e-03  5.652e-04  2.868e-04  1.454e-04  7.296e-05   order 0.9800204920822957
+    O2 seconds: 0.12 0.16 0.25 0.44 0.83   -> PASS
+PSU: O1 ok (1.1 s); O2 n=[25, 50, 100, 200, 400] status {'ok'}
+    e_sig: 5.086e-02  2.524e-02  1.260e-02  6.258e-03  3.118e-03   order 1.0067046719728459
+    e_pi: 5.154e-02  2.558e-02  1.277e-02  6.346e-03  3.162e-03   order 1.0064761224282492
+    O2 seconds: 0.14 0.16 0.21 0.29 0.47   -> PASS
+TCU: O1 ok (1.0 s); O2 n=[25, 50, 100, 200, 400] status {'ok'}
+    e_sig: 4.805e-02  2.394e-02  1.204e-02  6.006e-03  3.007e-03   order 0.9991504707949389
+    e_pi: 4.887e-02  2.434e-02  1.223e-02  6.103e-03  3.055e-03   order 0.9994554127754861
+    O2 seconds: 0.10 0.11 0.15 0.24 0.42   -> PASS
+PSU K1.7 at |eps_a| 200 %: p -231.9288 vs p_cs -231.9303 (rel 6.76e-06); zeta q/|p| 1.25000 vs M 1.25 (rel 8.70e-08); theta 51.45 deg; ok, 2.4 s
+TCU K1.7 at |eps_a| 200 %: p -231.9083 vs p_cs -231.9303 (rel 9.52e-05); zeta q/|p| 1.25000 vs M 1.25 (rel 1.01e-06); theta 60.00 deg; ok, 1.6 s
+on_surface start PS: ok after 100 of 100 increments; O2 substepped at increments [0, 1, 2]
+on_surface start TC: ok after 100 of 100 increments; O2 substepped at increments [0]
+on_surface start TE: ok after 100 of 100 increments; O2 substepped at increments [0]
+on_surface start PSU: ok after 100 of 100 increments; O2 substepped at increments []
+on_surface start TCU: ok after 100 of 100 increments; O2 substepped at increments []
+ramp_end start PS: ok after 100 of 100 increments; O2 substepped at increments [0, 1]
+ramp_end start TC: ok after 100 of 100 increments; O2 substepped at increments [0, 1]
+ramp_end start TE: ok after 100 of 100 increments; O2 substepped at increments []
+ramp_end start PSU: ok after 100 of 100 increments; O2 substepped at increments []
+ramp_end start TCU: ok after 100 of 100 increments; O2 substepped at increments []
+DRIVERS PASS

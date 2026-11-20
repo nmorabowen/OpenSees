@@ -1,0 +1,32 @@
+constraint map: 2000 random u per configuration decode to admissible sets accepted by O2 validate()
+[noisy] generator step 0.025 % vs model step 0.05 %, noise seed 1; discretisation floor |r(truth)| (noise-free set, other step) 2.125 over 188 residuals (rms 0.155, max 0.341) in sigma units
+synthetic written: ['/mnt/deadmanschest/nmorabowen/wp144/repo/Ladruno_files/testbed/norsand_calib/out/synthetic/noisy_syn_PS_s49_e0716.csv', '/mnt/deadmanschest/nmorabowen/wp144/repo/Ladruno_files/testbed/norsand_calib/out/synthetic/noisy_syn_PS_s4.9_e0714.csv']; n_res 188; |r(truth)| 1.098e+01; one residual eval 2.51 s
+[six] 4 starts, 1646 s wall; best cost 5.871e+01; recovered by 2/4 starts; max rel err 1.06e-01 -> PASS
+    noisy gate: Mahalanobis^2 16.33 vs chi2(0.999, 6) 22.46; chi2 fit 117.4 (expected 135.8), at truth 120.6 (expected 141.8); cost not worse than truth: True
+    chi      true -3  fit -2.9680992  rel 1.06e-02  z -0.88 (sd ln 0.012)
+    h        true  150  fit  147.79887  rel 1.47e-02  z -0.26 (sd ln 0.057)
+    N        true  0.3  fit  0.33179563  rel 1.06e-01  z +0.52 (sd ln 0.195)
+    N_bar    true  0.2  fit  0.20592356  rel 2.96e-02  z +0.20 (sd ln 0.143)
+    rho_bar  true  0.75  fit  0.73824597  rel 1.57e-02  z -0.39 (sd ln 0.040)
+    rho      true  0.712  fit  0.72620999  rel 2.00e-02  z +0.77 (sd ln 0.026)
+    start  2: cost 5.871e+01  max rel err 1.06e-01  nfev   38  926 s  status 2
+    start  3: cost 5.871e+01  max rel err 1.06e-01  nfev   37  1098 s  status 2
+    start  1: cost 6.048e+01  max rel err 2.86e-01  nfev   29  531 s  status 3
+    start  0: cost 6.127e+01  max rel err 2.02e-01  nfev   44  1646 s  status 3
+    Jacobian (d r / d ln theta) singular values [933.69753185 327.53781364  58.37914242  18.3441482    6.87951423
+   5.53972717]; condition 1.685e+02 (26 s)
+    weakest direction {'chi': 0.03461725274983796, 'h': 0.3255444643800065, 'N': -0.728338144654691, 'N_bar': 0.5991902001987675, 'rho_bar': 0.04171155336625017, 'rho': 0.039714542249485674}
+[rho_pinned] 4 starts, 1341 s wall; best cost 5.890e+01; recovered by 1/4 starts; max rel err 9.96e-02 -> PASS
+    noisy gate: Mahalanobis^2 6.23 vs chi2(0.999, 5) 20.52; chi2 fit 117.8 (expected 136.8), at truth 120.6 (expected 141.8); cost not worse than truth: True
+    chi      true -3  fit -2.9851218  rel 4.96e-03  z -0.47 (sd ln 0.011)
+    h        true  150  fit  146.60165  rel 2.27e-02  z -0.42 (sd ln 0.055)
+    N        true  0.3  fit  0.32988962  rel 9.96e-02  z +0.49 (sd ln 0.195)
+    N_bar    true  0.2  fit  0.19707324  rel 1.46e-02  z -0.12 (sd ln 0.120)
+    rho_bar  true  0.75  fit  0.75429728  rel 5.73e-03  z +0.22 (sd ln 0.027)
+    start  2: cost 5.890e+01  max rel err 9.96e-02  nfev   31  562 s  status 2
+    start  0: cost 6.114e+01  max rel err 3.11e-01  nfev   42  1341 s  status 3
+    start  1: cost 1.478e+04  max rel err 1.33e+00  nfev   19  930 s  status 3
+    start  3: cost 2.003e+04  max rel err 1.13e+00  nfev   24  1184 s  status 3
+    Jacobian (d r / d ln theta) singular values [646.6324423  238.90294814  53.60274643   7.54369278   5.64336669]; condition 1.146e+02 (24 s)
+    weakest direction {'chi': 0.04381343987034389, 'h': 0.30557800873462954, 'N': -0.8482363545506418, 'N_bar': 0.42285158792612043, 'rho_bar': 0.07996301939961069}
+SMOKE[noisy] PASS  total wall 3335 s

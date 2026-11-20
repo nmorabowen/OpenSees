@@ -116,6 +116,9 @@ class StagedStrainNDMaterial : public NDMaterial
   StagedStrainNDMaterial();
 
   bool isValid(void) const { return theMaterial != 0; }   // construction succeeded?
+  // Ladruno WP-144 (G2 close): read-only view of the wrapped material, for the LogStrain factories'
+  // construction-time check (is a LadrunoElasticStrainProvider hidden behind this wrapper?).
+  const NDMaterial *getInner(void) const { return theMaterial; }
   void setMaxStrain(double e) { maxStrain = e; }          // Ladruno (C3b): -maxStrain
   ~StagedStrainNDMaterial();
 
