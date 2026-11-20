@@ -184,6 +184,8 @@ static const OptSpec kLadrunoRCOptions[] = {
   {"-autoRegularization", 1, "PR-277"},
   // Ladruno C2 (#877): cracked Poisson ratio and the MCFT strut coefficient
   {"-betaC", 1, "PR-877"}, {"-crackedNu", 1, "PR-877"},
+  // Ladruno WP-241: spatial add-on plane (beam fibres) and the damage crack gate
+  {"-addonPlane", 1, "WP-241"}, {"-crackGate", 1, "WP-241"},
 };
 
 // ---------------------------------------------------------------------------

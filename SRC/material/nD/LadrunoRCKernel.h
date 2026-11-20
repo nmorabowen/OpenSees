@@ -570,7 +570,75 @@ struct Params {
     double betaC = 170.0;          // MCFT softening coefficient C in beta = 1/(0.8 + C eps1) (-betaC)
     double crackedNu = -1.0;       // <0 => off. >=0: Poisson ratio of C0 once eps1 >= crackStrain
                                    // (irreversible latch RCHist::nuCracked) (-crackedNu)
+    // --- Ladruno WP-241 (defaults = pre-WP-241 behaviour, byte-identical) ---
+    // addonPlane: where the MCFT add-ons (beta, tension stiffening, cracked-nu latch) read the
+    //   principal tensile strain eps1 and its direction p1.
+    //   0 membrane (default): the x-y block {exx, eyy, gxy}, 2D p1 (shell / plane views).
+    //   1 spatial: the full 3x3 strain tensor, 3D p1 (frame-covariant; for beam fibres, where
+    //     the shear sits in gxy AND gxz). The fixed-crack interlock is x-y only and is refused
+    //     with spatial (parser); the kernel skips it defensively.
+    int    addonPlane = 0;         // -addonPlane {membrane|spatial}
+    // crackGate: what opens the cracked-nu latch and the tension-stiffening floor.
+    //   0 strain (default): eps1 >= crackStrain. eps1 is the TOTAL principal strain, so Poisson
+    //     expansion under compression opens it with no crack (WP-241 probe: at ~0.42 fc in
+    //     uniaxial compression of a plane-stress point).
+    //   1 damage: tensile damage has started, i.e. the tensile threshold xt is past the peak of
+    //     the tension backbone (latch: committed xt; floor: trial xt), and for the floor also
+    //     eps1 >= crackStrain. The Lubliner tensile measure is zero without a tensile principal
+    //     stress, so compression alone never opens it.
+    int    crackGate = 0;          // -crackGate {strain|damage}
 };
+
+// Strain abscissa of the tension backbone's maximum stress (the crack-onset threshold used by
+// crackGate = damage). The post-peak regularization stretches only the softening branch, so
+// this does not move under -autoRegularization.
+inline double backbonePeakAbscissa(const Backbone& b)
+{
+    double ymax = -1.0e300, xp = 0.0;
+    for (int i = 0; i < b.n; ++i) if (b.y[i] > ymax) { ymax = b.y[i]; xp = b.x[i]; }
+    return xp;
+}
+
+// Ladruno WP-241: principal tensile strain of the FULL 3x3 strain tensor (engineering shear in,
+// tensor shear gamma/2 used). Returns e1 = <lambda_max> and three Voigt 6-vectors over
+// {00,11,22,01,12,02}, built from the m eigenvectors v_k that share lambda_max (multiplicity
+// m = 1, 2 or 3, relative tolerance 1e-9 of the strain scale, as eps1FromMembrane):
+//   P1[]   = d e1 / d eps (engineering dual) = (1/m) sum_k (vx^2, vy^2, vz^2, vx vy, vy vz, vx vz)
+//   inj[]  = TS injection weights            =       sum_k (vx^2, vy^2, vz^2, vx vy, vy vz, vx vz)
+//   meas[] = TS measured quantity weights    = (1/m) sum_k (vx^2, vy^2, vz^2, 2vx vy, 2vy vz, 2vx vz)
+// so meas . inj = 1 for every m (each of the m normals is pinned to sigma_ts). For an x-y state
+// whose largest principal lies in x-y these equal the membrane vectors exactly: m = 1 gives
+// (a, b, ab) / (a, b, 2ab); the in-plane equibiaxial m = 2 gives (1,1,0) / (0.5,0.5,0).
+inline double eps1Spatial(const double eps6[6], double P1[6], double inj[6], double meas[6], int* mult)
+{
+    double A[3][3] = {
+        { eps6[0],       0.5 * eps6[3], 0.5 * eps6[5] },
+        { 0.5 * eps6[3], eps6[1],       0.5 * eps6[4] },
+        { 0.5 * eps6[5], 0.5 * eps6[4], eps6[2]       }
+    };
+    double S[3], V[3][3];
+    eig3x3sym(A, S, V);
+    double scale = 0.0;
+    for (int a = 0; a < 6; ++a) scale += fabs(eps6[a]);
+    scale += 1.0e-30;
+    int m = 1;
+    if (S[0] - S[1] < 1.0e-9 * scale) m = 2;
+    if (S[0] - S[2] < 1.0e-9 * scale) m = 3;
+    for (int a = 0; a < 6; ++a) { P1[a] = 0.0; inj[a] = 0.0; meas[a] = 0.0; }
+    for (int k = 0; k < m; ++k) {
+        double vx = V[0][k], vy = V[1][k], vz = V[2][k];
+        double w[6] = { vx*vx, vy*vy, vz*vz, vx*vy, vy*vz, vx*vz };
+        for (int a = 0; a < 6; ++a) {
+            inj[a]  += w[a];
+            P1[a]   += w[a] / m;
+            meas[a] += (a < 3 ? 1.0 : 2.0) * w[a] / m;
+        }
+    }
+    if (mult) *mult = m;
+    double lam = S[0];
+    if (m > 1) { lam = 0.0; for (int k = 0; k < m; ++k) lam += S[k]; lam /= m; }
+    return macauley(lam);
+}
 
 inline void setupParams(Params& P)    // call after ht/hc are filled
 {
@@ -667,11 +735,24 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // stress (sig2_eff ~ eps2 + nu eps1). The effective stress is incremental, so the switch is
     // stress-continuous; the step that cracks uses the cracked operator for its whole increment.
     // Off (crackedNu < 0, the default) => C0(E, nu) exactly as before.
+    // Ladruno WP-241: the add-on principal strain, membrane (default) or spatial, computed once.
+    const bool spatial = (P.addonPlane == 1);
+    double sp_P1[6], sp_inj[6], sp_meas[6]; int sp_mult = 1;
+    const double e1_sp = spatial ? eps1Spatial(eps6, sp_P1, sp_inj, sp_meas, &sp_mult) : 0.0;
+    // crackGate = damage: crack onset = tensile threshold past the backbone peak
+    const double xtPeak = (P.crackGate == 1) ? backbonePeakAbscissa(P.ht) : 0.0;
     double nuCr = in.nuCracked;
     if (P.crackedNu >= 0.0 && nuCr < 0.5) {
-        double p1c[2]; int dgc = 0;
-        if (eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1c, &dgc) >= P.crackStrain && P.crackStrain > 0.0)
-            nuCr = 1.0;
+        if (P.crackGate == 1) {
+            // WP-241: the COMMITTED threshold (the predictor needs nu before this step's
+            // damage is known), so the latch lags the crack by one step; stress-continuous.
+            if (in.xt > xtPeak) nuCr = 1.0;
+        } else {
+            double p1c[2]; int dgc = 0;
+            double e1c = spatial ? e1_sp : eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1c, &dgc);
+            if (e1c >= P.crackStrain && P.crackStrain > 0.0)
+                nuCr = 1.0;
+        }
     }
     const double nuAct = (P.crackedNu >= 0.0 && nuCr >= 0.5) ? P.crackedNu : P.nu;
     double C0[6][6]; elasticTangent(E, nuAct, C0);
@@ -688,8 +769,8 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     decompose(seff, P.cdf, D);
 
     // MCFT beta from in-plane membrane principal tensile strain (gxy = eps6[3] engineering)
-    double p1[2]; int degen = 0;
-    double e1 = eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1, &degen);
+    double p1[2] = { 1.0, 0.0 }; int degen = 0;
+    double e1 = spatial ? e1_sp : eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1, &degen);
     // IMPL-EX: freeze beta over the step from the extrapolated (committed) eps1, so the
     // returned tangent carries no beta cross-term (constant secant). eps1 itself is a
     // pure function of strain, so this is the only path-frozen quantity here.
@@ -789,26 +870,33 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     //   inject g=sigma_ts-q to BOTH normals -> ts_inj=(1,1,0), ts_meas=(0.5,0.5,0),
     //   ts_meas.ts_inj = 1 (each in-plane normal reaches sigma_ts; the rank-1 (0.5,0.5,0)
     //   reuse would only reach the half-way point -- self-consistency coeff 0.5).
+    // Ladruno WP-241: the vectors live on an index list -- membrane {0,1,3} (the original
+    // arithmetic, term for term), spatial all six (eps1Spatial's multiplicity-aware vectors).
     bool   ts_active = false;
-    double ts_inj[3] = {0,0,0}, ts_meas[3] = {0,0,0}, ts_P1eps[6] = {0,0,0,0,0,0}, ts_dsig = 0.0;
-    if (P.tensStiffMode != 0 && e1_ts >= P.crackStrain) {
-        if (degen) {
+    double ts_inj[6] = {0,0,0,0,0,0}, ts_meas[6] = {0,0,0,0,0,0}, ts_P1eps[6] = {0,0,0,0,0,0}, ts_dsig = 0.0;
+    const int ts_idx_m[3] = { 0, 1, 3 }, ts_idx_s[6] = { 0, 1, 2, 3, 4, 5 };
+    const int* ts_idx = spatial ? ts_idx_s : ts_idx_m;
+    const int  ts_n   = spatial ? 6 : 3;
+    const bool ts_gate = (P.crackGate == 1) ? (new_xt > xtPeak) : true;   // WP-241 crackGate
+    if (P.tensStiffMode != 0 && e1_ts >= P.crackStrain && ts_gate) {
+        if (spatial) {
+            for (int k = 0; k < 6; ++k) { ts_inj[k] = sp_inj[k]; ts_meas[k] = sp_meas[k]; ts_P1eps[k] = sp_P1[k]; }
+        } else if (degen) {
             ts_inj[0] = 1.0;  ts_inj[1] = 1.0;
             ts_meas[0] = 0.5; ts_meas[1] = 0.5;
             ts_P1eps[0] = 0.5; ts_P1eps[1] = 0.5;         // de1/d(exx)=de1/d(eyy)=0.5 (mean)
         } else {
             double a = p1[0]*p1[0], b = p1[1]*p1[1], ab = p1[0]*p1[1];
-            ts_inj[0] = a;  ts_inj[1] = b;  ts_inj[2] = ab;
-            ts_meas[0] = a; ts_meas[1] = b; ts_meas[2] = 2.0*ab;
+            ts_inj[0] = a;  ts_inj[1] = b;  ts_inj[3] = ab;
+            ts_meas[0] = a; ts_meas[1] = b; ts_meas[3] = 2.0*ab;
             ts_P1eps[0] = a; ts_P1eps[1] = b; ts_P1eps[3] = ab;   // de1/deps (membrane)
         }
-        double q      = ts_meas[0]*sig6[0] + ts_meas[1]*sig6[1] + ts_meas[2]*sig6[3];
+        double q = 0.0;
+        for (int k = 0; k < ts_n; ++k) q += ts_meas[ts_idx[k]] * sig6[ts_idx[k]];
         double sig_ts = tensStiff(e1_ts, P.tensStiffMode, P.ftPeak, P.tensStiffC, P.tensStiffAlpha, &ts_dsig);
         double delta  = sig_ts - q;
         if (delta > 0.0) {
-            sig6[0] += delta * ts_inj[0];
-            sig6[1] += delta * ts_inj[1];
-            sig6[3] += delta * ts_inj[2];
+            for (int k = 0; k < ts_n; ++k) sig6[ts_idx[k]] += delta * ts_inj[ts_idx[k]];
             ts_active = true;
         }
     }
@@ -843,7 +931,9 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // shearRetMode 3 (rots) = rotating-coaxial: skip the fixed-crack shear entirely, so the
     // membrane shear stays smeared/spectral (no capture, no clip, no friction). il_active
     // stays false => the tangent carries no crack cross-term either.
-    if (P.interlockOn && P.shearRetMode != 3) {
+    // WP-241: the fixed crack is an x-y object (2D normal, scalar slip); the spatial add-on
+    // plane refuses -interlock in the parser and the kernel skips it here as a backstop.
+    if (P.interlockOn && P.shearRetMode != 3 && !spatial) {
         if (cracked < 0.5 && e1 >= P.crackStrain && !degen) {   // freeze crack normal
             cracked = 1.0; crk_c = p1[0]; crk_s = p1[1];
         }
@@ -977,7 +1067,8 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
                 double dbeta = dBetaCompr(e1, P.betaFloor, P.betaC);
                 if (dbeta != 0.0) {
                     double P1[6] = { 0,0,0,0,0,0 };
-                    if (degen) { P1[0] = 0.5; P1[1] = 0.5; }   // equibiaxial blend
+                    if (spatial) { for (int k = 0; k < 6; ++k) P1[k] = sp_P1[k]; }   // WP-241: 3D dual
+                    else if (degen) { P1[0] = 0.5; P1[1] = 0.5; }   // equibiaxial blend
                     else { P1[0] = p1[0]*p1[0]; P1[1] = p1[1]*p1[1]; P1[3] = p1[0]*p1[1]; }
                     double coef = (1.0 - dc_bar) * dbeta;
                     for (int a = 0; a < 6; ++a)
@@ -998,16 +1089,15 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
             // => constant secant). Placed before the interlock tangent so the interlock cross-term
             // reads the floored Dtan (consistent with the floored stress order).
             if (P.tangentMode == 0 && ts_active && !implexExplicit) {
-                const int vidx[3] = { 0, 1, 3 };
                 double row[6];                                              // d(q)/deps, all cols
                 for (int c = 0; c < 6; ++c) {
                     double acc = 0.0;
-                    for (int k = 0; k < 3; ++k) acc += ts_meas[k] * Dtan6[vidx[k]][c];
+                    for (int k = 0; k < ts_n; ++k) acc += ts_meas[ts_idx[k]] * Dtan6[ts_idx[k]][c];
                     row[c] = acc;
                 }
-                for (int a = 0; a < 3; ++a)
+                for (int a = 0; a < ts_n; ++a)
                     for (int c = 0; c < 6; ++c)
-                        Dtan6[vidx[a]][c] += ts_inj[a] * (ts_dsig * ts_P1eps[c] - row[c]);
+                        Dtan6[ts_idx[a]][c] += ts_inj[ts_idx[a]] * (ts_dsig * ts_P1eps[c] - row[c]);
             }
             // Phase-2a interlock CONSISTENT tangent. The stress clips the crack-shear
             // tau_sm = m_sigma.sig_ip to +/- v_ci,max via sig_ip += dtau*m_eps. Below the
@@ -1029,33 +1119,41 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
                 // sensitivity m_eps (x) (m_sigma.Dtan_ip), then add the friction stiffness
                 // G*m_eps (x) m_eps (full when sliding-elastic; floored to betaSrMin*G when
                 // capped/plastic for conditioning). v_ci,max(w) coupling omitted (2nd order).
+                // Ladruno WP-241: the smeared crack shear depends on ALL six strains (eps_zz and
+                // the transverse shears enter the in-plane stresses through C0 and the spectral
+                // spine), so its removal spans all six columns -- the same fix the TS pinning
+                // tangent got (quirk LEGACY-tension-stiffening-pinning-tangent-must-span). With
+                // columns {0,1,3} only, a condensed view (eps_zz Newton in PlaneStress /
+                // PlateFiber) kept the pinned-away eps_zz sensitivity. The friction stiffness
+                // G m_eps (x) m_eps is a function of the in-plane slip only (columns {0,1,3}).
                 double c = crk_c, s = crk_s, c2 = c*c, s2 = s*s, cs = c*s;
                 const int vidx[3] = { 0, 1, 3 };
                 double msig[3] = { -cs, cs, c2 - s2 };
-                double row[3];
-                for (int j = 0; j < 3; ++j) {
+                double row[6];
+                for (int j = 0; j < 6; ++j) {
                     double acc = 0.0;
-                    for (int k = 0; k < 3; ++k) acc += msig[k] * Dtan6[vidx[k]][vidx[j]];
+                    for (int k = 0; k < 3; ++k) acc += msig[k] * Dtan6[vidx[k]][j];
                     row[j] = acc;
                 }
                 double gcoef = (il_capped ? P.betaSrMin : 1.0) * il_Gint;
+                double mfull[6] = { il_m[0], il_m[1], 0.0, il_m[2], 0.0, 0.0 };
                 for (int a = 0; a < 3; ++a)
-                    for (int c3 = 0; c3 < 3; ++c3)
-                        Dtan6[vidx[a]][vidx[c3]] += -il_m[a] * row[c3] + gcoef * il_m[a] * il_m[c3];
+                    for (int j = 0; j < 6; ++j)
+                        Dtan6[vidx[a]][j] += -il_m[a] * row[j] + gcoef * il_m[a] * mfull[j];
             } else if (il_capped) {
                 double c = crk_c, s = crk_s, c2 = c*c, s2 = s*s, cs = c*s;
                 const int vidx[3] = { 0, 1, 3 };
                 double msig[3] = { -cs, cs, c2 - s2 };       // m_sigma (tensor shear projector)
-                double row[3];
-                for (int j = 0; j < 3; ++j) {
+                double row[6];                                // WP-241: all six columns (above)
+                for (int j = 0; j < 6; ++j) {
                     double acc = 0.0;
-                    for (int k = 0; k < 3; ++k) acc += msig[k] * Dtan6[vidx[k]][vidx[j]];
+                    for (int k = 0; k < 3; ++k) acc += msig[k] * Dtan6[vidx[k]][j];
                     row[j] = acc;
                 }
                 double fac = 1.0 - P.betaSrMin;
                 for (int a = 0; a < 3; ++a)
-                    for (int c3 = 0; c3 < 3; ++c3)
-                        Dtan6[vidx[a]][vidx[c3]] -= fac * il_m[a] * row[c3];
+                    for (int j = 0; j < 6; ++j)
+                        Dtan6[vidx[a]][j] -= fac * il_m[a] * row[j];
             }
         }
     }

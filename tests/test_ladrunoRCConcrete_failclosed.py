@@ -64,6 +64,9 @@ ACCEPTED = {
     "-tensStiff": ["vc"], "-tensStiffC": [500.0], "-tensStiffAlpha": [1.0],
     "-autoRegularization": [50.0],
     "-betaC": [170.0], "-crackedNu": [0.2],       # Ladruno C2, fork PR #877
+    # Ladruno WP-241. membrane here: the all-together line also carries -interlock, which
+    # -addonPlane spatial refuses (test_ladrunoRCConcrete_spatial.py::test_parser_refuses).
+    "-addonPlane": ["membrane"], "-crackGate": ["damage"],
 }
 
 REFUSED = {

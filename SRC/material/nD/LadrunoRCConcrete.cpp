@@ -48,6 +48,7 @@ using namespace ladruno_rc_kernel;
 //             <-Kc $Kc> <-beta> <-betaFloor $f> <-lublinerReduced>
 //             <-tensStiff {vc|cm}> <-tensStiffC $c> <-tensStiffAlpha $a>  (Phase 3; vc c default 200, C2)
 //             <-betaC $C> <-crackedNu $nu>                                 (Ladruno C2)
+//             <-addonPlane {membrane|spatial}> <-crackGate {strain|damage}>  (Ladruno WP-241)
 //             <-rho $rho> <-secant | -numericalTangent>
 // ===========================================================================
 void* OPS_LadrunoRCConcrete(void)
@@ -93,6 +94,8 @@ void* OPS_LadrunoRCConcrete(void)
   bool   tensStiffCGiven = false;
   // Ladruno (C2): MCFT softening coefficient + cracked-state Poisson ratio (defaults = pre-C2)
   double betaC = 170.0, crackedNu = -1.0;
+  // Ladruno WP-241: add-on plane (0 membrane | 1 spatial) and crack gate (-1 = view default | 0 strain | 1 damage)
+  int addonPlane = 0, crackGate = -1;
   // Phase 3b: crack-band (Bazant-Oh) regularization (default off => baseline-identical)
   bool   autoReg = false;
   double lchRef = 1.0;
@@ -172,6 +175,20 @@ void* OPS_LadrunoRCConcrete(void)
     else if (strcmp(opt, "-betaC") == 0)          { int nd = 1; if (OPS_GetDoubleInput(&nd, &betaC) < 0)          { opserr << "LadrunoRCConcrete: -betaC needs a value.\n";          return 0; } }
     // Ladruno (C2): -crackedNu nu  (Poisson ratio once eps1 >= eps_cr; default off = elastic nu kept)
     else if (strcmp(opt, "-crackedNu") == 0)      { int nd = 1; if (OPS_GetDoubleInput(&nd, &crackedNu) < 0)      { opserr << "LadrunoRCConcrete: -crackedNu needs a value.\n";      return 0; } }
+    // Ladruno WP-241: -addonPlane {membrane|spatial}  (where beta / TS / cracked-nu read eps1)
+    else if (strcmp(opt, "-addonPlane") == 0) {
+      const char* m = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetString() : 0;
+      if      (m && strcmp(m, "membrane") == 0) addonPlane = 0;
+      else if (m && strcmp(m, "spatial")  == 0) addonPlane = 1;
+      else { opserr << "LadrunoRCConcrete: -addonPlane needs {membrane|spatial}.\n"; return 0; }
+    }
+    // Ladruno WP-241: -crackGate {strain|damage}  (what opens the cracked-nu latch and the TS floor)
+    else if (strcmp(opt, "-crackGate") == 0) {
+      const char* m = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetString() : 0;
+      if      (m && strcmp(m, "strain") == 0) crackGate = 0;
+      else if (m && strcmp(m, "damage") == 0) crackGate = 1;
+      else { opserr << "LadrunoRCConcrete: -crackGate needs {strain|damage}.\n"; return 0; }
+    }
     else if (strcmp(opt, "-tensStiffAlpha") == 0) { int nd = 1; if (OPS_GetDoubleInput(&nd, &tensStiffAlpha) < 0) { opserr << "LadrunoRCConcrete: -tensStiffAlpha needs a value.\n"; return 0; } }
     // Phase 3b: -autoRegularization $lch_ref  (crack-band Bazant-Oh regularization).
     else if (strcmp(opt, "-autoRegularization") == 0) {
@@ -211,6 +228,15 @@ void* OPS_LadrunoRCConcrete(void)
     opserr << "nDMaterial LadrunoRCConcrete error: -crackedNu must be in [0, 0.5).\n";
     return 0;
   }
+  // Ladruno WP-241: the fixed-crack interlock is an x-y object (2D normal, scalar slip); it has
+  // no meaning on the spatial add-on plane, so the combination fails closed (implications above
+  // already turned -cyclic/-xcrack/-shearRetention into -interlock).
+  if (addonPlane == 1 && interlockOn) {
+    opserr << "nDMaterial LadrunoRCConcrete error: -addonPlane spatial cannot be combined with "
+              "-interlock/-cyclic/-xcrack/-shearRetention (the fixed crack is x-y only).\n";
+    return 0;
+  }
+  if (crackGate < 0) crackGate = (addonPlane == 1) ? 1 : 0;   // spatial defaults to the damage gate
   if (autoReg && lchRef <= 0.0) {
     opserr << "nDMaterial LadrunoRCConcrete error: -autoRegularization $lch_ref must be > 0.\n";
     return 0;
@@ -240,6 +266,7 @@ void* OPS_LadrunoRCConcrete(void)
   P.tensStiffAlpha = tensStiffAlpha; P.ftPeak = 0.0;   // ftPeak set by setupParams
   P.autoReg = autoReg; P.lchRef = lchRef;
   P.betaC = betaC; P.crackedNu = crackedNu;   // Ladruno (C2)
+  P.addonPlane = addonPlane; P.crackGate = crackGate;   // Ladruno WP-241
 
   // build backbones via the faithful ASDConcrete3D HardeningLaw c-tor + adjust()
   // (elastic-consistent q). -Cd/-Td are optional -> pad with zeros to match length.
@@ -457,6 +484,15 @@ const Matrix& LadrunoRCConcrete::getInitialTangent(void)
 {
   double C0[6][6];
   elasticTangent(P.E, P.nu, C0);
+  // Ladruno WP-241: the condensed views (PlaneStress, PlateFiber: sigma_33 = 0) return the
+  // Schur complement on index 2, as getTangent does, so -initial Newton iterates against the
+  // plane-stress E/(1-nu^2) and not the plane-strain-like lambda + 2 mu of the raw C0 block.
+  if (condense) {
+    double d22 = C0[2][2], col[6], row[6];
+    for (int i = 0; i < 6; i++) { col[i] = C0[i][2]; row[i] = C0[2][i]; }
+    for (int I = 0; I < 6; I++)
+      for (int J = 0; J < 6; J++) C0[I][J] -= col[I]*row[J]/d22;
+  }
   for (int a = 0; a < ncomp; a++)
     for (int b = 0; b < ncomp; b++) tangentOut(a, b) = C0[vmap[a]][vmap[b]];
   return tangentOut;
@@ -513,6 +549,7 @@ int LadrunoRCConcrete::revertToStart(void)
   implexError = 0.0; dtime_n = dtime_n_commit = dtime_0 = 0.0; commitDone = false;
   double C0[6][6]; elasticTangent(P.E, P.nu, C0);
   for (int a = 0; a < 6; a++) for (int b = 0; b < 6; b++) Dtan[a][b] = C0[a][b];
+  if (condense) this->condenseTangent();   // Ladruno WP-241: a condensed view starts condensed
   return 0;
 }
 
@@ -546,7 +583,7 @@ NDMaterial* LadrunoRCConcrete::getCopy(const char* type)
 // ===========================================================================
 //  parallel  (serialize params + backbones + committed history)
 // ===========================================================================
-static const int RC_SCHEMA_VERSION = 6;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor; v4 = +tension stiffening; v5 = +crack-band regularization; v6 = +betaC,crackedNu,nuCracked (C2)
+static const int RC_SCHEMA_VERSION = 7;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor; v4 = +tension stiffening; v5 = +crack-band regularization; v6 = +betaC,crackedNu,nuCracked (C2); v7 = +addonPlane,crackGate (WP-241)
 static const int RC_NSCALAR = 1 /*schemaVersion*/ + 3 /*tag,dim,rho*/
                             + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/
                             + 9 /*interlockOn,shearRetMode,shearRetFactor,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/
@@ -556,7 +593,8 @@ static const int RC_NSCALAR = 1 /*schemaVersion*/ + 3 /*tag,dim,rho*/
                             + 4 /*tensStiffMode,tensStiffC,tensStiffAlpha,ftPeak*/
                             + 4 /*autoReg,lchRef,regularizationDone,regLch*/
                             + 5 /*dtime_n,dtime_n_commit,dtime_0,commitDone,implexError*/
-                            + 2 /*betaC,crackedNu (C2)*/;
+                            + 2 /*betaC,crackedNu (C2)*/
+                            + 2 /*addonPlane,crackGate (WP-241)*/;
 static const int RC_BACK = 1 + 3*MAXPTS;   // n + x[]+y[]+q[]
 static const int RC_HIST = 6 + 6 + 6        // stress_eff, strain, (xt,xc,dt_bar,dc_bar,beta,eps1)
                          + 5                // + (cracked,crackC,crackS,wmax,betaSr)
@@ -597,6 +635,7 @@ int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = dtime_n; data(c++) = dtime_n_commit; data(c++) = dtime_0;
   data(c++) = commitDone ? 1.0 : 0.0; data(c++) = implexError;
   data(c++) = P.betaC; data(c++) = P.crackedNu;   // v6 (C2)
+  data(c++) = P.addonPlane; data(c++) = P.crackGate;   // v7 (WP-241)
   data(c++) = P.ht.n;
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.x[i];
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.y[i];
@@ -665,6 +704,7 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   dtime_n = data(c++); dtime_n_commit = data(c++); dtime_0 = data(c++);
   commitDone = (data(c++) != 0.0); implexError = data(c++);
   P.betaC = data(c++); P.crackedNu = data(c++);   // v6 (C2)
+  P.addonPlane = (int)data(c++); P.crackGate = (int)data(c++);   // v7 (WP-241)
   P.ht.n = (int)data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.x[i] = data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.y[i] = data(c++);
@@ -692,6 +732,7 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   if (condense) strain6[2] = cEps33;
   double C0[6][6]; elasticTangent(P.E, P.nu, C0);
   for (int a = 0; a < 6; a++) for (int b = 0; b < 6; b++) Dtan[a][b] = C0[a][b];
+  if (condense) this->condenseTangent();   // Ladruno WP-241: a condensed view starts condensed
   return 0;
 }
 

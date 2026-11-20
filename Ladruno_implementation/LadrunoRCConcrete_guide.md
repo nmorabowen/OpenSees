@@ -300,7 +300,9 @@ elastic operator (predictor **and** every tangent built on it, and the `-cyclic`
 strain `ε_cr` (`-crackStrain`, default `ft/E`). The switch is an **irreversible latch**
 (`nuCracked`, serialized, a recorder response) and is stress-continuous (the effective stress is
 incremental); the step that cracks uses `ν_c` for its whole increment. Off by default
-(bit-identical). `getInitialTangent` keeps the elastic `ν`.
+(bit-identical). `getInitialTangent` keeps the elastic `ν`; in the condensed views it is the
+σ33 = 0 Schur complement (WP-241; before, the raw C0 block, λ + 2μ in plane). With the default
+`-crackGate strain` the latch also fires on Poisson expansion in compression (§5.2).
 
 PV panels, `mcft` flags (`-beta -lublinerReduced -tensStiff vc -tensStiffC 200`), elastic `ν = 0.2`:
 
@@ -324,6 +326,34 @@ residual; the PV20 match with `ν` kept was a cancellation.
 > `-tensStiff` for monotonic / pushover analyses.** Combined with `-interlock`, TS uses the *live*
 > `p1` while interlock uses the *frozen* crack normal — validated for **proportional (non-rotating)**
 > loading; an `ε1max`-envelope + secant-unload + frozen-plane TS is the documented cyclic upgrade.
+
+### 5.2 Spatial add-on plane and the damage crack gate (`-addonPlane`, `-crackGate`, Ladruno WP-241)
+
+**`-addonPlane {membrane|spatial}`.** The add-ons (β, the tension-stiffening floor, the cracked-ν
+latch) read the principal tensile strain `ε1` and its direction `p1`. `membrane` (default) reads
+the x–y block `{εxx, εyy, γxy}`, as every release before WP-241 did (the shell and plane views).
+`spatial` reads the full 3×3 strain tensor: `ε1 = λmax`, `p1` a 3D unit vector, and the dual
+`dε1/dε = Voigt(p1 ⊗ p1)` (engineering shear). A repeated top eigenvalue (multiplicity `m`, e.g.
+`ε22 = ε33` in a laterally symmetric fibre) uses the average over the `m` eigenvectors; the TS
+floor then pins each of the `m` normals (`meas · inj = 1` for every `m`). For an x–y state whose
+largest principal lies in x–y, `spatial` reproduces `membrane` to round-off; under a 90° swap of
+the shear plane (γxy ↔ γxz) `spatial` is exactly invariant and `membrane` is not (the x–z shear
+gets no add-on at all). It is the plane the beam-fibre view (a later WP of program #1131) uses, where the
+section shear sits in γxy **and** γxz. The fixed-crack interlock is an x–y object (2D normal,
+scalar slip), so `-addonPlane spatial` refuses `-interlock/-cyclic/-xcrack/-shearRetention`.
+
+**`-crackGate {strain|damage}`.** What opens the cracked-ν latch and the TS floor. `strain`
+(the membrane default) is `ε1 ≥ ε_cr`. `ε1` is the **total** principal strain, so Poisson
+expansion opens it in plain compression: a plane-stress point in uniaxial compression reaches
+`ν|εyy| = ε_cr` at ≈ 0.42 f'c, latches `-crackedNu`, and the step diverged (WP-241 probe; quirk
+"cracked-ν latch fires in plain compression"). `damage` (the spatial default) requires tensile
+damage: the tensile threshold `xt` past the peak of the tension backbone (latch: the committed
+`xt`, so it lags the crack by one step; floor: the trial `xt`, and `ε1 ≥ ε_cr` too). The
+Lubliner tensile measure is zero without a tensile principal stress, so compression alone never
+opens it. In a beam every compressed fibre is laterally condensed, so the strain gate would be
+the common case there, not an edge case. β is not gated (MCFT reads `ε1` regardless).
+
+Both defaults reproduce the pre-WP-241 material. Wire: RC schema v7, RCF schema v3.
 
 ## 6. Crack-band regularization (`-autoRegularization`)
 
@@ -600,6 +630,7 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
     [-implex [-implexAlpha $a] [-implexControl $errTol $timeRedLim]] \
     [-tensStiff {vc|cm} [-tensStiffC $c] [-tensStiffAlpha $a]] \
     [-betaC $C] [-crackedNu $nu_c] \
+    [-addonPlane {membrane|spatial}] [-crackGate {strain|damage}] \
     [-autoRegularization $lch_ref]
 
 # identical grammar (minus the view choice); ThreeDimensional-only, for -geom finite:
@@ -626,6 +657,8 @@ nDMaterial LadrunoRCFiniteStrain $tag $E $nu  <same backbones + flags as above>
 | `-tensStiff` / `-tensStiffC` / `-tensStiffAlpha` | tension stiffening `vc`|`cm` (§5) / `vc` coeff `c>0` (ignored in `cm`) / `cm` scale | OFF / **200** (500 before C2) / 1.0 |
 | `-betaC` | MCFT softening coefficient `C` in `β = 1/(0.8 + C ε1)` (§3); V&C 1986: `0.34/|ε'c|` | 170 |
 | `-crackedNu` | Poisson ratio of the elastic operator once `ε1 ≥ ε_cr` (irreversible latch, §5.1); must be in [0, 0.5) | off (elastic `ν` kept) |
+| `-addonPlane` | where β / TS / cracked-ν read `ε1`: x–y block or full 3×3 strain (§5.2); `spatial` refuses the interlock family | membrane |
+| `-crackGate` | what opens the cracked-ν latch and the TS floor: `ε1 ≥ ε_cr`, or tensile damage started (§5.2) | strain (membrane), damage (spatial) |
 | `-autoRegularization` | enable Bažant–Oh crack-band at reference length `$lch_ref` (§6) | OFF |
 
 > [!important] Flag implication chain + defaults-off
