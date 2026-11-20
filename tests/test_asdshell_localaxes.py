@@ -22,7 +22,6 @@ import math
 
 import numpy as np
 import pytest
-
 from _testbed import ops
 
 pytestmark = [pytest.mark.zone_a]
