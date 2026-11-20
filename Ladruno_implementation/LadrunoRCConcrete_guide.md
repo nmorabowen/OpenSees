@@ -568,10 +568,28 @@ $$
 - **IMPL-EX** works unchanged: the lateral solve runs on the explicit response and its secant, and
   the commit re-integrates implicitly at the converged full strain (as the σ33 views do).
 - **Recorders** (BeamFiber view; zeros elsewhere): `lateralStrain` `(εyy, εzz, γyz)`, `tieStress`
-  `(f_s,y, f_s,z)`, `lateralIterations`.
+  `(f_s,y, f_s,z)`, `lateralIterations`, `crackCheck` (1 when the cap below binds).
+- **Crack check** (`-crackCheck sum $smx $smt`, off by default). Model C's crack equilibrium (VC86,
+  the `sum` form its calibration chose) caps the principal tension `q = n1·σ·n1` (after the TS
+  floor):
 
-Not in this view yet: Model C's `sum` crack check (`f1 ≤ v_ci tanθ + ρ(fyt − f_st)`), the section
-with a shear-strain profile, and the steel adapter (later WPs of program #1131).
+  $$
+  q \le v_{ci,\max}\tan\theta + \sum_{i=y,z} \rho_i \langle f_{yt} - f_{s,i}\rangle\, \frac{n_{1i}^2}{n_{1y}^2 + n_{1z}^2},
+  \qquad v_{ci,\max} = \frac{0.18\sqrt{f'_c}}{0.31 + 24 w/(a_g + 16)}
+  $$
+
+  with `sinθ = |n1x|` (θ = strut angle from the fibre axis, clipped to [1e-3, π/2 − 1e-3]),
+  `w = ε1 / (sinθ/smx + cosθ/smt)` and `a_g` from `-agg` (SI: MPa, mm). In the x–y plane this is
+  the rcbf-0 oracle's formula term for term (gate B8, 1e-14); the tie weights make it invariant
+  under γxy ↔ γxz (B10). It is applied, like the oracle, whenever `ε1 > 0`. When it binds the
+  stress is pushed down along `n1` (the TS floor's rank-1 injection, reversed), and since it uses
+  the trial tie stress it is part of the lateral root problem. Tangent: `∂cap/∂ε` by central
+  differences (ties included), the `n1` rotation term omitted as in the TS floor. On a TS shear
+  ramp under axial compression it binds on most of the ramp and lowers the end shear by ~20 %
+  (B9, Zone-A). Inert in the other views; `LadrunoRCFiniteStrain` refuses it.
+
+Not in this view yet: the section with a shear-strain profile and the steel adapter (later WPs of
+program #1131).
 
 ## 13. The finite-strain companion (`LadrunoRCFiniteStrain`)
 
@@ -685,7 +703,7 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
     [-tensStiff {vc|cm} [-tensStiffC $c] [-tensStiffAlpha $a]] \
     [-betaC $C] [-crackedNu $nu_c] \
     [-addonPlane {membrane|spatial}] [-crackGate {strain|damage}] \
-    [-ties $rhoY $rhoZ $fyt $Es] [-tieHardening $b] \
+    [-ties $rhoY $rhoZ $fyt $Es] [-tieHardening $b] [-crackCheck sum $smx $smt] \
     [-autoRegularization $lch_ref]
 
 # identical grammar (minus the view choice); ThreeDimensional-only, for -geom finite:
@@ -716,6 +734,7 @@ nDMaterial LadrunoRCFiniteStrain $tag $E $nu  <same backbones + flags as above>
 | `-crackGate` | what opens the cracked-ν latch and the TS floor: `ε1 ≥ ε_cr`, or tensile damage started (§5.2) | strain (membrane), damage (spatial and the BeamFiber view) |
 | `-ties` | smeared ties of the **BeamFiber view** (§12.1): ratio per lateral direction (fibre y, z), yield stress, modulus. Inert in the other views; `LadrunoRCFiniteStrain` refuses it | none (free lateral) |
 | `-tieHardening` | bilinear kinematic hardening ratio of the ties, `Et = b Es` past yield, `0 ≤ b < 1` (§12.1) | 0 |
+| `-crackCheck` | Model C crack check of the **BeamFiber view** (§12.1): `sum $smx $smt` caps the principal tension at `v_ci,max tanθ + ρ(fyt − f_s)`; `smx`, `smt` crack-spacing parameters (mm, > 0). Inert in the other views; `LadrunoRCFiniteStrain` refuses it | none |
 | `-autoRegularization` | enable Bažant–Oh crack-band at reference length `$lch_ref` (§6) | OFF |
 
 > [!important] Flag implication chain + defaults-off

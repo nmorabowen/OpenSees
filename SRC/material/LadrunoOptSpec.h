@@ -187,7 +187,7 @@ static const OptSpec kLadrunoRCOptions[] = {
   // Ladruno WP-241: spatial add-on plane (beam fibres) and the damage crack gate
   {"-addonPlane", 1, "WP-241"}, {"-crackGate", 1, "WP-241"},
   // Ladruno WP-243: smeared ties of the BeamFiber view (LadrunoRCConcrete only; RCF refuses them)
-  {"-ties", 4, "WP-243"}, {"-tieHardening", 1, "WP-243"},
+  {"-ties", 4, "WP-243"}, {"-tieHardening", 1, "WP-243"}, {"-crackCheck", 3, "WP-243"},
 };
 
 // ---------------------------------------------------------------------------

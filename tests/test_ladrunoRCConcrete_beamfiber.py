@@ -221,6 +221,46 @@ def test_serialization_v8_carries_ties_and_tie_history():
                        probe_fn=lambda: [_probe()["txy"], *_probe()["tie"], *_probe()["lat"]])
 
 
+# ----------------------------------------------------------------------------- Model C crack check
+CC = ["-crackCheck", "sum", 150.0, 100.0]
+SHEAR = [(-3.0e-4, 4.0e-3 * k / 40, 0.0) for k in range(1, 41)]
+
+
+def _cc_flag():
+    return float(ops.eleResponse(1, "section", "fiber", 0.0, 0.0, 1, "crackCheck")[0])
+
+
+def test_crack_check_sum_caps_the_principal_tension():
+    """Model C `sum` on a TS shear ramp under axial compression: every step converges, the cap
+    binds (recorder crackCheck = 1) and the shear ends lower than the unchecked fibre's (the cap
+    trims the tension-stiffening floor, as in the rcbf-0 oracle)."""
+    out0, ok0 = _run(MCFT + ["-ties", 0.002, 0.002, FY, ES], SHEAR)
+    assert ok0
+    assert _cc_flag() == 0.0
+    out1, ok1 = _run(MCFT + ["-ties", 0.002, 0.002, FY, ES] + CC, SHEAR)
+    assert ok1
+    assert _cc_flag() == 1.0
+    assert out1[-1]["txy"] < 0.95 * out0[-1]["txy"], (out1[-1]["txy"], out0[-1]["txy"])
+
+
+def test_serialization_v8_carries_the_crack_check():
+    """Schema v8: -crackCheck and its spacings survive a database round trip. The path ends on a
+    small shear unload where the cap still binds (the TS floor re-inflates): re-evaluation there
+    is a fixed point, while on a loading step the plastic-damage return is not idempotent (xt
+    advances), with or without the check. The unchecked fibre's shear is 4.18, so a restore that
+    lost the check would not reproduce 3.36."""
+    path = SHEAR + [(-3.0e-4, 3.98e-3, 0.0)]
+
+    def build():
+        _build(MCFT + ["-ties", 0.002, 0.002, FY, ES] + CC, path)
+        for _ in path:
+            assert ops.analyze(1) == 0
+        assert _cc_flag() == 1.0
+
+    database_roundtrip(build, probe_nodes=[2], ndf=6, dbname="rc_wp243_cc",
+                       probe_fn=lambda: [_probe()["txy"], *_probe()["tie"], *_probe()["lat"], _cc_flag()])
+
+
 # ----------------------------------------------------------------------------- parser
 @pytest.mark.parametrize("flags", [
     ["-ties", -0.01, 0.0, FY, ES],
@@ -230,6 +270,9 @@ def test_serialization_v8_carries_ties_and_tie_history():
     ["-ties", 0.01, 0.01, FY],
     ["-tieHardening", 1.0],
     ["-tieHardening", -0.1],
+    ["-crackCheck", "sum", 0.0, 100.0],
+    ["-crackCheck", "sum", 150.0],
+    ["-crackCheck", "min", 150.0, 100.0],
 ])
 def test_parser_refuses(flags):
     ops.wipe()
@@ -243,6 +286,7 @@ def test_parser_accepts():
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     _rc(1, "-ties", 0.004, 0.002, FY, ES, "-tieHardening", 0.01)
     _rc(2, *MCFT, "-ties", 0.0, 0.0, FY, ES)
+    _rc(3, *MCFT, "-ties", 0.002, 0.002, FY, ES, "-crackCheck", "sum", 150.0, 100.0)
 
 
 # ----------------------------------------------------------------------------- classic Tcl engine

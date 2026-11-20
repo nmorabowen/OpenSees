@@ -22,11 +22,18 @@
 //                        view's default) never latches cracked-nu; the strain gate does (break-once).
 //  B7 ties:              bilinear return: yield at fy, Et = b Es past it, elastic unloading keeps
 //                        the plastic strain; in a cracked fibre the converged tie stress is fy.
+//  B8 crack check:       Model C `sum` cap vs the spec formula (06 section 2.6, 2D membrane
+//                        definitions written out here) at random x-y states.
+//  B9 cap binds:         TS on, shear ramp under axial compression: every step converges, the cap
+//                        binds with q = cap at the converged state, the shear ends lower; the FD
+//                        gradient of the cap does not depend on its step.
+//  B10 invariance:       gamma_xy vs gamma_xz with the crack check on.
 #include "LadrunoRCKernel.h"
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
 using namespace ladruno_rc_kernel;
+static const double PI_ = 3.14159265358979323846;
 
 static int nfail = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { nfail++; printf("  FAIL: " __VA_ARGS__); printf("\n"); } } while (0)
@@ -298,6 +305,103 @@ int main()
         for (int k = 1; k <= 60; ++k) trial(P, f, 0.0, 0.012 * k / 60.0, 0.0, sig, D, eps, ts, true);
         printf("B7 cracked fibre, rhoY fy = %.2f: tie stress %.2f, eps_yy %.2e\n", 0.001 * 420.0, ts[0], eps[1]);
         CHECK(rel(ts[0], 420.0) < 1e-9, "B7 the tie must sit at fy in a cracked fibre with rho fy < f_cr");
+    }
+
+    // ---------------- B8 crack-check cap vs the spec formula ----------------
+    // Model C `sum` (spec 06 §2.6), written here from the 2D membrane definitions: phi from atan2,
+    // th = |pi/2 - |phi||, s_th, w, v_ci,max, f1 cap = v_ci tan(th) + rho (fyt - f_st). States
+    // in the x-y plane with eps_zz the most compressive principal, so n1 lies in x-y.
+    {
+        Params P; fill(P); P.tieRhoY = 0.003; P.crackCheck = 1; P.ccSmx = 150.0; P.ccSmt = 100.0;
+        srand(7); double worst = 0.0; int n = 0;
+        for (int t = 0; t < 200; ++t) {
+            double ex = -6e-4 + 1.2e-3 * rand() / RAND_MAX, ey = 3e-3 * rand() / RAND_MAX;
+            double g = -4e-3 + 8e-3 * rand() / RAND_MAX;
+            double e[6] = { ex, ey, -5e-3, g, 0.0, 0.0 };
+            double c0 = 0.5 * (ex + ey), R = sqrt(0.25 * (ex - ey) * (ex - ey) + 0.25 * g * g);
+            double e1 = c0 + R;
+            if (!(e1 > 1e-6)) continue;
+            double phi = 0.5 * atan2(g, ex - ey);
+            double th = fabs(0.5 * PI_ - fabs(phi));
+            double sth = 1.0 / (fabs(sin(th)) / P.ccSmx + fabs(cos(th)) / P.ccSmt + 1e-12);
+            double w = e1 * sth;
+            double vci = 0.18 * sqrt(30.0) / (0.31 + 24.0 * w / (P.aggSize + 16.0));
+            double thc = fmin(fmax(th, 1e-3), 0.5 * PI_ - 1e-3);
+            double fs = fmin(fmax(P.tieEs * ey, -P.tieFy), P.tieFy);
+            double ref = vci * tan(thc) + P.tieRhoY * fmax(P.tieFy - fs, 0.0);
+            double P1[6], inj[6], meas[6], e1k;
+            double ep0[2] = { 0.0, 0.0 };
+            double cap = crackCheckCap(P, e, ep0, P1, inj, meas, &e1k);
+            worst = fmax(worst, rel(cap, ref)); n++;
+        }
+        printf("B8 crack-check cap vs spec 2.6 (x-y plane): %d states, max rel diff %.2e\n", n, worst);
+        CHECK(n >= 100, "B8 too few tensile states (%d)", n);
+        CHECK(worst < 1e-10, "B8 cap differs from the spec formula (%.3e)", worst);
+    }
+
+    // ---------------- B9 crack check binds on a shear ramp ----------------
+    // TS on, ties both ways, axial compression: every step converges, the cap binds on most of the
+    // ramp with q = cap at the converged state, and the shear ends below the unchecked fibre's.
+    // The FD gradient of the cap (h = 1e-9) agrees with a coarser step (h = 1e-7).
+    {
+        double tEnd[2] = { 0.0, 0.0 }; int nbind = 0, nconv = 0; double worstPin = 0.0, worstG = 0.0;
+        for (int cc = 0; cc < 2; ++cc) {
+            Params P; fill(P); P.tieRhoY = P.tieRhoZ = 0.002; P.tensStiffMode = 1;
+            P.crackCheck = cc; P.ccSmx = 150.0; P.ccSmt = 100.0;
+            Fib f; double sig[6], D[6][6], eps[6], ts[2];
+            for (int k = 1; k <= 40; ++k) {
+                double e6[6] = { -3e-4, f.h.strain[1], f.h.strain[2], 4e-3 * k / 40.0, f.h.strain[4], 0.0 };
+                RCHist o; double ep[2]; int it = 0; bool b = false;
+                int st = driveBeamFiber(P, e6, f.h, f.ep, sig, D, o, ep, ts, &it, false, 1.0, &b);
+                if (st != STATUS_OK) break;
+                if (cc == 1) {
+                    nconv++;
+                    if (b) {
+                        nbind++;
+                        double P1[6], inj[6], meas[6], e1k;
+                        double cap = crackCheckCap(P, e6, f.ep, P1, inj, meas, &e1k);
+                        double q = 0.0; for (int a = 0; a < 6; ++a) q += meas[a] * sig[a];
+                        worstPin = fmax(worstPin, fabs(q - cap) / fmax(1.0, cap));
+                        for (int kk = 0; kk < 6; ++kk) {
+                            double gg[2];
+                            for (int hi = 0; hi < 2; ++hi) {
+                                double h = hi ? 1e-7 : 1e-9, ep_[6], em_[6], d1[6], d2[6], d3[6];
+                                for (int a = 0; a < 6; ++a) { ep_[a] = e6[a]; em_[a] = e6[a]; }
+                                ep_[kk] += h; em_[kk] -= h;
+                                gg[hi] = (crackCheckCap(P, ep_, f.ep, d1, d2, d3, 0) - crackCheckCap(P, em_, f.ep, d1, d2, d3, 0)) / (2 * h);
+                            }
+                            worstG = fmax(worstG, fabs(gg[0] - gg[1]) / (fabs(gg[1]) + 1e-3 * P.E));
+                        }
+                    }
+                }
+                f.h = o; f.ep[0] = ep[0]; f.ep[1] = ep[1];
+            }
+            tEnd[cc] = sig[3];
+        }
+        printf("B9 crack check on a shear ramp: converged %d/40, binding %d, |q - cap| %.2e, tau_end %.3f vs %.3f unchecked, cap-gradient step check %.2e\n",
+               nconv, nbind, worstPin, tEnd[1], tEnd[0], worstG);
+        CHECK(nconv == 40, "B9 a step was refused (%d/40)", nconv);
+        CHECK(nbind >= 20, "B9 the cap binds on too few steps (%d)", nbind);
+        CHECK(worstPin < 1e-9, "B9 q != cap at a binding converged state (%.3e)", worstPin);
+        CHECK(tEnd[1] < 0.95 * tEnd[0], "B9 the check does not lower the shear (%.3f vs %.3f)", tEnd[1], tEnd[0]);
+        CHECK(worstG < 1e-4, "B9 cap gradient depends on the FD step (%.3e)", worstG);
+    }
+
+    // ---------------- B10 crack-check invariance ----------------
+    {
+        double worst = 0.0;
+        Params P; fill(P); P.tieRhoY = P.tieRhoZ = 0.002; P.crackCheck = 1; P.ccSmx = 150.0; P.ccSmt = 100.0;
+        Fib fa, fb; double sa[6], sb[6], D[6][6], ea[6], eb[6], ta[2], tb[2];
+        for (int k = 1; k <= 30; ++k) {
+            double g = 3e-3 * k / 30.0;
+            int s1 = trial(P, fa, -3e-4, g, 0.0, sa, D, ea, ta, true);
+            int s2 = trial(P, fb, -3e-4, 0.0, g, sb, D, eb, tb, true);
+            CHECK(s1 == STATUS_OK && s2 == STATUS_OK, "B10 refused at step %d", k);
+            worst = fmax(worst, rel(sa[3], sb[5])); worst = fmax(worst, rel(sa[0], sb[0]));
+            worst = fmax(worst, rel(ea[1], eb[2])); worst = fmax(worst, rel(ea[2], eb[1]));
+        }
+        printf("B10 crack-check invariance (xy vs xz): max rel diff %.2e\n", worst);
+        CHECK(worst < 1e-6, "B10");
     }
 
     if (nfail == 0) printf("GPP BEAMFIBER GATE: PASS\n");

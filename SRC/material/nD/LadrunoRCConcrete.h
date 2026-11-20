@@ -109,6 +109,7 @@ class LadrunoRCConcrete : public NDMaterial {
   double tieSig[2];                  // trial tie bar stresses (y, z), for recorders
   int    bfIters;                    // Newton iterations of the last lateral solve
   int    bfWarned;                   // non-convergence messages printed (rate limit, not serialized)
+  int    ccBinds;                    // 1 when the Model C crack check binds at the last trial
 
   // working state (engineering shear; stress = true stress)
   double strain6[6];

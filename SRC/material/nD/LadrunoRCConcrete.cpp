@@ -50,6 +50,7 @@ using namespace ladruno_rc_kernel;
 //             <-betaC $C> <-crackedNu $nu>                                 (Ladruno C2)
 //             <-addonPlane {membrane|spatial}> <-crackGate {strain|damage}>  (Ladruno WP-241)
 //             <-ties $rhoY $rhoZ $fyt $Es> <-tieHardening $b>  (BeamFiber view, Ladruno WP-243)
+//             <-crackCheck sum $smx $smt>                          (BeamFiber view, Ladruno WP-243)
 //             <-rho $rho> <-secant | -numericalTangent>
 // ===========================================================================
 void* OPS_LadrunoRCConcrete(void)
@@ -100,6 +101,7 @@ void* OPS_LadrunoRCConcrete(void)
   // Ladruno WP-243: BeamFiber-view ties (default none: a free-lateral fibre)
   double tieRhoY = 0.0, tieRhoZ = 0.0, tieFy = 0.0, tieEs = 0.0, tieB = 0.0;
   bool   tiesGiven = false;
+  int    crackCheck = 0; double ccSmx = 0.0, ccSmt = 0.0;   // WP-243 Model C crack check
   // Phase 3b: crack-band (Bazant-Oh) regularization (default off => baseline-identical)
   bool   autoReg = false;
   double lchRef = 1.0;
@@ -206,6 +208,17 @@ void* OPS_LadrunoRCConcrete(void)
       tieRhoY = v[0]; tieRhoZ = v[1]; tieFy = v[2]; tieEs = v[3]; tiesGiven = true;
     }
     // Ladruno WP-243: -tieHardening b  (bilinear kinematic hardening ratio of the ties)
+    // Ladruno WP-243: -crackCheck sum smx smt  (Model C crack check, BeamFiber view; fixed arity 3,
+    // so absent = off)
+    else if (strcmp(opt, "-crackCheck") == 0) {
+      const char* m = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetString() : 0;
+      if (m && strcmp(m, "sum") == 0) {
+        int nd = 2; double v[2];
+        if (OPS_GetDoubleInput(&nd, v) < 0) { opserr << "LadrunoRCConcrete: -crackCheck sum needs $smx $smt.\n"; return 0; }
+        crackCheck = 1; ccSmx = v[0]; ccSmt = v[1];
+      }
+      else { opserr << "LadrunoRCConcrete: -crackCheck needs sum $smx $smt.\n"; return 0; }
+    }
     else if (strcmp(opt, "-tieHardening") == 0) { int nd = 1; if (OPS_GetDoubleInput(&nd, &tieB) < 0) { opserr << "LadrunoRCConcrete: -tieHardening needs a value.\n"; return 0; } }
     // declared in kLadrunoRCOptions but no branch above: the table and the ladder drifted
     else { ladruno_opt::reportUnhandled("LadrunoRCConcrete", tag, opt); return 0; }
@@ -261,6 +274,9 @@ void* OPS_LadrunoRCConcrete(void)
       opserr << "nDMaterial LadrunoRCConcrete error: -ties fyt and Es must be > 0.\n"; return 0;
     }
   }
+  if (crackCheck == 1 && !(ccSmx > 0.0 && ccSmt > 0.0)) {
+    opserr << "nDMaterial LadrunoRCConcrete error: -crackCheck sum $smx $smt must be > 0.\n"; return 0;
+  }
   if (tieB < 0.0 || tieB >= 1.0) {
     opserr << "nDMaterial LadrunoRCConcrete error: -tieHardening b must be in [0, 1).\n"; return 0;
   }
@@ -295,6 +311,7 @@ void* OPS_LadrunoRCConcrete(void)
   P.betaC = betaC; P.crackedNu = crackedNu;   // Ladruno (C2)
   P.addonPlane = addonPlane; P.crackGate = crackGate;   // Ladruno WP-241
   P.tieRhoY = tieRhoY; P.tieRhoZ = tieRhoZ; P.tieFy = tieFy; P.tieEs = tieEs; P.tieB = tieB;   // WP-243
+  P.crackCheck = crackCheck; P.ccSmx = ccSmx; P.ccSmt = ccSmt;                                 // WP-243
 
   // build backbones via the faithful ASDConcrete3D HardeningLaw c-tor + adjust()
   // (elastic-consistent q). -Cd/-Td are optional -> pad with zeros to match length.
@@ -313,7 +330,7 @@ void* OPS_LadrunoRCConcrete(void)
 // ===========================================================================
 LadrunoRCConcrete::LadrunoRCConcrete()
   : NDMaterial(0, ND_TAG_LadrunoRCConcrete),
-    rho(0.0), dim(DIM_3D), ncomp(6), condense(false), cEps33(0.0), confined(false), bfIters(0), bfWarned(0), status(STATUS_OK),
+    rho(0.0), dim(DIM_3D), ncomp(6), condense(false), cEps33(0.0), confined(false), bfIters(0), bfWarned(0), ccBinds(0), status(STATUS_OK),
     implexError(0.0), dtime_n(0.0), dtime_n_commit(0.0), dtime_0(0.0), commitDone(false),
     regularizationDone(false), regLch(0.0), regWarned(false),
     stressOut(6), strainOut(6), tangentOut(6, 6)
@@ -335,7 +352,7 @@ LadrunoRCConcrete::LadrunoRCConcrete()
 
 LadrunoRCConcrete::LadrunoRCConcrete(int tag, const Params& P_, double rho_, int dimMode)
   : NDMaterial(tag, ND_TAG_LadrunoRCConcrete),
-    P(P_), rho(rho_), dim(dimMode), ncomp(6), condense(false), cEps33(0.0), confined(false), bfIters(0), bfWarned(0), status(STATUS_OK),
+    P(P_), rho(rho_), dim(dimMode), ncomp(6), condense(false), cEps33(0.0), confined(false), bfIters(0), bfWarned(0), ccBinds(0), status(STATUS_OK),
     implexError(0.0), dtime_n(0.0), dtime_n_commit(0.0), dtime_0(0.0), commitDone(false),
     regularizationDone(false), regLch(0.0), regWarned(false),
     stressOut(6), strainOut(6), tangentOut(6, 6)
@@ -452,7 +469,9 @@ int LadrunoRCConcrete::setTrialStrain(const Vector& e)
     // Ladruno WP-243: the lateral block starts from the committed lateral strain inside the driver
     for (int i = 0; i < 6; i++) strain6[i] = 0.0;
     for (int a = 0; a < ncomp; a++) strain6[vmap[a]] = e(a);
-    status = driveBeamFiber(P, strain6, histN, tieEpN, stress6, Dtan, histTr, tieEpTr, tieSig, &bfIters, dox, tf);
+    bool ccb = false;
+    status = driveBeamFiber(P, strain6, histN, tieEpN, stress6, Dtan, histTr, tieEpTr, tieSig, &bfIters, dox, tf, &ccb);
+    ccBinds = ccb ? 1 : 0;
     if (status == STATUS_NO_CONVERGE) {
       if (bfWarned < 5) {
         opserr << "WARNING LadrunoRCConcrete (tag " << this->getTag() << "): BeamFiber lateral balance "
@@ -600,7 +619,7 @@ int LadrunoRCConcrete::revertToStart(void)
   for (int i = 0; i < 6; i++) { strain6[i] = 0.0; stress6[i] = 0.0; }
   cEps33 = 0.0;
   for (int d = 0; d < 2; d++) { tieEpN[d] = tieEpTr[d] = tieSig[d] = 0.0; }   // WP-243
-  bfIters = 0;
+  bfIters = 0; ccBinds = 0;
   implexError = 0.0; dtime_n = dtime_n_commit = dtime_0 = 0.0; commitDone = false;
   this->resetViewTangent();
   return 0;
@@ -666,7 +685,7 @@ NDMaterial* LadrunoRCConcrete::getCopy(const char* type)
 // ===========================================================================
 //  parallel  (serialize params + backbones + committed history)
 // ===========================================================================
-static const int RC_SCHEMA_VERSION = 8;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor; v4 = +tension stiffening; v5 = +crack-band regularization; v6 = +betaC,crackedNu,nuCracked (C2); v7 = +addonPlane,crackGate,tsScale (WP-241); v8 = +ties, tie plastic strains (WP-243)
+static const int RC_SCHEMA_VERSION = 8;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor; v4 = +tension stiffening; v5 = +crack-band regularization; v6 = +betaC,crackedNu,nuCracked (C2); v7 = +addonPlane,crackGate,tsScale (WP-241); v8 = +ties, tie plastic strains, crackCheck (WP-243)
 static const int RC_NSCALAR = 1 /*schemaVersion*/ + 3 /*tag,dim,rho*/
                             + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/
                             + 9 /*interlockOn,shearRetMode,shearRetFactor,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/
@@ -678,7 +697,8 @@ static const int RC_NSCALAR = 1 /*schemaVersion*/ + 3 /*tag,dim,rho*/
                             + 5 /*dtime_n,dtime_n_commit,dtime_0,commitDone,implexError*/
                             + 2 /*betaC,crackedNu (C2)*/
                             + 2 /*addonPlane,crackGate (WP-241)*/
-                            + 5 /*tieRhoY,tieRhoZ,tieFy,tieEs,tieB (WP-243)*/;
+                            + 5 /*tieRhoY,tieRhoZ,tieFy,tieEs,tieB (WP-243)*/
+                            + 3 /*crackCheck,ccSmx,ccSmt (WP-243)*/;
 static const int RC_BACK = 1 + 3*MAXPTS;   // n + x[]+y[]+q[]
 static const int RC_HIST = 6 + 6 + 6        // stress_eff, strain, (xt,xc,dt_bar,dc_bar,beta,eps1)
                          + 5                // + (cracked,crackC,crackS,wmax,betaSr)
@@ -722,6 +742,7 @@ int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = P.betaC; data(c++) = P.crackedNu;   // v6 (C2)
   data(c++) = P.addonPlane; data(c++) = P.crackGate;   // v7 (WP-241)
   data(c++) = P.tieRhoY; data(c++) = P.tieRhoZ; data(c++) = P.tieFy; data(c++) = P.tieEs; data(c++) = P.tieB;   // v8 (WP-243)
+  data(c++) = P.crackCheck; data(c++) = P.ccSmx; data(c++) = P.ccSmt;   // v8 (WP-243)
   data(c++) = P.ht.n;
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.x[i];
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.y[i];
@@ -794,6 +815,7 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   P.betaC = data(c++); P.crackedNu = data(c++);   // v6 (C2)
   P.addonPlane = (int)data(c++); P.crackGate = (int)data(c++);   // v7 (WP-241)
   P.tieRhoY = data(c++); P.tieRhoZ = data(c++); P.tieFy = data(c++); P.tieEs = data(c++); P.tieB = data(c++);   // v8 (WP-243)
+  P.crackCheck = (int)data(c++); P.ccSmx = data(c++); P.ccSmt = data(c++);   // v8 (WP-243)
   P.ht.n = (int)data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.x[i] = data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.y[i] = data(c++);
@@ -867,6 +889,9 @@ void LadrunoRCConcrete::Print(OPS_Stream& s, int)
   if (confined || P.tieRhoY > 0.0 || P.tieRhoZ > 0.0)   // WP-243
     s << "  ties  : rhoY=" << P.tieRhoY << "  rhoZ=" << P.tieRhoZ << "  fyt=" << P.tieFy
       << "  Es=" << P.tieEs << "  b=" << P.tieB << (confined ? "" : "  (BeamFiber view only)") << endln;
+  if (P.crackCheck == 1)                                 // WP-243
+    s << "  crackCheck: sum  smx=" << P.ccSmx << "  smt=" << P.ccSmt << "  a_g=" << P.aggSize
+      << (confined ? "" : "  (BeamFiber view only)") << endln;
 }
 
 // ===========================================================================
@@ -907,6 +932,8 @@ Response* LadrunoRCConcrete::setResponse(const char** argv, int argc, OPS_Stream
     return new MaterialResponse(this, 14, Vector(2));  // bar stress (y, z)
   if (strcmp(a, "lateralIterations") == 0)
     return new MaterialResponse(this, 15, Vector(1));
+  if (strcmp(a, "crackCheck") == 0)
+    return new MaterialResponse(this, 16, Vector(1));  // 1 = the Model C cap binds
   return NDMaterial::setResponse(argv, argc, s);
 }
 
@@ -933,6 +960,7 @@ int LadrunoRCConcrete::getResponse(int responseID, Information& matInfo)
     case 14: if (matInfo.theVector) { Vector& v = *(matInfo.theVector);
               v(0) = confined ? tieSig[0] : 0.0; v(1) = confined ? tieSig[1] : 0.0; } return 0;
     case 15: if (matInfo.theVector) (*(matInfo.theVector))(0) = bfIters; return 0;
+    case 16: if (matInfo.theVector) (*(matInfo.theVector))(0) = ccBinds; return 0;
     default: return -1;
   }
 }
