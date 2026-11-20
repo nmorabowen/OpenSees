@@ -75,8 +75,9 @@ runs go through: `results/postpeak_bands.png`, `postpeak_curves.png`, `postpeak_
 
 - Every case forms one through-going band and softens; the six seeds lose 17 to 18 % of their peak
   by 14 %. Six of nine runs needed no relaxed step at all.
-- The homogeneous, seed 4 and white-noise runs are NOT clean: they hit the 8 h wall budget; the
-  first two oscillate by tens of kPa after the peak and accepted steps at up to 10x the unbalance tolerance (0.1 kN). Read them as a trend.
+- The homogeneous, seed 4 and white-noise runs are NOT clean: they hit the 8 h wall budget and
+  oscillate by tens of kPa after the peak; the first two accepted steps at up to 10x the unbalance
+  tolerance (0.1 kN), the white-noise run at 3x. Read them as a trend.
 - The post-peak slope is mesh dependent, as expected of a local softening model: seed 1 ends at
   495 kPa on 20x40 and 671 kPa on 10x20. Nothing here regularises the band width.
 - The separated points sit in the band. The cutoff was designed for footing edges (WP-152); inside a
