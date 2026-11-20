@@ -1,0 +1,111 @@
+{
+ "antilocking": "fbar",
+ "failed_attempts": 178,
+ "relaxed_steps": 1,
+ "halvings": 45,
+ "stopped": 15,
+ "zone_fallback_share": 0.0,
+ "t": [
+  1.0,
+  2.0,
+  3.0,
+  4.0,
+  5.0,
+  6.0,
+  7.0,
+  8.0,
+  9.0,
+  10.0,
+  11.0,
+  12.0,
+  13.0,
+  14.0,
+  15.0
+ ],
+ "q": [
+  -0.0,
+  -0.0,
+  -0.0,
+  -0.0,
+  -0.0,
+  -0.0,
+  -0.0,
+  -0.0,
+  -0.0,
+  -0.0,
+  44.703224320906074,
+  61.21344788272303,
+  76.61367953536843,
+  87.8121966095116,
+  97.38215616565189
+ ],
+ "s": [
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.002,
+  0.004,
+  0.006,
+  0.008,
+  0.01
+ ],
+ "verdicts": [
+  [
+   "expect cond_pressure_max footing y 1.0 ge 110.28",
+   "fail",
+   "97.3822 ge 110.28"
+  ],
+  [
+   "expect cond_pressure_max footing y 1.0 le 134.78",
+   "pass",
+   "97.3822 le 134.78"
+  ],
+  [
+   "expect reach_t eq 110.0 tol 1e-9 0",
+   "fail",
+   "15 eq 110.0"
+  ],
+  [
+   "expect cond_pressure_max footing y 1.0 eq 138.907 tol 0 0.10 report",
+   "report",
+   "97.3822 eq 138.907"
+  ],
+  [
+   "expect cond_pressure_plateau footing y 1.0 95.0 eq 138.907 tol 0 0.10 report",
+   "report",
+   "nan (not a finite number)"
+  ],
+  [
+   "expect cond_pressure_argmax footing y 1.0 report",
+   "report",
+   "15"
+  ]
+ ],
+ "gridvel": [
+  [
+   "footing",
+   "box",
+   "-0.125",
+   "-0.0",
+   "1.0",
+   "1.0e9",
+   "v",
+   "0.0",
+   "-0.002",
+   "start",
+   "10.0",
+   "track",
+   "y"
+  ]
+ ],
+ "lead": 0.0,
+ "build": "0a8613c01fd8e05f0d91d90c10dd83162ea368b3",
+ "wall_s": 1490.6922886371613
+}
