@@ -1,0 +1,769 @@
+{
+ "fixtures": [
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "one perturbed stress component",
+   "id": "perturbed_stress_component",
+   "mutation": {
+    "amount": 0.001,
+    "component": 0,
+    "element": 0,
+    "kind": "perturb_sigma",
+    "vertex": 0
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "cone_violation_too_large",
+   "harness_item": "stress scaled by 1.01",
+   "id": "stress_scaled_1p01",
+   "mutation": {
+    "factor": 1.01,
+    "kind": "scale_lower"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "a facet traction jump",
+   "id": "facet_traction_jump",
+   "mutation": {
+    "amount": 0.01,
+    "component": 0,
+    "element": 0,
+    "kind": "element_offset"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "a Lower value that is not the multiplier of its field",
+   "id": "wrong_lower_value",
+   "mutation": {
+    "factor": 1.01,
+    "kind": "scale_value"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "value_mismatch",
+   "harness_item": "a wrong load normalisation",
+   "id": "wrong_load_normalisation",
+   "mutation": {
+    "factor": 1.1,
+    "kind": "scale_value"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "result_wrong_bound_arrays",
+   "harness_item": "swapped LB and UB labels",
+   "id": "swapped_bound_labels",
+   "mutation": {
+    "kind": "relabel_upper"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
+   "stage": "schema"
+  },
+  {
+   "expect": "element_curved",
+   "harness_item": "a curved tetrahedron",
+   "id": "curved_tetrahedron",
+   "mutation": {
+    "amount": 0.01,
+    "element": 0,
+    "kind": "move_mid_node",
+    "local_node": 4
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": null,
+   "stage": "schema"
+  },
+  {
+   "expect": "hash_mismatch",
+   "harness_item": "a mismatched problem hash",
+   "id": "mismatched_problem_hash",
+   "mutation": {
+    "kind": "problem_hash"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "schema"
+  },
+  {
+   "expect": "unsupported_domain_claim",
+   "harness_item": "an unsupported domain_claim",
+   "id": "unsupported_domain_claim",
+   "mutation": {
+    "claim": "halfspace_by_zero_extension",
+    "kind": "certificate_claim"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "schema"
+  },
+  {
+   "expect": "unsupported_domain_claim",
+   "harness_item": "a side face outside every declared set under a zero-extension claim",
+   "id": "unlisted_side_face",
+   "mutation": {
+    "kind": "drop_truncation_set",
+    "name": "xmin"
+   },
+   "problem": "vm_ground_patch_halfspace.m0",
+   "result": "vm_ground_patch_halfspace.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "schema"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "wrong gravity in equilibrium",
+   "id": "wrong_gravity_in_equilibrium",
+   "mutation": {
+    "kind": "zero_gravity_lower"
+   },
+   "problem": "vm_dead_gravity_shear_layer.m0",
+   "result": "vm_dead_gravity_shear_layer.m0.q.lower.p1d-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "tr(D) != 0 at one vertex of an isochoric Upper field",
+   "id": "isochory_one_vertex",
+   "mutation": {
+    "amount": 0.001,
+    "component": 0,
+    "kind": "perturb_velocity",
+    "node": 14
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "flow_violation_too_large",
+   "harness_item": "Drucker-Prager flow-cone violation at one vertex",
+   "id": "dp_flow_cone_one_vertex",
+   "mutation": {
+    "amount": 0.001,
+    "component": 0,
+    "kind": "perturb_velocity",
+    "node": 14
+   },
+   "problem": "dp_uniaxial_tension.m0",
+   "result": "dp_uniaxial_tension.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "a footprint node off the rigid motion",
+   "id": "footprint_off_rigid",
+   "mutation": {
+    "amount": 0.001,
+    "component": 1,
+    "kind": "perturb_velocity",
+    "node": 2
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "non-zero support velocity on a box target",
+   "id": "support_velocity_nonzero",
+   "mutation": {
+    "amount": 0.001,
+    "component": 0,
+    "kind": "perturb_velocity",
+    "node": 1
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "nonzero wall velocity under a zero-extension claim",
+   "id": "wall_velocity_zero_extension",
+   "mutation": {
+    "amount": 0.001,
+    "component": 0,
+    "element": 3,
+    "kind": "perturb_element_velocity",
+    "local_node": 0
+   },
+   "problem": "vm_ground_patch_halfspace.m0",
+   "result": "vm_ground_patch_halfspace.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "non-zero normal jump at one facet node under isochoric flow",
+   "id": "normal_jump_isochoric",
+   "mutation": {
+    "amount": 0.001,
+    "edge": 3,
+    "element": 0,
+    "kind": "edge_normal_jump"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "a von Mises jump that opens, admissible only if read as the cone with tau = 0",
+   "id": "vm_jump_opening",
+   "mutation": {
+    "amount": 0.001,
+    "direction": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "elements": [
+     2,
+     3,
+     5
+    ],
+    "kind": "side_translation"
+   },
+   "problem": "vm_uniaxial_tension.m0",
+   "result": "vm_uniaxial_tension.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "a non-zero velocity on a restrained footing component",
+   "id": "restrained_footing_component",
+   "mutation": {
+    "amount": 0.001,
+    "axis": 1,
+    "component": 2,
+    "footing": 0,
+    "kind": "restrained_shear"
+   },
+   "problem": "vm_plate_shear_restrained.m0",
+   "result": "vm_plate_shear_restrained.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "flow_violation_too_large",
+   "harness_item": "a jump admissible at facet nodes but not across the facet",
+   "id": "jump_between_nodes",
+   "mutation": {
+    "amount": 0.001,
+    "elements": [
+     2,
+     3,
+     5
+    ],
+    "kind": "side_opening",
+    "normal": [
+     -0.7071067811865475,
+     0.7071067811865475,
+     0.0
+    ]
+   },
+   "problem": "dp_free_hydrostatic.m0",
+   "result": "dp_free_hydrostatic.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "value_mismatch",
+   "harness_item": "wrong gravity work or wrong dissipation quadrature",
+   "id": "wrong_gravity_work",
+   "mutation": {
+    "body": "lumped",
+    "kind": "value_rule",
+    "quadrature": "vertex"
+   },
+   "problem": "vm_dead_gravity_shear_layer.m0",
+   "result": "vm_dead_gravity_shear_layer.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "value_mismatch",
+   "harness_item": "wrong gravity work or wrong dissipation quadrature",
+   "id": "wrong_dissipation_quadrature",
+   "mutation": {
+    "body": "exact",
+    "kind": "value_rule",
+    "quadrature": "centroid"
+   },
+   "problem": "vm_dead_gravity_shear_layer.m0",
+   "result": "vm_dead_gravity_shear_layer.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "work_nonpositive",
+   "harness_item": "a non-positive reference work rate",
+   "id": "nonpositive_reference_work",
+   "mutation": {
+    "kind": "negate_velocity"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "no_admissible_correction",
+   "harness_item": "a finite dissipation charge offered as repair",
+   "id": "dissipation_charge_as_repair",
+   "mutation": {
+    "amount": 1e-08,
+    "charge": 1.0,
+    "component": 0,
+    "kind": "dissipation_charge",
+    "node": 14
+   },
+   "problem": "dp_uniaxial_tension.m0",
+   "result": "dp_uniaxial_tension.m0.q.upper.p2c-vertex.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "equality_residual_above_floor",
+   "harness_item": "an equality residual just above the floor",
+   "id": "equality_just_above_floor",
+   "mutation": {
+    "amount": 1.2789769243681803e-13,
+    "component": 0,
+    "element": 0,
+    "kind": "perturb_sigma",
+    "tau_multiple": 3.0,
+    "vertex": 0
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
+   "stage": "final_check"
+  },
+  {
+   "expect": "interior_field_invalid",
+   "harness_item": "a declared apex face that omits a needed condition",
+   "id": "apex_zero_omits_a_condition",
+   "mutation": {
+    "amount": 0.1,
+    "apex_zero": [
+     [
+      1,
+      7
+     ],
+     [
+      1,
+      8
+     ],
+     [
+      1,
+      9
+     ],
+     [
+      1,
+      10
+     ],
+     [
+      1,
+      11
+     ],
+     [
+      1,
+      12
+     ],
+     [
+      1,
+      13
+     ],
+     [
+      1,
+      14
+     ],
+     [
+      1,
+      15
+     ],
+     [
+      1,
+      16
+     ],
+     [
+      1,
+      17
+     ],
+     [
+      1,
+      18
+     ],
+     [
+      1,
+      19
+     ],
+     [
+      1,
+      20
+     ],
+     [
+      1,
+      21
+     ],
+     [
+      1,
+      22
+     ],
+     [
+      1,
+      23
+     ],
+     [
+      1,
+      24
+     ],
+     [
+      1,
+      25
+     ],
+     [
+      1,
+      26
+     ],
+     [
+      1,
+      27
+     ],
+     [
+      1,
+      28
+     ],
+     [
+      1,
+      29
+     ]
+    ],
+    "direction": [
+     -0.7071067811865475,
+     0.7071067811865475,
+     0.0
+    ],
+    "element": 0,
+    "elements": [
+     2,
+     3,
+     5
+    ],
+    "kind": "apex_zero_omits",
+    "local_node": 0,
+    "omitted": [
+     1,
+     6
+    ],
+    "perturbation": [
+     1e-08,
+     0.0,
+     0.0
+    ]
+   },
+   "problem": "dp_free_hydrostatic.m0",
+   "result": "dp_free_hydrostatic.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "projection_move_too_large",
+   "harness_item": "a declared apex face over a violated condition",
+   "id": "apex_zero_hides_violation",
+   "mutation": {
+    "amount": 0.1,
+    "apex_zero": [
+     [
+      1,
+      6
+     ],
+     [
+      1,
+      7
+     ],
+     [
+      1,
+      8
+     ],
+     [
+      1,
+      9
+     ],
+     [
+      1,
+      10
+     ],
+     [
+      1,
+      11
+     ],
+     [
+      1,
+      12
+     ],
+     [
+      1,
+      13
+     ],
+     [
+      1,
+      14
+     ],
+     [
+      1,
+      15
+     ],
+     [
+      1,
+      16
+     ],
+     [
+      1,
+      17
+     ],
+     [
+      1,
+      18
+     ],
+     [
+      1,
+      19
+     ],
+     [
+      1,
+      20
+     ],
+     [
+      1,
+      21
+     ],
+     [
+      1,
+      22
+     ],
+     [
+      1,
+      23
+     ],
+     [
+      1,
+      24
+     ],
+     [
+      1,
+      25
+     ],
+     [
+      1,
+      26
+     ],
+     [
+      1,
+      27
+     ],
+     [
+      1,
+      28
+     ],
+     [
+      1,
+      29
+     ]
+    ],
+    "direction": [
+     -0.7071067811865475,
+     0.7071067811865475,
+     0.0
+    ],
+    "element": 0,
+    "elements": [
+     2,
+     3,
+     5
+    ],
+    "kind": "apex_zero_hides",
+    "local_node": 0,
+    "perturbation": [
+     0.0001,
+     0.0,
+     0.0
+    ]
+   },
+   "problem": "dp_free_hydrostatic.m0",
+   "result": "dp_free_hydrostatic.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "checker"
+  },
+  {
+   "expect": "certified_bound",
+   "harness_item": "a declared apex face that covers every needed condition",
+   "id": "apex_zero_full_face",
+   "mutation": {
+    "amount": 0.1,
+    "apex_zero": [
+     [
+      1,
+      6
+     ],
+     [
+      1,
+      7
+     ],
+     [
+      1,
+      8
+     ],
+     [
+      1,
+      9
+     ],
+     [
+      1,
+      10
+     ],
+     [
+      1,
+      11
+     ],
+     [
+      1,
+      12
+     ],
+     [
+      1,
+      13
+     ],
+     [
+      1,
+      14
+     ],
+     [
+      1,
+      15
+     ],
+     [
+      1,
+      16
+     ],
+     [
+      1,
+      17
+     ],
+     [
+      1,
+      18
+     ],
+     [
+      1,
+      19
+     ],
+     [
+      1,
+      20
+     ],
+     [
+      1,
+      21
+     ],
+     [
+      1,
+      22
+     ],
+     [
+      1,
+      23
+     ],
+     [
+      1,
+      24
+     ],
+     [
+      1,
+      25
+     ],
+     [
+      1,
+      26
+     ],
+     [
+      1,
+      27
+     ],
+     [
+      1,
+      28
+     ],
+     [
+      1,
+      29
+     ]
+    ],
+    "direction": [
+     -0.7071067811865475,
+     0.7071067811865475,
+     0.0
+    ],
+    "element": 0,
+    "elements": [
+     2,
+     3,
+     5
+    ],
+    "kind": "apex_zero_full",
+    "local_node": 0,
+    "perturbation": [
+     1e-08,
+     0.0,
+     0.0
+    ]
+   },
+   "problem": "dp_free_hydrostatic.m0",
+   "result": "dp_free_hydrostatic.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "certify"
+  },
+  {
+   "expect": "apex_zero_lower",
+   "harness_item": "a declared apex face on a Lower bound",
+   "id": "apex_zero_on_lower",
+   "mutation": {
+    "apex_zero": [
+     [
+      0,
+      0
+     ]
+    ],
+    "kind": "add_apex_zero"
+   },
+   "problem": "vm_plate_shear.m0",
+   "result": "vm_plate_shear.m0.q.lower.p1d-vertex.v0.result",
+   "stage": "schema"
+  },
+  {
+   "expect": "hash_mismatch",
+   "harness_item": "a declared apex face not covered by the result hash",
+   "id": "apex_zero_outside_hash",
+   "mutation": {
+    "apex_zero": [
+     [
+      0,
+      0
+     ]
+    ],
+    "kind": "add_apex_zero_unhashed"
+   },
+   "problem": "dp_free_hydrostatic.m0",
+   "result": "dp_free_hydrostatic.m0.q.upper.p2d-jump-bernstein.v0.result",
+   "stage": "schema"
+  }
+ ],
+ "format": "ladruno-limit-negative-fixtures",
+ "format_version": 0
+}

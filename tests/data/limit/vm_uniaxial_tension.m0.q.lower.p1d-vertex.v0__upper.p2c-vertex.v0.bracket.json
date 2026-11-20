@@ -1,0 +1,19 @@
+{
+ "domain_claim": "box_stated",
+ "floor_lower": 1.7320508075688772e-12,
+ "floor_upper": 1.7320508075688772e-12,
+ "format": "ladruno-limit-bracket",
+ "format_version": 0,
+ "gap": 0.0,
+ "lower": 1.7320508075688772,
+ "lower_domain_claim": "box_stated",
+ "lower_formulation": "lower.p1d-vertex.v0",
+ "lower_result_sha256": "12d94db9dbccb2b2e518c30b517f59ddcf9264dc95190e601b6242826b89fa6e",
+ "problem_sha256": "1c6263b45146b9d2b64d3446083b8093f4db62b03662004fbfa23ec054067f44",
+ "query_id": "q",
+ "status": "bracket",
+ "upper": 1.7320508075688772,
+ "upper_domain_claim": "box_stated",
+ "upper_formulation": "upper.p2c-vertex.v0",
+ "upper_result_sha256": "4a4ef9c4ff567d4ff3bd890197f754fed4bdb932355dd0e6b4d2e00ff3ba5fb5"
+}
