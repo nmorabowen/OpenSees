@@ -1,6 +1,7 @@
 ---
 wp: WP-241
 title: "LadrunoRCConcrete's cracked-nu latch (and TS gate) fires in PLAIN COMPRESSION: eps1 is the total principal strain, so Poisson expansion reaches ft/E with no crack"
+pr: "#1132"
 date: 2026-11-19
 ---
 ### LadrunoRCConcrete's cracked-ν latch (and TS gate) fires in PLAIN COMPRESSION: ε1 is the total principal strain, so Poisson expansion reaches ft/E with no crack (WP-241 adds `-crackGate damage`)
