@@ -485,7 +485,7 @@ from the proven `LadrunoJ2Kernel.h`. The OpenSees-facing classes are thin wrappe
 
 | Class | classTag | base | role |
 |---|---|---|---|
-| `LadrunoRCConcrete` | **33015** | `NDMaterial` | the small-strain material — **one** class, three `getType()` views (`3D` / `PlaneStress` / `PlateFiber`) selected by `dim`/`vmap` |
+| `LadrunoRCConcrete` | **33015** | `NDMaterial` | the small-strain material — **one** class, four `getType()` views (`3D` / `PlaneStress` / `PlateFiber` / `BeamFiber`, WP-243) selected by `dim`/`vmap` |
 | `LadrunoRCFiniteStrain` | **33018** | `FiniteStrainNDMaterial` | the finite-strain (Hencky) view — `ThreeDimensional`-only, driven by `setTrialF(F)` (§13) |
 
 Kernel contents (all `inline`, plain doubles):
@@ -515,6 +515,7 @@ Kernel contents (all `inline`, plain doubles):
 | `ThreeDimensional` (`3D`) | 6 | `{σxx σyy σzz τxy τyz τzx}` | 3D continuum (`LadrunoBrick`/`stdBrick`); reduce-to-`ASDConcrete3D` baseline |
 | `PlaneStress` | 3 | `{σxx σyy τxy}` | 2D continuum / membrane quad; the clean MCFT oracle target — **not** a shell host |
 | `PlateFiber` | 5 | `{σxx σyy τxy τyz τzx}` | **the shell path** — rides `LayeredShellFiberSection getCopy("PlateFiber")` |
+| `BeamFiber` | 3 | `{σxx τxy τxz}` | **the beam path** (WP-243, §12.1) — rides `NDFiberSection2d/3d getCopy("BeamFiber")`; lateral block balanced against the ties |
 
 The `PlaneStress`/`PlateFiber` views enforce `σ33 = 0` with a **guarded** nested scalar Newton on
 `ε33`. This is the one place cloning the stock `PlateFiberMaterial` would be a bug (Quirk §22.14): on
@@ -526,6 +527,51 @@ non-convergence code** instead.
 > The condensation re-calls the in-plane update ~25× per converged point. All crack/slip state
 > therefore depends **only** on the membrane strains and is written only to the *output* history —
 > idempotent across the inner re-calls — so the Newton cannot corrupt the committed crack frame.
+
+### 12.1 The BeamFiber view (Ladruno WP-243)
+
+A beam fibre imposes `(εxx, γxy, γxz)`. The lateral block `(εyy, εzz, γyz)` is solved so that the
+concrete balances smeared transverse ties of its own direction (`driveBeamFiber` in the kernel):
+
+$$
+r = \big(\sigma_{yy} + \rho_y f_s(\varepsilon_{yy}),\;\; \sigma_{zz} + \rho_z f_s(\varepsilon_{zz}),\;\; \tau_{yz}\big) = 0,
+\qquad
+D^{c}_{RR} = D_{RR} - D_{RL}\,(D_{LL} + T)^{-1} D_{LR},\;\; T = \mathrm{diag}(\rho_y E_{t,y},\, \rho_z E_{t,z},\, 0).
+$$
+
+- **Ties.** `-ties ρy ρz fyt Es [-tieHardening b]`: a bilinear kinematic-hardening bar per direction,
+  with its committed plastic strain in the material state (wire v8). `ρ = 0` in a direction leaves
+  that lateral normal stress free; with no ties the fibre is the uniaxial-stress fibre with two
+  shears. Ties are a property of the **material**, so a section that mixes core and cover fibres
+  uses two materials (ties on the core one only).
+- **Root selection.** The Newton starts from the **committed** lateral strain with a backtracking
+  line search on `|r|`. Where `ρ fyt < f_cr` (every specimen of the program's lab set) the lateral
+  residual folds at cracking and has more than one root; starting from the committed state follows
+  the branch the fibre is on, the rule of the rotating-MCFT strip reference. The g++ gate checks it
+  against nested bracketing bisection from the same committed state (B3).
+- **Add-ons.** The view sets `-addonPlane spatial` on its copy (the fibre's shear sits in γxy and
+  γxz) and resolves an **unset** `-crackGate` to `damage`. An explicit `-crackGate strain` is kept:
+  in a fibre it opens the latch from Poisson expansion at ~0.5 f′c, `σyy` is pinned above zero and
+  no lateral balance exists, so the trial is refused (gate B6 and the Zone-A test show it). The x–y
+  interlock family has no meaning here and is switched off with a warning. (The stock fibre section
+  calls `exit()` on a null copy, so the view adapts and says so instead of refusing the copy.)
+- **Non-convergence refuses.** An unmet lateral balance returns `LADRUNO_MATERIAL_REFUSED` and
+  prints a rate-limited warning. Stock `BeamFiberMaterial` returns 0 there; never wrap this material
+  in it.
+- **Cyclic loading: no `-tensStiff`.** The TS floor is monotonic (§5, Quirk §22.13): it re-inflates
+  on unloading, and under cyclic shear the lateral balance then loses its root on the first unload
+  and the view refuses. With MCFT β and ties only, three ±4e-3 shear cycles under axial compression
+  converge at every step (Zone-A). The `ε1max`-envelope TS is the cyclic upgrade.
+- **Tangent.** The condensation is exact given the kernel's 3D tangent. In the softening regime that
+  tangent is itself approximate (the `W_B` secant, §22), ~10 % off its FD on a cracked shear state;
+  the condensed tangent inherits that and does not add to it (gate B4).
+- **IMPL-EX** works unchanged: the lateral solve runs on the explicit response and its secant, and
+  the commit re-integrates implicitly at the converged full strain (as the σ33 views do).
+- **Recorders** (BeamFiber view; zeros elsewhere): `lateralStrain` `(εyy, εzz, γyz)`, `tieStress`
+  `(f_s,y, f_s,z)`, `lateralIterations`.
+
+Not in this view yet: Model C's `sum` crack check (`f1 ≤ v_ci tanθ + ρ(fyt − f_st)`), the section
+with a shear-strain profile, and the steel adapter (later WPs of program #1131).
 
 ## 13. The finite-strain companion (`LadrunoRCFiniteStrain`)
 
@@ -639,6 +685,7 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
     [-tensStiff {vc|cm} [-tensStiffC $c] [-tensStiffAlpha $a]] \
     [-betaC $C] [-crackedNu $nu_c] \
     [-addonPlane {membrane|spatial}] [-crackGate {strain|damage}] \
+    [-ties $rhoY $rhoZ $fyt $Es] [-tieHardening $b] \
     [-autoRegularization $lch_ref]
 
 # identical grammar (minus the view choice); ThreeDimensional-only, for -geom finite:
@@ -666,7 +713,9 @@ nDMaterial LadrunoRCFiniteStrain $tag $E $nu  <same backbones + flags as above>
 | `-betaC` | MCFT softening coefficient `C` in `β = 1/(0.8 + C ε1)` (§3); V&C 1986: `0.34/|ε'c|` | 170 |
 | `-crackedNu` | Poisson ratio of the elastic operator once `ε1 ≥ ε_cr` (irreversible latch, §5.1); must be in [0, 0.5) | off (elastic `ν` kept) |
 | `-addonPlane` | where β / TS / cracked-ν read `ε1`: x–y block or full 3×3 strain (§5.2); `spatial` refuses the interlock family | membrane |
-| `-crackGate` | what opens the cracked-ν latch and the TS floor: `ε1 ≥ ε_cr`, or tensile damage started (§5.2) | strain (membrane), damage (spatial) |
+| `-crackGate` | what opens the cracked-ν latch and the TS floor: `ε1 ≥ ε_cr`, or tensile damage started (§5.2) | strain (membrane), damage (spatial and the BeamFiber view) |
+| `-ties` | smeared ties of the **BeamFiber view** (§12.1): ratio per lateral direction (fibre y, z), yield stress, modulus. Inert in the other views; `LadrunoRCFiniteStrain` refuses it | none (free lateral) |
+| `-tieHardening` | bilinear kinematic hardening ratio of the ties, `Et = b Es` past yield, `0 ≤ b < 1` (§12.1) | 0 |
 | `-autoRegularization` | enable Bažant–Oh crack-band at reference length `$lch_ref` (§6) | OFF |
 
 > [!important] Flag implication chain + defaults-off

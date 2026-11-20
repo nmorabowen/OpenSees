@@ -587,6 +587,14 @@ struct Params {
     //     eps1 >= crackStrain. The Lubliner tensile measure is zero without a tensile principal
     //     stress, so compression alone never opens it.
     int    crackGate = 0;          // -crackGate {strain|damage}
+    // --- Ladruno WP-243 BeamFiber view: smeared transverse ties (read only by driveBeamFiber) ---
+    // Tie ratios per lateral direction of the fibre frame (y = index 1, z = index 2), yield stress,
+    // modulus and the bilinear kinematic hardening ratio b (Et = b Es once yielded). rho = 0 in a
+    // direction leaves that lateral normal stress free (sigma = 0), so a cover fibre is the
+    // default. Inert in every other view.
+    double tieRhoY = 0.0, tieRhoZ = 0.0;   // -ties rhoY rhoZ fyt Es
+    double tieFy = 0.0, tieEs = 0.0;
+    double tieB = 0.0;                     // -tieHardening b, 0 <= b < 1
 };
 
 // Strain abscissa of the tension backbone's maximum stress (the crack-onset threshold used by
@@ -1183,6 +1191,158 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
         *residual = sqrt(sn);
     }
     return STATUS_OK;
+}
+
+// ===========================================================================
+// Ladruno WP-243: the BeamFiber view.
+//
+// A beam fibre imposes the retained components {0, 3, 5} = (eps_xx, gamma_xy, gamma_xz). The
+// lateral block {1, 2, 4} = (eps_yy, eps_zz, gamma_yz) is solved so that the concrete balances the
+// smeared ties of its own direction:
+//   r = ( sig_yy + rhoY f_s(eps_yy),  sig_zz + rhoZ f_s(eps_zz),  sig_yz ) = 0.
+// A direction with rho = 0 is stress-free, so a fibre with no ties is the uniaxial-stress fibre
+// with two shears. The retained tangent is the static condensation of the same Jacobian:
+//   D_RR - D_RL (D_LL + T)^-1 D_LR,   T = diag(rhoY Et_y, rhoZ Et_z, 0).
+// Root selection: Newton starts from the COMMITTED lateral strain (in.strain), with a backtracking
+// line search on |r|, so it follows the branch the fibre is on through the cracking fold (where
+// rho fyt < f_cr, the lateral residual is not monotonic in eps_yy).
+// The caller supplies the view's Params (addonPlane = spatial). Returns STATUS_OK, or
+// STATUS_NO_CONVERGE when the lateral balance is not met: the caller must refuse the trial, never
+// report a stress (stock BeamFiberMaterial returns 0 there).
+// ===========================================================================
+
+// Bilinear kinematic-hardening bar, one direction. Committed plastic strain epN in, trial epNew and
+// tangent Et out. b = 0 is elastic-perfectly plastic; b > 0 gives Et = b Es past yield.
+inline double tieUpdate(double eps, double epN, double Es, double fy, double b, double& Et, double& epNew)
+{
+    const double H   = (b > 0.0) ? b * Es / (1.0 - b) : 0.0;   // linear kinematic modulus
+    const double sTr = Es * (eps - epN);
+    const double xi  = sTr - H * epN;                          // relative to the back stress H epN
+    const double f   = fabs(xi) - fy;
+    if (f <= 0.0) { Et = Es; epNew = epN; return sTr; }
+    const double dg = f / (Es + H);
+    epNew = epN + (xi > 0.0 ? dg : -dg);
+    Et = Es * H / (Es + H);
+    return Es * (eps - epNew);
+}
+
+inline bool solve3x3(const double A[3][3], const double b[3], double x[3])
+{
+    double M[3][4];
+    for (int i = 0; i < 3; ++i) { for (int j = 0; j < 3; ++j) M[i][j] = A[i][j]; M[i][3] = b[i]; }
+    for (int c = 0; c < 3; ++c) {
+        int piv = c; double best = fabs(M[c][c]);
+        for (int r = c + 1; r < 3; ++r) if (fabs(M[r][c]) > best) { best = fabs(M[r][c]); piv = r; }
+        if (!(best > 1.0e-300)) return false;
+        if (piv != c) for (int j = 0; j < 4; ++j) { double t = M[piv][j]; M[piv][j] = M[c][j]; M[c][j] = t; }
+        for (int r = 0; r < 3; ++r) {
+            if (r == c) continue;
+            const double f = M[r][c] / M[c][c];
+            for (int j = c; j < 4; ++j) M[r][j] -= f * M[c][j];
+        }
+    }
+    for (int i = 0; i < 3; ++i) x[i] = M[i][3] / M[i][i];
+    return true;
+}
+
+// eps6: retained {0,3,5} set by the caller; lateral {1,2,4} overwritten with the converged values.
+// tieEpN: committed tie plastic strains (y, z). tieEp/tieSig: trial plastic strains and bar stresses.
+// iters (optional): Newton iterations used.
+inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, const double tieEpN[2],
+                          double sig6[6], double Dtan6[6][6], RCHist& out,
+                          double tieEp[2], double tieSig[2], int* iters = 0,
+                          bool do_implex = false, double time_factor = 1.0)
+{
+    static const int L[3] = {1, 2, 4};
+    const double rho[2] = {P.tieRhoY, P.tieRhoZ};
+    double Et[2] = {0.0, 0.0};
+    double r[3], J[3][3];
+    for (int a = 0; a < 3; ++a) eps6[L[a]] = in.strain[L[a]];
+
+    auto evaluate = [&]() -> double {
+        returnMap3D(P, eps6, in, sig6, Dtan6, out, true, 0, do_implex, time_factor);
+        for (int d = 0; d < 2; ++d) {
+            Et[d] = 0.0; tieEp[d] = tieEpN[d]; tieSig[d] = 0.0;
+            if (rho[d] > 0.0)
+                tieSig[d] = tieUpdate(eps6[1 + d], tieEpN[d], P.tieEs, P.tieFy, P.tieB, Et[d], tieEp[d]);
+        }
+        r[0] = sig6[1] + rho[0] * tieSig[0];
+        r[1] = sig6[2] + rho[1] * tieSig[1];
+        r[2] = sig6[4];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) J[i][j] = Dtan6[L[i]][L[j]];
+        J[0][0] += rho[0] * Et[0];
+        J[1][1] += rho[1] * Et[1];
+        return sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+    };
+    auto stressScale = [&]() -> double {
+        double s = 0.0; for (int a = 0; a < 6; ++a) s += sig6[a] * sig6[a];
+        s = sqrt(s);
+        return (s > P.ftPeak) ? s : (P.ftPeak > 0.0 ? P.ftPeak : 1.0);
+    };
+
+    double rn = evaluate();
+    bool conv = false;
+    int it = 0;
+    for (; it < 50; ++it) {
+        if (rn <= 1.0e-10 * stressScale()) { conv = true; break; }
+        double dx[3];
+        if (!solve3x3(J, r, dx)) break;
+        const double base[3] = {eps6[1], eps6[2], eps6[4]};
+        double lam = 1.0, rnew = rn;
+        for (int ls = 0; ls < 8; ++ls) {               // backtracking on |r|; the last try is kept
+            for (int a = 0; a < 3; ++a) eps6[L[a]] = base[a] - lam * dx[a];
+            rnew = evaluate();
+            if (rnew < rn) break;
+            lam *= 0.5;
+        }
+        rn = rnew;
+    }
+    if (iters) *iters = it;
+    if (!conv) conv = (rn <= 1.0e-6 * stressScale());  // a stalled but balanced point is accepted
+    if (!conv) return STATUS_NO_CONVERGE;
+
+    // condensed tangent at the converged state (J and Dtan6 belong to the last evaluate())
+    double T[3][6];
+    for (int k = 0; k < 6; ++k) {
+        const double rhs[3] = {Dtan6[L[0]][k], Dtan6[L[1]][k], Dtan6[L[2]][k]};
+        double c[3];
+        if (!solve3x3(J, rhs, c)) return STATUS_NO_CONVERGE;
+        for (int i = 0; i < 3; ++i) T[i][k] = c[i];
+    }
+    double Dc[6][6];
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+        double v = Dtan6[i][j];
+        for (int a = 0; a < 3; ++a) v -= Dtan6[i][L[a]] * T[a][j];
+        Dc[i][j] = v;
+    }
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = Dc[i][j];
+    return STATUS_OK;
+}
+
+// Elastic BeamFiber tangent (getInitialTangent, revertToStart): the same condensation on C0 with
+// the elastic tie stiffness rho Es.
+inline void beamFiberInitialTangent(const Params& P, double D[6][6])
+{
+    static const int L[3] = {1, 2, 4};
+    elasticTangent(P.E, P.nu, D);
+    double J[3][3];
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) J[i][j] = D[L[i]][L[j]];
+    J[0][0] += P.tieRhoY * P.tieEs;
+    J[1][1] += P.tieRhoZ * P.tieEs;
+    double T[3][6];
+    for (int k = 0; k < 6; ++k) {
+        const double rhs[3] = {D[L[0]][k], D[L[1]][k], D[L[2]][k]};
+        double c[3] = {0.0, 0.0, 0.0};
+        solve3x3(J, rhs, c);
+        for (int i = 0; i < 3; ++i) T[i][k] = c[i];
+    }
+    double Dc[6][6];
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+        double v = D[i][j];
+        for (int a = 0; a < 3; ++a) v -= D[i][L[a]] * T[a][j];
+        Dc[i][j] = v;
+    }
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) D[i][j] = Dc[i][j];
 }
 
 } // namespace ladruno_rc_kernel

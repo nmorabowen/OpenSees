@@ -54,7 +54,8 @@ class LadrunoRCConcrete : public NDMaterial {
   // dimensional views (element-facing ordering, engineering shear)
   enum { DIM_3D = 0,        // {00,11,22,01,12,02}      order 6
          DIM_PSTRESS,       // {00,11,01}  sig33=0      order 3
-         DIM_PLATEFIBER };  // {00,11,01,12,02} sig33=0 order 5
+         DIM_PLATEFIBER,    // {00,11,01,12,02} sig33=0 order 5
+         DIM_BEAMFIBER };   // {00,01,02}, lateral {11,22,12} balanced against ties, order 3 (WP-243)
 
   LadrunoRCConcrete();
   LadrunoRCConcrete(int tag, const ladruno_rc_kernel::Params& P, double rho, int dimMode = DIM_3D);
@@ -102,6 +103,12 @@ class LadrunoRCConcrete : public NDMaterial {
   int    vmap[6];
   bool   condense;
   double cEps33;                     // committed out-of-plane strain (condensed modes)
+  // Ladruno WP-243 BeamFiber view: lateral block solved against the ties (driveBeamFiber)
+  bool   confined;
+  double tieEpN[2], tieEpTr[2];      // committed / trial tie plastic strains (y, z)
+  double tieSig[2];                  // trial tie bar stresses (y, z), for recorders
+  int    bfIters;                    // Newton iterations of the last lateral solve
+  int    bfWarned;                   // non-convergence messages printed (rate limit, not serialized)
 
   // working state (engineering shear; stress = true stress)
   double strain6[6];
@@ -124,6 +131,7 @@ class LadrunoRCConcrete : public NDMaterial {
   void setupDim(void);
   void integrate(bool do_implex, double tfac);
   void condenseTangent(void);
+  void resetViewTangent(void);       // elastic tangent of the current view (condensed / confined)
   double implexTimeFactor(void) const;
 
   // element-facing return buffers
