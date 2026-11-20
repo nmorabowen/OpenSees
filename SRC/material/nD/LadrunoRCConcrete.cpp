@@ -583,7 +583,7 @@ NDMaterial* LadrunoRCConcrete::getCopy(const char* type)
 // ===========================================================================
 //  parallel  (serialize params + backbones + committed history)
 // ===========================================================================
-static const int RC_SCHEMA_VERSION = 7;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor; v4 = +tension stiffening; v5 = +crack-band regularization; v6 = +betaC,crackedNu,nuCracked (C2); v7 = +addonPlane,crackGate (WP-241)
+static const int RC_SCHEMA_VERSION = 7;    // bump when the wire layout changes (hard-checked in recvSelf); v2 = +IMPL-EX; v3 = +shearRetFactor; v4 = +tension stiffening; v5 = +crack-band regularization; v6 = +betaC,crackedNu,nuCracked (C2); v7 = +addonPlane,crackGate,tsScale (WP-241)
 static const int RC_NSCALAR = 1 /*schemaVersion*/ + 3 /*tag,dim,rho*/
                             + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/
                             + 9 /*interlockOn,shearRetMode,shearRetFactor,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/
@@ -601,7 +601,8 @@ static const int RC_HIST = 6 + 6 + 6        // stress_eff, strain, (xt,xc,dt_bar
                          + 2                // + Phase-2b (tauCr,gammaCr)
                          + 2                // + Phase-2b.2b (cracked2,slipCum)
                          + 3                // + Phase-4 IMPL-EX (xt_old,xc_old,eps1_old)
-                         + 1;               // + C2 cracked-nu latch (nuCracked)
+                         + 1                // + C2 cracked-nu latch (nuCracked)
+                         + 1;               // + WP-241 damage-gated TS onset scale (tsScale)
 static const int RC_DATA = RC_NSCALAR + 2*RC_BACK + RC_HIST + 1 /*cEps33*/;
 
 int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
@@ -655,6 +656,7 @@ int LadrunoRCConcrete::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = histN.cracked2; data(c++) = histN.slipCum;
   data(c++) = histN.xt_old; data(c++) = histN.xc_old; data(c++) = histN.eps1_old;
   data(c++) = histN.nuCracked;   // v6 (C2)
+  data(c++) = histN.tsScale;     // v7 (WP-241)
   data(c++) = cEps33;
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
@@ -724,6 +726,7 @@ int LadrunoRCConcrete::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBr
   histN.cracked2 = data(c++); histN.slipCum = data(c++);
   histN.xt_old = data(c++); histN.xc_old = data(c++); histN.eps1_old = data(c++);
   histN.nuCracked = data(c++);   // v6 (C2)
+  histN.tsScale = data(c++);     // v7 (WP-241)
   cEps33 = data(c++);
 
   this->setupDim();

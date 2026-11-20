@@ -465,7 +465,7 @@ NDMaterial* LadrunoRCFiniteStrain::getCopy(const char* type)
 //  parallel  (serialize params + backbones + committed history; no dim/cEps33,
 //  the finite view is 3D-only and condensation-free — its own schema)
 // ===========================================================================
-static const int RCF_SCHEMA_VERSION = 3;   // v2 = +betaC,crackedNu,nuCracked (Ladruno C2); v3 = +addonPlane,crackGate (WP-241)
+static const int RCF_SCHEMA_VERSION = 3;   // v2 = +betaC,crackedNu,nuCracked (Ladruno C2); v3 = +addonPlane,crackGate,tsScale (WP-241)
 static const int RCF_NSCALAR = 1 /*schemaVersion*/ + 2 /*tag,rho*/
                             + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/
                             + 9 /*interlockOn,shearRetMode,shearRetFactor,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/
@@ -476,7 +476,7 @@ static const int RCF_NSCALAR = 1 /*schemaVersion*/ + 2 /*tag,rho*/
                             + 4 /*autoReg,lchRef,regularizationDone,regLch*/
                             + 5 /*dtime_n,dtime_n_commit,dtime_0,commitDone,implexError*/;
 static const int RCF_BACK = 1 + 3*MAXPTS;
-static const int RCF_HIST = 6 + 6 + 6 + 5 + 2 + 2 + 3 + 1 /*nuCracked, C2*/;
+static const int RCF_HIST = 6 + 6 + 6 + 5 + 2 + 2 + 3 + 1 /*nuCracked, C2*/ + 1 /*tsScale, WP-241*/;
 static const int RCF_DATA = RCF_NSCALAR + 2*RCF_BACK + RCF_HIST + 2 /*betaC,crackedNu (C2)*/ + 2 /*addonPlane,crackGate (WP-241)*/;
 
 int LadrunoRCFiniteStrain::sendSelf(int commitTag, Channel& theChannel)
@@ -529,6 +529,7 @@ int LadrunoRCFiniteStrain::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = histN.cracked2; data(c++) = histN.slipCum;
   data(c++) = histN.xt_old; data(c++) = histN.xc_old; data(c++) = histN.eps1_old;
   data(c++) = histN.nuCracked;   // v2 (C2)
+  data(c++) = histN.tsScale;     // v3 (WP-241)
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoRCFiniteStrain::sendSelf - failed to send vector\n";
@@ -596,6 +597,7 @@ int LadrunoRCFiniteStrain::recvSelf(int commitTag, Channel& theChannel, FEM_Obje
   histN.cracked2 = data(c++); histN.slipCum = data(c++);
   histN.xt_old = data(c++); histN.xc_old = data(c++); histN.eps1_old = data(c++);
   histN.nuCracked = data(c++);   // v2 (C2)
+  histN.tsScale = data(c++);     // v3 (WP-241)
 
   histTr = histN;
   for (int i = 0; i < 6; i++) { strain6[i] = 0.0; stress6[i] = 0.0; }

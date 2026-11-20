@@ -37,5 +37,6 @@ def test_spatial_gpp_gate():
     out = rr.stdout
     assert "GPP SPATIAL GATE: PASS" in out, out
     for head in ("G1 reduce", "G2 invariance", "G3 dual", "G4 TS pinning", "G5 interlock (2a",
-                 "G5 interlock (cyclic", "G6 compression", "G6 tension"):
+                 "G5 interlock (cyclic", "G6 compression", "G6 tension", "G7 TS onset",
+                 "G7 uniaxial tension"):
         assert head in out, out

@@ -20,6 +20,9 @@
 //  G6 crack gate: uniaxial compression with Poisson laterals: the strain gate latches
 //                 cracked-nu (the WP-241 probe defect); the damage gate never does and adds no
 //                 TS floor. Uniaxial tension past the peak: the damage gate latches.
+//  G7 TS onset:   compression + shear, damage gate: the floor opens with no stress jump (scaled
+//                 by the onset stress, RCHist::tsScale); forcing the full floor jumps (break-once).
+//                 Uniaxial tension: onset scale 1, stress identical to the strain gate.
 #include "LadrunoRCKernel.h"
 #include <cstdio>
 #include <cmath>
@@ -264,6 +267,53 @@ int main()
         printf("G6 tension: damage gate latches at step %d (peak strain at step ~%d)\n", latchT,
                (int)ceil(backbonePeakAbscissa(P.ht) / 0.0006 * 100.0));
         CHECK(latchT > 0, "G6 damage gate never latched in tension");
+    }
+
+    // ---------------- G7 damage-gated TS onset is continuous ----------------
+    // Compression + shear (spatial): the damage gate opens below ft, where the bare principal
+    // stress is under sigma_ts(e1). A fine eps_yy scan through the onset, from one committed
+    // state: the largest step-to-step change of sigma_yy with TS on must be no larger than with
+    // TS off (plus 5 %). Break-once: forcing tsScale = 1 (the full floor at onset, the pre-fix
+    // rule) must jump by more than 10x that.
+    {
+        Params P; fill(P); P.crackGate = 1; P.addonPlane = 1;
+        RCHist h0; histZero(h0);
+        { double e[6] = { -3e-4, 0, 0, 2e-4, 0, 0 }, s[6], D[6][6]; RCHist o; returnMap3D(P, e, h0, s, D, o); h0 = o; }
+        double jump[3] = { 0, 0, 0 }; int opened = 0;
+        for (int mode = 0; mode < 3; ++mode) {             // 0 TS on, 1 TS off, 2 TS on forced s = 1
+            Params Q = P; if (mode == 1) Q.tensStiffMode = 0;
+            RCHist h = h0;                                 // every point is a trial from h0
+            if (mode == 2) h.tsScale = 1.0;
+            double prev = 0.0;
+            for (int i = 0; i <= 240; ++i) {
+                double e[6] = { -3e-4, 4.0e-5 + i * 1.0e-7, 6.152e-5, 4e-4, 0, 0 }, s[6], D[6][6]; RCHist o;
+                returnMap3D(Q, e, h, s, D, o);
+                if (i > 0) jump[mode] = fmax(jump[mode], fabs(s[1] - prev));
+                if (mode == 0 && o.tsScale >= 0.0) opened++;
+                prev = s[1];
+            }
+        }
+        printf("G7 TS onset (compression+shear, damage gate): max |d sigma_yy| per 1e-7 step: TS on %.3e, TS off %.3e, forced full floor %.3e (onset crossings %d)\n",
+               jump[0], jump[1], jump[2], opened);
+        CHECK(opened > 0, "G7 the scan never crossed the damage-gated TS onset (vacuous)");
+        CHECK(jump[0] <= 1.05 * jump[1] + 1e-9, "G7 TS onset jumps (%.3e vs %.3e TS off)", jump[0], jump[1]);
+        CHECK(jump[2] > 10.0 * jump[1], "G7 forced full floor does not jump: the gate would be vacuous (%.3e)", jump[2]);
+        // uniaxial tension: onset at the peak, where q = ft >= sigma_ts -> s = 1, and the damage
+        // gate's stress equals the strain gate's (same crack strain ft/E here) once open
+        double worst = 0.0; double sc = -2.0;
+        for (int sp = 0; sp < 2; ++sp) {
+            Params A = P, B = P; A.addonPlane = B.addonPlane = sp; A.crackGate = 1; B.crackGate = 0;
+            RCHist ha, hb; histZero(ha); histZero(hb);
+            for (int k = 1; k <= 100; ++k) {
+                double e[6] = { 0.0008 * k / 100.0, 0, 0, 0, 0, 0 }, sa[6], sb[6], D[6][6]; RCHist oa, ob;
+                returnMap3D(A, e, ha, sa, D, oa); returnMap3D(B, e, hb, sb, D, ob);
+                if (oa.tsScale >= 0.0) { sc = oa.tsScale; for (int a = 0; a < 6; ++a) worst = fmax(worst, rel(sa[a], sb[a])); }
+                ha = oa; hb = ob;
+            }
+        }
+        printf("G7 uniaxial tension: onset scale %.6f, damage vs strain gate stress after onset %.2e\n", sc, worst);
+        CHECK(fabs(sc - 1.0) < 1e-12, "G7 uniaxial-tension onset scale != 1 (%.6f)", sc);
+        CHECK(worst < 1e-12, "G7 damage gate differs from strain gate in uniaxial tension (%.3e)", worst);
     }
 
     if (nfail == 0) printf("GPP SPATIAL GATE: PASS\n");

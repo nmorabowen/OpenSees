@@ -673,6 +673,11 @@ struct RCHist {
     double eps1_old;        // committed in-plane principal tensile strain at step n-1
     // --- Ladruno C2: cracked-Poisson latch (0/1), set once eps1 >= crackStrain with crackedNu on ---
     double nuCracked;
+    // --- Ladruno WP-241: crackGate = damage tension-stiffening onset scale (latch) ---
+    // < 0: the floor has not opened. >= 0: s = min(1, q_on / sigma_ts(e1_on)), frozen on the step
+    // the damage-gated floor first opens; the floor is then s * sigma_ts(e1). Unused (stays -1)
+    // under crackGate = strain.
+    double tsScale;
 };
 
 inline void histZero(RCHist& h)
@@ -684,6 +689,7 @@ inline void histZero(RCHist& h)
     h.cracked2 = 0.0; h.slipCum = 0.0;
     h.xt_old = h.xc_old = 0.0; h.eps1_old = 0.0;
     h.nuCracked = 0.0;
+    h.tsScale = -1.0;
 }
 
 inline double equivTensile(const double Si[3], double fcft, double Kc)
@@ -878,6 +884,13 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     const int* ts_idx = spatial ? ts_idx_s : ts_idx_m;
     const int  ts_n   = spatial ? 6 : 3;
     const bool ts_gate = (P.crackGate == 1) ? (new_xt > xtPeak) : true;   // WP-241 crackGate
+    // WP-241 crackGate = damage: the gate opens when tensile damage starts, and under tension-
+    // compression (Lubliner) that is BELOW ft, where the bare principal stress q is already under
+    // sigma_ts(e1). Injecting the full floor there is a stress JUMP (no root for a lateral balance).
+    // So the floor is scaled by s = min(1, q / sigma_ts(e1)) taken on the step it first opens
+    // (delta = 0 there: continuous), and frozen at commit (RCHist::tsScale). The gate stays shut
+    // while q <= 0. crackGate = strain: s = 1 always (byte-identical).
+    double tsScale = in.tsScale;
     if (P.tensStiffMode != 0 && e1_ts >= P.crackStrain && ts_gate) {
         if (spatial) {
             for (int k = 0; k < 6; ++k) { ts_inj[k] = sp_inj[k]; ts_meas[k] = sp_meas[k]; ts_P1eps[k] = sp_P1[k]; }
@@ -894,6 +907,12 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
         double q = 0.0;
         for (int k = 0; k < ts_n; ++k) q += ts_meas[ts_idx[k]] * sig6[ts_idx[k]];
         double sig_ts = tensStiff(e1_ts, P.tensStiffMode, P.ftPeak, P.tensStiffC, P.tensStiffAlpha, &ts_dsig);
+        if (P.crackGate == 1) {
+            if (tsScale < 0.0 && q > 0.0 && sig_ts > 0.0)      // onset step: open at q
+                tsScale = (q < sig_ts) ? q / sig_ts : 1.0;
+            const double s = (tsScale < 0.0) ? 0.0 : tsScale;   // q <= 0: still shut
+            sig_ts *= s; ts_dsig *= s;
+        }
         double delta  = sig_ts - q;
         if (delta > 0.0) {
             for (int k = 0; k < ts_n; ++k) sig6[ts_idx[k]] += delta * ts_inj[ts_idx[k]];
@@ -1027,6 +1046,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // by the host material at commit (so a mid-step explicit pass never corrupts it).
     out.xt_old = in.xt_old; out.xc_old = in.xc_old; out.eps1_old = in.eps1_old;
     out.nuCracked = nuCr;   // Ladruno (C2)
+    out.tsScale = tsScale;  // Ladruno WP-241 (damage-gated TS onset scale)
 
     // tangent
     if (do_tangent) {

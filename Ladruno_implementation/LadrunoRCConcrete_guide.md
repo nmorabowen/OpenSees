@@ -353,6 +353,14 @@ Lubliner tensile measure is zero without a tensile principal stress, so compress
 opens it. In a beam every compressed fibre is laterally condensed, so the strain gate would be
 the common case there, not an edge case. β is not gated (MCFT reads `ε1` regardless).
 
+Under tension–compression the damage gate opens **below** `ft` (Lubliner), where the bare
+principal stress `q` is already under `σ_ts(ε1)`. The full floor there would be a stress jump
+(0.5 MPa in a compression + shear fibre; a laterally balanced view then has no root). So with
+`damage` the floor is `s·σ_ts(ε1)`, `s = min(1, q_on/σ_ts(ε1_on))` taken on the step the floor
+first opens (δ = 0 there, so the onset is continuous) and frozen at commit (history `tsScale`).
+The floor stays shut while `q ≤ 0`. A crack that opens at the backbone peak has `s = 1` (uniaxial
+tension: identical to `strain`). `strain` is unchanged (`s = 1` always).
+
 Both defaults reproduce the pre-WP-241 material. Wire: RC schema v7, RCF schema v3.
 
 ## 6. Crack-band regularization (`-autoRegularization`)
