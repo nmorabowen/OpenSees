@@ -1,0 +1,23 @@
+{
+ "arrays": "dp_uniaxial_tension.m0.q.upper.p2c-vertex.v0.result.npz",
+ "bound": "upper",
+ "format": "ladruno-limit-result",
+ "format_version": 0,
+ "formulation": "upper.p2c-vertex.v0",
+ "objective": 1.2864213722373603,
+ "problem_sha256": "6ac48175d5eff1569e3c6149c04aecc2ca055a1ace716659e26fff6f1bdb12c8",
+ "producer": {
+  "name": "analytic-fixture",
+  "version": "0"
+ },
+ "query_id": "q",
+ "result_sha256": "e34258eed9e1af099398306cf9e4e300cb7c24b8ace8b8db82120473c46eb6a9",
+ "solver": {
+  "name": "none",
+  "settings": {},
+  "version": "0"
+ },
+ "solver_status": "solved",
+ "value": 1.2864213722373603,
+ "wall_time_s": null
+}

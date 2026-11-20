@@ -1,0 +1,23 @@
+{
+ "arrays": "vm_plate_shear.m0.q.upper.p2d-jump-bernstein.v0.result.npz",
+ "bound": "upper",
+ "format": "ladruno-limit-result",
+ "format_version": 0,
+ "formulation": "upper.p2d-jump-bernstein.v0",
+ "objective": 1.0,
+ "problem_sha256": "e51dcffa9451e4fdbb720eeab30636c2738833086f697ce20f46abfcc272f913",
+ "producer": {
+  "name": "analytic-fixture",
+  "version": "0"
+ },
+ "query_id": "q",
+ "result_sha256": "9507eff252a6d00d3fecf0065e924765a53c116687dc4f1641c8fa4edca6f7eb",
+ "solver": {
+  "name": "none",
+  "settings": {},
+  "version": "0"
+ },
+ "solver_status": "solved",
+ "value": 1.0,
+ "wall_time_s": null
+}
