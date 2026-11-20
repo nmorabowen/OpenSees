@@ -1540,6 +1540,15 @@ ASDShellT3::setResponse(const char** argv, int argc, OPS_Stream& output)
         theResponse = new ElementResponse(this, 4, Vector(24));
     }
 
+    // Ladruno WP-242: material frame for recorder ladruno MODEL/LOCAL_AXES
+    // (9 packed direction cosines e1|e2|e3, reference configuration).
+    else if (strcmp(argv[0], "localAxes") == 0) {
+        static const char* la_names[9] = { "e1x", "e1y", "e1z", "e2x", "e2y", "e2z", "e3x", "e3y", "e3z" };
+        for (int i = 0; i < 9; i++)
+            output.tag("ResponseType", la_names[i]);
+        theResponse = new ElementResponse(this, 5, Vector(9));
+    }
+
     output.endTag();
     return theResponse;
 }
@@ -1605,6 +1614,22 @@ ASDShellT3::getResponse(int responseID, Information& eleInfo)
         }
         return eleInfo.setVector(stresses);
         break;
+    case 5: { // Ladruno WP-242: localAxes = material frame (e1|e2|e3)
+        // The sections work in the reference local system rotated by m_angle
+        // about its normal (setDomain: e1 = -local projected on the shell plane,
+        // or the default edge direction). The reference system is built from the
+        // undeformed nodal coordinates, also for -corotational.
+        static thread_local Vector la(9);
+        ASDShellT3LocalCoordinateSystem cs = m_transformation->createReferenceCoordinateSystem();
+        Vector3Type vx = cs.Vx(), vy = cs.Vy(), vz = cs.Vz();
+        double c = std::cos(m_angle), s = std::sin(m_angle);
+        for (int i = 0; i < 3; i++) {
+            la(i) = c * vx(i) + s * vy(i);
+            la(3 + i) = -s * vx(i) + c * vy(i);
+            la(6 + i) = vz(i);
+        }
+        return eleInfo.setVector(la);
+    }
     default:
         return -1;
     }
