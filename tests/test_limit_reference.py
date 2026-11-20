@@ -7,7 +7,9 @@ route: the contract's helpers, Gauss quadrature, closed-form fields, or the case
 Tests that run the open solver carry no zone marker and are skipped unless Clarabel is installed
 (``requires_clarabel``), so the Zone-A selection never needs it; their numbers are estimates of the
 discrete optima, never certified values. The ``slow`` tier holds the larger estimates:
-measured 2026-11-19 on a 16-thread desktop, 82 s in total (Clarabel 0.11.1); the hard stop is
+measured 2026-11-19 on a 16-thread desktop, 82 s in total (Clarabel 0.11.1); remeasured after amendment 2
+the same day, 589 s with the apex-face test (78 s), the plain solves of the ordered-estimates test taking
+470 s of it under that run's machine load; the hard stop is
 ``limit_reference.CLARABEL_TIME_LIMIT_S``, and a leg ending on it carries no number and fails.
 """
 import importlib.util
@@ -1228,3 +1230,239 @@ def test_frictional_strip_jump_estimate_is_repair_ready_on_the_producer_preview(
     velocity, _, _ = lr.upper_interior_field(program)
     preview = lr.repair_preview(program.layout["geometry"], fields["element_velocity"], velocity)
     assert preview["n_repaired"] > 0 and preview["ready"] and preview["mu"] < 1e-5, preview
+
+
+# ---------------------------------------------------------------------------------------------------
+# Amendment 2: the declared apex face Z (interface 19.2.1) and the exact n_S (interface 5, m6)
+# ---------------------------------------------------------------------------------------------------
+
+# A 54-tet miniature of upper3d_fixed_phi30: the same strength, footing and wall types on a 3 x 3 x 1 box.
+# Measured 2026-11-19 with Clarabel 0.11.1 (scratch probe of find_apex_zero): the jump Upper has an apex
+# face of 8 flow and 128 jump conditions next to 107 row-forced ones, with the clean splits of the
+# finder's calibration note (stuck arguments <= 1.9e-12 of scale, raised >= 3.0e-3).
+MINI_PAD = """
+case mini_pad
+units       length m; force kN; stress kPa
+box         -1.5 -1.5 -1 1.5 1.5 0
+mesh        3 3 1
+region      soil drucker_prager k 0.8320502943378437 alpha 0.16012815380508713
+footing     pad xref 0 0 0 law bonded
+boundary    contact footing plane z 0 range x -0.5 0.5 range y -0.5 0.5 footing pad
+boundary    surface free plane z 0
+boundary    xmin fixed plane x -1.5
+boundary    xmax fixed plane x 1.5
+boundary    ymin fixed plane y -1.5
+boundary    ymax fixed plane y 1.5
+boundary    base fixed plane z -1
+query       q ray
+F1          pad 0 0 -1 0 0 0
+end
+"""
+
+
+def mini_pad():
+    key = ("mini_pad",)
+    if key not in _CACHE:
+        problem, arrays = contract.build_case_problem(contract.parse_case_text(MINI_PAD)["mini_pad"], 0)
+        _CACHE[key] = (problem, arrays, lr.Geometry(problem, arrays))
+    return _CACHE[key]
+
+
+def footing_push(program):
+    """A program vector with only the footing moving down: ``W1 = 1``, so a result has a value."""
+    x = np.zeros(program.A.shape[1])
+    x[program.layout["V"] + 2] = -1.0
+    return x
+
+
+@pytest.mark.zone_a
+def test_inequality_conditions_follow_the_apex_zero_encoding():
+    problem, arrays, geo = mini_pad()
+    tau, _ = lr.jump_constants(geo.alpha[geo.e_minus])
+    for broken in (False, True):
+        key = lr.upper_inequality_conditions(geo, broken)["key"]
+        np.testing.assert_array_equal(lr.apex_zero_array(key), key)           # sorted and unique as written
+        flow, jump = key[key[:, 0] == 0, 1], key[key[:, 0] == 1, 1]
+        np.testing.assert_array_equal(flow, np.arange(4 * geo.E))               # every vertex: alpha > 0 everywhere
+        assert len(jump) == (6 * int(np.sum(tau > 0.0)) if broken else 0)
+    interior, _ = contract.mesh_facets(arrays["tets"])
+    assert [tuple(f[0]) for f in interior] == list(zip(geo.e_minus.tolist(), geo.f_minus.tolist()))  # F order of 3.4
+
+
+@pytest.mark.zone_a
+def test_result_emits_the_face_inside_the_hash_with_the_contract_encoding():
+    problem, arrays, geo = mini_pad()
+    program = lr.assemble(problem, arrays, lr.JUMP_ID, geometry=geo)
+    x = footing_push(program)
+    face = [[1, 6 * 3 + 2], [0, 4 * 5 + 1], [0, 0]]                               # unsorted on purpose
+    doc, out = lr.result_document(program, "solved", x, apex_zero=face)
+    contract.validate_result(doc, out, problem, arrays)
+    assert out["apex_zero"].dtype.str == "<i8" and out["apex_zero"].shape == (3, 2)
+    assert contract.apex_zero_rows(out) == [(0, 0), (0, 21), (1, 20)]
+    plain, plain_out = lr.result_document(program, "solved", x)
+    other, _ = lr.result_document(program, "solved", x, apex_zero=face[:2])
+    assert "apex_zero" not in plain_out
+    assert len({doc["result_sha256"], plain["result_sha256"], other["result_sha256"]}) == 3
+    tampered = dict(out, apex_zero=np.array([[0, 0], [0, 21]], dtype="<i8"))
+    with pytest.raises(contract.ContractError) as error:
+        contract.validate_result(doc, tampered, problem, arrays)
+    assert error.value.code == "hash_mismatch"
+    # Method-report identity (19.2.1 item 12) of the emitted face.
+    assert contract.apex_zero_sha256(out) == contract.document_hash({}, {"apex_zero": out["apex_zero"]}, None)
+    # Optional dual: shape (n_Z, 6), a jump row with three components; never without a face.
+    dual = np.zeros((3, 6))
+    dual[:, 0] = 1.0
+    faced, faced_out = lr.result_document(program, "solved", x, apex_zero=face, apex_zero_dual=dual)
+    contract.validate_result(faced, faced_out, problem, arrays)
+    for kwargs, code in (({"apex_zero_dual": dual}, "apex_zero_invalid"),
+                         ({"apex_zero": face, "apex_zero_dual": np.zeros((2, 6))}, "apex_zero_invalid"),
+                         ({"apex_zero": face + [[0, 0]]}, "apex_zero_invalid"),
+                         ({"apex_zero": [[0, 4 * geo.E]]}, "apex_zero_invalid")):
+        with pytest.raises(contract.ContractError) as error:
+            lr.result_document(program, "solved", x, **kwargs)
+        assert error.value.code == code, kwargs
+    # No field, no face (item 1): a result without a value drops it.
+    empty, empty_out = lr.result_document(program, "numerical_error", None, apex_zero=face)
+    assert not empty_out
+    contract.validate_result(empty, empty_out, problem, arrays)
+    # A jump entry in the continuous formulation and any face on a Lower are refused.
+    control = lr.assemble(problem, arrays, lr.CONTROL_ID, geometry=geo)
+    with pytest.raises(contract.ContractError) as error:
+        lr.result_document(control, "solved", footing_push(control), apex_zero=[[1, 0]])
+    assert error.value.code == "apex_zero_invalid"
+    lower = lr.assemble(problem, arrays, lr.LOWER_ID, geometry=geo)
+    with pytest.raises(contract.ContractError) as error:
+        lr.result_document(lower, "solved", np.zeros(lower.A.shape[1]), apex_zero=[[0, 0]])
+    assert error.value.code == "apex_zero_lower"
+
+
+@pytest.mark.zone_a
+def test_face_rows_are_the_contract_apex_rows():
+    problem, arrays, geo = mini_pad()
+    program = lr.assemble(problem, arrays, lr.JUMP_ID, geometry=geo)
+    rng = np.random.default_rng(7)
+    field = rng.normal(size=(geo.E, 10, 3))
+    face = lr.apex_zero_array([[0, 3], [0, 4 * 7 + 2], [1, 0], [1, 6 * 11 + 5]])
+    base, _ = lr.face_rows(program)
+    rows, g = lr.face_rows(program, face)
+    assert rows.shape[0] == base.shape[0] + 6 * 2 + 3 * 2 and not np.any(g[base.shape[0]:])
+    x = np.concatenate([field.reshape(-1), np.zeros(6)])
+    tail = (rows @ x)[base.shape[0]:]
+    expected = contract.apex_zero_row_values(arrays, field, contract.apex_zero_rows({"apex_zero": face}))
+    np.testing.assert_allclose(tail[:12], expected[:12], rtol=1e-12, atol=1e-12)
+    basis = np.concatenate([geo.interior_normal[:, None], lr.tangent_bases(geo.interior_normal)], axis=1)
+    for j, facet in enumerate((0, 11)):                                         # rotated jump coefficients
+        local = tail[12 + 3 * j: 15 + 3 * j]
+        np.testing.assert_allclose(basis[facet].T @ local, expected[12 + 3 * j: 15 + 3 * j], rtol=1e-12, atol=1e-12)
+    # The cone-variable form of the same face: one unit row per cone component of each entry.
+    cone_rows = lr.apex_zero_cone_rows(program, face)
+    assert cone_rows.shape == (6 * 2 + 3 * 2, program.A.shape[1]) and cone_rows.nnz == cone_rows.shape[0]
+
+
+@pytest.mark.zone_a
+def test_face_terms_of_the_value_are_never_credited_negative():
+    problem, arrays, geo = mini_pad()
+    rng = np.random.default_rng(11)
+    field = rng.normal(size=(geo.E, 10, 3))
+    footing = np.array([[0.0, 0.0, -1.0, 0.0, 0.0, 0.0]])
+    d = geo.strain_rates(field)
+    pi = lr.support_value(d, geo.k[:, None], geo.alpha[:, None])
+    flows = np.argwhere(pi < 0.0)[:3]
+    face = lr.apex_zero_array([[0, 4 * e + i] for e, i in flows] + [[1, 0], [1, 1]])
+    plain = lr.upper_field_value(problem, arrays, "q", field, footing, geo)
+    faced = lr.upper_field_value(problem, arrays, "q", field, footing, geo, apex_zero=face)
+    coeff = lr.jump_coefficients(geo, field)[0, :2]
+    n = geo.interior_normal[0]
+    density = geo.k[geo.e_minus[0]] * (coeff @ n) / (3.0 * geo.alpha[geo.e_minus[0]])
+    credit = sum(-geo.volume[e] / 4.0 * pi[e, i] for e, i in flows) \
+        + float(np.sum(geo.interior_area[0] / 6.0 * np.maximum(-density, 0.0)))
+    assert len(flows) == 3 and credit > 0.0
+    assert faced[1] == pytest.approx(plain[1] + credit, rel=1e-12)
+    assert faced[2:] == plain[2:]
+
+
+@pytest.mark.zone_a
+def test_problem_hashes_and_symmetry_normals_are_unchanged_by_amendment_2():
+    table = contract.load_problem_hashes()
+    for name in sorted(table):
+        problem, arrays = lr.case_problem(name, 0)
+        assert problem["problem_sha256"] == table[name]["m0"], name
+        geo = lr.Geometry(problem, arrays)
+        for index, normal in geo.set_normal.items():
+            assert normal.tobytes() == contract.symmetry_set_normal(problem, arrays, index).tobytes()
+    for formulation in FORMULATIONS:
+        assert golden_digest(formulation) == GOLDEN_SHA[formulation]
+
+
+@requires_clarabel
+@pytest.mark.parametrize("name, formulation", [("dp_uniaxial_tension", lr.CONTROL_ID),
+                                               ("dp_uniaxial_tension", lr.JUMP_ID),
+                                               ("dp_weighted_apex_column", lr.JUMP_ID)])
+def test_finder_returns_no_face_where_no_condition_is_forced(name, formulation, tmp_path):
+    program, _, _, _ = solved(name, 0, formulation)
+    face, info = lr.find_apex_zero(program)
+    assert face is None and info["n_stuck"] == 0 and info["n_partial"] == 0, info
+    assert info["min_argument_raised"] > 1e3 * lr.Z_APEX_ARGUMENT_REL
+    runs = lr.run_case(name, 0, [formulation], tmp_path, solve_it=True)
+    doc, fields = runs[formulation][1]
+    assert "apex_zero" not in fields and "interior_footing_velocity" in fields
+    problem, arrays = contract.load_document(tmp_path / f"{name}.m0.problem.json")
+    assert problem["problem_sha256"] == contract.load_problem_hashes()[name]["m0"]
+
+
+@requires_clarabel
+def test_finder_refuses_a_lower_program():
+    program = lr.assemble(*mini_pad()[:2], lr.LOWER_ID)
+    with pytest.raises(contract.ContractError) as error:
+        lr.find_apex_zero(program)
+    assert error.value.code == "apex_zero_lower"
+
+
+def assert_face_is_needed_and_sufficient(problem, arrays, geo, program, x, face):
+    """Z is non-empty, outside the row-forced set, and the interior field built on it clears P \\ Z."""
+    assert face is not None and set(face[:, 0].tolist()) <= {0, 1}
+    forced = lr.row_forced_conditions(program, face)
+    assert not forced.any(), "Z holds no condition the rows force on their own"
+    velocity, footing, info = lr.upper_interior_field(program, apex_zero=face)
+    assert info["n_unraised"] == 0 and info["n_apex_zero"] == len(face)
+    doc, out = lr.result_document(program, "solved", x, interior=(velocity, footing), apex_zero=face)
+    contract.validate_result(doc, out, problem, arrays)
+    np.testing.assert_array_equal(out["apex_zero"], face)
+    # On the face: project both fields with the augmented rows (19.2.1 items 4, 7).
+    candidate, cand_footing, move = lr.face_projection(program, out["element_velocity"], out["footing_velocity"], face)
+    interior, _, interior_move = lr.face_projection(program, velocity, footing, face)
+    assert move < 1e-6 and interior_move < 1e-6
+    assert lr.rho_apex(geo, candidate, face) < 1e-12 and lr.rho_apex(geo, interior, face) < 1e-12
+    preview = lr.repair_preview(geo, candidate, interior, face)
+    assert preview["n_repaired"] > 0 and preview["ready"], preview
+    assert preview["worst_clearance_on_P"] <= -contract.TOLERANCES["TOL_INTERIOR_MIN"]
+    # Without the face (no Z rows, so the raw fields) the Z conditions are in P and cannot be cleared.
+    bare = lr.repair_preview(geo, out["element_velocity"], velocity)
+    assert not bare["ready"] and bare["worst_clearance_on_P"] > -contract.TOLERANCES["TOL_INTERIOR_MIN"], bare
+    return preview
+
+
+@requires_clarabel
+def test_apex_face_on_the_mini_pad():
+    problem, arrays, geo = mini_pad()
+    program = lr.assemble(problem, arrays, lr.JUMP_ID, geometry=geo)
+    status, x, _, _ = lr.solve(program)
+    assert status in contract.SOLVER_STATUS_WITH_VALUE
+    face, info = lr.find_apex_zero(program)
+    assert info["stuck_off_apex"] == 0 and info["n_partial"] == 0, info
+    assert info["max_argument_in_z"] < 1e-3 * lr.Z_APEX_ARGUMENT_REL < 1e-3 * info["min_argument_raised"]
+    assert np.sum(face[:, 0] == 0) > 0 and np.sum(face[:, 0] == 1) > 0          # both kinds occur here
+    assert_face_is_needed_and_sufficient(problem, arrays, geo, program, x, face)
+
+
+@requires_clarabel
+@pytest.mark.slow
+def test_apex_face_on_fixed_phi30_mesh_0():
+    """The 18.3 case: 305 conditions (26 flow, 279 jump) besides the 230 the rows force. 70 s (2026-11-19)."""
+    program, x, _, _ = solved("upper3d_fixed_phi30", 0, lr.JUMP_ID)
+    problem, arrays, geo = problem_of("upper3d_fixed_phi30", 0)
+    face, info = lr.find_apex_zero(program)
+    assert info["n_row_forced"] == 230 and info["n_partial"] == 0 and info["stuck_off_apex"] == 0, info
+    assert (int(np.sum(face[:, 0] == 0)), int(np.sum(face[:, 0] == 1))) == (26, 279)
+    preview = assert_face_is_needed_and_sufficient(problem, arrays, geo, program, x, face)
+    assert preview["mu"] <= contract.TOLERANCES["TOL_REPAIR_MAX"]
