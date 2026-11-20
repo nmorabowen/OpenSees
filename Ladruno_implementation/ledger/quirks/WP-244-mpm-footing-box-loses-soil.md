@@ -1,7 +1,7 @@
 ---
 wp: WP-244
 title: "An MPM rigid footing whose box ends at the footing base loses the soil before each node row joins"
-pr: "#TBD"
+pr: "#1136"
 date: 2026-11-20
 ---
 ### MPM footing pressure collapses at s/h ≈ 0.75 (q 868 → 38 kPa), then rises like a fresh contact
@@ -22,4 +22,4 @@ particle centre, and the soil next to the footing interpolates almost entirely f
 unbounded above (`hi_y = 1e9`), so `translate y` and `track y` select the same rows. Translating
 a zero-thickness box (`lo_y = hi_y`) is worse: it holds a node row only when s is a multiple of h.
 
-**Fix.** Measured in WP-244 (#TBD); see the follow-up below.
+**Fix.** Measured in WP-244 (#1136); see the follow-up below.
