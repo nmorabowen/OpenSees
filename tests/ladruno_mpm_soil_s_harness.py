@@ -402,6 +402,7 @@ RELAXED = 3            # the third try is the relaxed one
 H_MIN = 5e-4           # the halving floor, of the 2 mm (pseudo dt 1) step
 Q0 = 20.0              # the surcharge, kPa
 B_HALF = 1.0
+FOOTING_LEAD = 0.5     # WP-244: the footing box's lower bound at -FOOTING_LEAD * h
 
 
 def s3_build(ops, mat_cmd, r, antilocking="fbar", extra_opts=()):
@@ -417,7 +418,10 @@ def s3_build(ops, mat_cmd, r, antilocking="fbar", extra_opts=()):
     ops.mpm("fix", "xmin", "x")
     ops.mpm("fix", "xmax", "x")
     ops.mpm("fix", "ymin", "xy")
-    ops.mpm("gridvel", "footing", "box", -h, 0.0, B_HALF, 1.0e9, "v", 0.0, -0.002,
+    # WP-244 (#1112): the box's lower bound leads the footing base by half a cell, so a node
+    # row is prescribed once the base is nearer to it than to the row above; at 0.0 the only
+    # prescribed row left the active set as s -> h and the footing lost the soil
+    ops.mpm("gridvel", "footing", "box", -h, -FOOTING_LEAD * h, B_HALF, 1.0e9, "v", 0.0, -0.002,
             "start", 12.0, "track", "y")
     ops.mpm("gravity", 0.0, -G)
     ops.timeSeries("Path", TS_TAG, "-time", 0.0, 10.0, 1.0e9, "-values", 0.0, 1.0, 1.0)

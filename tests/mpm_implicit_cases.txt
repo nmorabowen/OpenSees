@@ -279,7 +279,9 @@ end
 # Stage 2, t > 10: the rough rigid footing = a gridvel on the nodes with x in [-h, B/2], both
 #   components, v = (0, -0.002) m per unit pseudo-time, dt = 1: 2 mm per step, 100 steps to
 #   s = 0.2 m (s/B = 0.10; the FE control plateaus from s/B ~ 0.05). 'track y' lowers the set's
-#   bottom with the footing, so rows the footing reaches join it.
+#   bottom with the footing, so rows the footing reaches join it. WP-244 (#1112): the bottom
+#   starts at -h/2, so a row joins once the footing base is nearer to it than to the row above
+#   (at 0.0 the only prescribed row left the active set as s -> h and the footing lost the soil).
 # Footing pressure q = -cond_force(footing, y) / (B/2), B/2 = 1 m per unit thickness.
 # Gate (pre-registered): q_max at the finest within [0.90, 1.10] x 138.907 kPa = [125.02, 152.80].
 # Particles (ppc 2): r1 (4 cells across B) 1152, r2 (8) 4608, r3 (16) 18432.
@@ -299,7 +301,7 @@ pforce 1 box 0.0 -0.25 12.0 0.0 0.0 -2.5
 fix xmin x
 fix xmax x
 fix ymin xy
-gridvel footing box -0.5 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+gridvel footing box -0.5 -0.25 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
 series linear 10.0
 dt 1.0
 steps 110
@@ -331,7 +333,7 @@ pforce 1 box 0.0 -0.125 12.0 0.0 0.0 -1.25
 fix xmin x
 fix xmax x
 fix ymin xy
-gridvel footing box -0.25 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+gridvel footing box -0.25 -0.125 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
 series linear 10.0
 dt 1.0
 steps 110
@@ -357,7 +359,7 @@ pforce 1 box 0.0 -0.0625 12.0 0.0 0.0 -0.625
 fix xmin x
 fix xmax x
 fix ymin xy
-gridvel footing box -0.125 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+gridvel footing box -0.125 -0.0625 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
 series linear 10.0
 dt 1.0
 steps 110
