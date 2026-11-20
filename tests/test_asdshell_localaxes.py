@@ -127,9 +127,10 @@ def test_asdshell_corotational_frame_is_the_reference_one():
     assert np.allclose(before, after, atol=1e-14)
 
 
-def _quat_to_cols(q):
+def _quat_to_rows(q):
+    # schema v1 sec.5: FRAME is a unit quaternion (w, x, y, z) taking global ->
+    # element-local, i.e. the matrix whose ROWS are e1, e2, e3
     w, x, y, z = q
-    # columns e1, e2, e3 of the rotation matrix (Ladruno_Types.h quatFromMat inverse)
     return np.array([
         [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
         [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
@@ -167,10 +168,10 @@ def test_asdshell_local_axes_in_recorder(tmp_path):
                 fr = np.stack([fr[c] for c in fr.dtype.names], axis=-1)
             fr = np.asarray(fr, dtype=float).reshape(len(ids), 4)
             for eid, q in zip(ids, fr):
-                seen[int(eid)] = (name, _quat_to_cols(q))
+                seen[int(eid)] = (name, _quat_to_rows(q))
     assert set(seen) == set(expected), sorted(seen)
     for eid, (name, R) in seen.items():
         _k, _x, _l, e1, e2, e3 = expected[eid]
-        for col, exp, lab in ((0, e1, "e1"), (1, e2, "e2"), (2, e3, "e3")):
-            assert np.allclose(R[:, col], exp, atol=1e-9), \
-                f"{name} ele {eid}: FRAME {lab}={R[:, col]}, expected {exp}"
+        for row, exp, lab in ((0, e1, "e1"), (1, e2, "e2"), (2, e3, "e3")):
+            assert np.allclose(R[row], exp, atol=1e-9), \
+                f"{name} ele {eid}: FRAME {lab}={R[row]}, expected {exp}"
