@@ -3,12 +3,18 @@
 # STATUS: frozen at 03f59c1a4 (2026-11-19). Amendment 1 (interface section 19.1) is recorded after the freeze;
 #         it changes no case line. Under amendment 1, item 8, the checker's present capacity cannot prove the
 #         conditioning bound on mesh 5 for the Lower formulation of every upper_gate_3d case or for the jump
-#         Upper formulation of the phi = 0 cases; those mesh-5 gates stand unchanged and cannot pass until
-#         WP-237d identifies an open, proved route (interface 11.2, 18.3, 17.1).
+#         Upper formulation of the phi = 0 cases; those mesh-5 gates stood unchanged and could not pass until
+#         WP-237d identified an open, proved route (interface 11.2, 18.3, 17.1). Amendment 3 removed them.
 #         Amendment 2 (interface 19.2.2, owner decision OD3 of 2026-11-19) turns 'formulation upper.p2c-vertex.v0'
 #         into a 'control' line in the two Tresca strip cases, so the jump pair alone decides their gates.
 #         The decision came after strip results were seen; the disclosure is in interface 19.2.2.
 #         The two Drucker-Prager Prandtl thin slabs still bind P2c until the owner decides them case by case.
+#         Amendment 3 (interface 19.3, owner decision OD5 of 2026-11-19) takes mesh 5 out of the P0 gate of every
+#         upper_gate_3d case. Each now gates the kinematic test, a certified Upper and a certified bracket on
+#         meshes 0 to 4 and the nested pair (0, 4) only. Mesh 5, 'nested 3 5' and every 'record gap' line
+#         stay: mesh 5 is evidence for P4 and for kill criterion K1. MAX_GAP_3D_VM and MAX_GAP_3D_DP keep
+#         their values as P4 exit targets.
+#         The decision came after mesh-4 and mesh-5 results were seen; the disclosure is in interface 19.3.
 #
 # FORMAT (line based, ASCII)
 #   '#' starts a comment line; blank lines are ignored. Tokens are separated by whitespace.
@@ -46,7 +52,8 @@
 #               | gap_le <value> | gravity_work_eq <tol>
 #               | lower_ge_formula <name> [key=value ...] | upper_le_formula <name> [key=value ...]
 #               | lower_le_formula <name> [key=value ...] | upper_ge_formula <name> [key=value ...]
-#   gate        kinematic_status formulation_feasible
+#   gate        kinematic_status formulation_feasible [mesh <i>]
+#                                        bare: every listed mesh; with 'mesh i': mesh i only (amendment 3)
 #               | certified_upper mesh <i> | certified_bracket mesh <i>
 #               | gap_le <NAMED_LIMIT> mesh <i>
 #               | upper_nonincrease <i> <j> | lower_nondecrease <i> <j>
@@ -607,19 +614,23 @@ boundary    base fixed plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
 gate        certified_upper mesh 3
 gate        certified_upper mesh 4
-gate        certified_upper mesh 5
-gate        certified_bracket mesh 5
-gate        gap_le MAX_GAP_3D_VM mesh 5
+gate        certified_bracket mesh 0
+gate        certified_bracket mesh 1
+gate        certified_bracket mesh 2
+gate        certified_bracket mesh 3
+gate        certified_bracket mesh 4
 gate        upper_nonincrease 0 4
-gate        upper_nonincrease 3 5
 gate        lower_nondecrease 0 4
-gate        lower_nondecrease 3 5
 record      gap mesh 0
 record      gap mesh 1
 record      gap mesh 2
@@ -660,19 +671,23 @@ boundary    base fixed plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
 gate        certified_upper mesh 3
 gate        certified_upper mesh 4
-gate        certified_upper mesh 5
-gate        certified_bracket mesh 5
-gate        gap_le MAX_GAP_3D_DP mesh 5
+gate        certified_bracket mesh 0
+gate        certified_bracket mesh 1
+gate        certified_bracket mesh 2
+gate        certified_bracket mesh 3
+gate        certified_bracket mesh 4
 gate        upper_nonincrease 0 4
-gate        upper_nonincrease 3 5
 gate        lower_nondecrease 0 4
-gate        lower_nondecrease 3 5
 record      gap mesh 0
 record      gap mesh 1
 record      gap mesh 2
@@ -713,19 +728,23 @@ boundary    base fixed plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
 gate        certified_upper mesh 3
 gate        certified_upper mesh 4
-gate        certified_upper mesh 5
-gate        certified_bracket mesh 5
-gate        gap_le MAX_GAP_3D_DP mesh 5
+gate        certified_bracket mesh 0
+gate        certified_bracket mesh 1
+gate        certified_bracket mesh 2
+gate        certified_bracket mesh 3
+gate        certified_bracket mesh 4
 gate        upper_nonincrease 0 4
-gate        upper_nonincrease 3 5
 gate        lower_nondecrease 0 4
-gate        lower_nondecrease 3 5
 record      gap mesh 0
 record      gap mesh 1
 record      gap mesh 2
@@ -766,19 +785,23 @@ boundary    base fixed plane z -3
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
 gate        certified_upper mesh 3
 gate        certified_upper mesh 4
-gate        certified_upper mesh 5
-gate        certified_bracket mesh 5
-gate        gap_le MAX_GAP_3D_DP mesh 5
+gate        certified_bracket mesh 0
+gate        certified_bracket mesh 1
+gate        certified_bracket mesh 2
+gate        certified_bracket mesh 3
+gate        certified_bracket mesh 4
 gate        upper_nonincrease 0 4
-gate        upper_nonincrease 3 5
 gate        lower_nondecrease 0 4
-gate        lower_nondecrease 3 5
 record      gap mesh 0
 record      gap mesh 1
 record      gap mesh 2
@@ -819,19 +842,23 @@ boundary    base symmetry plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
 gate        certified_upper mesh 3
 gate        certified_upper mesh 4
-gate        certified_upper mesh 5
-gate        certified_bracket mesh 5
-gate        gap_le MAX_GAP_3D_VM mesh 5
+gate        certified_bracket mesh 0
+gate        certified_bracket mesh 1
+gate        certified_bracket mesh 2
+gate        certified_bracket mesh 3
+gate        certified_bracket mesh 4
 gate        upper_nonincrease 0 4
-gate        upper_nonincrease 3 5
 gate        lower_nondecrease 0 4
-gate        lower_nondecrease 3 5
 record      gap mesh 0
 record      gap mesh 1
 record      gap mesh 2
@@ -872,19 +899,23 @@ boundary    base symmetry plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
 gate        certified_upper mesh 3
 gate        certified_upper mesh 4
-gate        certified_upper mesh 5
-gate        certified_bracket mesh 5
-gate        gap_le MAX_GAP_3D_DP mesh 5
+gate        certified_bracket mesh 0
+gate        certified_bracket mesh 1
+gate        certified_bracket mesh 2
+gate        certified_bracket mesh 3
+gate        certified_bracket mesh 4
 gate        upper_nonincrease 0 4
-gate        upper_nonincrease 3 5
 gate        lower_nondecrease 0 4
-gate        lower_nondecrease 3 5
 record      gap mesh 0
 record      gap mesh 1
 record      gap mesh 2
@@ -925,19 +956,23 @@ boundary    base symmetry plane z -2
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
 gate        certified_upper mesh 3
 gate        certified_upper mesh 4
-gate        certified_upper mesh 5
-gate        certified_bracket mesh 5
-gate        gap_le MAX_GAP_3D_DP mesh 5
+gate        certified_bracket mesh 0
+gate        certified_bracket mesh 1
+gate        certified_bracket mesh 2
+gate        certified_bracket mesh 3
+gate        certified_bracket mesh 4
 gate        upper_nonincrease 0 4
-gate        upper_nonincrease 3 5
 gate        lower_nondecrease 0 4
-gate        lower_nondecrease 3 5
 record      gap mesh 0
 record      gap mesh 1
 record      gap mesh 2
@@ -978,19 +1013,23 @@ boundary    base symmetry plane z -3
 query       q ray
 F1          pad 0 0 -1 0 0 0
 target      none
-gate        kinematic_status formulation_feasible
+gate        kinematic_status formulation_feasible mesh 0
+gate        kinematic_status formulation_feasible mesh 1
+gate        kinematic_status formulation_feasible mesh 2
+gate        kinematic_status formulation_feasible mesh 3
+gate        kinematic_status formulation_feasible mesh 4
 gate        certified_upper mesh 0
 gate        certified_upper mesh 1
 gate        certified_upper mesh 2
 gate        certified_upper mesh 3
 gate        certified_upper mesh 4
-gate        certified_upper mesh 5
-gate        certified_bracket mesh 5
-gate        gap_le MAX_GAP_3D_DP mesh 5
+gate        certified_bracket mesh 0
+gate        certified_bracket mesh 1
+gate        certified_bracket mesh 2
+gate        certified_bracket mesh 3
+gate        certified_bracket mesh 4
 gate        upper_nonincrease 0 4
-gate        upper_nonincrease 3 5
 gate        lower_nondecrease 0 4
-gate        lower_nondecrease 3 5
 record      gap mesh 0
 record      gap mesh 1
 record      gap mesh 2
