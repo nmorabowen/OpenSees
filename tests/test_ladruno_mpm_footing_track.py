@@ -10,6 +10,10 @@ they differ in which rows are prescribed once s >= h/2, which this isolates from
 Also checked: before s = h/2 the two leads prescribe the same node rows, so the footing records
 that end before s = h/2 stay bit-identical (S3 r1 / r2, L4 r1, L3 r1 / r2).
 """
+import json
+from itertools import pairwise
+from pathlib import Path
+
 import pytest
 from _testbed import ops
 
@@ -114,3 +118,34 @@ def test_lead_is_bit_identical_before_half_a_cell():
     added the row at -h and they differ, so the comparison can fail."""
     assert _footing_state(0.0, 4) == _footing_state(0.5, 4)
     assert _footing_state(0.0, 6) != _footing_state(0.5, 6)
+
+
+# --------------------------------------------------------------------------- #
+#  F1, the artifact window (wp-briefs "WP-244"): HS S3 at r2 / r3 to s = 2 h   #
+#  The records are written by the WP-244 runs (`s3_run`, s_end = 2 h) and read  #
+#  here; lead 0 is the #1112 reproduction, reported.                           #
+# --------------------------------------------------------------------------- #
+WP244 = Path(__file__).resolve().parent / "data" / "mpm" / "wp244"
+
+
+def _worst_drop(curve, s_min=0.01):
+    """The largest one-step drop of q after s_min, as a fraction of the running maximum."""
+    run, worst = 0.0, 0.0
+    for (_, q0), (s1, q1) in pairwise(curve):
+        run = max(run, q0)
+        if s1 > s_min and run > 0.0:
+            worst = max(worst, (q0 - q1) / run)
+    return worst
+
+
+@pytest.mark.parametrize("r", [2, 3])
+def test_f1_artifact_window(r):
+    h = 0.5 / 2 ** (r - 1)
+    new = json.loads((WP244 / f"f1_hs_r{r}_lead0.5.json").read_text(encoding="utf-8"))
+    old = json.loads((WP244 / f"f1_hs_r{r}_lead0.0.json").read_text(encoding="utf-8"))
+    w_new, w_old = _worst_drop(new["curve"]), _worst_drop(old["curve"])
+    print(f"F1 r{r}: lead 0.5 reaches s/h {new['curve'][-1][0] / h:.2f}, worst drop "
+          f"{100 * w_new:.1f} %; lead 0 (reported) reaches s/h {old['curve'][-1][0] / h:.2f}, "
+          f"worst drop {100 * w_old:.1f} %")
+    assert new["reached"] and abs(new["curve"][-1][0] - 2.0 * h) < 1e-9, new["stopped"]
+    assert w_new <= 0.05, w_new
