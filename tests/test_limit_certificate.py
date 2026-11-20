@@ -75,7 +75,14 @@ def certified(problem, arrays, result, fields, **options):
     ct.validate_method_report(method, certificate, problem, result, fields, arrays)
     assert lc.method_failures(certificate, method, fields) == []
     form = ct.query_by_id(problem, result["query_id"])["form"]
-    assert ct.gate_admissible(certificate, form, method) and lc.gate_admissible(certificate, form, method)
+    # Amendment 2, m1: on the gate path the result's arrays are supplied and hash-checked; a report that names them
+    # (an interior field from the result, or a face Z) counts only with them.
+    assert ct.gate_admissible(certificate, form, method, result_arrays=fields)
+    assert lc.gate_admissible(certificate, form, method, fields, result)
+    needs = ct.method_needs_result_arrays(method)
+    assert lc.method_needs_result_arrays(method) == needs
+    assert ct.gate_admissible(certificate, form, method) == (not needs) == lc.gate_admissible(certificate, form, method)
+    assert not lc.gate_admissible(certificate, form, method, fields), "arrays without the result cannot be hash-checked"
     assert not ct.gate_admissible(certificate, form) and not lc.gate_admissible(certificate, form), "no report, no gate"
     assert certificate["checker"]["name"] == lc.CHECKER_NAME and outcome.passed is None
     return outcome
@@ -666,18 +673,40 @@ def test_schema_negative_fixtures_never_become_certificates():
             assert outcome.certificate["checks"]["straightness_max"] > T["TOL_GEOM_STRAIGHT"]
         elif kind == "problem_hash":
             estimate(problem, arrays, result, fields, "hash_mismatch")
+        elif kind == "add_apex_zero":
+            # Amendment 2, 19.2.1 item 3: a Lower never declares a face; the document is refused, nothing is written.
+            with pytest.raises(lc.Refusal) as error:
+                lc.check(problem, arrays, result, fields)
+            assert error.value.code == entry["expect"] == "apex_zero_lower"
+        elif kind == "add_apex_zero_unhashed":
+            # Item 2: Z is a result array, so a face added after hashing is another result.
+            assert entry["expect"] == "hash_mismatch"
+            estimate(problem, arrays, result, fields, "hash_mismatch")
         else:
             # A forged claim: the checker derives the claim itself and gives an estimate for the one asked for.
             outcome = estimate(problem, arrays, result, fields, "unsupported_domain_claim", requested_claim=forged["domain_claim"])
             claim = outcome.certificate["domain_claim"]
             assert claim == ct.supported_domain_claim(problem, arrays, "upper") != forged["domain_claim"]
             assert lc.check(problem, arrays, result, fields).certificate["domain_claim"] == claim
-    assert seen == {"relabel_upper", "move_mid_node", "problem_hash", "certificate_claim", "drop_truncation_set"}
+    assert seen == {"relabel_upper", "move_mid_node", "problem_hash", "certificate_claim", "drop_truncation_set",
+                    "add_apex_zero", "add_apex_zero_unhashed"}
+
+
+@pytest.mark.parametrize("entry", [e for e in ct.NEGATIVE if e["stage"] == "certify"], ids=lambda e: e["id"])
+def test_certify_fixture_is_certified(entry):
+    """Amendment 2, review fix M1: the full procedure of 17.4 with 19.2.1 must end certified_bound."""
+    problem, arrays, result, fields, _ = ct.apply_negative(entry)
+    assert entry["expect"] == "certified_bound"
+    outcome = certified(problem, arrays, result, fields)
+    checks = outcome.certificate["checks"]
+    assert checks["repair_mu"] == 0.0 and 0.0 <= checks["rho_apex"] <= T["TOL_CONE_MARGIN"]
+    assert outcome.method["apex_zero"] == {"count": len(fields["apex_zero"]), "sha256": ct.apex_zero_sha256(fields),
+                                           "z_forced": "absent"}
 
 
 def test_every_negative_fixture_is_exercised():
     stages = {entry["stage"] for entry in ct.NEGATIVE}
-    assert stages == {"schema", "checker", "final_check"} and len(ct.NEGATIVE) == 25
+    assert stages == {"schema", "checker", "final_check", "certify"} and len(ct.NEGATIVE) == 30
     ids = {entry["id"] for entry in ct.NEGATIVE}
     assert {"normal_jump_isochoric", "vm_jump_opening", "restrained_footing_component"} <= ids and "normal_jump_one_node" not in ids
 
@@ -1395,8 +1424,10 @@ def test_refusal_record_is_written_instead_of_a_certificate(tmp_path):
     ct.validate_refusal(record, problem, result)
     assert record == outcome.refusal and set(record) == {
         "format", "format_version", "problem_sha256", "result_sha256", "query_id", "bound", "formulation", "kind", "stage",
-        "detail", "resources", "checker", "tolerances"}
+        "detail", "resources", "budget", "checker", "tolerances"}
     assert record["kind"] == "capacity" and record["stage"] == "kappa_bound" and "value" not in record
+    # Amendment 2, m4: the budget declared before the run, and the one a size limit protects.
+    assert record["budget"] == {**lc.BUDGET, "exceeded": "memory"}
     # A certificate beside a refusal is an invalid record set for a gate reader.
     good = lc.check(problem, arrays, result, fields)
     lc.write_outcome(tmp_path, result, good)
@@ -1418,6 +1449,7 @@ def test_refusal_record_is_written_instead_of_a_certificate(tmp_path):
         lc.Conditioning = real
     ct.validate_refusal(outcome.refusal, problem, result)
     assert (outcome.refusal["kind"], outcome.refusal["stage"]) == ("conditioning", "dependent_rows")
+    assert outcome.refusal["budget"] == {**lc.BUDGET, "exceeded": None}, "a conditioning refusal ran within its budget"
     # A field made by the checker's own code is refused under the reserved name, like its certificates.
     own = dict(result, producer={"name": lc.CHECKER_NAME, "version": lc.CHECKER_VERSION})
     own["result_sha256"] = ct.document_hash(own, fields, "result_sha256")
@@ -1769,22 +1801,32 @@ def test_conditioning_command_writes_the_table(tmp_path):
 
 
 CONDITIONING_RECORD = Path(__file__).with_name("limit_conditioning_report.json")
-# Interface 11.2 (amendment 1, item 8): what the checker's capacity cannot prove at this amendment.
-UNPROVED_ON_MESH_5 = {(name, 5, ct.LOWER_ID) for name in ct.GATE_3D} | {(name, 5, ct.JUMP_ID) for name in ct.GATE_3D if name.endswith("phi00")}
+# Amendment 3 (interface 11.2, 19.3, owner OD5): the true-3D P0 gate is meshes 0 to 4. Mesh 5 gates nothing in P0;
+# its rows may stay in the record as evidence for P4 and K1 (18.3), and a refusal there fails no P0 item.
+GATE_MESHES_3D = range(5)
 
 
 def test_committed_conditioning_record_covers_every_gate_mesh_and_hides_no_refusal():
-    """kappa_eq, or the refusal, on meshes 0 to 5 of the eight true-3D cases and on the strips, as the command wrote
-    it (interface 17.1). The refusals are exactly the two groups the amended interface names."""
+    """kappa_eq on every gate mesh, as the command wrote it (interface 17.1), for every binding formulation: meshes 0 to
+    4 of the eight true-3D cases (amendment 3) and every mesh of the strips; under OD3 (amendment 2, item B) continuous
+    P2 is a control on the two Tresca strips and has no row there. No gate mesh is refused. Mesh-5 rows of the 3D cases
+    are optional evidence: a refusal there is allowed and is a capacity refusal, never required."""
     document = ct.load_document(CONDITIONING_RECORD)[0]
     assert document["format"] == lc.FORMAT_CONDITIONING and document["checker"]["name"] == lc.CHECKER_NAME
     hashes = ct.load_problem_hashes()
     gate_cases = [name for name in ct.ACTIVE if CASES[name]["class"] in lc.GATE_CLASSES]
     assert len(gate_cases) == 12 and sorted(name for name in gate_cases if CASES[name]["class"] == "upper_gate_3d") == sorted(ct.GATE_3D)
-    expected = {(name, mesh, formulation) for name in gate_cases for mesh in range(len(CASES[name]["mesh"]))
+    def meshes(name):
+        return GATE_MESHES_3D if CASES[name]["class"] == "upper_gate_3d" else range(len(CASES[name]["mesh"]))
+
+    required = {(name, mesh, formulation) for name in gate_cases for mesh in meshes(name)
+                for formulation in CASES[name]["formulation"]}
+    evidence = {(name, mesh, formulation) for name in ct.GATE_3D for mesh in range(5, len(CASES[name]["mesh"]))
                 for formulation in CASES[name]["formulation"]}
     rows = {(row["case"], row["mesh"], row["formulation"]): row for row in document["rows"]}
-    assert set(rows) == expected and len(document["rows"]) == len(expected) == 144
+    assert len(rows) == len(document["rows"]) and required <= set(rows) <= required | evidence
+    assert len(required) == 120
+    assert not any(formulation == ct.CONTROL_ID and name.startswith("tresca_strip") for name, _, formulation in rows)
     refused = set()
     for (name, mesh, formulation), row in rows.items():
         assert row["problem_sha256"] == hashes[name][f"m{mesh}"], "the record is of this case on this mesh"
@@ -1806,12 +1848,323 @@ def test_committed_conditioning_record_covers_every_gate_mesh_and_hides_no_refus
             zeros = row["rows_skipped"] if row["method"] == "eigen_normal_rows" else row["n_unknowns"] - row["rank"]
             assert complete["route"] == "inertia" and complete["count_below"] == zeros
             assert complete["shift"] > row["residual"] >= 0.0 and row["sigma_min_lower"] ** 2 <= complete["shift"] - row["residual"]
-    assert refused == UNPROVED_ON_MESH_5 and len(refused) == 10
+    assert not refused & required, "every gate mesh has a proved kappa_eq"
     assert all(rows[key]["refusal"]["kind"] == "capacity" for key in refused)
     # One row is recomputed here, with the capacity the record states.
     key = ("upper3d_fixed_phi30", 0, ct.JUMP_ID)
     again = lc.conditioning_report(*case_problem(key[0], key[1]), "q", key[2], **document["capacity"])
     assert again["kappa_eq"] == pytest.approx(rows[key]["kappa_eq"], rel=1e-9) and again["rank"] == rows[key]["rank"]
+
+
+# ---------------------------------------------------------------------------------------------
+# Amendment 2 (interface 19.2): the declared apex face Z, n_S, budgets, witness keys, the gate path
+# ---------------------------------------------------------------------------------------------
+
+def apex_fixture(name):
+    entry = [e for e in ct.NEGATIVE if e["id"] == name][0]
+    problem, arrays, result, fields, _ = ct.apply_negative(entry)
+    return problem, arrays, result, fields
+
+
+def rehash(result, fields):
+    result = dict(result)
+    result["result_sha256"] = ct.document_hash(result, fields, "result_sha256")
+    return result
+
+
+def test_set_normal_is_the_stated_formula_bitwise_on_a_tilted_plane():
+    """Amendment 2, m6: n_S by the exact formula and evaluation order, the same bits as the contract's executable form,
+    on every stored symmetry set and on the same sets after a rotation that tilts every plane."""
+    angle = 0.3
+    turn = np.array([[1.0, 0.0, 0.0], [0.0, math.cos(angle), -math.sin(angle)], [0.0, math.sin(angle), math.cos(angle)]])
+    turn = turn @ np.array([[math.cos(0.7), 0.0, math.sin(0.7)], [0.0, 1.0, 0.0], [-math.sin(0.7), 0.0, math.cos(0.7)]])
+    seen = 0
+    for path in sorted(DATA.glob("*.m0.problem.json")):
+        problem, arrays = ct.load_document(path)
+        kinds = [item["kind"] for item in problem["boundary_sets"]]
+        if "symmetry" not in kinds:
+            continue
+        for tilted in (False, True):
+            mesh = dict(arrays, nodes=arrays["nodes"] @ turn.T) if tilted else arrays
+            model = lc.Model(problem, mesh)
+            for s, kind in enumerate(kinds):
+                if kind == "symmetry":
+                    np.testing.assert_array_equal(model.set_normal[s], ct.symmetry_set_normal(problem, mesh, s))
+                    seen += 1
+    assert seen >= 4
+
+
+def test_apex_face_rows_are_the_arguments_the_contract_names():
+    """19.2.1 item 4: six rows d_ei (Voigt, engineering shear) per flow entry and three rows c_B per jump entry, in Z
+    order, checked against the contract's own operator on a random broken field."""
+    problem, arrays, result, fields = apex_fixture("apex_zero_full_face")
+    model = lc.Model(problem, arrays)
+    query = lc.Query(model, problem["queries"][0])
+    entries = [(0, 0), (0, 7), (0, 4 * model.n_elements - 1), (1, 2), (1, 6 * len(model.int_minus) - 1)]
+    system = lc.UpperSystem(model, query, ct.JUMP_ID, entries)
+    field = np.random.default_rng(3).standard_normal((model.n_elements, 10, 3))
+    x = system.pack(field, np.zeros((model.n_footings, 6)))
+    rows = system.kinds == "apex"
+    assert int(rows.sum()) == 3 * 6 + 2 * 3
+    np.testing.assert_allclose(system.matrix[np.nonzero(rows)[0]] @ x, ct.apex_zero_row_values(arrays, field, entries),
+                               rtol=1e-12, atol=1e-12)
+    plain = lc.UpperSystem(model, query, ct.JUMP_ID)
+    assert system.matrix.shape[0] == plain.matrix.shape[0] + int(rows.sum()) and list(system.kinds[: len(plain.kinds)]) == list(plain.kinds)
+
+
+@pytest.mark.parametrize("change, code", [
+    ("unsorted", "apex_zero_invalid"), ("duplicate", "apex_zero_invalid"), ("kind", "apex_zero_invalid"),
+    ("index", "apex_zero_invalid"), ("empty", "apex_zero_invalid"), ("dtype", "apex_zero_invalid"),
+    ("dual_alone", "apex_zero_invalid"), ("dual_shape", "apex_zero_invalid"), ("dual_tail", "apex_zero_invalid"),
+    ("no_field", "apex_zero_invalid"),
+])
+def test_declared_face_is_validated(change, code):
+    """19.2.1 item 1: encoding, order, uniqueness, the dual's form, and no face without a field."""
+    problem, arrays, result, fields = apex_fixture("apex_zero_full_face")
+    fields = dict(fields)
+    z = fields["apex_zero"]
+    result = dict(result)
+    if change == "unsorted":
+        fields["apex_zero"] = z[::-1].copy()
+    elif change == "duplicate":
+        fields["apex_zero"] = np.vstack([z[:1], z]).astype("<i8")
+    elif change == "kind":
+        fields["apex_zero"] = np.vstack([z, [[2, 0]]]).astype("<i8")
+    elif change == "index":
+        fields["apex_zero"] = np.vstack([z, [[1, 10 ** 6]]]).astype("<i8")
+    elif change == "empty":
+        fields["apex_zero"] = np.zeros((0, 2), dtype="<i8")
+    elif change == "dtype":
+        fields["apex_zero"] = z.astype("<i4")
+    elif change == "dual_alone":
+        del fields["apex_zero"]
+        fields["apex_zero_dual"] = np.ones((len(z), 6))
+    elif change == "dual_shape":
+        fields["apex_zero_dual"] = np.ones((len(z), 3))
+    elif change == "dual_tail":
+        dual = np.zeros((len(z), 6))
+        dual[0, 4] = 1.0
+        fields["apex_zero_dual"] = dual
+    elif change == "no_field":
+        result.update(solver_status="primal_infeasible", value=None, objective=None)
+    result = rehash(result, fields)
+    with pytest.raises(lc.Refusal) as error:
+        lc.check(problem, arrays, result, fields)
+    assert error.value.code == code
+    with pytest.raises(ct.ContractError) as contract:
+        ct.validate_result(result, fields, problem, arrays)
+    assert contract.value.code in (code, "array_shape", "result_value_without_solution", "result_arrays_without_solution")
+
+
+def test_face_is_refused_where_no_cone_has_an_apex_and_outside_the_jump_formulation():
+    """19.2.1 item 1: a flow entry needs alpha > 0, a jump entry the jump formulation with tau > 0."""
+    problem, arrays, result, fields = stored("vm_plate_shear", ct.JUMP_ID)
+    for rows in ([[0, 0]], [[1, 0]]):
+        faced = dict(fields, apex_zero=np.array(rows, dtype="<i8"))
+        with pytest.raises(lc.Refusal) as error:
+            lc.check(problem, arrays, rehash(result, faced), faced)
+        assert error.value.code == "apex_zero_invalid", rows
+    problem, arrays, result, fields = stored("dp_uniaxial_tension", ct.CONTROL_ID)
+    faced = dict(fields, apex_zero=np.array([[1, 0]], dtype="<i8"))
+    with pytest.raises(lc.Refusal) as error:
+        lc.check(problem, arrays, rehash(result, faced), faced)
+    assert error.value.code == "apex_zero_invalid"
+    faced = dict(fields, apex_zero=np.array([[0, 0]], dtype="<i8"))      # a flow entry is allowed in the control
+    outcome = lc.check(problem, arrays, rehash(result, faced), faced)
+    assert outcome.refusal is None and outcome.method is not None and outcome.method["apex_zero"]["count"] == 1
+
+
+def test_face_rows_and_not_only_the_exclusion_stop_a_hidden_violation(monkeypatch):
+    """Review fix M1: the Z rows are what end the hiding fixture with projection_move_too_large. Without them the
+    field is never moved, and only the rho_apex limit (item 9) still stops it; a checker that also left that out would
+    certify a violated field. A checker that ignores Z altogether fails the full face. This checker does neither."""
+    hide = apex_fixture("apex_zero_hides_violation")
+    full = apex_fixture("apex_zero_full_face")
+    estimate(*hide, "projection_move_too_large")
+    certified(*full)
+    with monkeypatch.context() as patch:
+        patch.setattr(lc.UpperSystem, "apex_row_operator",
+                      lambda self, entries: (np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64), np.zeros(0), 0))
+        mutant = is_estimate(lc.check(*hide), "flow_violation_too_large")
+        checks = mutant.certificate["checks"]
+        assert checks["projection_move"] == 0.0 and checks["rho_flow"] <= T["TOL_CONE_MARGIN"]
+        assert checks["rho_jump_cone"] <= T["TOL_CONE_MARGIN"], "outside Z every condition holds"
+        assert 1e-4 < checks["rho_apex"] < 1e-2, "only the size of the Z arguments shows the violation"
+    with monkeypatch.context() as patch:
+        patch.setattr(lc, "apex_zero_entries", lambda model, result, arrays: None)
+        assert not lc.check(*full).certified, "the mutant that ignores Z cannot certify the full face"
+
+
+def test_face_dissipation_is_charged_never_credited():
+    """19.2.1 item 8: Z terms enter D as max(0, pi); the other terms by the formulas, untested."""
+    problem, arrays, result, fields = apex_fixture("apex_zero_full_face")
+    model = lc.Model(problem, arrays)
+    query = lc.Query(model, problem["queries"][0])
+    entries = [tuple(int(v) for v in row) for row in fields["apex_zero"]]
+    faced, plain = lc.UpperSystem(model, query, ct.JUMP_ID, entries), lc.UpperSystem(model, query, ct.JUMP_ID)
+    field = fields["element_velocity"].copy()
+    f, b = divmod(entries[0][1], 6)
+    e1, f1 = model.int_minus[f]
+    field[e1, model.int_local_minus[f]] += 1e-3 * model.normal[e1, f1]      # opens the facet: o < 0 on the e- side
+    x = faced.pack(field, fields["footing_velocity"])
+    with_z, without = lc.UpperState(model, faced, query, x), lc.UpperState(model, plain, query, x)
+    alpha, k = model.alpha[model.int_minus[:, 0]], model.k[model.int_minus[:, 0]]
+    density = k[:, None] * without.opening / (3.0 * alpha[:, None])
+    weight = model.area[model.int_minus[:, 0], model.int_minus[:, 1]][:, None] / 6.0
+    credit = float(np.sum(weight * np.maximum(0.0, -density) * faced.z_jump))
+    assert credit > 0.0 and with_z.dissipation == pytest.approx(without.dissipation + credit, rel=1e-12)
+    assert with_z.rho_apex > 0.0 and without.rho_apex is None
+
+
+def test_kappa_is_proved_on_the_augmented_system_or_refused():
+    """19.2.1 item 5: kappa_eq of the system with the Z rows, by the routes of 17.1, or a refusal; never the kappa_eq
+    of the system without Z."""
+    problem, arrays, result, fields = apex_fixture("apex_zero_full_face")
+    outcome = certified(problem, arrays, result, fields)
+    model = lc.Model(problem, arrays)
+    query = lc.Query(model, problem["queries"][0])
+    entries = [tuple(int(v) for v in row) for row in fields["apex_zero"]]
+    faced = lc.UpperSystem(model, query, ct.JUMP_ID, entries)
+    rows = outcome.method["dependent_rows"]
+    assert rows["n_rows"] == faced.matrix.shape[0] == 3 * len(entries) + lc.UpperSystem(model, query, ct.JUMP_ID).matrix.shape[0]
+    assert outcome.method["rows_skipped"] == rows["n_rows"] - rows["rank"]
+    assert outcome.report["rows"] == faced.matrix.shape[0]
+    # The sparse route proves the same system, with its own proofs of every dependent row.
+    sparse = lc.check(problem, arrays, result, fields, dense_entries_max=0)
+    if sparse.refusal is None:
+        assert sparse.certified and sparse.method["dependent_rows"]["n_rows"] == rows["n_rows"]
+        assert sparse.method["dependent_rows"]["rank"] == rows["rank"]
+    else:
+        ct.validate_refusal(sparse.refusal, problem, result)
+    # Without the capacity, a refusal and no certificate: kind capacity, the memory budget named.
+    refused = lc.check(problem, arrays, result, fields, dense_entries_max=0, sparse_rows_max=10)
+    assert refused.certificate is None and refused.method is None
+    ct.validate_refusal(refused.refusal, problem, result)
+    assert refused.refusal["kind"] == "capacity" and refused.refusal["budget"]["exceeded"] == "memory"
+    assert refused.refusal["resources"]["n_rows"] == rows["n_rows"]
+
+
+def test_z_forced_is_a_diagnostic_and_never_a_gate():
+    """19.2.1 item 11: proved only when this checker verifies the dual, unproved otherwise, absent without one; the
+    certificate does not depend on it."""
+    problem, arrays, result, fields = apex_fixture("apex_zero_full_face")
+    absent = certified(problem, arrays, result, fields)
+    assert absent.method["apex_zero"]["z_forced"] == "absent"
+    for dual in (np.zeros((len(fields["apex_zero"]), 6)), np.tile([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], (len(fields["apex_zero"]), 1))):
+        faced = dict(fields, apex_zero_dual=dual)
+        outcome = certified(problem, arrays, rehash(result, faced), faced)
+        assert outcome.method["apex_zero"]["z_forced"] == "unproved"     # no step-2 row to carry the reduction
+        assert outcome.certificate["value_certified"] == absent.certificate["value_certified"]
+        assert outcome.certificate["checks"] == absent.certificate["checks"]
+
+    # A proved instance: every face of the cube fixed, so a flow condition whose seven nodes all sit on exterior
+    # facets of its element is forced by the fixed rows alone, with y any stress strictly inside the dual cone.
+    fixed = copy.deepcopy(problem)
+    for item in fixed["boundary_sets"]:
+        item["kind"] = "fixed"
+    zero = dict(arrays, t0=np.zeros_like(arrays["t0"]), t1=np.zeros_like(arrays["t1"]))
+    model = lc.Model(fixed, zero)
+    query = lc.Query(model, fixed["queries"][0])
+    exterior = {(int(e), int(f)) for e, f in model.ext}
+    entry = None
+    for e in range(model.n_elements):
+        covered = set()
+        for f in range(4):
+            if (e, f) in exterior:
+                covered |= set(lc.FACET_NODES[f])
+        for i in range(4):
+            touched = set(range(4)) | {4 + q for q, edge in enumerate(lc.EDGES) if i in edge}
+            if touched <= covered:
+                entry = (0, 4 * e + i)
+                break
+        if entry:
+            break
+    assert entry is not None
+    system = lc.UpperSystem(model, query, ct.JUMP_ID, [entry])
+    inside, outside = np.array([[1.0, 1.0, 1.0, 0.0, 0.0, 0.0]]), np.array([[1.0, -1.0, 0.0, 0.0, 0.0, 0.0]])
+    assert lc.apex_zero_forced(model, system, {"apex_zero_dual": inside}) == "proved"
+    assert lc.apex_zero_forced(model, system, {"apex_zero_dual": outside}) == "unproved"
+    assert lc.apex_zero_forced(model, system, {}) == "absent"
+
+
+def test_rho_apex_is_reported_and_bounded():
+    """17.7 and 19.2.1 items 6 and 9: rho_apex is null without Z, shown and within TOL_CONE_MARGIN with it."""
+    problem, arrays, result, fields = stored("dp_uniaxial_tension", ct.CONTROL_ID)
+    plain = certified(problem, arrays, result, fields)
+    assert plain.certificate["checks"]["rho_apex"] is None and plain.method["apex_zero"] is None
+    full = certified(*apex_fixture("apex_zero_full_face")).certificate
+    for value, bad in ((0.0, False), (T["TOL_CONE_MARGIN"], False), (2.0 * T["TOL_CONE_MARGIN"], True), (-1e-30, True)):
+        changed = copy.deepcopy(full)
+        changed["checks"]["rho_apex"] = value
+        assert ("rho_apex" in lc.certified_check_failures(changed, "ray")) == bad == \
+            ("rho_apex" in ct.certified_check_failures(changed, "ray")), value
+
+
+def test_method_report_names_the_face_and_the_gate_path_checks_it(tmp_path):
+    """15.9 and m1: the report's apex_zero key matches the result's arrays; arrays that do not hash to the result,
+    or a report whose face differs from them, are refused on the gate path."""
+    problem, arrays, result, fields = apex_fixture("apex_zero_full_face")
+    outcome = certified(problem, arrays, result, fields)
+    certificate, method = outcome.certificate, outcome.method
+    assert lc.method_needs_result_arrays(method)
+    assert not lc.gate_admissible(certificate, "ray", method), "a face counts only with the result's arrays"
+    tampered = dict(fields, element_velocity=fields["element_velocity"] * (1.0 + 1e-12))
+    assert not lc.gate_admissible(certificate, "ray", method, tampered, result)
+    for change in ({"count": 1}, {"sha256": "0" * 64}, {"z_forced": "proved"}, {"z_forced": "maybe"}):
+        broken = copy.deepcopy(method)
+        broken["apex_zero"].update(change)
+        assert "method_apex_zero" in lc.method_failures(certificate, broken, fields), change
+        with pytest.raises(ct.ContractError) as error:
+            ct.validate_method_report(broken, certificate, result_arrays=fields)
+        assert error.value.code == "method_apex_zero", change
+    silent = copy.deepcopy(method)
+    silent["apex_zero"] = None
+    assert "method_apex_zero" in lc.method_failures(certificate, silent)
+    # A gate reader refuses a face without the result, and arrays that are not the result's.
+    path = lc.write_outcome(tmp_path, result, outcome)
+    with pytest.raises(lc.Refusal) as error:
+        lc.read_gate_certificate(path)
+    assert error.value.code == "result_arrays_missing"
+    with pytest.raises(lc.Refusal) as error:
+        lc.read_gate_certificate(path, result=result, result_arrays=tampered)
+    assert error.value.code == "hash_mismatch"
+    assert lc.read_gate_certificate(path, result=result, result_arrays=fields)[0] == certificate
+
+
+def test_feasibility_record_carries_the_witness_keys():
+    """11.1 and 15.5, amendment 2 m2: the witness's projection move and W1 / W_scale, both null without a witness."""
+    problem, arrays, result, fields = stored("vm_plate_shear", ct.JUMP_ID)
+    record, _ = lc.feasibility(problem, arrays, result, fields)
+    ct.validate_feasibility(record, problem)
+    assert record["witness_result_sha256"] == result["result_sha256"]
+    assert 0.0 <= record["witness_projection_move"] <= T["TOL_PROJECTION_MOVE"]
+    assert record["witness_work_reference"] >= T["TOL_WORK_MIN"]
+    face = apex_fixture("apex_zero_full_face")
+    record, _ = lc.feasibility(*face)
+    ct.validate_feasibility(record, face[0])
+    assert record["witness_projection_move"] == pytest.approx(lc.check(*face).certificate["checks"]["projection_move"])
+
+
+def test_face_that_makes_the_equalities_unprovable_is_a_conditioning_refusal():
+    """19.2.1 item 5 with OD4: when no route proves kappa_eq on the augmented system the checker writes a refusal,
+    kind conditioning, no budget exceeded, which the evaluator counts as cause refused."""
+    problem, arrays, result, fields = apex_fixture("apex_zero_full_face")
+    real = lc.Conditioning
+
+    class Unproved(real):
+        def __init__(self, matrix, *args, **kwargs):
+            super().__init__(matrix, *args, **kwargs)
+            self.seen_rows = matrix.shape[0]
+            self._refuse("conditioning", "kappa_bound", "no route proves the augmented system")
+
+    try:
+        lc.Conditioning = Unproved
+        outcome = lc.check(problem, arrays, result, fields)
+    finally:
+        lc.Conditioning = real
+    ct.validate_refusal(outcome.refusal, problem, result)
+    assert outcome.certificate is None and outcome.refusal["kind"] == "conditioning"
+    assert outcome.refusal["budget"]["exceeded"] is None
 
 
 def test_checker_files_carry_no_private_material():

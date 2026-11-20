@@ -24,6 +24,14 @@ none; when no bound is proved, or the system exceeds the checker's capacity, ``c
 15.8 instead of a certificate; symmetry rows use the set normal in both bounds; flow and jump conditions have their
 own scales; and the feasibility witness is the projected field.
 
+Under contract amendment 2 (interface 19.2): an Upper result may declare an apex face Z (``apex_zero``), validated by
+``apex_zero_entries``; its exact rows join the step-2 system, kappa_eq is proved on that augmented system or the
+checker refuses, Z leaves the repair set, the interior clearance test and the inequality recheck, its dissipation is
+charged as max(0, pi), and ``rho_apex`` reports the size of its arguments. An attached ``apex_zero_dual`` is verified
+as the diagnostic ``z_forced`` and never gates. Symmetry rows use the exact n_S formula of m6; refusals carry the
+declared ``budget`` (m4); feasibility records carry the witness's projection move and reference work (m2); and the
+gate path hash-checks the result's arrays when a method report names them (m1).
+
 Uses the standard library, numpy and scipy. ``tests/test_limit_certificate.py`` cross-checks every table held
 here against the contract test.
 """
@@ -58,6 +66,8 @@ DEPENDENT_ROUTES = ("shape_forced_zeros", "dense_svd_blocks", "null_space_basis"
 INTERIOR_SOURCES = ("none", "zero", "result")
 REFUSAL_KINDS = ("capacity", "conditioning")
 REFUSAL_STAGES = ("projection", "dependent_rows", "kappa_bound")
+Z_FORCED = ("proved", "unproved", "absent")              # amendment 2, interface 19.2.1 item 11: diagnostic only
+BUDGET_EXCEEDED = ("memory", "time")                     # amendment 2, m4
 
 LOWER_ID = "lower.p1d-vertex.v0"
 CONTROL_ID = "upper.p2c-vertex.v0"
@@ -103,6 +113,7 @@ CONVENTIONS = {
 CHECK_KEYS = (
     "rho_div", "rho_jump", "rho_bc", "rho_resultant", "projection_move", "omega_eq", "kappa_eq", "tau_eq",
     "rho_cone", "repair_mu", "straightness_max", "rho_flow", "rho_jump_cone", "work_reference",
+    "rho_apex",                                          # amendment 2, interface 17.7 and 19.2.1 items 6 and 9
 )
 REASON_CODES = (
     "no_candidate", "hash_mismatch", "query_mismatch", "formulation_not_admitted", "formulation_not_applicable",
@@ -131,6 +142,10 @@ RESIDUAL_SAFETY = 2.0          # factor on every computed residual bound, for th
 NULL_BASIS_ENTRIES_MAX = 1.0e8 # largest explicit null-space basis, with its image, held in memory
 FEAS_DENSE_UNKNOWNS = 4000     # rank, nullity and footing modes are reported up to this many unknowns
 LSMR_COMPATIBLE = 1e-9         # relative residual below which a least-squares system counts as solved exactly
+# The budget this checker declares before every run (interface 15.8, amendment 2 m4): one workstation's memory and one
+# hour, the scale of ADR kill criterion K1. The capacity limits above are how the checker keeps within it: a size
+# limit protects the memory budget, an iteration limit the time budget.
+BUDGET = {"memory_bytes": 6.4e10, "wall_s": 3600.0}
 
 
 class Refusal(ValueError):
@@ -148,12 +163,17 @@ class CapacityRefusal(Refusal):
     estimate and never a missing certificate, and it says nothing about the result.
     """
 
-    def __init__(self, refusal, resources=None):
+    def __init__(self, refusal, resources=None, exceeded=None):
         if not isinstance(refusal, dict):
             refusal = {"kind": "capacity", "stage": "kappa_bound", "detail": str(refusal)}
         super().__init__("checker_capacity", f"{refusal['kind']} at {refusal['stage']}: {refusal['detail']}")
         self.kind, self.stage, self.detail_text = refusal["kind"], refusal["stage"], refusal["detail"]
         self.resources = resources or {"n_rows": 0, "n_unknowns": 0, "nnz": 0}
+        # Which declared budget a capacity refusal did not fit (15.8, m4); a conditioning refusal ran within both.
+        if refusal["kind"] == "capacity":
+            self.exceeded = exceeded or refusal.get("exceeded") or "memory"
+        else:
+            self.exceeded = None
 
 
 def _require(condition, code, detail=""):
@@ -530,19 +550,32 @@ class Model:
         e, f = self.ext[:, 0], self.ext[:, 1]
         self.ext_normal, self.ext_area = self.normal[e, f], self.area[e, f]
         self.footing_area = np.array([self.ext_area[self.facet_footing == q].sum() for q in range(self.n_footings)])
-        # Symmetry sets are planar: one normal and one plane (interface 5). The set normal is that of its first facet.
+        # Symmetry sets are planar: one normal and one plane (interface 5). The set normal is that of its first facet,
+        # by the formula and evaluation order of amendment 2, m6.
         self.set_normal = {}
         tol = TOLERANCES["TOL_GEOM_PLANE"]
         for s, kind in enumerate(kinds):
             if kind != "symmetry":
                 continue
             rows = np.nonzero(self.facet_set == s)[0]
-            reference = self.ext_normal[rows[0]]
+            reference = set_normal_exact(self.x[e[rows[0]], list(FACET_VERTICES[f[rows[0]]])])
             origin = self.x[e[rows[0]], FACET_VERTICES[f[rows[0]]][0]]
             points = self.x[e[rows][:, None], np.array(FACET_VERTICES)[f[rows]]]
             _require(np.all(np.linalg.norm(self.ext_normal[rows] - reference, axis=1) <= tol), "symmetry_not_planar", sets[s]["name"])
             _require(np.all(np.abs((points - origin) @ reference) <= tol * self.l_ref), "symmetry_not_planar", sets[s]["name"])
             self.set_normal[s] = reference
+
+
+def set_normal_exact(points):
+    """n_S of interface 5 (amendment 2, m6) from the facet's vertices a, b, c in 3.2 order: u = x_b - x_a,
+    w = x_c - x_a, q = u x w by components, n_S = q / sqrt(q_x q_x + q_y q_y + q_z q_z), the sum left to right and every
+    component divided by the same root, in IEEE double. Written with scalar floats so no library reorders a sum."""
+    xa, xb, xc = ([float(v) for v in point] for point in points)
+    u = (xb[0] - xa[0], xb[1] - xa[1], xb[2] - xa[2])
+    w = (xc[0] - xa[0], xc[1] - xa[1], xc[2] - xa[2])
+    q = (u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0])
+    root = math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2])
+    return np.array([q[0] / root, q[1] / root, q[2] / root])
 
 
 class Query:
@@ -738,10 +771,15 @@ class LowerSystem:
 
 
 class UpperSystem:
-    """Rows of interface 17.4 step 2 for the continuous control or the broken jump formulation."""
+    """Rows of interface 17.4 step 2 for the continuous control or the broken jump formulation.
 
-    def __init__(self, model, query, formulation):
+    With a declared apex face ``apex`` (amendment 2, 19.2.1 item 4) the exact homogeneous rows of Z follow, in Z order:
+    six rows d_ei = B_ei v_e = 0 (Voigt, engineering shear) per flow entry, three rows c_B = 0 per jump entry. Their
+    kind is ``apex``. ``z_flow`` (E, 4) and ``z_jump`` (F, 6) mark the conditions of Z."""
+
+    def __init__(self, model, query, formulation, apex=None):
         self.model, self.query, self.broken = model, query, formulation == JUMP_ID
+        self.apex = list(apex) if apex else None
         n_e, n_f = model.n_elements, model.n_footings
         self.nv = 30 * n_e if self.broken else 3 * model.n_nodes
         self.n = self.nv + 6 * n_f
@@ -802,7 +840,48 @@ class UpperSystem:
 
         self.bernstein = bernstein_map()
         self._normal_jump_rows(rows)
+        self.z_flow = np.zeros((n_e, 4), dtype=bool)
+        self.z_jump = np.zeros((len(model.int_minus) if self.broken else 0, 6), dtype=bool)
+        if self.apex:
+            self._apex_rows(rows)
         self.matrix, self.rhs, self.kinds = rows.build()
+
+    def apex_row_operator(self, entries):
+        """(row, column, value) of the arguments of ``entries`` stacked in their order, and the row count."""
+        model = self.model
+        rr, cc, vv, start = [], [], [], 0
+        for kind, index in entries:
+            if kind == 0:
+                e, i = divmod(index, 4)
+                g = model.dn[e, i]                              # (10, 3): grad N_a at vertex i
+                keys = self.key[e]
+                for a in range(10):
+                    for c in range(3):                          # d_cc = sum_a dN_a/dx_c v_ac
+                        rr.append(start + c), cc.append(3 * keys[a] + c), vv.append(g[a, c])
+                    # engineering shear: 2 D_xy, 2 D_yz, 2 D_zx (Voigt order xy, yz, zx)
+                    for row, (c, d) in ((3, (0, 1)), (4, (1, 2)), (5, (2, 0))):
+                        rr.append(start + row), cc.append(3 * keys[a] + c), vv.append(g[a, d])
+                        rr.append(start + row), cc.append(3 * keys[a] + d), vv.append(g[a, c])
+                start += 6
+            else:
+                f, b = divmod(index, 6)
+                e1, e2 = model.int_minus[f, 0], model.int_plus[f, 0]
+                minus, plus = self.key[e1, model.int_local_minus[f]], self.key[e2, model.int_local_plus[f]]
+                for p in np.nonzero(self.bernstein[b])[0]:
+                    for c in range(3):                          # c_B = sum_p B_bp (v+_p - v-_p)
+                        rr.append(start + c), cc.append(3 * plus[p] + c), vv.append(self.bernstein[b, p])
+                        rr.append(start + c), cc.append(3 * minus[p] + c), vv.append(-self.bernstein[b, p])
+                start += 3
+        return np.array(rr, dtype=np.int64), np.array(cc, dtype=np.int64), np.array(vv, dtype=float), start
+
+    def _apex_rows(self, rows):
+        for kind, index in self.apex:
+            if kind == 0:
+                self.z_flow[index // 4, index % 4] = True
+            else:
+                self.z_jump[index // 6, index % 6] = True
+        r, c, v, count = self.apex_row_operator(self.apex)
+        rows.block("apex", np.zeros(count), [(r, c, v)])
 
     def _normal_jump_rows(self, rows):
         """n . c_B = 0 on all six Bernstein coefficients of every interior facet with tau = 0 (interface 12.3)."""
@@ -1304,22 +1383,40 @@ class UpperState:
             self.jump = np.where((alpha > 0.0)[:, None], self.tau[:, None] * self.slip - self.opening, -math.inf)
             self.d_scale_jump = float(np.max(np.linalg.norm(self.coefficients, axis=2), initial=0.0))
         self.signed = np.concatenate([self.flow.reshape(-1), self.jump.reshape(-1)])
-        # A strain rate and a velocity are never scaled together. A ratio whose scale is zero is 0.
+        # A strain rate and a velocity are never scaled together. A ratio whose scale is zero is 0. D_scale_vol and
+        # D_scale_jump run over every condition of their kind, Z included (19.2.1 item 6).
         self.kind_scale = np.concatenate([np.full(self.flow.size, self.d_scale_vol), np.full(self.jump.size, self.d_scale_jump)])
         self.is_jump = np.concatenate([np.zeros(self.flow.size, dtype=bool), np.ones(self.jump.size, dtype=bool)])
-        self.rho_flow = max(0.0, float(np.max(self.flow, initial=-math.inf))) / self.d_scale_vol if self.d_scale_vol > 0.0 else 0.0
-        self.rho_jump = max(0.0, float(np.max(self.jump, initial=-math.inf))) / self.d_scale_jump if self.d_scale_jump > 0.0 else 0.0
+        # Conditions of the declared apex face: equalities, never tested again as inequalities (19.2.1 items 6, 7, 9).
+        z_flow = system.z_flow
+        z_jump = system.z_jump if self.jump.size else np.zeros(self.jump.shape, dtype=bool)
+        self.in_z = np.concatenate([z_flow.reshape(-1), z_jump.reshape(-1)])
+        open_flow, open_jump = self.flow[~z_flow], self.jump[~z_jump]
+        self.rho_flow = max(0.0, float(np.max(open_flow, initial=-math.inf))) / self.d_scale_vol if self.d_scale_vol > 0.0 else 0.0
+        self.rho_jump = max(0.0, float(np.max(open_jump, initial=-math.inf))) / self.d_scale_jump if self.d_scale_jump > 0.0 else 0.0
+        self.rho_apex = None
+        if system.apex:
+            # rho_apex = max(|d_ei|_F / D_scale_vol over flow entries, |c_B| / D_scale_jump over jump entries).
+            parts = [0.0]
+            if np.any(z_flow) and self.d_scale_vol > 0.0:
+                parts.append(float(np.max(self.dnorm[z_flow])) / self.d_scale_vol)
+            if np.any(z_jump) and self.d_scale_jump > 0.0:
+                parts.append(float(np.max(np.linalg.norm(self.coefficients[z_jump], axis=1))) / self.d_scale_jump)
+            self.rho_apex = max(parts)
 
-        # Dissipation by the value formulas of interface 4.3 and 12.2, with no test of the domain.
+        # Dissipation by the value formulas of interface 4.3 and 12.2, with no test of the domain. A condition of Z is
+        # charged max(0, pi): at omega level pi can be negative, and a negative charge is never credited (19.2.1 item 8).
         alpha, k = model.alpha[:, None], model.k[:, None]
         safe = np.where(alpha > 0.0, alpha, 1.0)
         density = np.where(alpha > 0.0, k * self.theta / (3.0 * safe), math.sqrt(2.0) * k * self.enorm)
+        density = np.where(z_flow, np.maximum(0.0, density), density)
         self.dissipation = float(np.sum(0.25 * model.volume[:, None] * density))
         if self.coefficients is not None:
             e1, f1 = model.int_minus[:, 0], model.int_minus[:, 1]
             alpha, k = model.alpha[e1][:, None], model.k[e1][:, None]
             safe = np.where(alpha > 0.0, alpha, 1.0)
             density = np.where(alpha > 0.0, k * self.opening / (3.0 * safe), k * self.slip)
+            density = np.where(z_jump, np.maximum(0.0, density), density)
             self.dissipation += float(np.sum(model.area[e1, f1][:, None] / 6.0 * density))
         self.w0, _ = work_rate(model, self.field, self.footing, model.b0, model.t0, query.f0 if query.is_ray else None)
         self.w1, self.w_scale = work_rate(model, self.field, self.footing, model.b1, model.t1, query.f1)
@@ -1385,10 +1482,70 @@ def interior_field_sha256(bound, formulation, arrays):
     return document_hash({}, {name: arrays[name] for name in interior_array_names(bound, formulation)}, None)
 
 
-def method_report(certificate, item, interior, arrays):
+def apex_zero_sha256(arrays):
+    """Identity of Z in a method report (amendment 2, 19.2.1 item 12): the 15.1 hash of {} with the array apex_zero."""
+    return document_hash({}, {"apex_zero": arrays["apex_zero"]}, None)
+
+
+def apex_zero_forced(model, system, arrays):
+    """The diagnostic z_forced of interface 19.2.1 item 11: ``absent`` without a dual, ``proved`` when this checker
+    verified the attached dual with its own operators, ``unproved`` otherwise. Never a gate.
+
+    The dual claims a one-step facial reduction: each y_z strictly inside the dual cone of its condition's cone, and
+    M^T y = A^T lambda with lambda^T g = 0, A x = g the step-2 rows without Z and M the map from x to the stacked
+    arguments of Z. Dual cones, by the pairings sigma^T d and t . c: for the flow cone theta >= 3 sqrt(2) alpha |e|,
+    alpha I1(y) > sqrt(J2(y)); for the jump cone o >= tau |c_t|, tau (t . n) > |t - (t . n) n|."""
+    if "apex_zero_dual" not in arrays:
+        return "absent"
+    dual = np.asarray(arrays["apex_zero_dual"], dtype=float)
+    try:
+        stacked = []
+        for (kind, index), y in zip(system.apex, dual):
+            if kind == 0:
+                alpha = float(model.alpha[index // 4])
+                if not float(principal_yield(y, 0.0, -alpha)) < 0.0:      # sqrt(J2) - alpha I1 < 0
+                    return "unproved"
+                stacked.append(y)
+            else:
+                f = index // 6
+                e1, f1 = model.int_minus[f]
+                normal = model.normal[e1, f1]
+                alpha = float(model.alpha[e1])
+                tau = 3.0 * alpha / math.sqrt(1.0 - 12.0 * alpha ** 2)
+                t_n = float(y[:3] @ normal)
+                if not tau * t_n > float(np.linalg.norm(y[:3] - t_n * normal)):
+                    return "unproved"
+                stacked.append(y[:3])
+        r, c, v, count = system.apex_row_operator(system.apex)
+        m_map = sp.coo_matrix((v, (r, c)), shape=(count, system.n)).tocsr()
+        target = m_map.T @ np.concatenate(stacked)
+        size = float(np.linalg.norm(target))
+        if size == 0.0:
+            return "proved"
+        keep = np.nonzero(system.kinds != "apex")[0]
+        a_rows, g = system.matrix[keep].tocsr(), system.rhs[keep]
+        if a_rows.shape[0] == 0:
+            return "unproved"
+        lam = spla.lsmr(a_rows.T.tocsr(), target, atol=1e-15, btol=1e-15, conlim=1e14, maxiter=20 * max(a_rows.shape))[0]
+        residual = float(np.linalg.norm(a_rows.T @ lam - target)) / size
+        offset = abs(float(lam @ g))
+        if residual <= TOLERANCES["TOL_FEAS_OK"] and \
+                offset <= TOLERANCES["TOL_FEAS_OK"] * float(np.linalg.norm(lam)) * max(float(np.linalg.norm(g)), 1e-300):
+            return "proved"
+    except (ValueError, ArithmeticError, MemoryError, RuntimeError):
+        pass
+    return "unproved"
+
+
+def method_report(certificate, item, interior, arrays, z_forced=None):
     """The method report of interface 15.9 for one certificate: how kappa_eq was proved, which rows were skipped
-    and by what proof, and which interior field repaired the bound. Bound to the certificate by its hash."""
+    and by what proof, which interior field repaired the bound, and the declared apex face (amendment 2). Bound to
+    the certificate by its hash."""
     sha = interior_field_sha256(certificate["bound"], certificate["formulation"], arrays) if interior == "result" else None
+    face = None
+    if certificate["bound"] == "upper" and "apex_zero" in arrays:
+        face = {"count": int(len(arrays["apex_zero"])), "sha256": apex_zero_sha256(arrays),
+                "z_forced": z_forced if z_forced in Z_FORCED else ("absent" if "apex_zero_dual" not in arrays else "unproved")}
     return {
         "format": FORMAT_METHOD, "format_version": FORMAT_VERSION,
         "problem_sha256": certificate["problem_sha256"], "result_sha256": certificate["result_sha256"],
@@ -1402,6 +1559,7 @@ def method_report(certificate, item, interior, arrays):
                            "proofs": [dict(proof) for proof in item.proofs]},
         "rows_skipped": int(item.rows_skipped),
         "interior_field": {"source": interior, "sha256": sha},
+        "apex_zero": face,
         "tolerances": dict(TOLERANCES),
     }
 
@@ -1412,7 +1570,8 @@ def method_failures(certificate, method, result_arrays=None):
     This is the checker's own reading of the frozen rules; the test file holds it against the contract's validator.
     """
     keys = {"format", "format_version", "problem_sha256", "result_sha256", "certificate_sha256", "query_id", "bound",
-            "formulation", "checker", "kappa", "dependent_rows", "rows_skipped", "interior_field", "tolerances"}
+            "formulation", "checker", "kappa", "dependent_rows", "rows_skipped", "interior_field", "apex_zero",
+            "tolerances"}
     if not isinstance(method, dict) or method.get("format") != FORMAT_METHOD or method.get("format_version") != FORMAT_VERSION:
         return ["method_report_missing"]
     if set(method) != keys:
@@ -1496,18 +1655,49 @@ def method_failures(certificate, method, result_arrays=None):
                 sha == interior_field_sha256(method["bound"], method["formulation"], result_arrays)
     if not good:
         failures.append("method_interior")
+
+    # Amendment 2 (19.2.1 items 6 and 12): the declared apex face, its identity, rho_apex exactly with a face.
+    face, certified = method["apex_zero"], certificate.get("classification") == "certified_bound"
+    rho_apex = certificate["checks"].get("rho_apex")
+    if face is None:
+        good = rho_apex is None and (result_arrays is None or "apex_zero" not in result_arrays)
+    else:
+        good = (isinstance(face, dict) and set(face) == {"count", "sha256", "z_forced"} and method["bound"] == "upper"
+                and count(face["count"], 1) and isinstance(face["sha256"], str) and len(face["sha256"]) == 64
+                and all(c in "0123456789abcdef" for c in face["sha256"]) and face["z_forced"] in Z_FORCED
+                and (not certified or _number(rho_apex)))
+        if good and result_arrays is not None:
+            good = ("apex_zero" in result_arrays and face["count"] == len(result_arrays["apex_zero"])
+                    and face["sha256"] == apex_zero_sha256(result_arrays)
+                    and (face["z_forced"] == "absent") == ("apex_zero_dual" not in result_arrays))
+    if not good:
+        failures.append("method_apex_zero")
     return failures
 
 
-def refusal_record(problem, result, kind, stage, detail, resources):
-    """The refusal of interface 15.8, written instead of a certificate. It carries no value and no classification."""
+def method_needs_result_arrays(method):
+    """Amendment 2, m1: a report naming result arrays (a ``result`` interior field, or a face Z) is checked against
+    them, so its certificate counts for a gate only when they are supplied and hash to the result."""
+    return method["interior_field"].get("source") == "result" or method.get("apex_zero") is not None
+
+
+def refusal_record(problem, result, kind, stage, detail, resources, exceeded=None):
+    """The refusal of interface 15.8, written instead of a certificate. It carries no value and no classification.
+
+    ``budget`` (amendment 2, m4) is the budget declared before the run, with the one a capacity refusal exceeded."""
     _require(kind in REFUSAL_KINDS and stage in REFUSAL_STAGES and isinstance(detail, str) and detail, "refusal_record")
+    if kind == "capacity":
+        exceeded = exceeded or "memory"
+        _require(exceeded in BUDGET_EXCEEDED, "refusal_record", repr(exceeded))
+    else:
+        exceeded = None
     own = isinstance(result.get("producer"), dict) and result["producer"].get("name") in (CHECKER_NAME, PROCEDURE_DEMO_CHECKER)
     return {
         "format": FORMAT_REFUSAL, "format_version": FORMAT_VERSION, "problem_sha256": problem["problem_sha256"],
         "result_sha256": result["result_sha256"], "query_id": result["query_id"], "bound": result["bound"],
         "formulation": result["formulation"], "kind": kind, "stage": stage, "detail": detail,
         "resources": {key: int(resources[key]) for key in ("n_rows", "n_unknowns", "nnz")},
+        "budget": {"memory_bytes": BUDGET["memory_bytes"], "wall_s": BUDGET["wall_s"], "exceeded": exceeded},
         "checker": {"name": PROCEDURE_DEMO_CHECKER if own else CHECKER_NAME, "version": CHECKER_VERSION},
         "tolerances": dict(TOLERANCES),
     }
@@ -1533,6 +1723,7 @@ class _Run:
         self.fields = {}
         self.final_only = False
         self.item, self.interior, self.interior_candidate, self.result_arrays = None, "none", "none", {}
+        self.apex, self.z_forced = None, None
 
     def passed(self):
         """A final check that found nothing: a verdict, with no certificate."""
@@ -1579,7 +1770,7 @@ class _Run:
         self.report["interior_field"] = self.interior
         method = None
         if self.item is not None and document["checks"]["kappa_eq"] == self.item.kappa:
-            method = method_report(document, self.item, self.interior, self.result_arrays)
+            method = method_report(document, self.item, self.interior, self.result_arrays, self.z_forced)
         if certified:
             failures = certified_check_failures(document, self.report.get("query_form")) + method_failures(document, method, self.result_arrays)
             _require(not failures, "checker_internal", f"a certified bound must show {failures}")
@@ -1643,6 +1834,10 @@ def certified_check_failures(document, query_form):
             tests["rho_jump_cone"] = checks["rho_jump_cone"] <= t["TOL_CONE_MARGIN"]
         if "work_reference" in need:
             tests["work_reference"] = checks["work_reference"] > 0.0
+    if checks.get("rho_apex") is not None:
+        # Amendment 2: the Z arguments within the cone rounding margin (19.2.1 item 9); a Lower never has them.
+        tests["rho_apex"] = (document["bound"] == "upper" and _number(checks["rho_apex"])
+                             and 0.0 <= checks["rho_apex"] <= t["TOL_CONE_MARGIN"])
     failures = [key for key, passed in tests.items() if not passed]
     expected = max(t["FLOOR_MIN_REL"], kappa * omega) * abs(document["value_certified"])
     if not math.isclose(document["floor"], expected, rel_tol=1e-9, abs_tol=1e-300):
@@ -1650,16 +1845,36 @@ def certified_check_failures(document, query_form):
     return failures
 
 
-def gate_admissible(record, query_form="ray", method=None):
+def result_arrays_failure(record, result, result_arrays):
+    """None when ``result`` with ``result_arrays`` is the result the record names, by the 15.1 hash; else a code."""
+    if result is None or result_arrays is None:
+        return "result_arrays_missing"
+    if result.get("result_sha256") != record.get("result_sha256") or \
+            document_hash(result, result_arrays, "result_sha256") != record.get("result_sha256"):
+        return "hash_mismatch"
+    return None
+
+
+def gate_admissible(record, query_form="ray", method=None, result_arrays=None, result=None):
     """Only a real checker's certified bound with a valid method report, or its feasible verdict with a witness, can
-    satisfy a gate (interface 15.6). A certificate without the report that proves its kappa_eq is rejected."""
+    satisfy a gate (interface 15.6). A certificate without the report that proves its kappa_eq is rejected.
+
+    Amendment 2, m1: a report naming result arrays (a ``result`` interior field, or a face Z) counts only when the
+    result document and its arrays are supplied, hash to the result the certificate binds (15.1), and match the
+    report. Supplied arrays are always hash-checked."""
     if record["checker"]["name"] in (SCHEMA_FIXTURE_CHECKER, PROCEDURE_DEMO_CHECKER):
         return False
     if record.get("format") == FORMAT_FEASIBILITY:
         return record["status"] == "formulation_feasible" and record["witness_result_sha256"] is not None
     if record["classification"] != "certified_bound" or certified_check_failures(record, query_form):
         return False
-    return method is not None and not method_failures(record, method)
+    if method is None:
+        return False
+    if result_arrays is not None and result_arrays_failure(record, result, result_arrays):
+        return False
+    if method_failures(record, method, result_arrays):
+        return False
+    return result_arrays is not None or not method_needs_result_arrays(method)
 
 
 def _identity(problem, arrays, result, result_arrays):
@@ -1700,8 +1915,50 @@ def _identify(problem, arrays, result, result_arrays):
     return None, model, query
 
 
+def apex_zero_entries(model, result, arrays):
+    """The declared apex face Z of interface 19.2.1 (amendment 2), validated: a list of (kind, index), or None.
+
+    Kind 0 is the flow condition at element vertex (e, i), index 4 e + i, only where alpha_e > 0; kind 1 the jump
+    condition at Bernstein coefficient (F, B), index 6 F + B, only in the jump formulation and only where tau > 0, from
+    the region of e-. Rows sorted lexicographically and unique, n_Z >= 1. A Lower carrying Z or its dual is
+    ``apex_zero_lower``; a result with no field declares no face; every other defect is ``apex_zero_invalid``."""
+    face = {"apex_zero", "apex_zero_dual"} & set(arrays)
+    if not face:
+        return None
+    _require(result.get("bound") == "upper", "apex_zero_lower", str(sorted(face)))
+    _require("apex_zero" in arrays, "apex_zero_invalid", "a dual without a declared face")
+    _require(result.get("solver_status") in ("solved", "almost_solved") and _number(result.get("value")),
+             "apex_zero_invalid", "a result with no field declares no face")
+    z = np.asarray(arrays["apex_zero"])
+    _require(z.dtype.str == "<i8" and z.ndim == 2 and z.shape[1:] == (2,) and z.shape[0] >= 1, "apex_zero_invalid",
+             f"dtype {z.dtype.str}, shape {z.shape}")
+    rows = [(int(kind), int(index)) for kind, index in z]
+    _require(all(rows[r] < rows[r + 1] for r in range(len(rows) - 1)), "apex_zero_invalid",
+             "rows sorted lexicographically and unique")
+    n_int = len(model.int_minus)
+    for kind, index in rows:
+        if kind == 0:
+            _require(0 <= index < 4 * model.n_elements, "apex_zero_invalid", f"flow index {index}")
+            element = index // 4
+        else:
+            _require(kind == 1, "apex_zero_invalid", f"kind {kind}")
+            _require(result.get("formulation") == JUMP_ID, "apex_zero_invalid", "jump conditions exist in the jump formulation")
+            _require(0 <= index < 6 * n_int, "apex_zero_invalid", f"jump index {index}")
+            element = int(model.int_minus[index // 6, 0])
+        _require(model.alpha[element] > 0.0, "apex_zero_invalid", f"({kind}, {index}): no cone apex where alpha = 0")
+    if "apex_zero_dual" in arrays:
+        dual = np.asarray(arrays["apex_zero_dual"])
+        _require(dual.dtype.str == "<f8" and dual.shape == (len(rows), 6) and bool(np.all(np.isfinite(dual))),
+                 "apex_zero_invalid", "apex_zero_dual")
+        for (kind, _), row in zip(rows, dual):
+            _require(kind == 0 or not np.any(row[3:]), "apex_zero_invalid", "a jump dual has three components")
+    return rows
+
+
 def _result_arrays(model, result, arrays):
     """Interface 15.3: a result holds the arrays of its own bound and formulation, and no others."""
+    apex_zero_entries(model, result, arrays)
+    arrays = {name: arrays[name] for name in arrays if name not in ("apex_zero", "apex_zero_dual")}
     n_e, n_n, n_f = model.n_elements, model.n_nodes, model.n_footings
     broken = result["formulation"] == JUMP_ID
     velocity, other = ("element_velocity", "velocity") if broken else ("velocity", "element_velocity")
@@ -1763,7 +2020,7 @@ def _run(problem, arrays, result, result_arrays, requested_claim, final_only, op
         if final_only:
             raise
         # Interface 15.8: a refusal instead of a certificate. Not an estimate, and not a missing certificate.
-        record = refusal_record(problem, result, error.kind, error.stage, error.detail_text, error.resources)
+        record = refusal_record(problem, result, error.kind, error.stage, error.detail_text, error.resources, error.exceeded)
         return Outcome(None, None, run.report, refusal=record)
 
 
@@ -1907,7 +2164,12 @@ def _lower_interior(run, model, query, system, zero, conditioning, result, array
 def _check_upper(run, model, query, result, arrays, final_check):
     t, checks = TOLERANCES, run.checks
     n_e, n_f = model.n_elements, model.n_footings
-    system = UpperSystem(model, query, result["formulation"])
+    apex = apex_zero_entries(model, result, arrays)
+    system = UpperSystem(model, query, result["formulation"], apex)
+    run.apex = apex
+    if apex:
+        run.z_forced = apex_zero_forced(model, system, arrays)
+        run.report["z_forced"] = run.z_forced
     name = "element_velocity" if system.broken else "velocity"
     shape = (n_e, 10, 3) if system.broken else (model.n_nodes, 3)
     x = system.pack(_field(arrays, name, shape), _field(arrays, "footing_velocity", (n_f, 6)))
@@ -1942,9 +2204,9 @@ def _check_upper(run, model, query, result, arrays, final_check):
         checks["rho_flow"], checks["rho_jump_cone"] = state.rho_flow, (state.rho_jump if system.broken else None)
         if state.rho_flow > t["TOL_FLOW_ACCEPT"] or state.rho_jump > t["TOL_FLOW_ACCEPT"]:
             return run.stop("flow_violation_too_large")
-        # Step 4: repair only by an admissible construction.
+        # Step 4: repair only by an admissible construction. P holds no condition of Z (19.2.1 item 7).
         checks["repair_mu"] = 0.0
-        repair = state.signed > t["TOL_CONE_MARGIN"] * state.kind_scale
+        repair = (state.signed > t["TOL_CONE_MARGIN"] * state.kind_scale) & ~state.in_z
         if np.any(repair):
             interior = _upper_interior(run, model, query, system, zero, arrays, name, shape, repair)
             if isinstance(interior, str):
@@ -1973,8 +2235,14 @@ def _check_upper(run, model, query, result, arrays, final_check):
     if reason:
         return run.stop(reason)
     checks["rho_flow"], checks["rho_jump_cone"] = state.rho_flow, (state.rho_jump if system.broken else None)
+    checks["rho_apex"] = state.rho_apex
     if state.rho_flow > t["TOL_CONE_MARGIN"] or state.rho_jump > t["TOL_CONE_MARGIN"]:
         return run.stop("flow_violation_too_large")
+    if state.rho_apex is not None and not state.rho_apex <= t["TOL_CONE_MARGIN"]:
+        # A Z argument above the cone rounding margin (19.2.1 item 9). No new reason code: the cone test fails.
+        return run.stop("flow_violation_too_large")
+    if apex:
+        run.report["repair_mu_with_z"] = checks["repair_mu"]      # calibration watch, 19.2.1 item 14
     run.value_certified = state.value
     run.report.update(d_scale_vol=state.d_scale_vol, d_scale_jump=state.d_scale_jump, dissipation=state.dissipation, work_fixed=state.w0)
     run.fields = {name: (state.field if system.broken else x[: system.nv].reshape(-1, 3)).copy(), "footing_velocity": state.footing.copy()}
@@ -2002,7 +2270,8 @@ def _upper_interior(run, model, query, system, zero, arrays, name, shape, repair
     for jump, scale in ((False, state.d_scale_vol), (True, state.d_scale_jump)):
         if np.any(repair & (state.is_jump == jump)) and not scale > 0.0:
             return "interior_field_invalid"         # D_scale_int > 0 for each kind that has a condition to repair
-    if np.any(state.signed > t["TOL_CONE_MARGIN"] * state.kind_scale):
+    # Projected with the same augmented rows, so on the face Z declares; tested on the conditions not in Z (19.2.1 item 7).
+    if np.any((state.signed > t["TOL_CONE_MARGIN"] * state.kind_scale) & ~state.in_z):
         return "interior_field_invalid"
     if np.any(state.signed[repair] > -t["TOL_INTERIOR_MIN"] * state.kind_scale[repair]):
         return "interior_field_invalid"
@@ -2013,20 +2282,28 @@ def _upper_interior(run, model, query, system, zero, arrays, name, shape, repair
 # Brackets (interface 15.6 and 17.9)
 # ---------------------------------------------------------------------------------------------
 
-def bracket(lower, upper, lower_method=None, upper_method=None, query_form="ray"):
+def bracket(lower, upper, lower_method=None, upper_method=None, query_form="ray", lower_result=None, upper_result=None):
     """The bracket record of two gate-admissible bounds of one problem and query.
 
     Each certificate comes with its method report: an estimate, a certificate under a reserved checker name, or one
     without a valid report forms no bracket. ``query_form`` is the form of the query both bounds answer.
+    ``lower_result`` and ``upper_result`` are ``(result document, result arrays)``: a report that names result arrays
+    (an interior field from the result, or a declared face Z) counts only with them, hash-checked (amendment 2, m1).
     """
     _require(lower["bound"] == "lower" and upper["bound"] == "upper", "bracket_labels")
     _require(lower["classification"] == upper["classification"] == "certified_bound", "bracket_uncertified")
-    for certificate, method in ((lower, lower_method), (upper, upper_method)):
+    for certificate, method, supplied in ((lower, lower_method, lower_result), (upper, upper_method, upper_result)):
         _require(certificate["checker"]["name"] not in (SCHEMA_FIXTURE_CHECKER, PROCEDURE_DEMO_CHECKER), "bracket_not_gate_admissible")
         _require(method is not None, "method_report_missing", str(certificate.get("result_sha256")))
-        failures = method_failures(certificate, method)
+        doc, arrays = supplied if supplied is not None else (None, None)
+        if arrays is not None:
+            failure = result_arrays_failure(certificate, doc, arrays)
+            _require(failure is None, failure or "")
+        failures = method_failures(certificate, method, arrays)
         _require(not failures, failures[0] if failures else "")
-        _require(gate_admissible(certificate, query_form, method), "bracket_not_gate_admissible")
+        _require(arrays is not None or not method_needs_result_arrays(method), "result_arrays_missing",
+                 "the method report names result arrays")
+        _require(gate_admissible(certificate, query_form, method, arrays, doc), "bracket_not_gate_admissible")
     _require(lower["problem_sha256"] == upper["problem_sha256"], "hash_mismatch")
     _require(lower["query_id"] == upper["query_id"], "query_mismatch")
     low, high = lower["value_certified"], upper["value_certified"]
@@ -2068,15 +2345,20 @@ def read_certificate(path):
     return certificate, (load_document(beside)[0] if beside.exists() else None)
 
 
-def read_gate_certificate(path, query_form="ray"):
-    """A certificate for a gate: refused unless it is certified, real, and comes with a valid method report."""
+def read_gate_certificate(path, query_form="ray", result=None, result_arrays=None):
+    """A certificate for a gate: refused unless it is certified, real, and comes with a valid method report. A report
+    that names result arrays needs the result and its arrays, which must hash to the bound result (amendment 2, m1)."""
     path = Path(path)
     _require(not path.with_name(path.name[: -len(".certificate.json")] + ".refusal.json").exists(), "refusal_conflict", path.name)
     certificate, method = read_certificate(path)
     _require(method is not None, "method_report_missing", path.name)
-    failures = method_failures(certificate, method)
+    if result_arrays is not None:
+        failure = result_arrays_failure(certificate, result, result_arrays)
+        _require(failure is None, failure or "", path.name)
+    failures = method_failures(certificate, method, result_arrays)
     _require(not failures, failures[0] if failures else "")
-    _require(gate_admissible(certificate, query_form, method), "certificate_not_gate_admissible", path.name)
+    _require(result_arrays is not None or not method_needs_result_arrays(method), "result_arrays_missing", path.name)
+    _require(gate_admissible(certificate, query_form, method, result_arrays, result), "certificate_not_gate_admissible", path.name)
     return certificate, method
 
 
@@ -2240,7 +2522,7 @@ def _lsmr(matrix, rhs):
     status = {"istop": int(out[1]), "iterations": int(out[2]), "residual": float(out[3]), "normal_residual": float(out[4])}
     if status["istop"] not in (0, 1, 2, 4, 5):
         raise CapacityRefusal(f"LSMR stopped with status {status['istop']} after {status['iterations']} iterations on a "
-                              f"{matrix.shape[0]} by {matrix.shape[1]} system")
+                              f"{matrix.shape[0]} by {matrix.shape[1]} system", exceeded="time")
     return out[0], status
 
 
@@ -2309,11 +2591,12 @@ def feasibility(problem, arrays, witness, witness_arrays, **options):
     # The witness is the stored field after the certificate procedure's projection and repair (17.4 steps 2 to 4).
     # It counts only when that procedure certifies it, so a certified Upper is a witness and nothing weaker is.
     witness_rho, witness_parts, stored_parts, sha = None, None, None, None
+    witness_move, witness_work_reference = None, None
     if reason is None:
         name = "element_velocity" if system.broken else "velocity"
         outcome = check(problem, arrays, witness, witness_arrays, **options)
         if outcome.refusal is not None:
-            raise CapacityRefusal(outcome.refusal, outcome.refusal["resources"])
+            raise CapacityRefusal(outcome.refusal, outcome.refusal["resources"], outcome.refusal["budget"]["exceeded"])
         report["witness_reasons"] = outcome.reasons
         stored = system.pack(witness_arrays[name], witness_arrays["footing_velocity"])
         stored_parts = kinematic_residual(model, system, UpperState(model, system, query, stored))
@@ -2328,6 +2611,11 @@ def feasibility(problem, arrays, witness, witness_arrays, **options):
                 witness_parts = kinematic_residual(model, system, state)
                 if witness_parts[1] > 0.0:
                     witness_rho, sha = witness_parts[0] / witness_parts[1], witness["result_sha256"]
+                    # Amendment 2, m2: the step-2 move of the witness (with the augmented rows of a declared face) and
+                    # its reference work W1 / W_scale, both on the witness field.
+                    witness_move = float(outcome.certificate["checks"]["projection_move"])
+                    if query.is_ray:
+                        witness_work_reference = state.w1 / state.w_scale if state.w_scale > 0.0 else 0.0
                 else:
                     witness_parts = None
 
@@ -2379,7 +2667,8 @@ def feasibility(problem, arrays, witness, witness_arrays, **options):
                   + f"{max(item.get('relative_residual', 0.0) for item in runs):.1e}")
     _require(denominator > 0.0, "feasibility_denominator", "a mechanism without strain rate or jump")
     rho = numerator / denominator
-    passes = witness_rho is not None and witness_rho <= t["TOL_FEAS_OK"]
+    passes = (witness_rho is not None and witness_rho <= t["TOL_FEAS_OK"] and witness_move <= t["TOL_PROJECTION_MOVE"]
+              and (not query.is_ray or witness_work_reference >= t["TOL_WORK_MIN"]))
     if rho <= t["TOL_FEAS_OK"] and passes and (modes is None or modes >= 1):
         status = "formulation_feasible"
     elif not frictional and rho >= t["TOL_FEAS_LOCKED"]:
@@ -2395,6 +2684,7 @@ def feasibility(problem, arrays, witness, witness_arrays, **options):
         "query_id": query.id, "formulation": formulation, "status": status, "rho_feas": rho, "numerator": numerator,
         "denominator": denominator, "n_unknowns": n_unknowns, "n_rows": n_rows, "rank": rank, "nullity": nullity,
         "footing_modes": modes, "method": method, "witness_result_sha256": sha, "witness_residual": witness_rho,
+        "witness_projection_move": witness_move, "witness_work_reference": witness_work_reference,
         "checker": {"name": PROCEDURE_DEMO_CHECKER if own else CHECKER_NAME, "version": CHECKER_VERSION},
         "tolerances": dict(TOLERANCES),
     }
