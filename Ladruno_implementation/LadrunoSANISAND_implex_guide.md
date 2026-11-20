@@ -1450,3 +1450,26 @@ evidence: [[152_sanisand_tension_cutoff]].
   only p_min, so a displacement test cannot tell a converged separated region from a stalled one.
 - **It is a constitutive choice about near-surface sand.** The owner and TIMs decide p_sep and p_contact, and how
   separated points are reported in the capacity. The p_r bracket (§13.4's cross-check) stays available.
+
+### 13.6 Plastic-modulus pressure exponent — WP-229, an OPT-IN DM04 variant (TIMs F26)
+
+```tcl
+... 129 $TanType $JacoType $TolF $TolR -sasHFloor 1 -sasReseatHyst 1 -sasSoftCap 0.5 -sasPlasticExp $nh ...
+```
+
+- **What it does.** b0 = G0 h0 (1 − ch e) (p/p_at)^−nh. DM04 is nh = 0.5, the default; at 0.5 the vanilla `sqrt`
+  line runs and the result is bit-identical. b0 is unchanged at p = p_at; with nh < 0.5 it is smaller below p_at and
+  larger above. The ELASTIC exponent stays 0.5 (WP-156, #898, owns that one).
+- **Why.** In DM04 Kp and the elastic part of the loading denominator both go as p^½, so the stress-ratio/strain
+  curve is pressure-similar except through ψ. TIMs' element calibration (F26) found a pressure trend in the strain at
+  peak that no bounded constant set removes and that nh ≈ 0.25 does.
+- **Range and refusals.** 0 ≤ nh ≤ 1. Refused for any scheme but 129.
+- **With R1 (§13.4).** R1 acts on h downstream of b0 and needs no change. The h floor composes multiplicatively (its
+  bound b0/(c_A √(2/3) m) carries (p/p_at)^(0.5 − nh)). The re-seat hysteresis is independent of b0. The soft cap is
+  an absolute bound built from the elastic X: where it binds the response no longer depends on nh, and for nh < 0.5
+  it binds less often below p_at.
+- **Do not read it as calibrated above p_at.** With nh in 0.2–0.3 and DM04's constants, all 17 of DM04's
+  Verdugo–Ishihara simulations stay within 4 % in q at 25 % strain and 14 within 10 % in q_peak (13 within 1 %), but
+  the three loose undrained tests that start at 1000–3000 kPa gain 19–41 % in their early peak. Plan and numbers:
+  [[229_sanisand_plastic_exponent]] §5.
+- **Read back:** `sasOptions` value 13, `sas_plasticExp`.
