@@ -419,8 +419,9 @@ def s3_build(ops, mat_cmd, r, antilocking="fbar", extra_opts=()):
     ops.mpm("fix", "xmax", "x")
     ops.mpm("fix", "ymin", "xy")
     # WP-244 (#1112): the box's lower bound leads the footing base by half a cell, so a node
-    # row is prescribed once the base is nearer to it than to the row above; at 0.0 the only
-    # prescribed row left the active set as s -> h and the footing lost the soil
+    # row is prescribed once the base is nearer to it than to the row above; at 0.0 the gap from
+    # the lowest prescribed row to the soil grew to a full cell as s -> h and the footing lost
+    # the soil
     ops.mpm("gridvel", "footing", "box", -h, -FOOTING_LEAD * h, B_HALF, 1.0e9, "v", 0.0, -0.002,
             "start", 12.0, "track", "y")
     ops.mpm("gravity", 0.0, -G)

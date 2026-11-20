@@ -92,8 +92,8 @@ LEAD0_MISS = (
     "prescribed row's support.")
 
 
-@pytest.mark.parametrize("lead", [pytest.param(0.0, marks=pytest.mark.xfail(strict=True,
-                                                                           reason=LEAD0_MISS)),
+@pytest.mark.parametrize("lead", [pytest.param(0.0, marks=pytest.mark.xfail(
+                                      strict=True, raises=AssertionError, reason=LEAD0_MISS)),
                                   0.5])
 def test_p1_rigid_translation(lead):
     w = _run(lead)

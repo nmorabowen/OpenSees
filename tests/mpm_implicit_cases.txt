@@ -281,7 +281,8 @@ end
 #   s = 0.2 m (s/B = 0.10; the FE control plateaus from s/B ~ 0.05). 'track y' lowers the set's
 #   bottom with the footing, so rows the footing reaches join it. WP-244 (#1112): the bottom
 #   starts at -h/2, so a row joins once the footing base is nearer to it than to the row above
-#   (at 0.0 the only prescribed row left the active set as s -> h and the footing lost the soil).
+#   (at 0.0 the gap from the lowest prescribed row to the soil grew to a full cell as s -> h,
+#   and the footing lost the soil).
 # Footing pressure q = -cond_force(footing, y) / (B/2), B/2 = 1 m per unit thickness.
 # Gate (pre-registered): q_max at the finest within [0.90, 1.10] x 138.907 kPa = [125.02, 152.80].
 # Particles (ppc 2): r1 (4 cells across B) 1152, r2 (8) 4608, r3 (16) 18432.
