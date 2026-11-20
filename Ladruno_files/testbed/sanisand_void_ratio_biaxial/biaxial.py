@@ -79,6 +79,27 @@ def main():
     ap.add_argument("--wall", type=float, default=1.0e9, help="stop and save after this many seconds")
     ap.add_argument("--log-every", type=int, default=200)
     ap.add_argument("--tantype", type=int, default=1, help="0 elastic, 1 continuum")
+    ap.add_argument("--solver", default="static", choices=["static", "dr"],
+                    help="dr: LadrunoDynamicRelaxation, continuous platen ramp (no tangent)")
+    ap.add_argument("--rate", type=float, default=2.0e-8, help="dr: platen travel per DR step (m)")
+    ap.add_argument("--mass-safety", type=float, default=0.5, help="dr: omega_max*dt <= 2f")
+    ap.add_argument("--chunk", type=int, default=500, help="dr: steps per curve sample")
+    ap.add_argument("--hold-every", type=float, default=0.01,
+                    help="dr: axial-strain interval of the hold checks (0 = only the final one)")
+    ap.add_argument("--hold-max", type=int, default=40000, help="dr: step cap of one hold")
+    ap.add_argument("--hold-tol", type=float, default=1.0e-3,
+                    help="dr: hold gate, residual inf-norm / (sig3 * hy)")
+    ap.add_argument("--dr-damping", default="kinetic", choices=["kinetic", "viscous"])
+    ap.add_argument("--zeta", type=float, default=1.0, help="dr: viscous damping ratio")
+    ap.add_argument("--reversal-tol", type=float, default=None,
+                    help="material -reversalTol: no alpha_in reset below this strain increment")
+    ap.add_argument("--reversal-rel", type=float, default=None, help="material -reversalRel")
+    ap.add_argument("--tension-cutoff", type=float, nargs=2, default=None,
+                    metavar=("P_SEP", "P_CONTACT"),
+                    help="material -sasTensionCutoff (WP-152): a point that refuses at low p separates")
+    ap.add_argument("--tol-relax", type=float, default=1.0,
+                    help="static: once the step is cut 16x (64x) accept a step at 3x (this "
+                         "factor) the unbalance tolerance; 1 = never. Counted and reported.")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     logf = open(os.path.join(a.out, "log.txt"), "w", encoding="utf-8")
@@ -111,6 +132,12 @@ def main():
 
     if os.environ.get("BIAX_NOR1"):
         del OPTS[OPTS.index("-sasHFloor"):]
+    if a.tension_cutoff is not None:
+        OPTS.extend(["-sasTensionCutoff", *a.tension_cutoff])
+    if a.reversal_tol is not None:
+        OPTS.extend(["-reversalTol", a.reversal_tol])
+    if a.reversal_rel is not None:
+        OPTS.extend(["-reversalRel", a.reversal_rel])
     sub = {"TAN": a.tantype, "SCH": a.scheme, "TOLR": a.tolr, "MAXSUB": a.maxsub}
     ops.nDMaterial("LadrunoSANISAND", MAT, *SAN, *[sub.get(o, o) if isinstance(o, str) else o for o in OPTS])
     conn, cen, tags = [], [], []
@@ -195,10 +222,15 @@ def main():
     def disp():
         return np.array([ops.nodeDisp(n) for n in range(1, len(xy) + 1)])
 
+    if a.solver == "dr":
+        return push_dr(a, log, logf, t0, uy0, sig_a, disp, xy, conn, cen, e, tags,
+                       [nt(i, ny) for i in range(nx + 1)], hy)
+
     curve = [(0.0, sig_a())]
     snap_eps = np.linspace(a.eps_end / a.snaps, a.eps_end, a.snaps)
     snaps, snap_at = [], []
     good, nfail, status = 0, 0, "completed"
+    relaxed = {}
     u_end = uy0 - a.eps_end * H
     while ops.getTime() > u_end + 1.0e-12:
         eps_now = (uy0 - ops.getTime()) / H
@@ -210,12 +242,24 @@ def main():
         target = uy0 - snap_eps[k] * H if k < len(snap_eps) else u_end
         step = min(ds, ops.getTime() - target)
         ok = False
-        for algo, tf, it in ladder:
-            ops.integrator("LoadControl", -step)
-            ops.test("NormUnbalance", tf * ptol, it, 0)
-            ops.algorithm(algo)
-            if ops.analyze(1) == 0:
-                ok = True
+        # the unbalance of a stalled step sits at 1 to 3 times the tolerance whatever the
+        # step size (measured), so a deeply cut step may be accepted at a declared looser one
+        tfs = [1.0]
+        if a.tol_relax > 1.0 and step <= ds_base / 16.0:
+            tfs.append(min(3.0, a.tol_relax))
+        if a.tol_relax > 3.0 and step <= ds_base / 64.0:
+            tfs.append(a.tol_relax)
+        for tfx in tfs:
+            for algo, tf, it in ladder:
+                ops.integrator("LoadControl", -step)
+                ops.test("NormUnbalance", tfx * tf * ptol, it, 0)
+                ops.algorithm(algo)
+                if ops.analyze(1) == 0:
+                    ok = True
+                    break
+            if ok:
+                if tfx > 1.0:
+                    relaxed[tfx] = relaxed.get(tfx, 0) + 1
                 break
         if not ok:
             nfail += 1
@@ -243,6 +287,46 @@ def main():
         snaps.append(disp())
         snap_at.append(curve[-1][0])
 
+    # stall diagnostic: which Gauss points refuse the update at the minimum step
+    sas0 = np.array([[ops.eleResponse(t, "material", g, "sasStats") for g in (1, 2, 3, 4)]
+                     for t in tags])
+    stall = np.zeros((0, 9))
+    if status.startswith("stopped: step below"):
+        ops.integrator("LoadControl", -ds_min)
+        ops.test("NormUnbalance", ptol, 60, 0)
+        ops.algorithm("Newton")
+        ops.analyze(1)
+        sas1 = np.array([[ops.eleResponse(t, "material", g, "sasStats") for g in (1, 2, 3, 4)]
+                         for t in tags])
+        dref = sas1[:, :, 15] - sas0[:, :, 15]
+        rows = []
+        for i, j in zip(*np.nonzero(dref > 0)):
+            sg = ops.eleResponse(tags[i], "material", int(j) + 1, "stress")
+            ps = ops.eleResponse(tags[i], "material", int(j) + 1, "psi")[0]
+            rows.append((tags[i], j + 1, dref[i, j], sas1[i, j, 27], sas1[i, j, 26],
+                         -(sg[0] + sg[1]) / 2.0, ps, cen[i, 0], cen[i, 1]))
+        stall = np.array(rows).reshape(-1, 9)
+        log(f"stall diagnostic, one more attempt at {ds_min:.1e} m: {len(rows)} Gauss points "
+            f"refused (of {4*len(tags)}); columns ele gp refusals code lastSubsteps "
+            f"-(sxx+syy)/2 psi x y")
+        for r in rows[:12]:
+            log("   " + " ".join(f"{v:.4g}" for v in r))
+            for g in (1, 2, 3, 4):
+                sg = ops.eleResponse(int(r[0]), "material", g, "stress")
+                log(f"      ele {int(r[0])} gp {g} stress " + " ".join(f"{v:.4f}" for v in sg))
+    tot = sas0.sum(axis=(0, 1))
+    log("sasStats totals: updates %.0f, refusals %.0f (startF %.0f startAlpha %.0f other %.0f "
+        "dTmin %.0f nonPosH %.0f lowP %.0f drift %.0f alpha %.0f cap %.0f), max substeps in "
+        "one update %.0f" % (tot[0], tot[15], tot[16], tot[17], tot[18], tot[19], tot[20],
+                             tot[21], tot[22], tot[23], tot[24], sas0[:, :, 25].max()))
+    log("separation census: entries tension %.0f, low p %.0f, exits %.0f, points separated "
+        "now %.0f" % (tot[36], tot[37], tot[38], tot[39]))
+    log("steps accepted at a relaxed unbalance tolerance: " +
+        (", ".join(f"{v} at {k:g}x" for k, v in sorted(relaxed.items())) or "none") +
+        f" (1x = {ptol:.3e} kN)")
+    c = census(tags)
+    log(f"alpha_in census: {c[0]:.0f} commits, {c[1]:.0f} with alpha_in moved "
+        f"({100*c[1]/max(c[0],1):.3f} %), sum |d alpha_in| = {c[2]:.4f}")
     # per-element state at the end
     e_now = np.array([np.mean([ops.eleResponse(t, "material", g, "psi")[0] for g in (1, 2, 3, 4)])
                       for t in tags])
@@ -250,11 +334,152 @@ def main():
              curve=np.array(curve), snaps=np.array(snaps), snap_at=np.array(snap_at),
              psi_end=e_now, W=W, H=H, nx=nx, ny=ny, sig3=a.sig3,
              seed=-1 if a.seed is None else a.seed, white=a.white, std=a.std, theta=a.theta,
-             status=status)
+             status=status, relaxed=np.array(sorted(relaxed.items()), float).reshape(-1, 2),
+             ptol=ptol, stall=stall, sas=sas0.sum(axis=1))
     c = np.array(curve)
     ip = int(np.argmax(c[:, 1]))
     log(f"{status}: {len(curve)-1} steps, {nfail} cutbacks; peak sigma_a = {c[ip,1]:.3f} kPa "
         f"at eps_a = {c[ip,0]:.5f}; end sigma_a = {c[-1,1]:.3f} kPa at eps_a = {c[-1,0]:.5f}")
+    logf.close()
+
+
+def census(tags):
+    """Sum of LadrunoSANISAND `commitStats` over the Gauss points: [commits, commits whose
+    alpha_in moved (a loading reversal on the committed path), sum |d alpha_in|]."""
+    c = np.zeros(3)
+    for t in tags:
+        for g in (1, 2, 3, 4):
+            v = ops.eleResponse(t, "material", g, "commitStats")
+            if v:
+                c += np.array(v[:3], float)
+    return c
+
+
+def push_dr(a, log, logf, t0, uy0, sig_a, disp, xy, conn, cen, e, tags, top, hy):
+    """Stage 1 by dynamic relaxation (ADR 21; recipe of note 83 sec. 4.3): the platen moves by
+    `rate` per DR step, continuously, through a Linear series on EVERY top node (no equalDOF:
+    the fictitious mass is sized on the unconstrained stiffness). A ramped point carries an
+    inertial lag, so at intervals the platen is HELD and the state relaxed to rest; the held
+    points are the static ones."""
+    W, H = a.W, a.H
+    ops.remove("loadPattern", 2)                  # the static push on the master node
+    ops.remove("timeSeries", 2)
+    for n in top[1:]:
+        ops.remove("mp", n)
+    ops.wipeAnalysis()
+    ops.constraints("Transformation")
+    ops.numberer("Plain")
+    ops.system("Diagonal")
+    ops.test("NormUnbalance", 1.0e-12, 1, 0)
+    ops.algorithm("Linear")
+    ops.integrator("LadrunoDynamicRelaxation", "-mass", "gershgorin", "-dt", a.rate,
+                   "-damping", *(["kinetic"] if a.dr_damping == "kinetic" else ["viscous", a.zeta]),
+                   "-massSafety", a.mass_safety)
+    ops.analysis("Transient")
+    res_tol = a.hold_tol * a.sig3 * hy
+
+    def dr(what):
+        return float(ops.ladrunoDR(what))
+
+    def arm(u):                                   # u_y = -t on the top nodes, continuous
+        ops.setTime(-u)
+        ops.timeSeries("Linear", 4)
+        ops.pattern("Plain", 2, 4)
+        for n in top:
+            ops.sp(n, 2, -1.0)
+
+    def hold(u):
+        """Freeze the platen at u and relax. Returns (sigma_a, steps, settled, res, ke)."""
+        ops.remove("loadPattern", 2)
+        ops.remove("timeSeries", 4)
+        ops.timeSeries("Constant", 3)
+        ops.pattern("Plain", 2, 3)
+        for n in top:
+            ops.sp(n, 2, float(u))
+        n_h, quiet, res, ke, s_prev = 0, 0, float("nan"), float("nan"), None
+        while n_h < a.hold_max:
+            if ops.analyze(a.chunk, a.rate) != 0:
+                break
+            n_h += a.chunk
+            res, ke = dr("residualNorm"), dr("kineticEnergy")
+            s_now = sig_a()
+            still = s_prev is not None and abs(s_now - s_prev) < 1.0e-4 * a.sig3
+            quiet = quiet + 1 if (res < res_tol and still) else 0
+            s_prev = s_now
+            if quiet >= 3:
+                break
+        out = (sig_a(), n_h, quiet >= 3, res, ke)
+        ops.remove("loadPattern", 2)
+        ops.remove("timeSeries", 3)
+        arm(u)
+        return out
+
+    arm(uy0)
+    s0, n0, ok0, r0, k0 = hold(uy0)               # control: a zero push must not move the state
+    log(f"DR control, zero push: sigma_a = {s0:.4f} kPa after {n0} steps, res {r0:.2e} kN, "
+        f"KE {k0:.2e}, {'settled' if ok0 else 'NOT SETTLED'}; "
+        f"stability margin {dr('stabilityMargin'):.3f}")
+    log(f"DR push: {a.rate:.2e} m per step ({a.rate/H:.2e} strain), massSafety {a.mass_safety}, "
+        f"hold gate res < {res_tol:.2e} kN")
+    curve, holds = [(0.0, s0)], [(0.0, s0, s0, n0, int(ok0))]
+    snap_eps = np.linspace(a.eps_end / a.snaps, a.eps_end, a.snaps)
+    snaps, snap_at, status = [], [], "completed"
+    nsteps = int(round(a.eps_end * H / a.rate))
+    next_hold = a.hold_every if a.hold_every > 0 else 2.0
+    n = 0
+    while n < nsteps:
+        if time.time() - t0 > a.wall:
+            status = f"stopped: wall budget {a.wall:.0f} s at eps_a = {curve[-1][0]:.5f}"
+            break
+        m = min(a.chunk, nsteps - n)
+        if ops.analyze(m, a.rate) != 0:
+            status = f"stopped: DR analyze failed at eps_a = {curve[-1][0]:.5f}"
+            break
+        n += m
+        u = ops.nodeDisp(top[0], 2)
+        eps, sg = (uy0 - u) / H, sig_a()
+        if not np.isfinite(sg):
+            status = f"stopped: non-finite state at eps_a = {eps:.5f}"
+            break
+        curve.append((eps, sg))
+        k = len(snaps)
+        if k < len(snap_eps) and eps >= snap_eps[k] - 1.0e-10:
+            snaps.append(disp())
+            snap_at.append(eps)
+        if eps >= next_hold - 1.0e-10:
+            sh, nh, okh, rh, kh = hold(u)
+            holds.append((eps, sg, sh, nh, int(okh)))
+            next_hold += a.hold_every
+            log(f"eps_a = {eps:.4f}  ramped {sg:9.3f} -> held {sh:9.3f} kPa "
+                f"({100*(sg/sh-1):+.2f} % lag), {nh} steps, "
+                f"{'settled' if okh else 'NOT SETTLED'}, res {rh:.2e}, "
+                f"margin {dr('stabilityMargin'):.3f}")
+        elif (len(curve) - 1) % a.log_every == 0:
+            log(f"  step {n}/{nsteps}: eps_a = {eps:.5f}, sigma_a = {sg:.3f}, "
+                f"res {dr('residualNorm'):.2e}, KE {dr('kineticEnergy'):.2e}")
+    log(status)
+    c = census(tags)
+    log(f"alpha_in census: {c[0]:.0f} commits, {c[1]:.0f} with alpha_in moved "
+        f"({100*c[1]/max(c[0],1):.3f} %), sum |d alpha_in| = {c[2]:.4f}")
+    if np.isfinite(curve[-1][1]):
+        u = ops.nodeDisp(top[0], 2)
+        sh, nh, okh, rh, kh = hold(u)             # the last point is a held one
+        holds.append((curve[-1][0], curve[-1][1], sh, nh, int(okh)))
+        log(f"final hold at eps_a = {curve[-1][0]:.4f}: ramped {curve[-1][1]:.3f} -> held "
+            f"{sh:.3f} kPa, {nh} steps, {'settled' if okh else 'NOT SETTLED'}")
+        snaps.append(disp())
+        snap_at.append(curve[-1][0])
+    psi = np.array([np.mean([ops.eleResponse(t, "material", g, "psi")[0] for g in (1, 2, 3, 4)])
+                    for t in tags])
+    np.savez(os.path.join(a.out, "run.npz"), xy=xy, conn=conn, cen=cen, e=e,
+             curve=np.array(curve), snaps=np.array(snaps), snap_at=np.array(snap_at),
+             holds=np.array(holds), psi_end=psi, W=W, H=H, nx=a.nx, ny=a.ny, sig3=a.sig3,
+             seed=-1 if a.seed is None else a.seed, white=a.white, std=a.std, theta=a.theta,
+             status=status, solver="dr", rate=a.rate)
+    h = np.array(holds)
+    ip = int(np.argmax(h[:, 2]))
+    log(f"{status}: {n} DR steps; held peak sigma_a = {h[ip,2]:.3f} kPa at eps_a = {h[ip,0]:.5f}; "
+        f"end held {h[-1,2]:.3f} kPa at eps_a = {h[-1,0]:.5f}")
     logf.close()
 
 

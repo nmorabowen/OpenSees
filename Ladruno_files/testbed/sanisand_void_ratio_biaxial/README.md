@@ -45,3 +45,55 @@ already forming there (`results/stall_seed1_sasme_tangent.png`, shear max/mean 1
 Raising `-maxSubsteps`, dropping the R1 options or line search do not help. The elastic
 tangent goes about three times further. Whether the stall is the tangent or the loss of
 uniqueness of a non-associated model was not separated.
+
+## Post-peak (2026-11-20, esmeralda, same build, `--tantype 0 --tol-relax 10 --tension-cutoff 0.5 1.0`)
+
+Why the runs above stop: at the stall exactly ONE Gauss point of 3200 refuses the SAS-ME update
+(`maxSubsteps`, code 9, or the minimum substep), at an in-plane mean stress below 0.001 kPa
+(homogeneous: element 590 gp 4 at (0.0475, 0.1475) m; seed 2: element 211 gp 4 at
+(0.0525, 0.0525) m). The stress is read after a failed attempt and excludes the out-of-plane
+component. A point in the band has lost its confinement, so neither a smaller step, a tenfold
+substep cap (`--maxsub 20000`) nor a looser unbalance tolerance (`--tol-relax 10`, alone) moves the
+stall by more than 0.001 % strain. The deck logs this diagnostic at every such stop.
+
+With the material's tension cutoff (WP-152, `-sasTensionCutoff p_sep p_contact` = 0.5 1.0 kPa) the
+runs go through: `results/postpeak_bands.png`, `postpeak_curves.png`, `postpeak_summary.md`.
+
+| case | mesh | peak (kPa) | at eps_a (%) | end (kPa) | end eps_a (%) | points separated at the end | steps at 3x / 10x tolerance |
+|---|---|---|---|---|---|---|---|
+| homogeneous | 20x40 | 715.8 | 3.23 | 567.5 | 13.91 (wall budget) | 23 | 132 / 757 |
+| seed 1 | 20x40 | 604.3 | 3.13 | 495.3 | 14.00 | 59 | 0 / 0 |
+| seed 2 | 20x40 | 620.2 | 4.86 | 512.9 | 14.00 | 43 | 0 / 0 |
+| seed 3 | 20x40 | 602.7 | 4.18 | 495.4 | 14.00 | 52 | 0 / 0 |
+| seed 4 | 20x40 | 675.2 | 4.85 | 551.7 | 13.21 (wall budget) | 57 | 143 / 116 |
+| seed 5 | 20x40 | 656.0 | 4.50 | 538.9 | 14.00 | 53 | 0 / 0 |
+| seed 6 | 20x40 | 689.8 | 3.91 | 565.7 | 14.00 | 77 | 0 / 0 |
+| seed 1 | 10x20 | 742.1 | 5.47 | 671.2 | 14.00 | 4 | 0 / 0 |
+
+(Of 3200 Gauss points on 20x40, 800 on 10x20. The white-noise case was still running at this commit.)
+
+- Every case forms one through-going band and softens; the six seeds lose 17 to 18 % of their peak
+  by 14 %. Six of eight runs needed no relaxed step at all.
+- The homogeneous and seed 4 curves are NOT clean: they oscillate by tens of kPa after the peak,
+  took 8 h, and accepted steps at up to 10x the unbalance tolerance (0.1 kN). Read them as a trend.
+- The post-peak slope is mesh dependent, as expected of a local softening model: seed 1 ends at
+  495 kPa on 20x40 and 671 kPa on 10x20. Nothing here regularises the band width.
+- The separated points sit in the band. The cutoff was designed for footing edges (WP-152); inside a
+  shear band it has not been validated against anything, so the softening branch is a traced
+  numerical path, not a verified one.
+
+## Dynamic relaxation: tried, rejected for this model
+
+`--solver dr` (LadrunoDynamicRelaxation, continuous platen ramp with holds) is in the deck but gives a
+wrong answer with SANISAND: the damped oscillations register as loading reversals and re-seat
+`alpha_in`, which stiffens the response. Homogeneous 10x20 at 1 % strain, static 407.1 kPa
+(0 % of commits move `alpha_in`):
+
+| DR setting | sigma_a at 1 % (kPa) | commits that move alpha_in |
+|---|---|---|
+| kinetic, 1e-7 m/step | 607 | 6.0 % |
+| kinetic, 2e-8 m/step | 581 | 0.156 % |
+| viscous zeta = 1, 2e-8 m/step, held | 420.6 | 0.001 % |
+
+The viscous run still reads 261.3 against 293.6 kPa at 0.5 % (lag). `-reversalTol` / `-reversalRel`
+are refused under IntScheme 129. The deck logs the `commitStats` census on both paths.

@@ -61,6 +61,9 @@ def main():
                             - (X0[:, 3, 0] - X0[:, 1, 0]) * (X0[:, 2, 1] - X0[:, 0, 1]))
         frac, ratio = band_stats(g, area)
         cv = r["curve"]
+        if "holds" in r.files:                 # dynamic relaxation: the HELD points are static
+            h = r["holds"]
+            cv = np.column_stack([h[:, 0], h[:, 2]])
         ip = int(np.argmax(cv[:, 1]))
         rows.append((c, int(r["nx"]), int(r["ny"]), float(r["e"].std()), cv[ip, 1], cv[ip, 0],
                      cv[-1, 1], cv[-1, 0], frac, ratio, str(r["status"])))
@@ -87,8 +90,13 @@ def main():
     fig2, a2 = plt.subplots(figsize=(7.2, 4.6))
     for c in cases:
         cv = R[c]["curve"]
-        a2.plot(100 * cv[:, 0], cv[:, 1], label=c, lw=1.4,
-                ls="--" if c.startswith("homog") else "-")
+        ln, = a2.plot(100 * cv[:, 0], cv[:, 1], label=c, lw=1.2,
+                      ls="--" if "homog" in c else "-")
+        if "holds" in R[c].files:              # ramped line, held (static) points as markers
+            h = R[c]["holds"]
+            ok = h[:, 4] > 0
+            a2.plot(100 * h[ok, 0], h[ok, 2], "o", ms=3.5, color=ln.get_color())
+            a2.plot(100 * h[~ok, 0], h[~ok, 2], "x", ms=5, color=ln.get_color())
     a2.set_xlabel("axial strain (%)")
     a2.set_ylabel("axial stress (kPa)")
     a2.grid(alpha=0.3)
