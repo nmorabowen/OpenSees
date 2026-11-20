@@ -87,6 +87,8 @@ void* OPS_LadrunoRCFiniteStrain(void)
   bool   tensStiffCGiven = false;
   // Ladruno (C2): MCFT softening coefficient + cracked-state Poisson ratio (defaults = pre-C2)
   double betaC = 170.0, crackedNu = -1.0;
+  // Ladruno WP-241: add-on plane (0 membrane | 1 spatial) and crack gate (-1 = view default | 0 strain | 1 damage)
+  int addonPlane = 0, crackGate = -1;
   bool   autoReg = false;
   double lchRef = 1.0;
 
@@ -163,6 +165,20 @@ void* OPS_LadrunoRCFiniteStrain(void)
     else if (strcmp(opt, "-betaC") == 0)          { int nd = 1; if (OPS_GetDoubleInput(&nd, &betaC) < 0)          { opserr << "LadrunoRCFiniteStrain: -betaC needs a value.\n";          return 0; } }
     // Ladruno (C2): -crackedNu nu  (Poisson ratio once eps1 >= eps_cr; default off = elastic nu kept)
     else if (strcmp(opt, "-crackedNu") == 0)      { int nd = 1; if (OPS_GetDoubleInput(&nd, &crackedNu) < 0)      { opserr << "LadrunoRCFiniteStrain: -crackedNu needs a value.\n";      return 0; } }
+    // Ladruno WP-241: -addonPlane {membrane|spatial}  (where beta / TS / cracked-nu read eps1)
+    else if (strcmp(opt, "-addonPlane") == 0) {
+      const char* m = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetString() : 0;
+      if      (m && strcmp(m, "membrane") == 0) addonPlane = 0;
+      else if (m && strcmp(m, "spatial")  == 0) addonPlane = 1;
+      else { opserr << "LadrunoRCFiniteStrain: -addonPlane needs {membrane|spatial}.\n"; return 0; }
+    }
+    // Ladruno WP-241: -crackGate {strain|damage}  (what opens the cracked-nu latch and the TS floor)
+    else if (strcmp(opt, "-crackGate") == 0) {
+      const char* m = (OPS_GetNumRemainingInputArgs() > 0) ? OPS_GetString() : 0;
+      if      (m && strcmp(m, "strain") == 0) crackGate = 0;
+      else if (m && strcmp(m, "damage") == 0) crackGate = 1;
+      else { opserr << "LadrunoRCFiniteStrain: -crackGate needs {strain|damage}.\n"; return 0; }
+    }
     else if (strcmp(opt, "-tensStiffAlpha") == 0) { int nd = 1; if (OPS_GetDoubleInput(&nd, &tensStiffAlpha) < 0) { opserr << "LadrunoRCFiniteStrain: -tensStiffAlpha needs a value.\n"; return 0; } }
     else if (strcmp(opt, "-autoRegularization") == 0) {
       autoReg = true; int nd = 1;
@@ -192,6 +208,15 @@ void* OPS_LadrunoRCFiniteStrain(void)
     opserr << "nDMaterial LadrunoRCFiniteStrain error: -crackedNu must be in [0, 0.5).\n";
     return 0;
   }
+  // Ladruno WP-241: the fixed-crack interlock is an x-y object (2D normal, scalar slip); it has
+  // no meaning on the spatial add-on plane, so the combination fails closed (implications above
+  // already turned -cyclic/-xcrack/-shearRetention into -interlock).
+  if (addonPlane == 1 && interlockOn) {
+    opserr << "nDMaterial LadrunoRCFiniteStrain error: -addonPlane spatial cannot be combined with "
+              "-interlock/-cyclic/-xcrack/-shearRetention (the fixed crack is x-y only).\n";
+    return 0;
+  }
+  if (crackGate < 0) crackGate = (addonPlane == 1) ? 1 : 0;   // spatial defaults to the damage gate
   if (autoReg && lchRef <= 0.0) {
     opserr << "nDMaterial LadrunoRCFiniteStrain error: -autoRegularization $lch_ref must be > 0.\n";
     return 0;
@@ -220,6 +245,7 @@ void* OPS_LadrunoRCFiniteStrain(void)
   P.tensStiffAlpha = tensStiffAlpha; P.ftPeak = 0.0;
   P.autoReg = autoReg; P.lchRef = lchRef;
   P.betaC = betaC; P.crackedNu = crackedNu;   // Ladruno (C2)
+  P.addonPlane = addonPlane; P.crackGate = crackGate;   // Ladruno WP-241
 
   std::vector<double> Cdf(Ce.size(), 0.0), Tdf(Te.size(), 0.0);
   for (size_t i = 0; i < Cd.size() && i < Cdf.size(); ++i) Cdf[i] = Cd[i];
@@ -439,7 +465,7 @@ NDMaterial* LadrunoRCFiniteStrain::getCopy(const char* type)
 //  parallel  (serialize params + backbones + committed history; no dim/cEps33,
 //  the finite view is 3D-only and condensation-free — its own schema)
 // ===========================================================================
-static const int RCF_SCHEMA_VERSION = 2;   // v2 = +betaC,crackedNu,nuCracked (Ladruno C2)
+static const int RCF_SCHEMA_VERSION = 3;   // v2 = +betaC,crackedNu,nuCracked (Ladruno C2); v3 = +addonPlane,crackGate,tsScale (WP-241)
 static const int RCF_NSCALAR = 1 /*schemaVersion*/ + 2 /*tag,rho*/
                             + 10 /*E,nu,Kc,fcft,betaFloor,cdf,eta,betaOn,lubRed,tanMode*/
                             + 9 /*interlockOn,shearRetMode,shearRetFactor,aggSize,crackStrain,crackSpacing,lch,betaSrMin,sqrtFc*/
@@ -450,8 +476,8 @@ static const int RCF_NSCALAR = 1 /*schemaVersion*/ + 2 /*tag,rho*/
                             + 4 /*autoReg,lchRef,regularizationDone,regLch*/
                             + 5 /*dtime_n,dtime_n_commit,dtime_0,commitDone,implexError*/;
 static const int RCF_BACK = 1 + 3*MAXPTS;
-static const int RCF_HIST = 6 + 6 + 6 + 5 + 2 + 2 + 3 + 1 /*nuCracked, C2*/;
-static const int RCF_DATA = RCF_NSCALAR + 2*RCF_BACK + RCF_HIST + 2 /*betaC,crackedNu (C2)*/;
+static const int RCF_HIST = 6 + 6 + 6 + 5 + 2 + 2 + 3 + 1 /*nuCracked, C2*/ + 1 /*tsScale, WP-241*/;
+static const int RCF_DATA = RCF_NSCALAR + 2*RCF_BACK + RCF_HIST + 2 /*betaC,crackedNu (C2)*/ + 2 /*addonPlane,crackGate (WP-241)*/;
 
 int LadrunoRCFiniteStrain::sendSelf(int commitTag, Channel& theChannel)
 {
@@ -483,6 +509,7 @@ int LadrunoRCFiniteStrain::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = dtime_n; data(c++) = dtime_n_commit; data(c++) = dtime_0;
   data(c++) = commitDone ? 1.0 : 0.0; data(c++) = implexError;
   data(c++) = P.betaC; data(c++) = P.crackedNu;   // v2 (C2)
+  data(c++) = P.addonPlane; data(c++) = P.crackGate;   // v3 (WP-241)
   data(c++) = P.ht.n;
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.x[i];
   for (int i = 0; i < MAXPTS; i++) data(c++) = P.ht.y[i];
@@ -502,6 +529,7 @@ int LadrunoRCFiniteStrain::sendSelf(int commitTag, Channel& theChannel)
   data(c++) = histN.cracked2; data(c++) = histN.slipCum;
   data(c++) = histN.xt_old; data(c++) = histN.xc_old; data(c++) = histN.eps1_old;
   data(c++) = histN.nuCracked;   // v2 (C2)
+  data(c++) = histN.tsScale;     // v3 (WP-241)
 
   if (theChannel.sendVector(this->getDbTag(), commitTag, data) < 0) {
     opserr << "LadrunoRCFiniteStrain::sendSelf - failed to send vector\n";
@@ -549,6 +577,7 @@ int LadrunoRCFiniteStrain::recvSelf(int commitTag, Channel& theChannel, FEM_Obje
   dtime_n = data(c++); dtime_n_commit = data(c++); dtime_0 = data(c++);
   commitDone = (data(c++) != 0.0); implexError = data(c++);
   P.betaC = data(c++); P.crackedNu = data(c++);   // v2 (C2)
+  P.addonPlane = (int)data(c++); P.crackGate = (int)data(c++);   // v3 (WP-241)
   P.ht.n = (int)data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.x[i] = data(c++);
   for (int i = 0; i < MAXPTS; i++) P.ht.y[i] = data(c++);
@@ -568,6 +597,7 @@ int LadrunoRCFiniteStrain::recvSelf(int commitTag, Channel& theChannel, FEM_Obje
   histN.cracked2 = data(c++); histN.slipCum = data(c++);
   histN.xt_old = data(c++); histN.xc_old = data(c++); histN.eps1_old = data(c++);
   histN.nuCracked = data(c++);   // v2 (C2)
+  histN.tsScale = data(c++);     // v3 (WP-241)
 
   histTr = histN;
   for (int i = 0; i < 6; i++) { strain6[i] = 0.0; stress6[i] = 0.0; }
