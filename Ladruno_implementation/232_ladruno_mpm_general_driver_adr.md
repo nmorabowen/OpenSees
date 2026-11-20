@@ -481,6 +481,18 @@ right length.
 > tangent) are admitted. `betaK0` and `betaKc` are refused at `mpm analyze`: the initial and the
 > committed stiffness belong to an earlier support, which re-pointing replaces every step.
 
+> **Amendment (232l, 2026-11-19) — the table's two-phase column.**
+> - **Skeleton materials:** every admitted material in the table may be the skeleton of a
+>   two-phase body (`mpm twoPhase <body> …`, LadrunoUP's flags). The gates use ElasticIsotropic
+>   and DruckerPrager. SANISAND and HS are admitted but unrun as two-phase skeletons (R row 5;
+>   #1125).
+> - **Refused:** porous materials (PDMY, PIMY, FluidSolidPorous) are refused at particles.
+> - **Kinematics and statics:** hypo use as in the table (`mpm kinematics small` is optional).
+>   There are no new process statics.
+> - **Threads:** serial; no threaded two-phase path.
+> - **Stage walks:** these reach two-phase particles unchanged (232k). Route S also refreshes its
+>   cached drained pencil after each one.
+
 ---
 
 ## 7. apeGmsh integration
@@ -901,6 +913,108 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 > - **Review of record (ADR-87 D4):** the Fable critic (AMEND; every finding fixed or ruled)
 >   and `/code-review high`.
 
+> **Amendment (232l kickoff, 2026-11-18) — phase 6's scope, its two routes and its gates, fixed
+> before any two-phase MPM number.** The brief is `wp-briefs.md` "232l" (decisions U1–U12, gates
+> T0–T12).
+>
+> - **Scope.** Saturated Biot u-p at single-point particles: ADR-71's zones I and II, one set of
+>   particles carrying the skeleton and the pore fluid. Unsaturated (ADR-86 D1, Track U),
+>   double-point particles and full Biot u-U (zone III) are out. Anura3D's double-point work stays
+>   papers-only (§2).
+> - **The two routes the §9 item names are both built and compared, one per mode.**
+>   - **Route E, mode A: stabilized equal-order, monolithic.** Grid nodes under a two-phase body
+>     carry a pressure DOF. Each particle adds Q, H, S and H̃ through the pure helpers of
+>     `LadrunoUPKernel.h` at its own (N, ∇N, V_p), with LadrunoUP's block placement and sign
+>     convention. With linear shapes and particles at the Gauss points, it must reproduce
+>     LadrunoUP Q4 / H8 exactly (gate T1). This is why route E reuses the kernel rather than
+>     writing a new one.
+>   - **Route S, mode F: semi-implicit.** Explicit MUSL for the skeleton, an implicit pressure
+>     solve on the active grid every step. Round 1 picks the scheme, with a written argument:
+>     either ADR-73's fixed-stress rate form, which the fork ships and has measured, moved onto the
+>     grid, or the fractional step of Berkeley geomechanics/mpm (MIT, source may be read). The
+>     chosen scheme gets a numpy oracle before any C++, as every new numeric has (§11).
+>   - Each route is gated on its own. The "versus" is reported: the TIMs first-settlement
+>     diagnostic, the checkerboard index, the cost per step and the time-step limit of each, so
+>     that the owner can choose the default afterwards.
+> - **The pressure lives on the particles.** Mode A resets the grid every step (W1), and so does
+>   mode F. Each particle therefore carries its pore pressure p (and ṗ for Newmark), projected to
+>   the grid and read back each step. Round 1 picks the projection and the update (incremental or
+>   total) against the oracle. The projection's own diffusion is measured and reported.
+> - **Consolidation is transient.** Mode A's quasi-static path admits `LoadControl` only, and a
+>   static solve sees no S or Qᵀ rate terms, so it cannot consolidate. Two-phase mode A therefore
+>   runs Newmark, as LadrunoUP does (`LadrunoUP.cpp:1450-1503`). A two-phase body under a static
+>   analysis is refused loudly.
+> - **References** are the closed forms (Terzaghi, Mandel, hydrostatics) and the fork's own
+>   LadrunoUP on the same grid, time step and integrator. They are never MPM. Mandel has no test
+>   in the tree today (ADR-86 O1), so 232l writes its closed form and its FE reference.
+> - **Serial.** Two-phase particles run on one thread in phase 6.
+> - **No contract change** beyond the additive pore-pressure field that `232a_mpm_contracts.md:636`
+>   reserves. The gates read p through `mpm` queries, and any apeGmsh reader work goes to T.
+
+> **Amendment (232l, 2026-11-19) — phase 6: two-phase particles.** The decisions, rulings and
+> gates are in `wp-briefs.md` "232l"; the design is `tests/mpm_twophase_interface.md` (P1–P13,
+> §7a–§7c); the results are in `232l_mpm_two_phase.md`; the final build is `cd503bdbb`.
+>
+> - **Shipped.** Saturated Biot u-p at single-point particles, in both modes.
+>   - **Route E (mode A).** Grid nodes carry ndf = ndm + 1 in a two-phase epoch. Each particle
+>     assembles LadrunoUP's blocks through `LadrunoUPKernel.h`, under Newmark only. T1 shows
+>     identity with LadrunoUP Q4/H8 when particles sit at the Gauss points (≤ 1.1e-15).
+>   - **Route S (mode F).** IMEX: an explicit skeleton, with the strain from the grid velocity v₁
+>     for two-phase particles (USL; the owner's consistency fix), and an implicit pressure
+>     [S* + Δt H + Δt² QᵀM⁻¹Q] p by Jacobi-PCG.
+>     - u weights are renormalised over the u-active nodes; light nodes below
+>       max(massCutoff, pressureCutoff) are dropped.
+>     - The run-time limit is s·Δt_d (the drained pencil), with s ≤ 0.5 by default and ≤ 0.7 warned.
+>     - Δt_d is cached per epoch and refreshed on a cell change, a stage walk, a parameter update,
+>       or after 100 steps.
+>   - **Shared.**
+>     - The particle pressure carrier P5a: FLIP on a consistent L2 projection, with a probe-guarded
+>       singularity refusal.
+>     - p-activity by the two-phase mass against `pressureCutoff`.
+>     - Per-component B-spline images.
+>     - `mpm pfix`, the rigid `mpm plate`, and `mpm traction`.
+>     - The q + π invariant, for fix 2's affine image on impervious B-spline faces under gravity.
+>     - The additive `PORE_PRESSURE` output field, and restart pack v5 (mode A).
+> - **Gates (final, `cd503bdbb`).**
+>   - T0 (oracle) ≤ 8.1e-12.
+>   - T2p Terzaghi on the particle-carried p, ≤ 0.0057 against 0.02.
+>   - T3 Mandel, peaks 1.081–1.086 against ≥ 1.039.
+>   - T4p hydrostatics ≤ 1.0e-4 against 0.01.
+>   - T5 CB_lap 0.134 (E) and 0.137 (S) against ≤ 0.3.
+>   - T6 route S Terzaghi and Mandel, 8/8.
+>   - T13 translation patch 8/8 (≤ 1.0e-13).
+>   - T8–T10 and T12 pass. T10: 24/24 single-phase legs bit for bit.
+>   - T11: IDENT turns the two-phase oracle 14/14 red; ZERO/SCALE 0.500/0.398.
+>   - The MPM suite: 526 passed, 0 failed.
+> - **Owner decisions** (all dated in `wp-briefs.md`):
+>   - Fix the particle-pressure carrier under new gates T2p/T4p after route E's first miss.
+>   - The fix-2 patch check gates the field, not the particle-carried value; the motion residual
+>     (6.0e-6) is recorded.
+>   - Route S's consistency fix, after the Mandel instability (ρ 1.00093 → 0.999999998).
+>   - **T7 is a recorded miss:** USL's stable step is 0.7× (gimp) / 0.8× (bspline2) the drained
+>     pencil, not 0.9×. Hence the 0.5 cap.
+> - **The route comparison** (reported; the default route is the owner's choice).
+>   - Both routes track LadrunoUP's first settlement within 5 %.
+>   - On a stiff fluid, the default `-stab auto 0.25` inflates it to about 2× the closed form in
+>     every route, LadrunoUP included. That is the TIMs effect, and it is an FE property, not an
+>     MPM one.
+>   - Cost per simulated second on T2's column: route S 29 / 83 ms and route E 30 / 103 ms
+>     (gimp / bspline2), against LadrunoUP's 3.2.
+>   - At the default cap, route S admits 0.707× the undrained pencil on the gated soil, so the
+>     semi-implicit route buys little step size on compressible-fluid decks.
+> - **Review of record (ADR-87 D4).**
+>   - A mid-WP Fable audit of the carrier found four contradictions.
+>   - The ready-flip Fable critic and `/code-review high` BLOCKED `d77caf8fd`: route S could not
+>     translate a two-phase body, because the orchestrator's §7c rule dropped light nodes without
+>     renormalising. The B-spline plate image was also not translation-consistent. Both were fixed
+>     and are gated by T13.
+> - **Limits and follow-ups.**
+>   - #1124: no fix-2 term in route S, refused (A7).
+>   - #1125: no drainage switch at particles; R row 5 not run.
+>   - #1126: a pressure-shape transient at the start of a mode-A translation.
+>   - #1127: the USL limit as a bound.
+>   - Porosity is constant; serial only.
+
 **Mutation gate (ADR-87 D2)**, through the fork's existing mechanism: a new family `MPM` in the
 `LADRUNO_MUTATE_FAMILY` list (`CMakeLists.txt`, a vanilla-ledgered line), in the options of
 `.github/workflows/ladruno_mutation.yml` and in `Ladruno_scripts/mutation_gate.py`; the mutant is
@@ -1090,6 +1204,14 @@ ADR-88).
   SANISAND and HS admitted at particles; SANISAND mode F only on B-spline bases (the K0 gimp
   miss, owner's decision); the K0p plastic meter passes on every admitted leg; S1 (3D mode A,
   IntScheme-2 shear) and S2 are owner-accepted misses; S3 SANISAND reported only. Found #1109–#1112.
+- **2026-11-18** — 232l (phase 6, two-phase particles) kicked off: saturated Biot u-p at
+  single-point particles; route E (stabilized equal-order, monolithic, mode A) and route S
+  (semi-implicit, mode F), each gated on its own, compared in a reported row (amendment
+  "232l kickoff", after the 232k amendment).
+- **2026-11-19** — 232l closed (amendment "232l, 2026-11-19", after the kickoff amendment): routes
+  E and S shipped; T2p/T4p after the owner's carrier decision; T7 a recorded miss with the 0.5 cap;
+  the review of record blocked `d77caf8fd` (route-S translation), fixed and gated by T13 on
+  `cd503bdbb`. Follow-ups #1124–#1127.
 
 ---
 

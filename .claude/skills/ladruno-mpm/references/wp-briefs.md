@@ -1328,3 +1328,749 @@ Done when: every gated row is green (or a reported miss with diagnosis); the rep
 Ladruno_implementation/232k_mpm_soil_models.md; the ci/ gates are clean; ladrunoBuild matches your
 head on the exe and the pyd. Report per the Worker rules.
 ```
+
+## 232l — phase 6: two-phase particles, stabilized equal-order (mode A) against semi-implicit (mode F)
+
+Kickoff 2026-11-18 (orchestrator, Opus 5.5, from the owner's `/ladruno-mpm 232l`). Branch
+`wp/232l-mpm-two-phase`, one draft PR for the WP. Base `ladruno` at `cfe478254` (232k #1108
+merged; the last release is `ladruno-v20261118`, 232i + 232j). ADR §9 phase 6 and §8's row
+"Terzaghi + Mandel on particles (+ TIMs' first-settlement diagnostic)". The ADR carries
+"Amendment (232l kickoff, 2026-11-18)", written with this section and before any two-phase MPM
+number. Done when the gate table below is green (or each miss is reported with its diagnosis,
+never a widened band), the warrant package is in the PR, and the ADR carries "Amendment (232l,
+<date>)" with the route comparison and the §6 table's two-phase column filled.
+
+**Facts checked at kickoff** (source-verified on `cfe478254`; the workers re-quote, never recall):
+- **The kernel is reusable at a point.** `SRC/element/ladrunoUP/LadrunoUPKernel.h` is pure (no
+  OpenSees dependency, `:31-38`). `addQ` (`:87`, Q = ∫Bᵀ α m N_p dV), `addH` (`:104`), `addS`
+  (`:120`), `addHtilde` (`:136`, into the damp p-p slot, S* = S + H̃), `addFseep` (`:153`) take
+  (N, ∇N, dv) and accumulate into caller-zeroed buffers. Two catches: `stabAlphaAuto(h, K, G, α₀)`
+  = α₀h²/(K + 4G/3) (`:175-178`) needs a length h, which a particle lacks (FE uses the longest
+  element edge, `LadrunoUPShapes.h:67`); `dofMap` (`:203-216`) assumes p last on each node. The
+  overlay already calls the kernel outside an element (`LadrunoPorousOverlay.cpp:642`, `:658-671`).
+- **LadrunoUP's blocks** (ELE 33017; ndf = ndm + 1 for equal order, `OPS_LadrunoUP.cpp:195-199`;
+  the nodal DOF is p itself, ṗ from the velocity slot, `LadrunoUP.cpp:1681`, `:1704-1705`):
+  tangent [K, −Q; 0, H] (`:1360-1408`); damp [C_Ray, 0; Qᵀ, S+H̃] (`:1450-1503`); mass [M, 0; 0, 0]
+  (`:1505-1521`); resisting force [∫Bᵀσ′ − Qp − body; Hp − f_seep] (`:1523-1526`). Sign: σ = σ′ −
+  α m p, tension-positive σ, compression-positive p (`:2235-2236`). Unsymmetric: ProfileSPD
+  silently drops a block (quirk `LEGACY-symmetric-storage-solvers-silently-drop-one-u-p`). Defaults:
+  α 1, Ks −1 (incompressible grains), `-stab auto` α₀ 0.25, `-dynSeepage` off.
+- **Mode A cannot carry p today.** Grid nodes are built with ndf = ndm as a literal
+  (`LadrunoMPMImplicit.cpp:885-886`); `LadrunoMPMPoint::getNumDOF` returns `nen * ndm`
+  (`LadrunoMPMPoint.h:188`; the header says every grid node has ndf = ndm, `:32`). Mode A admits
+  Newmark, HHT and GeneralizedAlpha (`LadrunoMPMImplicit.cpp:403-416`) and, quasi-static,
+  `LoadControl` only (`:433-437`); symmetric storage is refused with an unsymmetric tangent
+  (`:469-490`).
+- **Mode F has no scalar field.** `Particles` (`LadrunoMPMCore.h:531-548`) carry id, body, mat,
+  flags, m, V0, lp, x, v, V, F, R, eps, sigHat, sig, sig0, a. Grid arrays `gm, gp, gfi, gfe, gv1,
+  ga, gvs` are sized nN or nd·nN (`:1141`, `:1179-1183`). `advance()` at `:785`: P2G `:797`, grid
+  update `:873`, MUSL `:903`, commit `:1016`, G2P `:1026`. There is no linear solve in the engine.
+- **The overlay is the fork's semi-implicit precedent** (ADR-73; `LadrunoPorousOverlay`, pattern
+  tag 33022, `classTags.h:649`). Its own p vector on FE nodes, its own CSR H, S*, L and a
+  Jacobi-preconditioned CG (`LadrunoPorousOverlay.cpp:887-982`). Fixed-stress rate form, solid
+  first: (S* + L + Δt H) p = (S* + L) p₀ + L Δp_ref − Qᵀ Δu + Δt f_seep (`.h:41-55`), with
+  L = α²/K_dr by default (`.cpp:602-629`). `-fluidUpdate explicit` is its explicit lane. It meshes
+  T3, Q4 and H8 cells only (`.cpp:229-231`), so it cannot be pointed at particles as it stands.
+- **No porous material is admitted** at particles (`admitMaterial`, `LadrunoMPMPattern.cpp:409-504`);
+  PDMY, PIMY and FluidSolidPorous fall to the generic refusal (`:431-438`).
+- **Contract 2** has no pore-pressure field (`LadrunoMPMIO.cpp:50-64`); `232a_mpm_contracts.md:636`
+  reserves "a pore pressure in phase 6" as additive.
+- **References in the tree.** Terzaghi: `tests/test_ladruno_up_element_analytic.py`
+  (`terzaghi_series` `:89`, `terzaghi_U` `:98`; Q4 1×10, `-stab off`, dt 0.02; p gates 0.15 / 0.02
+  / 0.01 / 0.005 at Tv 0.05 / 0.1 / 0.2 / 0.5, `:252-255`; |ΔU| < 0.02 at Tv 0.1–0.5, `:259-263`).
+  The checkerboard index: `tests/test_ladruno_up_element_equiv.py` B4 (`:332-345`, `:441-455`;
+  CB_lap(off) ≥ 0.5, CB_lap(auto 0.25) ≤ 0.3, ratio ≥ 3). **Mandel is not in `tests/`**: ADR 232
+  `:181` cites the TIMs C0-up result (peak 1.0754 against 1.0757) from outside the tree, and ADR-86
+  O1 proposes the oracle. The 1.71× first settlement appears only at ADR 232 `:171`.
+- **Quirks that bind u-p runs:** honest-p LadrunoUP under central difference is unstable (no p
+  mass); `-body` is an acceleration in LadrunoUP; the contact handler guards ndf 3 on every node;
+  a staged non-zero pressure SP added mid-analysis converges to a wrong state under Transformation.
+
+**Model and effort, re-decided at kickoff.**
+- C++ worker 232l-C: opus · high. Both routes, sequentially (route E first): the grid pressure DOF
+  in mode A, the particle u-p element, the particle pressure state and its projection, route S in
+  the mode-F engine, the refusals, restart, the harness.
+- Verification worker 232l-V: opus · high, a different agent. The numpy oracle (particle u-p
+  assembly, the pressure projection, one route-S step), the closed forms (Terzaghi, Mandel,
+  hydrostatics) and the FE LadrunoUP references on the same grids. It never reads the MPM C++.
+- Ready-flip critic: fable · high, plus `/code-review high`: the review of record (ADR-87 D4).
+- Runs: esmeralda for anything over 10 min. A fresh `git clone --depth 1 --branch
+  wp/232l-mpm-two-phase` into `~/ladruno_build_test/OpenSees_232l`; never touch
+  `~/ladruno_build_test/OpenSees`; never overwrite a loaded `.so` in place. The orchestrator
+  launches every build and every long run, and deletes the clone and run folders after the merge.
+
+**Decisions fixed at kickoff** (a worker may object in its Round-1 report; the orchestrator
+decides):
+
+- **U1 — scope.** Saturated Biot u-p, single-point particles, zones I/II. Out: unsaturated,
+  double-point, u-U, porous materials (PDMY, PIMY, FluidSolidPorous stay refused). The skeleton
+  material is any admitted effective-stress material (§6 table); the gates use ElasticIsotropic
+  and DruckerPrager, the soils are reported (R).
+- **U2 — route E, the grid pressure DOF (mode A).** Grid nodes under a two-phase body carry
+  ndf = ndm + 1, p last (LadrunoUP's `dofMap`). Round 1 decides how nodes reached only by
+  single-phase particles are handled (uniform ndm + 1 with the stray p fixed, or mixed ndf) and
+  quotes what the numberer, the handler, `renormalize` empty support and the B-spline image
+  ghosts do with a p component. A p-row with no two-phase support must never reach the solver
+  singular: it is fixed or absent.
+- **U3 — route E, the particle element.** The particle calls `addQ`, `addH`, `addS`, `addHtilde`
+  and `addFseep` with its own N, ∇N and V_p, and places the blocks as `LadrunoUP.cpp:1360-1526`
+  does. The stabilization length is the grid spacing h, on every basis; α₀ and `-stab off|auto|α`
+  as LadrunoUP parses them. `-dynSeepage` stays off (its quirk). Kf, n, ρ_f, k (or k_H with γ_w),
+  α and Ks are per two-phase body, with LadrunoUP's flag names and defaults. Porosity is constant
+  in phase 6 (gates are small strain); Round 1 says what a J-update would need.
+- **U4 — the pressure lives on the particles.** The grid is reset every step in both modes, so
+  each particle carries p (and ṗ in mode A, for Newmark's re-seed in `domainChanged()`, W1). Round 1
+  picks the projection to the grid (volume- or mass-weighted, or a local least-squares) and the
+  update back (incremental, FLIP-like, or total, PIC-like), both checked against the oracle. The
+  projection's diffusion is measured on a no-motion column (reported, R).
+- **U5 — integrators.** Two-phase mode A runs Newmark (HHT and GeneralizedAlpha only if a test
+  admits them), like LadrunoUP. A two-phase body under a static analysis is refused loudly (no
+  rate terms, so no consolidation). Central difference and every mode-A explicit path are refused
+  with a two-phase body (the honest-p quirk).
+- **U6 — route S (mode F).** An explicit MUSL skeleton step and an implicit pressure solve on the
+  active grid each step. Round 1 picks, with a written argument quoting its sources:
+  (a) ADR-73's fixed-stress rate form moved onto the grid (the overlay's scheme and its CG, which
+  the fork has measured), or (b) the fractional step of Berkeley geomechanics/mpm (MIT; source may
+  be read and cited). Round 1 states the scheme's time-step limit (the drained skeleton wave
+  speed, not the undrained one, is the point of a semi-implicit route) and how the engine solves
+  the pressure system (an engine-owned CG on the active nodes, as the overlay has, or an OpenSees
+  SOE). The overlay itself is not reused as an object: it meshes FE cells only.
+- **U7 — pressure boundary conditions.** Drained (p = 0) and prescribed-p faces as grid
+  conditions on the p component, host-owned SPs in mode A (232f), engine-applied in mode F.
+  Impervious is natural. On B-spline `fix` faces, the p ghost is an image: odd for a drained face,
+  even for an impervious one (232i's method). Free-surface drainage at a particle boundary that is
+  not a grid face is out of phase 6 (reported if met); every gated case puts its drained faces on
+  grid lines.
+- **U8 — loads.** Gated cases load through grid conditions or a carrier body, never the
+  `footing_mildcone` body force on one particle row, which #1110 showed is not a traction. Round 1
+  picks Terzaghi's top load and Mandel's rigid frictionless plate (a stiff impervious carrier
+  block, or a host-owned tie of the top nodes' vertical DOF), and 232l-V's FE reference uses the
+  same mechanism.
+- **U9 — refusals.** Loud refusal for: a two-phase body with a symmetric-storage SOE (both
+  routes are unsymmetric unless Round 1 shows otherwise); a static analysis (U5); central
+  difference in mode A; a porous material at a particle; `mpm antiLocking fbar` with a two-phase
+  body unless Round 1 shows the composition with a test (LadrunoUP's own answer is `-formulation
+  bbar`); an initial-stress offset on a two-phase particle (Q2); a two-phase body with threads
+  above 1 (serial, honoured as 1 with one warning or refused, as 232k's K2 rule does).
+- **U10 — staging.** A two-phase body starts from zero excess pressure in the gated cases (no
+  gravity). Hydrostatic initialization (p = γ_w (H − Y)) with gravity is gate T4. Soil stage flips
+  on a two-phase body use 232k's `mpm stage` walk unchanged.
+- **U11 — contracts.** Contract 2 gains the additive `PORE_PRESSURE` field that
+  `232a_mpm_contracts.md:636` reserves, only if Round 1 quotes that it is additive with no format
+  bump the readers would reject. Otherwise it goes to T. apeGmsh reader work is queued with T, not
+  done here. The gates read p through `mpm` queries.
+- **U12 — restart.** The database pack carries p (and ṗ) and the body's fluid constants; a pack
+  version bump; older packs are refused with a two-phase body.
+
+**Pre-registered gates** (fixed here, before any two-phase MPM number; a band is never widened
+after a run, a miss is reported as a miss with its diagnosis). References are closed forms and
+the fork's own LadrunoUP on the same grid, time step and integrator — never MPM. "FE error" below
+means LadrunoUP's own error against the closed form on that grid, Δt and Newmark pair; MPM may not
+be worse than twice it, nor worse than the fixed floor. Both quantities are reported.
+
+| Row | Gate |
+|---|---|
+| **T0 oracle match — runs FIRST** | 232l-V's numpy oracle, from `tests/mpm_twophase_interface.md` alone: (i) one particle's u-p blocks and residual; (ii) the pressure projection and update (U4) over 3 steps with motion; (iii) 10 route-S steps on a 4×4 grid. The C++ matches each to rel 1e-9. No other two-phase MPM case runs before T0 passes. |
+| **T1 FE identity (route E, mode A)** | Linear basis, particles at the 2×2 (2D) / 2×2×2 (3D) Gauss points with V_p = the Gauss weight × detJ, small strain (`-geom` off at both sides), ElasticIsotropic and DruckerPrager, `-stab off` and `auto`, h = grid spacing = element edge. From a common non-zero state (u, p, ṗ prescribed), the assembled tangent and residual (`printA` / `printB`) equal LadrunoUP Q4 / H8 on the same mesh to rel 1e-12 in the Frobenius / 2-norm; the first Newmark step's u and p equal it to rel 1e-10. |
+| T2 Terzaghi, route E (mode A; `gimp`, `bspline2`) | 232l-V's column (the `test_ladruno_up_element_analytic.py` parameters, quoted; a B-spline grid is 2 cells wide), drained top on a grid line, impervious base, step or short-ramp load (U8), Newmark γ 0.6 / β 0.3025 as the FE test uses. Observables at Tv 0.1, 0.2, 0.5: max_z \|p − p_exact\| / p₀ and \|U − U_exact\|. **Gate:** each ≤ max(2 × FE error, 0.02). Tv 0.05 reported (the step transient, as the FE test treats it). `linear` reported. |
+| T3 Mandel, route E (mode A; `gimp`, `bspline2`) | Plane strain, rigid frictionless plate (U8), lateral drainage on grid lines; parameters chosen by 232l-V so the closed-form Mandel–Cryer peak is ≥ 1.05 p₀. Observables: p(0, t)/p₀ at five times 232l-V fixes in Round 1 (the peak among them). **Gate:** each ≤ max(2 × FE error, 0.02) against the closed form, and the MPM peak ≥ 1 + ½ (closed-form peak − 1). |
+| T4 hydrostatics + effective self-weight (mode A; `gimp`, `bspline2`) | A saturated column under gravity, drained top at p = 0, run to steady state. **Gate:** p within 0.01 γ_w H of γ_w (H − Y), σ′_yy within 0.03 ρ′ g H of closed form (the S1 self-weight bar), at every particle. |
+| T5 checkerboard (mode A, route E; and mode F, route S) | ADR-71's B4 footing (`test_ladruno_up_element_equiv.py:332-345`) on particles at the B4 grid, ppc 2, `gimp`. **Gate:** CB_lap ≤ 0.3 for route E `-stab auto` 0.25 and for route S; route E `-stab off` ≥ 0.5 (the test must see a checkerboard). The FE's own CB values are reported beside. |
+| T6 Terzaghi and Mandel, route S (mode F; `bspline2`; `gimp` reported) | T2's and T3's cases with a load ramp of at least 20 undrained wave transits (Round 1 states it), no damping during consolidation, read at the same Tv. Reference: the closed forms, and the FE error of LadrunoUP under Newmark with the same ramp. **Gate:** as T2 and T3. |
+| T7 time step (route S) | The scheme's stated Δt limit (U6): stable at 0.9 × the limit for 2000 steps on T6's column, unstable or refused at 1.5 ×. The undrained CFL that a fully explicit scheme would need is reported beside it. |
+| T8 refusals and options | Every U9 refusal, loud, in both modes where it applies; U2's stray-p rule tested; `mpm info` reports the body's route, fluid constants and stabilization. |
+| T9 restart (mode A) | The database round trip with two-phase particles mid-consolidation: the continued run equals the uninterrupted one bit for bit. |
+| T10 unchanged answers | The whole existing MPM suite passes unchanged (counts reported), and a single-phase body in a model with no two-phase body is bit for bit 232k's answer (L1 and the S1 triaxial). |
+| T11 mutation | The MPM family's ZERO and SCALE scores at or above 232k's 0.500 and 0.398. Plus a Zone-A two-phase oracle (T1 at one cell) that goes red if Q or the p projection is skipped. |
+| T12 engines | Classic Tcl and Python give the same T2 answer at small size. |
+| R reported, not gated | **The route comparison:** the TIMs first-settlement ratio u(0⁺)/u_undrained for route E at α₀ ∈ {off, 0.1, 0.25} and for route S (TIMs' C0-up FE: 1.71 with stabilization, 0.94 without but a 1.35 p₀ checkerboard); CB index; cost per step and Δt of each route against LadrunoUP. The projection's diffusion on a no-motion column (U4). A two-phase cell-crossing meter: T4's column translated through four cells (232k's K0 machinery), p error against hydrostatic. SANISAND and HS undrained one-point cyclic shear at a two-phase particle against LadrunoUP's one element. |
+
+**Order.** Round 1 (both workers, in parallel) → the orchestrator's freeze → 232l-V's oracle and
+232l-C's route E → **T0 (i, ii) and T1 are the first two-phase MPM numbers** → T2–T5, T8–T12 on
+route E → route S with T0 (iii) first → T6, T7 → the warrant run on one build.
+
+**Freeze (2026-11-18, orchestrator, on `tests/mpm_twophase_interface.md` @ `6401e5ff9`), before
+any two-phase MPM number.** P1–P13 are frozen as written. Verified in-tree before freezing:
+`FE_Element::setID` returns −3 on a DOF-count mismatch (`FE_Element.cpp:352-358`), so P4's uniform
+ndf + 1 with zero p rows is required, not optional; Newmark re-seeds the committed accel of every
+DOF (`Newmark.cpp:396-416`); ADR-73's §12 P0 item 3 records the rate form as "CD-unstable at any
+Δt" and the L = 0 lane at exactly 1.000× the undrained pencil (`73_…adr.md:1078-1082`); the
+contracts doc reserves the field as additive (`232a_mpm_contracts.md:636`); `MPM_PACK_VERSION = 4`
+(`LadrunoMPMImplicit.cpp:1533`); mode A has only the hypo path (`LadrunoMPMPoint.h:44-49`). The
+orchestrator re-derived route S's step 3 from LadrunoUP's blocks (momentum with p^{n+1} implicit,
+Qᵀv₁ + S*(p − p̂)/Δt + H p = f_seep): it is exact and the operator is SPD. Rulings:
+
+- **A1 accepted:** particles carry p, ṗ and p̈ (Newmark's re-seed reads all three). U4 reads so.
+- **A2 accepted:** `mpm kinematics small | hypo`, default `hypo`, fixed per epoch. T10 adds: with
+  `hypo` (the default), single-phase answers stay bit for bit. T0 and T1 run under `small`; T2–T7
+  run under `hypo` (the shipped default), and `small` is reported beside T2 at one basis.
+- **A3 accepted:** route S is the fractional step's structure (predictor → pressure → correction)
+  on ADR-71's single-velocity u-p equations, an IMEX scheme. Berkeley's two-velocity scheme is cited,
+  not ported. Its drained Δt limit is a claim, which T7 measures.
+- **A4 accepted, with one change:** each new fold (P9's per-component map, P10's affine plate image)
+  gets its patch check (drained elastic block under the plate: uniform σ′_yy, u_y = U at every face
+  node, rel 1e-10) before any T3/T6 number. A failing patch check is a **defect to fix first**; only
+  if it cannot be fixed in this WP do that basis's Mandel legs become a **reported miss with the
+  diagnosis, raised to the program orchestrator** (the owner decides misses). They are never quietly
+  demoted.
+- **A5 accepted:** mode F has no Rayleigh, so route S's T5 leg runs B4 undamped. That is a stated
+  difference from the FE reference, and the CB_lap ≤ 0.3 gate is unchanged.
+- **A6 accepted:** T7's yardstick is the discrete drained pencil (`mpm criticalTimeStep
+  drainedPencil`): stable at 0.9× for 2000 steps, unstable or refused at 1.5×. The undrained pencil
+  is reported beside it.
+- **Plate (P10) as Terzaghi's and Mandel's load: accepted.** 232l-V's FE references tie the top
+  nodes' u_y with `equalDOF` and load the retained node. T2's 1D column under the plate is
+  Terzaghi's uniform load.
+- **`mpm pressureBlend` default 1 (incremental):** accepted; α_p = 0 is reported in the U4 row only.
+- **232l-V's Round-1 numbers** (the FE errors that set the T2/T3/T6 bands, Mandel's parameters and
+  times, and any FE-unreachable row) are ruled here when they arrive, before any MPM number on those
+  rows. T0 and T1 do not depend on them.
+
+**Rulings on 232l-V's Round 1 (2026-11-18, records @ `3a39b08f9`, build `b751dcbfe`), before any
+two-phase MPM number.** The orchestrator read the T3, T4 and T6 records; each number below is
+quoted from them.
+- **T2 bands: every band is the 0.02 floor.** The FE errors at the GIMP points are at most 0.0102
+  (p, Tv 0.1, `-stab auto`) and 0.0055 (U), so max(2 × FE, 0.02) = 0.02 throughout. The plate
+  (equalDOF) gives the same FE answer as nodal forces to the last digit, and 1×10 equals 2×10. Tv 0.05
+  (FE 0.11) is reported.
+- **T3: the step load is replaced by a 5 s linear ramp, for T3 and T6 alike (case amendment; the
+  band rule is unchanged).** Under a step the strip rings and the FE itself misses p(0, t) by
+  0.05–1.13 p₀ up to the peak, so the row was unreachable by its own reference. The ramp is 52
+  lateral undrained transits. Case: Terzaghi's soil with ν 0.1 (ν 0.2 peaks at only 1.059), half
+  strip a = 10, b = 4, 10 × 4 cells. Closed-form peak under the ramp: **1.0781 p₀ at tv 0.078**.
+  Times: tv 0.04, 0.078, 0.12, 0.2, 0.4. FE error ≤ 0.008, so the bands are 0.02, and the peak gate
+  is MPM peak ≥ 1 + ½ (1.0781 − 1) = **1.039 p₀**. The step-load Mandel is reported.
+- **Mandel's closed form:** the Cheng–Detournay / Abousleiman series, with tan αₙ = (1 − ν)/(ν_u − ν)
+  αₙ, checked against an independent Laplace-domain solution inverted numerically (agreement 2.4e-11
+  p₀). The papers' equation numbers are unverified (not opened), and the record says so. The Laplace
+  check is the warrant.
+- **T4: h = H/20, band unchanged at 0.03 (case amendment).** At h = H/10 the FE's σ′ is constant
+  per element, and its error at the GIMP points is ρ′g h/4 = 0.025 ρ′gH, against a bar of 0.03.
+  That bar would then test the FE's discretization, not the MPM. The 2 × FE rule would have widened
+  it to 0.05, so the case is refined instead: at H/20 the FE gives 0.0125 (GIMP points) and 0.0144
+  (Gauss points). h = H/10 is reported. p is exact in the FE at both (≤ 1.5e-8).
+- **T5:** the FE gives CB_lap 0.603 (off) and 0.126 (auto 0.25), equal to the shipped B4 test. The
+  gate is unchanged.
+- **T6: the FE reference runs at route S's own Δt; ramp 5 s for Terzaghi too.** γ = 0.6 damps the
+  slow modes per step, so the FE error depends on Δt: Terzaghi 0.003 → 0.011, Mandel peak 0.003 →
+  0.019 as Δt goes 0.05 → 0.001. The band is max(2 × FE error at the MPM run's Δt, 0.02), named per
+  leg. The interface's 2 s ramp leaves 0.0175 at Tv 0.1 (dt 0.002), too close to the floor, so the
+  ramp is 5 s (amends P10's 20-transit note; still ≥ 20 transits).
+- **The oracle's five questions go to 232l-C** as an addendum §7a to the interface, which it answers
+  before T0 runs: the (i) dump's format and its DOF and support-node order; whether K is from the
+  trial state; the GIMP weights after `renormalize`; M⁻¹'s fixed-component rule in route S; the
+  first-step re-seed values. The oracle is written from §1 and §7a, never from the C++.
+- **Two route-S points §1/§7a left open (ruled 2026-11-18, before T0 (iii) ran; binding on the
+  C++ and the oracle alike).** (1) In mode F a node is **p-active iff it is mass-active (above the
+  mode-F cutoff) and some two-phase particle has S^p > 0 there**. A sub-cutoff node, such as a ghost
+  row with a weight of about 1e-7, is outside the pressure system, and its p does not enter G2P.
+  This is the mode-F analogue of mode A's `renormalize` drop. (2) Under `kinematics small` in
+  mode F, Δε = sym(Δt Σ_a v**_a ⊗ ∇S_a), with v** the conditioned second-projection velocity (the
+  one MUSL builds L from). V stays V₀, σ′ is the material's at ε_n + Δε, and x moves with v₁.
+- **Re-ruling of point (1) (2026-11-18, before T0 (iii) is gated).** 232l-V measured that the
+  literal rule admits the T0 (iii) ghost row (m_a = 1.3e-8 to 2.6e-8 m_p, above mode F's 1e-10). Those
+  rows are ill-conditioned (p = +44 000 kPa at step 3 against about 20), and including them moves
+  particle p by 1.2e-3, v by 3.6e-3 and σ′ by 5.2e-3 after 10 steps. A quantity no CG reproduces to
+  1e-9 is not gateable. **New rule, one for both modes:** in route S a node is **p-active iff
+  m_a > c_m · m_max**, where c_m is mode A's cutoff (default 5e-2, set by `mpm massCutoff`, the
+  test of `LadrunoMPMImplicit.cpp:741-753`), and S^p > 0 there. Each two-phase particle's S^p,
+  ∇S^p are **renormalised over its p-active nodes** with `renormalize`'s formula
+  (`:764-788`; B9 for B-spline images). A dropped node is therefore absent from the pressure
+  system, the projection and G2P, and is never treated as drained. The u side is unchanged: mode
+  F's 1e-10 cutoff, Q_(a,i),b = α V ∂_iS_a S^p_b with the renormalised S^p. The light-node
+  correction then scales as the existing σ′ force does. This is mode A's P4 rule (S^p rescaled by
+  the same sums) carried to mode F. Not a band change: T0 (iii) is gated at rel 1e-9 under it, and
+  the oracle runs with `pcut` = c_m.
+- **The pressure cutoff is its own knob (2026-11-18, 232l-V's flag on §7a Q4 @ `5307d4757`).**
+  `mpm massCutoff` sets the u-side cutoffs (1e-10 in mode F, 5e-2 in mode A) and no longer
+  touches route S's p cutoff. A mode-F deck that passed `massCutoff` would otherwise drag the p
+  cutoff to 1e-10 and readmit the ill-conditioned rows. The p cutoff is `mpm pressureCutoff <c>`,
+  default 5e-2, reported by `mpm info twoPhase`; T8 tests that `massCutoff` leaves it unchanged.
+  In mode A the p rows already follow `renormalize` (P4), so there is no separate knob there.
+- **R's first-settlement comparison runs on two decks (2026-11-18, before any MPM number; reported
+  row, no gate moves).** 232l-V's LadrunoUP ratios (`r_first_settlement_fe.json`, b751dcbfe): on T2's
+  soil (K_f/n ≈ E_oed) the storage block outweighs H̃, and the ratio is 1.01–1.05 for α₀ off–0.25 at
+  dt 1e-3–0.2. On a stiff fluid (K_f = 2.2e6, s0 = 1.81e-5 m, dt 1e-3) it is 2.06 off, 16.7 at
+  α₀ 0.1 and 25.8 at 0.25: TIMs' regime, magnified. The route comparison therefore reports both
+  decks, so it can see the defect it exists to compare. Both are on the quasi-static deck (ρ = 2e-6;
+  on T2's ρ = 2, u(0⁺) is undefined while the compression wave transits), each MPM leg against the
+  FE leg at the same dt and stabilization.
+
+**Route E on build `fd81cbdd3` (records `25cc9b69e`, diagnostic `13024db9f`).** Pass: A4 patch checks
+(≤ 1.6e-12), T3 Mandel 4/4 (≤ 0.0117 against 0.02; peaks 1.079–1.085 against 1.039), T5 (CB_lap
+0.095 auto, 0.621 off), T9 bit for bit, T12 to 1e-12, T8 except the stray-p rule, and T2's settlement
+(≤ 0.006). **Misses, on the particle-carried pore pressure:**
+- **T2:** 0.089–0.111 p₀ at Tv 0.1 (0.028–0.036 at Tv 0.5) against 0.02.
+- **T4:** 0.029 (gimp) and 0.055 (bspline2) against 0.01.
+
+Diagnostic (reported, never gated): the grid field read at the particle points meets every T2 band
+at Tv 0.1–0.5 (0.0008–0.0066; gimp at or better than LadrunoUP's 0.008–0.0095), and T4 gimp's field
+is exact to 1e-4. The miss is the particle-minus-field residual, which the incremental update never
+reconciles with the pinned drained-face nodes. Projected to the grid, it is 70–75 % visible over all
+nodes and 4–8 % over the free nodes in T2. In T4 it is also visible on free nodes (0.019 projected),
+so it enters the solve every step: a scheme defect, not an output artifact.
+
+**Defect fixes ruled by the orchestrator (no band or reference moves):**
+- **Fix 2:** a B-spline impervious face with a normal fluid drive takes an affine even p image,
+  ∂p/∂n = ρ_f b_f·n (zero flux). P9's plain even image imposed ∂p/∂n = 0, which is wrong under
+  gravity.
+- **Fix 3:** mode A's p-activity follows the route-S rule (`3d3699a50`): two-phase nodal mass
+  > c_m·m_max, with S^p renormalised over the p-active nodes. The T8 stray-p row (p = −6.7e3 at a
+  1e-8 tail) becomes a pass.
+
+**Owner decision (2026-11-18, asked directly in this session): fix the carrier in this WP under a
+new gate; the `fd81cbdd3` misses stay on record as the evidence.** Pre-registered here, before any
+carrier design or number:
+- **T2p:** on every T2 leg (gimp, bspline2; `-stab off` and `auto 0.25`), the particle-carried p
+  error ≤ 0.02 p₀ at Tv 0.1, 0.2 and 0.5 (T2's band, on T2's observable). The grid field at the
+  particle points also stays ≤ 0.02, and U ≤ 0.02. Tv 0.05 is reported.
+- **T4p:** particle-carried p within 0.01 γ_w H of γ_w (H − Y), and σ′_yy within 0.03 ρ′gH, at
+  every particle, gimp and bspline2, h = H/20.
+- **Residual, reported:** max |p_p − Σ S^p_a p_a| per row, beside the T2p and T4p numbers.
+- **Guards on the fix** (each must hold, or it is a miss):
+  - P5's own invariant: a motionless, sealed, k̄ = 0 column keeps p bit for bit.
+  - T0 (ii) at rel 1e-9 against 232l-V's oracle, re-derived from the amended interface text, never
+    from the C++.
+  - T1, T3, T5 and T9 re-run and still pass.
+  - T10: single-phase answers bit for bit.
+- **Process:**
+  1. 232l-C writes the carrier as an amendment P5a to `tests/mpm_twophase_interface.md`: the
+     scheme, its argument, and why the residual cannot survive at a pinned or prescribed node.
+  2. The orchestrator freezes P5a.
+  3. 232l-V updates the oracle from the text.
+  4. 232l-C implements P5a with fixes 2 and 3, for one build.
+
+**Freeze of P5a (2026-11-18, interface §7b @ `cc60193c9`), before any carrier code or T2p/T4p
+number.**
+- **P5a is frozen:** FLIP increments on a consistent L2 projection, M_ab = Σ V_p S^p_pa S^p_pb,
+  solved for p, ṗ and p̈. The orchestrator checked the argument. With M nonsingular,
+  M⁻¹ Pᵀ V P = I, so the particle field projects exactly onto the new grid field after each
+  increment, at pinned nodes included. P5's lumped projection could not do that, and that is the
+  measured cause.
+- **Fixes 2 and 3** (P9 and P4 amendments in §7b) are frozen as ruled.
+- **Added, a singularity guard (binding):** §7b's SPD condition ("particles span each p-active
+  node's shape functions, ppc ≥ 2") is a claim that particle motion can break, for example a thinned
+  cell or a folded B-spline face. A singular M under Jacobi-PCG returns a non-unique answer without
+  failing, which no oracle can match. So:
+  - The solve refuses the step loudly (rule named, nothing changed) when PCG does not reach 1e-14,
+    or when any PCG curvature dᵀMd falls to 1e-14 · (the largest diagonal entry) · dᵀd or below.
+  - T8 gains a deliberately rank-deficient case: bspline2 with one particle per cell in a p-active
+    region. It must be refused, not solved.
+  - The oracle solves M densely (`numpy.linalg.solve`, and it checks M's smallest eigenvalue), so
+    T0's rel 1e-9 also checks that PCG converged to the unique answer.
+- **Oracle and references:** 232l-V re-derives T0 (ii) and (iii) from §1, §7a and §7b, and
+  regenerates `t1_fe.json`, whose FE nodal state is the projection, now consistent. T0 (i) is
+  unchanged. The T1 bands are unchanged.
+
+**P5a on build `7b7cdc9cf` (records `9a6315ee0`), and two rulings (2026-11-18, before any T2p/T4p
+number).**
+- **Pass:**
+  - T0 (i, ii): 4.6e-14 / 7.4e-13.
+  - T1: 12/12, A ≤ 5.0e-16, p ≤ 1.2e-13.
+  - The sealed column, bit for bit.
+  - T9, T12, T8 stray-p and the other T8 refusals.
+  - T3 gimp: ≤ 0.0118; peaks 1.086 and 1.083.
+  - T10: 24 single-phase legs bit for bit. The baseline is `cfe478254`, the WP's base, because the
+    `fd81cbdd3` binary was replaced. Accepted: it is the stricter baseline.
+- **T3 bspline2 refused at step 1: an implementation bug, fixed.** The code tested mass only, but
+  ruling `3d3699a50` also requires S^p > 0. A ghost column on a drained-only face kept its u mass,
+  became p-active with an empty row, and the zero-diagonal guard refused it, correctly. Every
+  bspline2 case with a drained face hit the same bug.
+- **T8 rank-deficient case solved, not refused: the frozen guard (a) had a gap, now amended.** With
+  M singular and Pᵀ V x always in M's range, CG stays in the range: it converges with positive
+  curvature to a non-unique answer. **Amendment:** each projection also runs one probe PCG on a fixed
+  deterministic right-hand side, b_k = sin(1.7 k + 0.3) over the p-active rows in storage order,
+  with the same tolerance (1e-14), the same iteration cap and the same curvature test. A probe that
+  fails refuses the step loudly, naming the rule, with nothing changed. A nonsingular M passes the
+  probe, so no answer changes. The probe's cost is reported in the cost row.
+- **Renormalisation beside a folded face (ruled 2026-11-18 on `399ea34c2`, before its build).**
+  S^p is renormalised only when a node with S^p > 0 is dropped by the cutoff. A kept node whose p
+  weight was folded onto its mirror (a ghost behind a drained-only B-spline face) is retained, and its
+  unsigned weight W counts in the sum. Two reasons:
+  - The fold is the boundary condition. An odd image makes the folded weights deliberately not sum
+    to one, so renormalising across it would undo p = 0 on the face.
+  - It matches mode A's B9 rule, which renormalises by the unsigned sums over the kept support,
+    ghosts included.
+  GIMP and linear are unchanged under either reading.
+- **Re-run order after the build:** T3 bspline2, the fix-2 patch check, T8 rank-deficient, T5, a
+  re-check of T0/T1/sealed/T10 (cheap), then T2p and T4p.
+
+**Build `d06695367` (records `9b90c3536`): T3 bspline2 passes, and the fix-2 patch check misses.**
+- **T3 bspline2:** ≤ 0.0118 against 0.02; peaks 1.082 and 1.080. T3 is now 4/4.
+- **Fix-2 patch check:** base particle 1.0e-3 γ_w H against 1e-10. The grid field is exact to 2e-15
+  (near-rigid probe), so the miss is on the particle carrier.
+
+**Ruling (2026-11-18), a design gap between P5a and fix 2, before any T2p/T4p number.** Fix 2
+writes the field as Σ S^p c + π. An initial p = 0 with π ≠ 0 at the first projection violates the
+strongly imposed zero-flux condition, so 0 is not in the admissible space. Its invisible part −π_⊥
+then stays on the particles under FLIP. §7b's claim that "the invisible residual is zero when the
+initial field is zero" is false once π ≠ 0.
+- **The fix (A′, narrower than 232l-C's option A):** at the first projection at which π ≠ 0, add to
+  each two-phase particle's p only π's own invisible part,
+  π_⊥ = π − P M⁻¹ Pᵀ V π (over the same p-active set, M and S^p).
+  - This projects the initial condition onto the admissible space. The user's own invisible content
+    is untouched, so the sealed-column invariant still holds.
+  - ṗ and p̈ are unchanged, because π's rate is neglected (§7b).
+  - Later changes of π need nothing more: G2P already adds Δπ in full, so the residual stays as it
+    was.
+  - A drive that ramps from zero never triggers it.
+  - The restart pack records that A′ has been applied, so a restart does not apply it twice.
+  - `mpm info twoPhase` reports max |π_⊥| applied.
+- **Option A is declined:** re-expressing the whole field would erase user content the sealed-column
+  guard protects.
+- **Option C is declined:** it moves a gate.
+- **The patch gate stays at 1e-10.**
+- **Harness correction accepted:** the "field at the particles" readout must include π. The earlier
+  bspline2 diagnostic numbers that omitted it are annotated, not rewritten.
+
+**Build `89718fdad` (records `802e86c3f`): the fix-2 patch check misses again.** The base particle
+is at 1.2e-3 γ_w H against 1e-10. A′ itself works without motion: near-rigid column 1.9e-11 at the
+base, field exact to 1.4e-15, max |π_⊥| = 0.0578 kPa. The miss is motion. π at a particle depends on
+its position, and G2P adds only π's change from the load factor, never its change from the
+particle's own motion. So A′'s premise ("G2P already adds Δπ in full") fails under motion.
+
+**Ruling (2026-11-18): one invariant, frozen, which every carrier rule must satisfy.** Each
+two-phase particle carries the coefficient-space part q_p, and p_p ≡ q_p + π(x_p, drive),
+evaluated at the particle's current position and drive wherever p is used (output, queries, the
+projection's right side).
+- q is the FLIP-carried state, with P5a in plain space. Projection: c = M⁻¹ Pᵀ V q. G2P:
+  q_p += Σ S^p (c_new − ĉ).
+- At initialisation, q = p_init − (P M⁻¹ Pᵀ V π(0))_p. That is A′ in this form: the user's own
+  invisible content is kept.
+- 232l-C's per-particle π_c bookkeeping is accepted as one implementation of this invariant
+  (p − π_c = q). Either form must hold the invariant exactly under motion, and π_c (or q) joins the
+  restart pack.
+- ṗ and p̈ still neglect π's rate (§7b).
+- Where π = 0 nothing changes: GIMP, T0, T1, the sealed column and T10 are unaffected.
+- The patch gate stays at 1e-10.
+- **Re-brief rule:** this is the second fix round on the fix-2 patch check. If a third round
+  misses it, the orchestrator re-briefs a fresh worker at max effort (skill rule), with the
+  alternative design on the table: no p fold on impervious faces (zero flux as the natural
+  condition), which removes π entirely.
+
+**Rulings before the `3fe8a445c` build (2026-11-18), on 232l-C's two caveats.**
+- **The fix-2 patch check runs to steady state; the gate stays at 1e-10 and E stays at 1e4.** The
+  §7b deck (200 steps of 1 s) ends in a transient. With π = 0, the base particle is still at
+  2.2e-9 γ_w H at step 200, decaying ×0.974 per step, so the check could not measure the boundary
+  condition it exists to test.
+  - New stopping rule, fixed before the run: step until the step-to-step change of max |p_p| is
+    ≤ 1e-13 γ_w H, capped at 2000 steps. Reaching the cap is a miss.
+  - E = 1e4 stays, because motion is what broke A′. A stiffer skeleton would hide it.
+  - Reported beside: the π = 0 twin and the E = 1e6 and rigid controls.
+- **The per-step self-check is the bookkeeping identity:** |p_p − π(x_p, drive) − q_p| ≤ 1e-12 γ_w H
+  after every step, with q the FLIP-carried state, or p − π_c with π_c = π(x_p) checked as well.
+  The part of q that the moved supports cannot represent is the motion residual, not a bookkeeping
+  error. It is reported per step, beside the rigid control (expected about 1e-15).
+- **No-p-fold design:** kept in reserve. 232l-C argues that it meets the same motion residual and
+  enforces zero flux only weakly.
+
+**Build `0fc5a3f13` (records `af2a0ff7d`): the fix-2 patch check misses a third time, but the
+invariant holds.** At steady state (step 128) the base is 1.24e-3 γ_w H against 1e-10. The q + π
+bookkeeping holds (≤ 4.6e-14; π_c = π exactly). Controls: π = 0 twin 2.2e-9, E 1e6 5.7e-8, rigid
+5.7e-11. **The cause is an implementation contradicting frozen text, verified by the orchestrator in
+`LadrunoMPMTwoPhase.cpp:456-477`.** The u-side `renormalize` pass rescales every component of
+each kept entry, the p component (`c = nd`) and fix 2's affine coefficients included. The fix-3
+rule (P4 amended, and the folded-face ruling `d06695367`) renormalises S^p only when a p-active
+node is dropped by the p rule. After settlement, the y = 10.5 ghost row's u weight (0.0133) falls
+below the cutoff. The p weights are then divided by 0.98660, and linear reproduction at the
+drained face is lost (dp/dy = −0.957 γ_w).
+- **Fix (implementation, frozen text unchanged):**
+  - The u-side pass rescales only the u components.
+  - The p weights and `aff` follow the fix-3 p rule alone.
+  - Fix 3 runs on the raw weights.
+  - Re-check T10.
+- **The fresh-worker rule, applied by its intent rather than its letter (a recorded deviation).**
+  The three misses were three distinct defects, each diagnosed precisely and verified in-tree. The
+  reserve design (no p fold on impervious faces) keeps the odd image at the drained face, so it
+  meets this same defect. So 232l-C applies this fix, and **a fresh critic from the other family
+  (Fable · high) audits the whole carrier against §7b and every 232l ruling now**, in parallel and
+  read-only. Any remaining contradiction then surfaces in one pass rather than one build at a time.
+  The audit is not the ready-flip review of record, which still runs.
+
+**The Fable carrier audit (2026-11-18, code @ `af2a0ff7d`, read-only).** Four findings beyond the
+known u-side rescale, all still present at `58727204e`. Findings 1 and 2 were verified in-tree by the
+orchestrator. All four are implementation or text defects, ruled as fixes, with no band or reference
+moving:
+1. **Dangling `else` (`LadrunoMPMCore.h:620-625`).** Fix 2's affine `if` was inserted between the
+   u-fold `add(…mir…)` and its `else add(…i…)`. On a face with a u condition and `pfix` (T2's
+   `plate ymax` + `pfix ymax`), the ghost's W goes to the mirror and to the ghost: ΣW = 1.03125, and
+   the plate's motion interpolates as 0.97 U. **T2p on bspline2 run on any build before the fix is
+   void (not a measurement).** Fix: restore the if/else pairing. Add a unit check that ΣW = 1 to
+   1e-14 at every particle beside a `plate` + `pfix` face.
+2. **A′ and π_c mutate state before the step is accepted (`LadrunoMPMTwoPhase.cpp:695-703`).**
+   Later refusals, a Newton failure and the debug hooks (`particleBlocks`, `assemble`) can follow,
+   so A′ can apply twice or be skipped. `particlePressure`/`porePressure` after a dump can also
+   leave the flag set. Fix: compute A′'s π_⊥ and the new π_c at the projection, but commit them
+   (P.pw, π_c, the applied flag, max |π_⊥|) only when the step is accepted, i.e. in the after-step
+   path. The debug hooks must leave all of them unchanged. Setting p by command clears the applied
+   flag (A′ re-arms for the new field). Tests: dump → analyze → reset → analyze gives one π_⊥;
+   a refused first step leaves the flag unset.
+3. **π at the first projection used λ = 1, not the series value.** §7a Q2 ("1 before the first
+   step") conflicts with A′'s "π = 0 at the first projection" for a ramp. **Text amendment:** π is
+   always evaluated at the drive of the step being taken, i.e. the series value the step's
+   `applyLoad` uses, including at the first projection; §7a Q2 is superseded for π. A test: a
+   ramped bspline2 gravity deck reports max |π_⊥| = 0.
+4. **`massCutoff` limits mode-A p-activity** (p-active ⊆ the u-kept set). **Text amendment:** with
+   a two-phase body, mode A refuses `massCutoff` > `pressureCutoff` loudly, naming the rule. The
+   "never moved by `massCutoff`" sentence is scoped to route S (mode F). With massCutoff ≤
+   pressureCutoff, the subset is automatic, because two-phase mass ≤ total mass. The T8 refusal is
+   tested.
+
+**Build `58727204e` (records `ea536a822`), and the owner's decision on the fix-2 patch check
+(2026-11-18, asked directly in this session, after the numbers).** The renormalisation fix works:
+the grid coefficients equal γ_w(H − Y) to 2.4e-14, and the field at every particle (π included) is
+exact to 2.35e-14, where it was off by 1.24e-3 before. The base particle's carried p misses 1e-10
+by 6.0e-6 γ_w H. That is P5a's motion residual: the part of q that the supports, moved by the
+0.044 m settlement, cannot represent. The frozen P5a text keeps it deliberately, because of the
+sealed-column invariant, and reports it without gating it.
+- **Owner decision: the patch check gates what it exists to test, which is fix 2's boundary
+  condition.** The gates are the grid coefficients and the field at the particles, at 1e-10, and
+  both pass on `58727204e`. The particle-carried value (6.0e-6) is recorded beside them as the motion
+  residual, and remains gated by T4p at 0.01 γ_w H. This is recorded as a ruling made after the
+  numbers, with this reasoning.
+- **Item 3 confirmed (orchestrator):** A′ uses π at the epoch's initial drive λ(t₀), since the initial
+  condition is stated at t₀, so a ramp from 0 gives max |π_⊥| = 0. Every later projection and
+  after-step update uses the drive of the step being taken.
+
+**Route S batch (`21916618f`), amendment A7 accepted (2026-11-18, before any route-S number).**
+Route S refuses loudly an impervious B-spline face with a normal fluid drive (fix 2's affine term).
+Carrying π and the q + π invariant into mode F is a follow-up issue, opened at landing. No gated
+route-S case has that configuration: T0 (iii) and T5 are gimp, and T6 and T7 have no gravity. A
+two-phase B-spline column under gravity in mode F is therefore unavailable in this WP; the guide
+says so. 232l-V re-checked the T0 (iii) oracle against every later ruling (`bc118a60e`): only the
+renormalisation's form changed, by ≤ 9.7e-16.
+
+**Route S on build `4b74bd335` (records `66ce9aa25`, `86bacad2d`).**
+- **T0 (iii): pass,** 1.1e-11 against 1e-9.
+- **T7:**
+  - Drained pencil: bspline2 0.017748, gimp 0.013458.
+  - Undrained pencil: 0.012550 and 0.009516.
+  - The estimator h/c_d, 0.013416, refuses 0.9 × the pencil on bspline2: `mpm safety` is capped at 1,
+    and the pencil is 1.32 × the estimator.
+  - gimp is stable at 0.9 × its pencil (1.27 × undrained), and bspline2 at the estimator limit
+    (1.07 × undrained).
+  - **Owner decision (2026-11-18, asked directly): allow measuring it.** Route S gets a pencil-based
+    run-time limit (documented, warned), and the leg is measured as written.
+- **T6 Terzaghi: pass on all four legs,** worst p 0.0037, U 0.0016, against 0.02.
+- **T6 Mandel: misses on both bases.**
+  - bspline2 gated: off 0.039 and 6.55 at tv 0.2 and 0.4; peak 1.32.
+  - gimp reported: wrong from tv 0.04.
+  - **bspline2 diagnosis:** an x-velocity oscillation grows at the top-right corner, where the plate
+    face meets the drained traction-free face, doubling about every 5 s at Δt 0.005, which is
+    **0.30 × the drained pencil**.
+  - Δt 0.0025 decays, flip 0.98 decays, and the single-phase twin is bounded. So the drained-pencil
+    limit claimed in U6/A6 does not hold for this configuration.
+  - **gimp hypothesis:** light ghost u nodes past the drained face stay active under mode F's 1e-10
+    cutoff, and their pressure correction Δt M⁻¹ Q p grows like 1/δ. This bears directly on the
+    orchestrator's ruling at `3d3699a50` ("do NOT also drop the correction on light u components"),
+    which overrode 232l-V's original proposal and is now under suspicion.
+- **Ruling: diagnose before any design change.** No band moves, and no Δt is chosen to pass:
+  1. **The linearised one-step amplification** of route S on the Mandel bspline2 deck at Δt 0.005,
+     with central differences of `advanceUP` on the full particle state through the existing
+     setters. Report the spectral radius, the unstable mode's localisation (which nodes, u or p,
+     which particles), and the same at Δt 0.0025, plus a single-phase control.
+  2. **The light-node test on gimp Mandel:** the same run with route S's u-side correction
+     restricted to nodes above c_m·m_max. Use the existing `mpm massCutoff` in mode F as a probe if
+     it does exactly that; otherwise say what it does instead.
+  3. **Write it up for the owner:** a miss on T6 Mandel (gated, bspline2) is the owner's decision.
+     The orchestrator brings the diagnosis with the options.
+  The T7 pencil-limit change and any fix that follows go into one batch, after the diagnosis.
+
+**T6 Mandel diagnosis (records `8dcead316`, build `4b74bd335`, no code change), and decisions
+(2026-11-18/19).**
+- **bspline2: a linear instability of route S.** ρ = 1.00093 per step at Δt 0.005 (0.30 × the drained
+  pencil); 1.0000067 at 0.0025; the single-phase twin is at 0.9999997. The mode is the x-velocity of
+  the particle column beside the drained free face. The plate is not involved, and no node falls
+  below 5e-2.
+  - Mechanism (232l-C, a hypothesis that fits every control): the skeleton strain uses MUSL's
+    re-projected particle velocity v**, while the fluid balance uses the grid velocity v₁. The
+    difference is O(Δt) null-space content, so part of the undrained coupling acts explicitly, with
+    a lag.
+- **gimp: the light-node correction. The orchestrator's ruling at `3d3699a50` was wrong** ("do not
+  drop the correction on light u components"). gimp is linearly stable (ρ = 0.999997). With light u
+  nodes dropped (`mpm massCutoff 5e-2` in mode F), gimp Mandel passes both stabs: 0.0139/0.0214 and
+  0.0150/0.0227, peaks 1.0945 and 1.0925.
+- **Owner decision (asked directly): the consistency fix.** Route S computes the skeleton strain from
+  the grid velocity v₁, the velocity the fluid balance sees (USL for the skeleton in two-phase
+  bodies). That is the assumption the IMEX argument makes. Bands are unchanged. If T6 Mandel still
+  misses, it returns to the owner as a miss.
+- **The orchestrator corrects its own ruling:** in route S, a u node with mass ≤ c_m · m_max
+  (pressureCutoff's c_m, default 5e-2) is dropped whole for two-phase bodies: no momentum, force or
+  correction. This matches the `massCutoff` probe. The single-phase mode-F path keeps 1e-10 (T10).
+- **T7:** the pencil-based run-time limit, decided earlier, goes into the same batch.
+- **Order:**
+  1. 232l-C writes the amended text (§7c).
+  2. 232l-V re-derives T0 (iii) from it.
+  3. One build.
+  4. T0 (iii), T7, T6 (all legs), T5 route S, T10 and the route-E zone_a set.
+
+**Route S after the consistency fix (build `5d64922a4`, records `f3082784a`, `70ac724cb`).**
+- **Pass:**
+  - T0 (iii): 8.1e-12.
+  - **T6 all eight legs:**
+    - Terzaghi bspline2: ≤ 0.0037 against 0.02.
+    - Mandel bspline2: ≤ 0.0166 against 0.0214/0.0227, peaks 1.089 and 1.087.
+    - gimp reported: also passes.
+  - Mandel ρ: 0.999999998, where it was 1.00093.
+  - T5 route S: CB_lap 0.137.
+  - T10: 24/24 bit for bit.
+  - Two-phase files: 65/65, re-run by the orchestrator.
+- **T7 misses on both bases.** USL's skeleton limit is below the grid pencil: gimp is stable to 0.7×,
+  bspline2 to 0.8×, and K_f = 1 gives the same thresholds. The per-step pencil costs 76–80 % of a
+  Mandel step.
+- **Owner decision (2026-11-19, asked directly): record the miss and cap at 0.5.**
+  - T7 is recorded as a strict-xfail miss, with the scan as its diagnosis. The gate text is not
+    rewritten.
+  - The route-S run-time limit is dt ≤ s·Δt_d, with s ≤ 0.5 by default. A user may raise s up to
+    0.7, the measured gimp bound, with a once-per-epoch warning naming T7's scan. Above 0.7 the step
+    is refused.
+  - Δt_d is computed once per epoch and refreshed when the particle-to-cell connectivity changes, not
+    every step. The cost goes in the R row.
+  - Each route-S records file carries `ladrunoBuild`; the Mandel amplification record lacked it and
+    is restamped.
+
+**Ready-flip review of record on `d77caf8fd` (2026-11-19): Fable critic BLOCK + `/code-review high`,
+8 findings.** The warrant run had passed (509 passed, 0 failed; T10 24/24; IDENT 14/14 red).
+- **Blocker, verified by the orchestrator: route S cannot translate a two-phase body.** §7c (1),
+  the orchestrator's ruling, drops u nodes below c_u whole without renormalising the kept weights.
+  Particles still interpolate v, a and L over every entry, so the partition of unity breaks.
+  - A free gimp block at v = (1, 0) gives mean v_x 0.29 and σ′ 172 kPa after 200 steps.
+  - bspline2 reverses to −0.42.
+  - pressureCutoff 1e-10, and route E, are exact.
+  - Every route-S gate deck was confined and stationary, so none could see it.
+  - **Ruling (the orchestrator corrects §7c (1)):** route S renormalises S and ∇S (each component,
+    B9's unsigned sums) over the u-active nodes of each particle, with mode A's `renormalize`
+    formula. A dropped node is absent, never held at zero. c_u stays max(massCutoff,
+    pressureCutoff). The owner's consistency fix (strain from v₁) is unchanged.
+  - New gate **T13, translation patch** (pre-registered here): a free two-phase block in rigid
+    translation keeps v, σ′ and p to rel 1e-10 for 200 steps. Both routes, gimp and bspline2,
+    with and without a `plate` face.
+  - T0 (iii), T6 (all eight legs), T5 and T7 re-run; 232l-V re-derives T0 (iii).
+- **Major (critic, to verify first): the B-spline plate image is not translation-consistent**
+  (`LadrunoMPMCore.h:645`) in either mode; T13's plate legs cover it.
+- **Major: the gates are not asserted.** Pytest files are required for T0 (iii), T2p, T3, T4p, T5,
+  T6, T13, the fix-2 patch check and T10: zone_a short forms, zone_b full forms reading the bands
+  from the cases file. `mutation_gate.py`'s MPM paths are to include the two-phase oracle and
+  identity files and a route-S zone_a test.
+- **Minor, all fixed in the same round:**
+  - MAX_DOF 256 → room for 65 entries × 4.
+  - The cached Δt_d also refreshes on any stage walk or parameter update, and at least every 100
+    steps; the guide states this.
+  - T7's reproducibility: a repo-relative scan script, with a debug-only `mpm debug routeSLimit
+    off` so the scan can measure above the cap; the T7 xfail runs through it.
+  - Every route-S record stamped.
+  - The contracts doc §2.6 edit.
+  - The guide's undrained-limit sentence corrected: at the default cap, route S admits 0.707 × the
+    undrained pencil on the gated soil.
+- **Docs:** the orchestrator writes the ADR amendment "232l" and the §6 two-phase column; the
+  results document gets the route-S R rows.
+
+**T11 on the final head (CI run 44555570302, `fa4087122`, per-mode selection), and the owner's
+decision (2026-11-19).**
+- **Combined suite:** ZERO 51/103 = 0.495, SCALE 36/103 = 0.350. The CI floors pass.
+- **The four established files reproduce 232k exactly:** ZERO 44/88 = 0.500, SCALE 35/88 = 0.398.
+- **The two-phase gates file kills ZERO 7/15 and SCALE 1/15.** T13 checked v, σ′ and p but not x, so
+  a sabotaged position update survived.
+- **Owner decision: strengthen and judge.** T11 is judged on the established suite (pass; 232k's
+  numbers reproduced). T13 is strengthened to also check positions against X + v₀ t at rel 1e-10.
+  That is a stricter test, not a band change. The CI lane is re-run, and the gates file's kill rates
+  are reported beside T11.
+
+### 232l-V — oracle and FE references (opus · high; never reads the MPM two-phase C++)
+
+```text
+<header>  ADR sections: §4 (rows LadrunoUPKernel, LadrunoPorousOverlay, TIMs C0-up), §8 (the P6
+row), §9 phase 6, §11, and the amendment "232l kickoff". ADR-71 §3 and §6, ADR-73 §1 and its §12
+log. Your PR: #<pr>.
+Branch: work detached on origin/wp/232l-mpm-two-phase; commit; `git pull --rebase origin
+wp/232l-mpm-two-phase`; `git push origin HEAD:wp/232l-mpm-two-phase`. Another worker pushes C++
+to the same branch. You touch only tests/mpm_twophase_reference.py,
+tests/test_mpm_twophase_reference.py, tests/data/mpm/twophase/*.json and the reference blocks of
+tests/mpm_twophase_cases.txt (create it; the C++ worker adds the MPM blocks).
+Independence: read nothing under SRC/domain/pattern/ladrunoMPM/ or SRC/element/ladrunoMPMPoint/.
+Your oracle is written from tests/mpm_twophase_interface.md (232l-C writes it in Round 1) and the
+papers, never from the MPM C++. You may read and run LadrunoUP, its kernel and its tests, and the
+overlay. Read the "232l" section of .claude/skills/ladruno-mpm/references/wp-briefs.md first: the
+facts, U1–U12 and the gate table bind you. Never widen a band.
+Binary: <pyd path>, built by the orchestrator; print ops.ladrunoBuild() into every record.
+
+ROUND 1 — report before running anything long (at most 300 words + a plan):
+  - Terzaghi: the case you take from tests/test_ladruno_up_element_analytic.py, quoted with lines,
+    in kN, t, m, s; its FE error at Tv 0.1 / 0.2 / 0.5 on the grids T2 uses (gimp: 1 cell wide;
+    bspline2: 2 cells wide), so the max(2 × FE, 0.02) bands are known before any MPM number.
+  - Mandel: the closed form you implement (cite the paper and equation numbers), parameters with
+    a Mandel–Cryer peak ≥ 1.05 p₀, the five times, the plate mechanism you can build in LadrunoUP
+    (it must be one the MPM can build too: U8), and the FE error at those times.
+  - T4: the hydrostatic column and its FE steady state; T5: B4 on the MPM grid and its FE CB values.
+  - The oracle's scope (T0 i–iii) and what it needs from tests/mpm_twophase_interface.md.
+  - For T6: whether LadrunoUP under Newmark with T6's ramp reaches the T2 bands; if not, say so
+    with the number, before any MPM number.
+  - Anything in the gate table you find unreachable by the FE itself, with the number.
+ROUND 2 — on the orchestrator's "frozen":
+  1. The numpy oracle (T0 i–iii) and its self-checks (one-element consolidation ODE against
+     closed form; block symmetry pattern; Q against LadrunoUP's printA on one element).
+  2. Closed forms: Terzaghi (reuse terzaghi_series / terzaghi_U by import), Mandel, hydrostatics.
+  3. FE references: T1's LadrunoUP Q4/H8 tangent, residual and first step from the common state;
+     T2–T6 records with the FE error per observable; T5's CB values; the first-settlement ratio
+     for LadrunoUP at α₀ ∈ {off, 0.1, 0.25}.
+  4. tests/test_mpm_twophase_reference.py: shape and closed-form checks; never against MPM.
+Long FE runs: give the orchestrator the command; it launches them on esmeralda. Nothing over
+10 min yourself. python3.12; ruff F811 clean; the fork-checklist gates before every push. Report
+per the Worker rules.
+```
+
+### 232l-C — two-phase particles in C++ (opus · high; a different agent from 232l-V)
+
+```text
+<header>  ADR sections: §4 (W1–W17, especially W1, W9, W14, W15, W17; the LadrunoUPKernel and
+LadrunoPorousOverlay rows), §5.2, §5.3 and their amendments, §6, §8 (the P6 row), §9 phase 6,
+§11, and the amendments "232i", "232j", "232k" and "232l kickoff". ADR-71 §3 and §6; ADR-73.
+Your PR: #<pr>.
+Branch: work detached on origin/wp/232l-mpm-two-phase; commit; `git pull --rebase origin
+wp/232l-mpm-two-phase`; `git push origin HEAD:wp/232l-mpm-two-phase`.
+Read the "232l" section of .claude/skills/ladruno-mpm/references/wp-briefs.md first: the facts,
+U1–U12 and the gate table bind you. Never widen a band.
+Independence: read tests/mpm_interface.md, tests/mpm_implicit_interface.md,
+tests/mpm_bspline_interface.md, tests/mpm_antilocking_interface.md, tests/mpm_soil_interface.md
+and the cases files. Never read tests/mpm_reference.py, tests/mpm_implicit_reference.py,
+tests/mpm_soil_reference.py or tests/mpm_twophase_reference.py.
+Licences: Berkeley geomechanics/mpm (MIT) and Kratos (BSD-4, fork only) may be read and cited;
+never Anura3D, Karamelo, AMPLE, GeoTaichi, Matter or NairnMPM.
+Context: #1109–#1112 touch code near yours. Do not fix them unless your change rewrites that
+code; never regress them.
+
+ROUND 1 — stop and report after it (the orchestrator freezes it):
+  tests/mpm_twophase_interface.md, at most ~4 pages, deciding with code anchors quoted:
+  - U2: the grid pressure DOF in mode A — node creation (LadrunoMPMImplicit.cpp:885-886), the
+    particle element's DOF count (LadrunoMPMPoint.h:188), stray p rows, numberer, handler,
+    renormalize, B-spline image ghosts for p, SP grid conditions on p.
+  - U3: the particle u-p element — which kernel helpers, the block placement against
+    LadrunoUP.cpp:1360-1526, h, the body's fluid constants and their grammar.
+  - U4: the particle pressure state, the projection and the update, in both modes; what
+    domainChanged() re-seeds for p and ṗ under Newmark (W1).
+  - U5, U9: the integrator rule and every refusal with its message.
+  - U6: route S — (a) or (b), the argument, the equations, the Δt limit, the pressure solver,
+    where it sits in advance() (LadrunoMPMCore.h:785-1030), and what it reuses from the overlay.
+  - U7, U8: pressure conditions; Terzaghi's load and Mandel's plate mechanism.
+  - U11, U12: the output field (quote 232a_mpm_contracts.md:636) and the restart pack.
+  - Enough of the formulation (symbols, signs, the state per particle, each step's order) for
+    232l-V's oracle to be written from this file alone (T0 i–iii).
+  - The cases file tests/mpm_twophase_cases.txt layout and the test files, with each one's
+    Zone-A cost; a cost estimate for T2–T7 per leg.
+ROUND 2 — on the orchestrator's "frozen":
+  Route E first: U2–U5, U7–U9 and the harness; batch edits; ask the orchestrator for each build
+  (all five targets) and each mutant build; never start build.bat yourself. T0 (i, ii) and T1 are
+  the first two-phase MPM numbers: report them and stop for the orchestrator. Then T2–T5, T8–T12.
+  Then route S (U6): T0 (iii) first, then T6, T7. Tests tests/test_ladruno_mpm_twophase_*.py
+  (zone_a within its time budget). Long runs are the warrant run, which the orchestrator launches
+  on esmeralda. Results JSON under tests/data/mpm/twophase/ carry ladrunoBuild, the counts and
+  per-row values.
+  Registrations per fork-checklist.md: the ledger fragments WP-232l-mpm-two-phase.md
+  (implementations; vanilla rows and `// Ladruno` markers for any upstream file; a quirk for each
+  gotcha met), a banner line, the guide (Ladruno_implementation/232_ladruno_mpm_guide.md: the
+  two-phase rows, the routes, the integrator rule, the pressure conditions, serial), stamps.
+  Draft the ADR amendment text in your report; the orchestrator writes it.
+Done when: every gated row is green (or a reported miss with diagnosis); the reported rows are in
+Ladruno_implementation/232l_mpm_two_phase.md; the ci/ gates are clean; ladrunoBuild matches your
+head on the exe and the pyd. Report per the Worker rules.
+```

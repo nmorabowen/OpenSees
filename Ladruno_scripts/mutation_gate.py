@@ -149,7 +149,21 @@ FAMILIES = {
         "paths": ["test_ladruno_mpm_engine.py",       # the cases suite; lifecycle/refusal tests are physics-free
                   "test_ladruno_mpm_implicit_engine.py",
                   "test_ladruno_mpm_bspline_mms.py",
-                  "test_ladruno_mpm_antilocking_switch.py"],
+                  "test_ladruno_mpm_antilocking_switch.py",
+                  # WP-232l: route S's gates file (T0 iii, T13 translation, T5 route S and the
+                  # short forms run its P2G internal force and its G2P positions).
+                  "test_ladruno_mpm_twophase_gates.py"],
+        # WP-232l, orchestrator's ruling after CI run 44551994541 on 439fee82b (decided before any
+        # re-score, not tuned to it). The review of record had added the two-phase oracle and FE
+        # identity files to "paths". ZERO and SCALE cannot reach them by construction: T1's common
+        # state has sigma' = 0 and checks no position, and T0 (i) is a block dump. They added only
+        # survivors (ZERO 0.453 against its 0.46 floor, SCALE 0.316), the same reason 232i / 232j
+        # left their kinematics and tangent files out. Those two files are IDENT's suite instead:
+        # IDENT cuts the u-p coupling (Q and the P5a projection), which is exactly what they check.
+        # CI builds no IDENT mutant; IDENT stays the recorded manual 14/14 red on d77caf8fd.
+        # "paths_by_mode" replaces "paths" for the named mode. Floors are unchanged.
+        "paths_by_mode": {"IDENT": ["test_ladruno_mpm_twophase_oracle.py",
+                                    "test_ladruno_mpm_twophase_fe_identity.py"]},
         "min_score": {"ZERO": 0.46, "SCALE": 0.38, "IDENT": 0.0},
     },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----
@@ -205,14 +219,16 @@ def probe_binary(python: str, cwd: Path) -> dict:
     )
 
 
-def resolve_paths(family: str) -> list[str]:
-    """Test files as names RELATIVE to tests/ (pytest is run from there)."""
+def resolve_paths(family: str, mode: str | None = None) -> list[str]:
+    """Test files as names RELATIVE to tests/ (pytest is run from there). A family may carry
+    "paths_by_mode": {MODE: [...]}, which replaces "paths" for that mode (WP-232l ruling)."""
     spec = FAMILIES[family]
+    pats = spec.get("paths_by_mode", {}).get(mode or "", spec["paths"])
     found: list[str] = []
-    for pat in spec["paths"]:
+    for pat in pats:
         found.extend(sorted(p.name for p in TESTS.glob(pat)))
     if not found:
-        raise SystemExit(f"FATAL: family {family} selected no test files ({spec['paths']}).")
+        raise SystemExit(f"FATAL: family {family} selected no test files ({pats}).")
     return found
 
 
@@ -252,7 +268,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             "installed-.pth hijack note in Ladruno_internal/BUILD_GOTCHAS.md)."
         )
 
-    paths = resolve_paths(family)
+    # the mode: from --expect FAMILY=MODE (the mutant run) or --mode (its baseline run)
+    mode = args.mode.upper() if args.mode else None
+    if args.expect and "=" in args.expect:
+        mode = args.expect.split("=", 1)[1].upper()
+    paths = resolve_paths(family, mode)
     with tempfile.TemporaryDirectory() as td:
         xml_path = Path(td) / "results.xml"
         cmd = [python, "-m", "pytest", "-p", "no:randomly", "--tb=no", "-q",
@@ -381,6 +401,8 @@ def main() -> int:
     r.add_argument("--out", required=True)
     r.add_argument("--python", help="interpreter to use (default: this one)")
     r.add_argument("--marker", help="extra pytest -m expression, e.g. zone_a")
+    r.add_argument("--mode", help="the mutation mode whose suite to run (a baseline run for a family "
+                                  "with paths_by_mode; a mutant run takes it from --expect)")
     r.add_argument("--module-dir",
                    help="directory holding the built opensees module and the test files "
                         "(default: tests/). Both the probe and pytest run here.")

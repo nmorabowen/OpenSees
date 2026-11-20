@@ -61,6 +61,7 @@
 // The core mirrors the mutation mode codes so it can stay OpenSees-free.
 static_assert(ladruno_mpm::MUT_ZERO == LADRUNO_MUT_ZERO, "MPM mutation code ZERO drifted");
 static_assert(ladruno_mpm::MUT_SCALE == LADRUNO_MUT_SCALE, "MPM mutation code SCALE drifted");
+static_assert(ladruno_mpm::MUT_IDENT == LADRUNO_MUT_IDENT, "MPM mutation code IDENT drifted");   // WP-232l T11
 
 // ---------------------------------------------------------------------------
 //  The material seam: one owned NDMaterial copy per particle
@@ -227,6 +228,26 @@ LadrunoMPMPattern::applyLoad(double pseudoTime)
     SP_Constraint *sp;
     while ((sp = it()) != 0)
       if (!sp->isHomogeneous()) sp->applyConstraint(pseudoTime - stepT0);
+    // WP-232l (P10, P10b): the plates' forces (positive F into the body) and the tractions'
+    // nodal forces, x lambda; Domain::applyLoad zeroed every node's unbalance just before
+    Domain *dom = this->getDomain();
+    if (dom != 0) {
+      for (int f = 0; f < 6; f++) {
+        if (!eng.fc.plateOn[f] || plateTag[f] == 0) continue;
+        Node *n = dom->getNode(plateTag[f]);
+        if (n == 0) continue;
+        Vector F(n->getNumberDOF());
+        F(f / 2) = (f % 2) ? -eng.fc.plateF[f] : eng.fc.plateF[f];
+        n->addUnbalancedLoad(F, lambda);
+      }
+      for (const auto &tl : tractionLoads) {
+        Node *n = dom->getNode(tl.first);
+        if (n == 0 || n->getNumberDOF() != (int)tl.second.size()) continue;
+        Vector F(n->getNumberDOF());
+        for (int a = 0; a < F.Size(); a++) F(a) = tl.second[a];
+        n->addUnbalancedLoad(F, lambda);
+      }
+    }
   }
 }
 
@@ -380,6 +401,7 @@ LadrunoMPMPattern::setParameter(const char **argv, int argc, Parameter &param)
 int
 LadrunoMPMPattern::updateParameter(int parameterID, Information &info)
 {
+  pencilDt = -1.0;                 // WP-232l review of record: route S's cached pencil is stale
   // WP-232k (D9): a stage registration made by setParameter (double path) or handed over
   // by a particle element from MaterialStageParameter (int path, mpmStageParameter)
   const int k = parameterID - STAGE_PARAM_BASE;
@@ -432,7 +454,9 @@ LadrunoMPMPattern::admitMaterial(int matTag, NDMaterial *&copy, bool &isElastic,
     err = "nDMaterial " + std::to_string(matTag) + " (class tag " + std::to_string(ct) +
           ") is not admitted at MPM particles. Admitted: ElasticIsotropic, LadrunoJ2"
           " (without -autoRegularization), DruckerPrager, LadrunoSANISAND and LadrunoHS"
-          " (ADR 232 §6, WP-232k)";
+          " (ADR 232 §6, WP-232k). Porous materials (PDMY, PIMY, FluidSolidPorous) are not"
+          " admitted: two-phase particles take an effective-stress material and `mpm twoPhase`"
+          " (WP-232l U1)";
     delete copy;
     copy = 0;
     return -1;
@@ -812,6 +836,22 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
                   " \"Soil particles\"). Mode A admits it on every basis (quasi-static runs).\n";
         return -1;
       }
+  // WP-232l route S (interface §1 "Route S", §5 P11): a two-phase body, a plate, pfix or a
+  // traction runs the semi-implicit u-p step (Engine::advanceUP); the rest is refused loudly
+  const bool routeS = routeSOn();
+  ladruno_mpm::UPStep upStep;
+  if (routeS) {
+    const std::string why = routeSAdmission();
+    if (!why.empty()) {
+      opserr << "ERROR mpm analyze -- " << why.c_str() << "\n";
+      return -1;
+    }
+    std::string err;
+    if (routeSConstants(upStep, err) < 0) {
+      opserr << "ERROR mpm analyze -- route S: " << err.c_str() << "\n";
+      return -1;
+    }
+  }
   // WP-232k (D18, #1109): mode F used to accept `mpm pforce` and ignore it, a silent wrong
   // answer. Particle point forces are mode A's (interface §5); refused here.
   for (double f : pforce)
@@ -842,7 +882,76 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       rc = -1;
       break;
     }
-    const double dtc = eng.criticalTimeStep(*adapter);
+    if (routeS) {                // WP-232l interface 7c (3): s x the drained pencil
+      // 7c amendment (owner, wp-briefs "Route S after the consistency fix"): s <= 0.5 by default,
+      // up to 0.7 with a warning (T7's scan), refused above
+      const double sS = eng.par.safety;
+      if (routeSLimitOff && !routeSLimitOffWarned) {
+        opserr << "WARNING mpm analyze -- `mpm debug routeSLimit off`: route S's run-time limit and its"
+                  " safety cap are OFF (debug only: T7's scan measures above the cap)\n";
+        routeSLimitOffWarned = true;
+      }
+      if (!routeSLimitOff && sS > 0.7) {
+        opserr << "ERROR mpm analyze -- route S caps `mpm safety` at 0.7 (s = " << sS << "): T7's scan"
+                  " found the USL skeleton stable only to 0.7 x the drained pencil on gimp (0.8 x on"
+                  " bspline2); interface §7c amendment. Step refused, nothing changed\n";
+        rc = -1;
+        break;
+      }
+      if (sS > 0.5 && !routeSCapWarned) {
+        opserr << "WARNING mpm analyze -- route S with `mpm safety` " << sS << " > 0.5: T7's scan found"
+                  " gimp stable only to 0.7 x the drained pencil and bspline2 to 0.8 x (USL skeleton);"
+                  " the default and recommended s is 0.5 (interface §7c amendment)\n";
+        routeSCapWarned = true;
+      }
+      // the drained pencil once per epoch, refreshed when the particle-to-cell map changes
+      {
+        const int nd = eng.ndm(), Np = eng.P.size();
+        std::vector<long> cells((size_t)Np, 0);
+        for (int p = 0; p < Np; p++) {
+          long c = 0, mult = 1;
+          for (int d = 0; d < nd; d++) {
+            const long i = (long)std::floor((eng.P.x[nd * p + d] - eng.grid.x0[d]) / eng.grid.h);
+            c += mult * (i + 2);
+            mult *= (long)eng.grid.n[d] + 5;
+          }
+          cells[p] = c;
+        }
+        // ... and on a stage walk or a parameter update (they reset pencilDt), and at least
+        // every 100 steps (review of record)
+        if (pencilDt < 0.0 || cells != pencilCell || pencilAge >= 100) {
+          pencilAge = 0;
+          std::string perr;
+          pencilDt = pencilTimeStep(false, perr);
+          if (!perr.empty()) {
+            pencilDt = -1.0;
+            opserr << "ERROR mpm analyze -- route S's drained pencil: " << perr.c_str()
+                   << "; step refused, nothing changed\n";
+            rc = -1;
+            break;
+          }
+          pencilCell.swap(cells);
+        }
+        pencilAge++;
+      }
+      const double dtd = pencilDt;
+      if (!routeSWarned) {
+        std::string e2;
+        const double dtu = pencilTimeStep(true, e2);
+        opserr << "WARNING mpm analyze -- route S's run-time limit is s x the drained pencil (dt_d = "
+               << dtd << "; undrained pencil " << dtu << "; h/c_d " << eng.criticalTimeStep(*adapter)
+               << "): the pressure is implicit, the skeleton explicit (interface §7c)\n";
+        routeSWarned = true;
+      }
+      if (!routeSLimitOff && dt > eng.par.safety * dtd) {
+        opserr << "ERROR mpm analyze -- dt = " << dt << " exceeds s * dt_pencil = " << eng.par.safety
+               << " * " << dtd << " = " << eng.par.safety * dtd
+               << " (route S: the drained pencil, interface §7c); step refused, nothing changed\n";
+        rc = -1;
+        break;
+      }
+    }
+    const double dtc = routeS ? std::numeric_limits<double>::infinity() : eng.criticalTimeStep(*adapter);
     if (dt > eng.par.safety * dtc) {
       opserr << "ERROR mpm analyze -- dt = " << dt << " exceeds s * dt_crit = "
              << eng.par.safety << " * " << dtc << " = " << eng.par.safety * dtc
@@ -888,7 +997,20 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
       adapter->setTimer(&matTmr);
 #endif
       adapter->trialFail = -1;                       // WP-232k (D14)
-      res = eng.advance(dt, lambda, *adapter, err);
+      if (routeS) {                                  // WP-232l route S
+        routeSLoads(upStep);
+        res = eng.advanceUP(dt, lambda, *adapter, upStep, err);
+        if (res == 0) {
+          lastGridP.clear();
+          for (size_t a = 0; a < upStep.gNode.size(); a++) {
+            lastGridP.push_back((double)upStep.gNode[a]);
+            lastGridP.push_back(upStep.gP[a]);
+            lastGridP.push_back(upStep.gPhat[a]);
+          }
+        }
+      } else {
+        res = eng.advance(dt, lambda, *adapter, err);
+      }
 #ifndef OPS_PROFILE_DISABLE
       adapter->setTimer(0);
 #endif
@@ -992,6 +1114,18 @@ LadrunoMPMPattern::reset(void)
   eng.presc.clear();                // WP-232k (D18)
   sanisandStage = 0;                // WP-232k (D10): the particles go back to stage 0
   hsWalked.clear();                 // AMEND A1
+  piInitApplied = false;            // WP-232l A': the particles go back to their initial p
+  piPerpMax = 0.0;
+  piC.clear();                      // the q + pi invariant: q is p again until the first projection
+  routeSWarned = false;             // WP-232l 7c (3): warn again in the next epoch
+  routeSCapWarned = false;
+  routeSLimitOffWarned = false;
+  pencilAge = 0;
+  pencilDt = -1.0;                  // 7c amendment: the pencil is recomputed in the next epoch
+  pencilCell.clear();
+  pendValid = pendFirst = false;    // Fable audit finding 2: nothing pending
+  pendPiPerp.clear();
+  pendPiC.clear();
   for (NDMaterial *m : mats)
     if (m != 0) m->revertToStart();   // review item 6: a hand-removed particle element took its material
   lambda = 1.0;
@@ -1231,6 +1365,7 @@ LadrunoMPMPattern::writeOutputNow(std::string &err)
       else if (f == "VOLUME") r.push_back(P.V[q]);
       else if (f == "GIMP_HALF_LENGTH") r.insert(r.end(), &P.lp[nd * q], &P.lp[nd * q] + nd);
       else if (f == "DEFORMATION_GRADIENT") r.insert(r.end(), &P.F[nn * q], &P.F[nn * q] + nn);
+      else if (f == "PORE_PRESSURE") r.push_back(q < (int)P.pw.size() ? P.pw[q] : 0.0);   // WP-232l
     }
   }
   if (writer->writeOutput(dom->getCommitTag(), dom->getCurrentTime(), ids, rows, err) < 0) return -1;

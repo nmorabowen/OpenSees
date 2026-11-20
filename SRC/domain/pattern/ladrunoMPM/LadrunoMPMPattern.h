@@ -268,7 +268,35 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   // D13: "particle id <id>, nDMaterial <class> tag <t>" of the first refusing particle
   std::string refuserText(int p) const;
 
+  // ---- WP-232l: two-phase particles (tests/mpm_twophase_interface.md) ---------------
+  // P1: `mpm twoPhase <body> ...` -- the body's fluid constants; before the first step
+  int    setTwoPhaseBody(int body, const ladruno_mpm::TwoPhaseProps &tp, std::string &err);
+  // P8 `mpm pfix <face> <p0>`; P10 `mpm plate <face> <F>`; P10b `mpm traction ...`
+  int    setPfix(int face, double p0, std::string &err);
+  int    setPlate(int face, double F, std::string &err);
+  int    addTraction(const std::string &name, int face, const double *lo, const double *hi,
+                     const double *t, std::string &err);
+  // P6 `mpm kinematics small|hypo`; P5 `mpm pressureBlend <alpha_p>`
+  int    setKinematics(int small, std::string &err);
+  int    setPressureBlend(double a, std::string &err);
+  // §7a Q5: initial particle state (flat, storage order); `mpm porePressure <body> uniform <p>`
+  int    setParticlePressure(const std::vector<double> &v, std::string &err);
+  int    setParticleAcceleration(const std::vector<double> &a, std::string &err);
+  int    setBodyPorePressure(int body, double p, std::string &err);
+  // P12: `mpm info twoPhase <body>`
+  int    twoPhaseInfo(int body, std::vector<double> &out, std::string &err);
+  // §7a: `mpm debug particleBlocks <p> <path> <6 scales>`; `mpm debug assemble <path> <dt>`
+  int    debugParticleBlocks(int p, const std::string &path, const double *scales, std::string &err);
+  int    debugAssemble(const std::string &path, double dt, const LadrunoMPMAnalysisRefs &A,
+                       std::string &err);
+  bool   anyTwoPhase(void) const;
+  bool   anyPlate(void) const;
+  bool   isTwoPhaseParticle(int p) const;
+
   // ---- LadrunoMPMPointHost --------------------------------------------------------
+  bool   mpmSmallKinematics(void) { return eng.par.smallKin != 0; }
+  double mpmPressureBlend(void) { return eng.par.pBlend; }
+  const double *mpmFluidDrive(int p);
   int    mpmStageParameter(const char **argv, int argc, Parameter &param);   // D9 (c)
   void   mpmTrialRefused(int p);                                             // D14
   ladruno_mpm::Particles &mpmParticles(void) { return eng.P; }
@@ -375,6 +403,52 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   void                    writeFailDump(double t, int attempt);
   // mode F's affine check with the particles' materials (defined where Mats is complete)
   void                    engineAffineCheck(const double *A, const double *b, std::vector<double> &o);
+
+  // ---- WP-232l state ------------------------------------------------------------
+  std::map<int, ladruno_mpm::TwoPhaseProps> twoPhase;   // body id -> fluid constants
+  int                     plateTag[6] = {0, 0, 0, 0, 0, 0};   // the plate unknowns' nodes (0 none)
+  struct Traction { std::string name; int face; double lo[3], hi[3], t[3]; };
+  std::vector<Traction>   tractions;
+  std::vector<std::pair<int, std::vector<double>>> tractionLoads;   // this step: node tag, force
+  std::vector<double>     fdBuf;                   // mpmFluidDrive scratch
+  bool                    piInitApplied = false;   // A' (interface 7b): pi_perp added (once per epoch)
+  double                  piPerpMax = 0.0;         // A': max |pi_perp| applied
+  // the q + pi invariant (ruling on 89718fdad): pi_c = the pi each two-phase particle's p holds,
+  // so q = p - pi_c is the FLIP-carried coefficient-space part
+  std::vector<double>     piC;
+  // Fable audit finding 2: what this step's projection computed, committed only when the step is
+  // accepted (twoPhaseAfterStep); a refused step and the debug hooks leave the state unchanged
+  bool                    pendValid = false, pendFirst = false;
+  std::vector<double>     pendPiPerp, pendPiC;    // A''s pi_perp (first projection); the pi_c used
+  // WP-232l route S (mode F, interface §1 "Route S", §5 P11, §7a Q4)
+  std::vector<double>     lastGridP;               // the last route-S step: [id, p, p^] per p-active node
+  bool                    routeSWarned = false;    // 7c (3): the run-time limit's warning, once per epoch
+  bool                    routeSCapWarned = false; // 7c amendment: s in (0.5, 0.7], warned once per epoch
+  double                  pencilDt = -1.0;         // 7c amendment: the epoch's drained pencil (< 0: none)
+  int                     pencilAge = 0;           // steps since the pencil was computed (refresh at 100)
+  bool                    routeSLimitOff = false;  // `mpm debug routeSLimit off` (T7's scan; debug only)
+  bool                    routeSLimitOffWarned = false;
+ public:
+  void   setRouteSLimit(bool on) { routeSLimitOff = !on; routeSLimitOffWarned = false; }
+ private:
+  std::vector<long>       pencilCell;              // ... and the particle-to-cell map it was computed on
+  bool        routeSOn(void) const;                // a two-phase body, a plate, pfix or a traction
+  std::string routeSAdmission(void) const;
+  int         routeSConstants(ladruno_mpm::UPStep &u, std::string &err);
+  void        routeSLoads(ladruno_mpm::UPStep &u);
+ public:
+  double      pencilTimeStep(bool undrained, std::string &err);   // `criticalTimeStep drainedPencil`
+  const std::vector<double> &gridPressure(void) const { return lastGridP; }
+ private:
+  struct PSup;
+  int    buildPSup(PSup &s, std::string &err);
+  double driveFactorAt(double t) const;            // finding 3: the series value a step at t uses
+  void   clearPiState(void);                       // A' re-arms (reset, p set by command)
+  void   twoPhaseAfterStep(void);                  // commit: p <- q + pi(current x, drive)
+  int    prepareStepUP(double h, std::string &err);   // a two-phase epoch or a plate (§2, §3)
+  int    tagOfExt(long ext) const;                     // a lattice id or plateId(f) -> live tag
+  void   retirePlates(void);
+  std::string twoPhaseAdmission(const LadrunoMPMAnalysisRefs &A) const;
 
   double modeAMassCutoff(void) const;
   int    prepareStep(double h, std::string &err);

@@ -1,0 +1,591 @@
+{
+ "leg": "r_rows_route_s",
+ "build": "69ffff490e27e9b0486dbd1798fb5dd3a6e0c802",
+ "engine": "C:\\Users\\nmb\\AppData\\Local\\Temp\\claude\\a2a5a6acf2a2a207\\591804e9-1aef-474d-8fec-ddfa838b46eb\\scratchpad\\dist_69ffff490\\bin\\opensees.pyd",
+ "deck": "tests/mpm_twophase_reference.py::rs_first_settlement, fe_ramp_settlement, rs_cost_and_dt",
+ "date": "2026-11-19",
+ "units": "kN, t, m, s, kPa; sigma tension-positive, p compression-positive",
+ "reported_never_gated": true,
+ "definition_u0": "u(0+) for the dynamic decks (chosen before running): the plate settlement at the end of a linear load ramp of T_r = 20 undrained wave transits of the column, T_r = 20 L/c_u, c_u = sqrt((Eoed + Kf/n)/rho), rho = 2 (T2's): 1.897 s for T2's soil, 0.1204 s for Kf 2.2e6. ratio = u(T_r)/s0, s0 = q L/(Eoed + Kf/n). Beside it the closed form's own ratio under the same ramp, s_ramp(T_r)/s0 (Duhamel; the real drainage during the ramp), and LadrunoUP and route E (mode A) on the same ramp at dt = T_r/50. Route S: mode F at dt = 0.49 x its drained pencil (just under the default cap s 0.5); settlement read as the particle quadrature -sum_p (F_yy - 1) V0_p / width (mode F has no plate node). Quasi-static rho = 2e-6 is not reachable explicitly (the drained pencil scales with sqrt(rho)).",
+ "r1_first_settlement": [
+  {
+   "route": "LadrunoUP",
+   "Kf": 4444.0,
+   "stab": "off",
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.037948280640895705,
+   "u": 0.0048969234387071636,
+   "ratio": 1.0881507983411618,
+   "ratio_closed_form": 1.077224383008112
+  },
+  {
+   "route": "S",
+   "basis": "gimp",
+   "Kf": 4444.0,
+   "stab": "off",
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.006588243166822171,
+   "steps": 288,
+   "dt_drained_pencil": 0.013457894061347508,
+   "u": 0.004871513356723145,
+   "ratio": 1.0825043957900684,
+   "ratio_closed_form": 1.0772243830081123,
+   "u_undrained": 0.004500225011250563,
+   "ms_per_step": 0.19797118056885665
+  },
+  {
+   "route": "S",
+   "basis": "bspline2",
+   "Kf": 4444.0,
+   "stab": "off",
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.00866399101390313,
+   "steps": 219,
+   "dt_drained_pencil": 0.01774823938882102,
+   "u": 0.004864286459059605,
+   "ratio": 1.0808984988303671,
+   "ratio_closed_form": 1.0772243830081123,
+   "u_undrained": 0.004500225011250563,
+   "ms_per_step": 0.7675315068580729
+  },
+  {
+   "route": "E",
+   "basis": "gimp",
+   "Kf": 4444.0,
+   "stab": "off",
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.037948280640895705,
+   "steps": 50,
+   "dt_drained_pencil": null,
+   "u": 0.004896562371229679,
+   "ratio": 1.0880705651358038,
+   "ratio_closed_form": 1.0772243830081123,
+   "u_undrained": 0.004500225011250563,
+   "ms_per_step": 0.593755999871064
+  },
+  {
+   "route": "E",
+   "basis": "bspline2",
+   "Kf": 4444.0,
+   "stab": "off",
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.037948280640895705,
+   "steps": 50,
+   "dt_drained_pencil": null,
+   "u": 0.004883475045736788,
+   "ratio": 1.0851624159965556,
+   "ratio_closed_form": 1.0772243830081123,
+   "u_undrained": 0.004500225011250563,
+   "ms_per_step": 2.036859999934677
+  },
+  {
+   "route": "LadrunoUP",
+   "Kf": 4444.0,
+   "stab": [
+    "auto",
+    0.1
+   ],
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.037948280640895705,
+   "u": 0.004909658419088746,
+   "ratio": 1.0909806524817314,
+   "ratio_closed_form": 1.077224383008112
+  },
+  {
+   "route": "S",
+   "basis": "gimp",
+   "Kf": 4444.0,
+   "stab": [
+    "auto",
+    0.1
+   ],
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.006588243166822171,
+   "steps": 288,
+   "dt_drained_pencil": 0.013457894061347508,
+   "u": 0.004884687416861044,
+   "ratio": 1.0854318183311558,
+   "ratio_closed_form": 1.0772243830081123,
+   "u_undrained": 0.004500225011250563,
+   "ms_per_step": 0.19129548612302946
+  },
+  {
+   "route": "S",
+   "basis": "bspline2",
+   "Kf": 4444.0,
+   "stab": [
+    "auto",
+    0.1
+   ],
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.00866399101390313,
+   "steps": 219,
+   "dt_drained_pencil": 0.01774823938882102,
+   "u": 0.004877453794155648,
+   "ratio": 1.083824426992431,
+   "ratio_closed_form": 1.0772243830081123,
+   "u_undrained": 0.004500225011250563,
+   "ms_per_step": 0.7585757990770646
+  },
+  {
+   "route": "E",
+   "basis": "gimp",
+   "Kf": 4444.0,
+   "stab": [
+    "auto",
+    0.1
+   ],
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.037948280640895705,
+   "steps": 50,
+   "dt_drained_pencil": null,
+   "u": 0.004909280397770027,
+   "ratio": 1.0908966519444752,
+   "ratio_closed_form": 1.0772243830081123,
+   "u_undrained": 0.004500225011250563,
+   "ms_per_step": 0.606843999994453
+  },
+  {
+   "route": "E",
+   "basis": "bspline2",
+   "Kf": 4444.0,
+   "stab": [
+    "auto",
+    0.1
+   ],
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.037948280640895705,
+   "steps": 50,
+   "dt_drained_pencil": null,
+   "u": 0.004896301359578581,
+   "ratio": 1.0880125654468003,
+   "ratio_closed_form": 1.0772243830081123,
+   "u_undrained": 0.004500225011250563,
+   "ms_per_step": 2.062644000106957
+  },
+  {
+   "route": "LadrunoUP",
+   "Kf": 4444.0,
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.037948280640895705,
+   "u": 0.004928438746160196,
+   "ratio": 1.0951538498273083,
+   "ratio_closed_form": 1.077224383008112
+  },
+  {
+   "route": "S",
+   "basis": "gimp",
+   "Kf": 4444.0,
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.006588243166822171,
+   "steps": 288,
+   "dt_drained_pencil": 0.013457894061347508,
+   "u": 0.004904152438224174,
+   "ratio": 1.0897571623560582,
+   "ratio_closed_form": 1.0772243830081123,
+   "u_undrained": 0.004500225011250563,
+   "ms_per_step": 0.19641666666656318
+  },
+  {
+   "route": "S",
+   "basis": "bspline2",
+   "Kf": 4444.0,
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.00866399101390313,
+   "steps": 219,
+   "dt_drained_pencil": 0.01774823938882102,
+   "u": 0.004896877207138051,
+   "ratio": 1.0881405251728207,
+   "ratio_closed_form": 1.0772243830081123,
+   "u_undrained": 0.004500225011250563,
+   "ms_per_step": 0.752643378997396
+  },
+  {
+   "route": "E",
+   "basis": "gimp",
+   "Kf": 4444.0,
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.037948280640895705,
+   "steps": 50,
+   "dt_drained_pencil": null,
+   "u": 0.00492802603196868,
+   "ratio": 1.09506214014824,
+   "ratio_closed_form": 1.0772243830081123,
+   "u_undrained": 0.004500225011250563,
+   "ms_per_step": 0.5884920002426952
+  },
+  {
+   "route": "E",
+   "basis": "bspline2",
+   "Kf": 4444.0,
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "t_ramp": 1.8974140320447854,
+   "dt": 0.037948280640895705,
+   "steps": 50,
+   "dt_drained_pencil": null,
+   "u": 0.004915210679104526,
+   "ratio": 1.0922144263490157,
+   "ratio_closed_form": 1.0772243830081123,
+   "u_undrained": 0.004500225011250563,
+   "ms_per_step": 2.027825999830384
+  },
+  {
+   "route": "LadrunoUP",
+   "Kf": 2200000.0,
+   "stab": "off",
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.002409657986707497,
+   "u": 0.00026496192809574064,
+   "ratio": 14.602346259498594,
+   "ratio_closed_form": 14.610535336958073
+  },
+  {
+   "route": "S",
+   "basis": "gimp",
+   "Kf": 2200000.0,
+   "stab": "off",
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.006341205228177623,
+   "steps": 19,
+   "dt_drained_pencil": 0.013457894061347508,
+   "u": 0.0002789181422840348,
+   "ratio": 15.371488730320136,
+   "ratio_closed_form": 14.610535336958073,
+   "u_undrained": 1.8145161290322583e-05,
+   "ms_per_step": 0.29268947362556663
+  },
+  {
+   "route": "S",
+   "basis": "bspline2",
+   "Kf": 2200000.0,
+   "stab": "off",
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.008605921381098202,
+   "steps": 14,
+   "dt_drained_pencil": 0.01774823938882102,
+   "u": 0.0002653745609073749,
+   "ratio": 14.625086912228658,
+   "ratio_closed_form": 14.610535336958073,
+   "u_undrained": 1.8145161290322583e-05,
+   "ms_per_step": 1.2662357143459044
+  },
+  {
+   "route": "E",
+   "basis": "gimp",
+   "Kf": 2200000.0,
+   "stab": "off",
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.002409657986707497,
+   "steps": 50,
+   "dt_drained_pencil": null,
+   "u": 0.00026161888462858385,
+   "ratio": 14.418107419530841,
+   "ratio_closed_form": 14.610535336958073,
+   "u_undrained": 1.8145161290322583e-05,
+   "ms_per_step": 0.5969140000524931
+  },
+  {
+   "route": "E",
+   "basis": "bspline2",
+   "Kf": 2200000.0,
+   "stab": "off",
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.002409657986707497,
+   "steps": 50,
+   "dt_drained_pencil": null,
+   "u": 0.0002525799357632197,
+   "ratio": 13.919960904284105,
+   "ratio_closed_form": 14.610535336958073,
+   "u_undrained": 1.8145161290322583e-05,
+   "ms_per_step": 2.0683340000687167
+  },
+  {
+   "route": "LadrunoUP",
+   "Kf": 2200000.0,
+   "stab": [
+    "auto",
+    0.1
+   ],
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.002409657986707497,
+   "u": 0.00038777525419760256,
+   "ratio": 21.370725120223426,
+   "ratio_closed_form": 14.610535336958073
+  },
+  {
+   "route": "S",
+   "basis": "gimp",
+   "Kf": 2200000.0,
+   "stab": [
+    "auto",
+    0.1
+   ],
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.006341205228177623,
+   "steps": 19,
+   "dt_drained_pencil": 0.013457894061347508,
+   "u": 0.00040252761439812934,
+   "ratio": 22.183744082385793,
+   "ratio_closed_form": 14.610535336958073,
+   "u_undrained": 1.8145161290322583e-05,
+   "ms_per_step": 0.2896947369567658
+  },
+  {
+   "route": "S",
+   "basis": "bspline2",
+   "Kf": 2200000.0,
+   "stab": [
+    "auto",
+    0.1
+   ],
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.008605921381098202,
+   "steps": 14,
+   "dt_drained_pencil": 0.01774823938882102,
+   "u": 0.0003888004625143132,
+   "ratio": 21.427225489677703,
+   "ratio_closed_form": 14.610535336958073,
+   "u_undrained": 1.8145161290322583e-05,
+   "ms_per_step": 1.2376357148501225
+  },
+  {
+   "route": "E",
+   "basis": "gimp",
+   "Kf": 2200000.0,
+   "stab": [
+    "auto",
+    0.1
+   ],
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.002409657986707497,
+   "steps": 50,
+   "dt_drained_pencil": null,
+   "u": 0.00038460651132660173,
+   "ratio": 21.19609217977716,
+   "ratio_closed_form": 14.610535336958073,
+   "u_undrained": 1.8145161290322583e-05,
+   "ms_per_step": 0.5879399998229928
+  },
+  {
+   "route": "E",
+   "basis": "bspline2",
+   "Kf": 2200000.0,
+   "stab": [
+    "auto",
+    0.1
+   ],
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.002409657986707497,
+   "steps": 50,
+   "dt_drained_pencil": null,
+   "u": 0.00037354905537276273,
+   "ratio": 20.58670349609892,
+   "ratio_closed_form": 14.610535336958073,
+   "u_undrained": 1.8145161290322583e-05,
+   "ms_per_step": 2.0356080000055954
+  },
+  {
+   "route": "LadrunoUP",
+   "Kf": 2200000.0,
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.002409657986707497,
+   "u": 0.0005241350957758568,
+   "ratio": 28.8856675005361,
+   "ratio_closed_form": 14.610535336958073
+  },
+  {
+   "route": "S",
+   "basis": "gimp",
+   "Kf": 2200000.0,
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.006341205228177623,
+   "steps": 19,
+   "dt_drained_pencil": 0.013457894061347508,
+   "u": 0.0005409997592410454,
+   "ratio": 29.815097842617607,
+   "ratio_closed_form": 14.610535336958073,
+   "u_undrained": 1.8145161290322583e-05,
+   "ms_per_step": 0.3060894737963712
+  },
+  {
+   "route": "S",
+   "basis": "bspline2",
+   "Kf": 2200000.0,
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.008605921381098202,
+   "steps": 14,
+   "dt_drained_pencil": 0.01774823938882102,
+   "u": 0.0005282366808240235,
+   "ratio": 29.111710409857295,
+   "ratio_closed_form": 14.610535336958073,
+   "u_undrained": 1.8145161290322583e-05,
+   "ms_per_step": 1.281871428156072
+  },
+  {
+   "route": "E",
+   "basis": "gimp",
+   "Kf": 2200000.0,
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.002409657986707497,
+   "steps": 50,
+   "dt_drained_pencil": null,
+   "u": 0.0005231825720077576,
+   "ratio": 28.833172857316416,
+   "ratio_closed_form": 14.610535336958073,
+   "u_undrained": 1.8145161290322583e-05,
+   "ms_per_step": 0.601981999934651
+  },
+  {
+   "route": "E",
+   "basis": "bspline2",
+   "Kf": 2200000.0,
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "t_ramp": 0.12048289933537484,
+   "dt": 0.002409657986707497,
+   "steps": 50,
+   "dt_drained_pencil": null,
+   "u": 0.0005132335609674687,
+   "ratio": 28.284871804429386,
+   "ratio_closed_form": 14.610535336958073,
+   "u_undrained": 1.8145161290322583e-05,
+   "ms_per_step": 2.1043000000645407
+  }
+ ],
+ "r2_cost_dt": [
+  {
+   "route": "S",
+   "basis": "gimp",
+   "dt_drained_pencil": 0.013457894061347508,
+   "dt_undrained_pencil": 0.009516406064394554,
+   "dt_estimator_h_over_c": 0.013416407864998736,
+   "dt_admitted_s0.5": 0.006728947030673754,
+   "dt_run": 0.006594368090060279,
+   "ms_per_step": 0.19164350000210106,
+   "ms_per_simulated_s": 29.061692854386788
+  },
+  {
+   "route": "E",
+   "basis": "gimp",
+   "dt_run": 0.02,
+   "dt_admitted": "unconditional (Newmark 0.6/0.3025)",
+   "ms_per_step": 0.5948200000016691,
+   "ms_per_simulated_s": 29.741000000083456
+  },
+  {
+   "route": "S",
+   "basis": "bspline2",
+   "dt_drained_pencil": 0.01774823938882102,
+   "dt_undrained_pencil": 0.0125502141852342,
+   "dt_estimator_h_over_c": 0.013416407864998736,
+   "dt_admitted_s0.5": 0.00887411969441051,
+   "dt_run": 0.0086966373005223,
+   "ms_per_step": 0.7237939499973436,
+   "ms_per_simulated_s": 83.22687551358204
+  },
+  {
+   "route": "E",
+   "basis": "bspline2",
+   "dt_run": 0.02,
+   "dt_admitted": "unconditional (Newmark 0.6/0.3025)",
+   "ms_per_step": 2.0616844444399853,
+   "ms_per_simulated_s": 103.08422222199927
+  },
+  {
+   "route": "LadrunoUP Q4 1 x 10",
+   "dt_run": 0.02,
+   "dt_admitted": "unconditional",
+   "ms_per_step": 0.06446211110515934,
+   "ms_per_simulated_s": 3.223105555257967
+  }
+ ],
+ "r3_route_comparison": {
+  "first_settlement_T2soil_auto0.25_ramp": {
+   "closed_form": 1.077224383008112,
+   "LadrunoUP": 1.0951538498273083,
+   "route_E_gimp": 1.09506214014824,
+   "route_E_bspline2": 1.0922144263490157,
+   "route_S_gimp": 1.0897571623560582,
+   "route_S_bspline2": 1.0881405251728207
+  },
+  "CB_lap_B4 (quoted, orchestrator)": {
+   "route_E": {
+    "auto0.25": 0.134,
+    "off": 0.621
+   },
+   "route_S": {
+    "auto0.25": 0.137,
+    "off": 0.614
+   },
+   "LadrunoUP": {
+    "auto0.25": 0.1259,
+    "off": 0.603
+   }
+  },
+  "cost_and_dt_T2column": {
+   "S_gimp": {
+    "ms_per_step": 0.19164350000210106,
+    "ms_per_simulated_s": 29.061692854386788,
+    "dt": 0.006728947030673754
+   },
+   "E_gimp": {
+    "ms_per_step": 0.5948200000016691,
+    "ms_per_simulated_s": 29.741000000083456,
+    "dt": 0.02
+   },
+   "S_bspline2": {
+    "ms_per_step": 0.7237939499973436,
+    "ms_per_simulated_s": 83.22687551358204,
+    "dt": 0.00887411969441051
+   },
+   "E_bspline2": {
+    "ms_per_step": 2.0616844444399853,
+    "ms_per_simulated_s": 103.08422222199927,
+    "dt": 0.02
+   },
+   "LadrunoUP Q4 1 x 10": {
+    "ms_per_step": 0.06446211110515934,
+    "ms_per_simulated_s": 3.223105555257967,
+    "dt": 0.02
+   }
+  }
+ },
+ "output": "tests/data/mpm/twophase/r_rows_route_s.json"
+}
