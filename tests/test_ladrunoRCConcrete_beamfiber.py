@@ -49,24 +49,24 @@ def _rc(tag, *flags):
 
 
 def _build(flags, path):
-    """One fibre on a zeroLengthSection; node 2 follows path = [(eps, gy, gz), ...] (one entry per
+    """One fibre on a zeroLengthSection (nodes 101, 102); node 102 follows path = [(eps, gy, gz), ...] (one entry per
     step, time = step number). Rotations fixed (a centroidal fibre has no bending stiffness)."""
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 6)
-    ops.node(1, 0.0, 0.0, 0.0)
-    ops.node(2, 0.0, 0.0, 0.0)
-    ops.fix(1, 1, 1, 1, 1, 1, 1)
-    ops.fix(2, 0, 0, 0, 1, 1, 1)
+    ops.node(101, 0.0, 0.0, 0.0)
+    ops.node(102, 0.0, 0.0, 0.0)
+    ops.fix(101, 1, 1, 1, 1, 1, 1)
+    ops.fix(102, 0, 0, 0, 1, 1, 1)
     _rc(1, *flags)
     ops.section("NDFiber", 1, "-GJ", 1.0e12)   # torsion is fixed; classic Tcl demands -GJ in 3D
     ops.fiber(0.0, 0.0, A, 1)
-    ops.element("zeroLengthSection", 1, 1, 2, 1)
+    ops.element("zeroLengthSection", 1, 101, 102, 1)
     t = [0.0] + [float(k + 1) for k in range(len(path))]
     for d in range(3):
         v = [0.0] + [p[d] for p in path]
         ops.timeSeries("Path", d + 1, "-time", *t, "-values", *v)
         ops.pattern("Plain", d + 1, d + 1)
-        ops.sp(2, d + 1, 1.0)
+        ops.sp(102, d + 1, 1.0)
     ops.system("FullGeneral")
     ops.numberer("Plain")
     ops.constraints("Transformation")
@@ -217,7 +217,7 @@ def test_serialization_v8_carries_ties_and_tie_history():
         for _ in path:
             assert ops.analyze(1) == 0
 
-    database_roundtrip(build, probe_nodes=[2], ndf=6, dbname="rc_wp243",
+    database_roundtrip(build, probe_nodes=[102], ndf=6, dbname="rc_wp243",
                        probe_fn=lambda: [_probe()["txy"], *_probe()["tie"], *_probe()["lat"]])
 
 
@@ -257,7 +257,7 @@ def test_serialization_v8_carries_the_crack_check():
             assert ops.analyze(1) == 0
         assert _cc_flag() == 1.0
 
-    database_roundtrip(build, probe_nodes=[2], ndf=6, dbname="rc_wp243_cc",
+    database_roundtrip(build, probe_nodes=[102], ndf=6, dbname="rc_wp243_cc",
                        probe_fn=lambda: [_probe()["txy"], *_probe()["tie"], *_probe()["lat"], _cc_flag()])
 
 
@@ -312,16 +312,16 @@ def test_classic_tcl_engine_gives_the_same_fibre(tmp_path):
     t = " ".join(str(x) for x in [0.0] + [float(k + 1) for k in range(len(path))])
     lines = [
         "model basic -ndm 3 -ndf 6",
-        "node 1 0 0 0", "node 2 0 0 0",
-        "fix 1 1 1 1 1 1 1", "fix 2 0 0 0 1 1 1",
+        "node 101 0 0 0", "node 102 0 0 0",
+        "fix 101 1 1 1 1 1 1", "fix 102 0 0 0 1 1 1",
         f"nDMaterial LadrunoRCConcrete 1 {E} {NU} {bb} {fl}",
         "section NDFiber 1 -GJ 1.0e12 {", f"  fiber 0.0 0.0 {A} 1", "}",
-        "element zeroLengthSection 1 1 2 1",
+        "element zeroLengthSection 1 101 102 1",
     ]
     for d in range(3):
         v = " ".join(str(x) for x in [0.0] + [p[d] for p in path])
         lines += [f"timeSeries Path {d + 1} -time {{{t}}} -values {{{v}}}",
-                  f"pattern Plain {d + 1} {d + 1} {{ sp 2 {d + 1} 1.0 }}"]
+                  f"pattern Plain {d + 1} {d + 1} {{ sp 102 {d + 1} 1.0 }}"]
     lines += ["system FullGeneral", "numberer Plain", "constraints Transformation",
               "test NormDispIncr 1.0e-12 30 0", "algorithm Newton", "integrator LoadControl 1.0",
               "analysis Static",
