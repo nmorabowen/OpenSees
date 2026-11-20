@@ -168,7 +168,8 @@ double LadrunoBondSlip::envelopeTangent(double a) const
 }
 
 // ===========================================================================
-//  state update: backbone on loading past the peak |slip|, elastic (k0) inside
+//  state update: backbone on loading past the peak |slip|; inside it, elastic
+//  (k0) from the committed point, with |tau| limited to the envelope at the peak
 // ===========================================================================
 int LadrunoBondSlip::setTrialStrain(double strain, double)
 {
@@ -182,14 +183,16 @@ int LadrunoBondSlip::setTrialStrain(double strain, double)
     Ttangent = envelopeTangent(a);    // (>=0 ascending, <0 softening, 0 plateau)
     if (Ttangent == 0.0) Ttangent = (a <= s2) ? k0 : -1.0e-12 * k0;  // avoid a hard 0 pivot
   }
-  else {                              // unload/reload elastically toward/from the peak
+  else {                              // inside the peak: elastic, then friction
     TslipMaxAbs = CslipMaxAbs;
-    double sgnMax = (CslipMaxAbs == 0.0) ? sgn
-                    : ((Cslip >= 0.0 || (Cslip == 0.0 && Tslip >= 0.0)) ? 1.0 : -1.0);
-    // unload line through the committed-peak envelope point with slope k0
-    double tauPeak = sgnMax * envelope(CslipMaxAbs);
-    Tstress  = tauPeak - k0 * (sgnMax * CslipMaxAbs - Tslip);
-    Ttangent = k0;
+    // Friction slider: k0 from the committed point, capped at the envelope stress
+    // of the peak slip in either direction. Since envelope(a) <= k0*a, the path
+    // reaches +-peak already on the cap, so it rejoins the backbone without a jump.
+    const double tauCap = envelope(CslipMaxAbs);
+    Tstress = Cstress + k0 * (Tslip - Cslip);
+    if (Tstress > tauCap)       Tstress = tauCap;
+    else if (Tstress < -tauCap) Tstress = -tauCap;
+    Ttangent = k0;                    // also while sliding: keeps the pivot finite
   }
   // cumulative bond work per unit interface area, W = ∫ tau ds, accumulated
   // from the committed point by the trapezoidal rule (ADR 20 §10.2b — the

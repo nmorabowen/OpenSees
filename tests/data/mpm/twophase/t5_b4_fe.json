@@ -1,0 +1,41 @@
+{
+ "leg": "b4_fe",
+ "build": "b751dcbfe25fded33af2e9b5f50f909030c84539",
+ "engine": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\compassionate-mccarthy-18cf89\\dist\\bin\\opensees.pyd",
+ "deck": "tests/mpm_twophase_reference.py::fe_b4",
+ "date": "2026-11-18",
+ "units": "kN, t, m, s, kPa; sigma tension-positive, p compression-positive",
+ "case": {
+  "E": 25000.0,
+  "nu": 0.3,
+  "rho": 2.67,
+  "poro": 0.4,
+  "Kf": 2200000000000.0,
+  "rhoF": 1.0,
+  "perm": 1e-07,
+  "Ncell": 10,
+  "L": 30.0,
+  "q": 0.1,
+  "strip": 3.0,
+  "dt": 0.01,
+  "T": 1.0
+ },
+ "runs": [
+  {
+   "stab": "off",
+   "CB_lat": 0.13842174644999505,
+   "CB_lap": 0.6029954226943228,
+   "pmax": 0.061705944508859085
+  },
+  {
+   "stab": [
+    "auto",
+    0.25
+   ],
+   "CB_lat": 0.026419834394655596,
+   "CB_lap": 0.12591501198112856,
+   "pmax": 0.03383426636440373
+  }
+ ],
+ "output": "tests/data/mpm/twophase/t5_b4_fe.json"
+}

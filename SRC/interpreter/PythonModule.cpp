@@ -680,6 +680,7 @@ initopensees(void)
 "        • mpm — quadratic / cubic B-spline bases, images on roller faces, MMS orders (WP-232i)\n"
 "        • mpm — anti-locking: cell-centre F-bar on the step increment, modes F and A (WP-232j)\n"
 "        • mpm — soil particles: LadrunoSANISAND and LadrunoHS, one stage walk in both modes (WP-232k)\n"
+"        • mpm — two-phase saturated u-p particles: route E (mode A) and route S (mode F) (WP-232l)\n"
 "\n";
         // FEATURES-END
         PySys_FormatStdout("%s\n", kFeatures);

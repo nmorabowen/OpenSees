@@ -1,0 +1,897 @@
+{
+ "patch": {
+  "build": "fd81cbdd3b1d4330c36a40a9364c4b3daf7d9926",
+  "date": "2026-11-18 19:54",
+  "wall_s": 0.805511474609375,
+  "results": [
+   {
+    "basis": "bspline2",
+    "syy_rel": 1.5736745240246818e-12,
+    "sxx_rel": 1.3625323092014697e-12,
+    "uy_rel": 2.1443109633602199e-13,
+    "p_odd_value_rel": 0.0,
+    "p_odd_grad_rel": 0.0,
+    "pass": true
+   },
+   {
+    "basis": "gimp",
+    "syy_rel": 5.645262035613996e-13,
+    "sxx_rel": 6.56030785251005e-13,
+    "uy_rel": 2.5878482157406533e-13,
+    "p_odd_value_rel": 0.0,
+    "p_odd_grad_rel": 0.0,
+    "pass": true
+   }
+  ]
+ },
+ "t2": {
+  "build": "fd81cbdd3b1d4330c36a40a9364c4b3daf7d9926",
+  "date": "2026-11-18 19:55",
+  "wall_s": 39.41442346572876,
+  "results": [
+   {
+    "basis": "gimp",
+    "stab": "off",
+    "kin": "hypo",
+    "rows": {
+     "0.05": {
+      "Tv_actual": 0.04999749987499375,
+      "p_err_max": 0.12458559184056309,
+      "U_err": 0.04096714373004404,
+      "U": 0.00581989241585148
+     },
+     "0.1": {
+      "Tv_actual": 0.0999949997499875,
+      "p_err_max": 0.08892135134676923,
+      "U_err": 0.002381702582197682,
+      "U": 0.006116527010066811
+     },
+     "0.2": {
+      "Tv_actual": 0.199989999499975,
+      "p_err_max": 0.06139378479242481,
+      "U_err": 0.0015174423370697835,
+      "U": 0.006775278919561834
+     },
+     "0.5": {
+      "Tv_actual": 0.4999749987499375,
+      "p_err_max": 0.028089208774157673,
+      "U_err": 0.0011182394085494035,
+      "U": 0.007942795899579781
+     }
+    },
+    "pass_bands_0.02": false,
+    "wall_s": 4.454317092895508
+   },
+   {
+    "basis": "gimp",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "kin": "hypo",
+    "rows": {
+     "0.05": {
+      "Tv_actual": 0.04999749987499375,
+      "p_err_max": 0.12571010003860864,
+      "U_err": 0.030959683337011545,
+      "U": 0.005774861095874012
+     },
+     "0.1": {
+      "Tv_actual": 0.0999949997499875,
+      "p_err_max": 0.0898945362233068,
+      "U_err": 0.005552262642276931,
+      "U": 0.006130793816925484
+     },
+     "0.2": {
+      "Tv_actual": 0.199989999499975,
+      "p_err_max": 0.062090123041320174,
+      "U_err": 0.002146720522410664,
+      "U": 0.006778110529801196
+     },
+     "0.5": {
+      "Tv_actual": 0.4999749987499375,
+      "p_err_max": 0.028745473949624532,
+      "U_err": 0.0009062893865959172,
+      "U": 0.00794184217217213
+     }
+    },
+    "pass_bands_0.02": false,
+    "wall_s": 4.473769664764404
+   },
+   {
+    "basis": "bspline2",
+    "stab": "off",
+    "kin": "hypo",
+    "rows": {
+     "0.05": {
+      "Tv_actual": 0.04999749987499375,
+      "p_err_max": 0.15689188747828114,
+      "U_err": 0.0074749832392166544,
+      "U": 0.005669185229755673
+     },
+     "0.1": {
+      "Tv_actual": 0.0999949997499875,
+      "p_err_max": 0.11052045032442935,
+      "U_err": 0.004532076634764405,
+      "U": 0.006126203209445007
+     },
+     "0.2": {
+      "Tv_actual": 0.199989999499975,
+      "p_err_max": 0.07666982338170857,
+      "U_err": 0.0005091744006048062,
+      "U": 0.006770741940719371
+     },
+     "0.5": {
+      "Tv_actual": 0.4999749987499375,
+      "p_err_max": 0.036152480457545474,
+      "U_err": 0.00027180411420257616,
+      "U": 0.007936541016502829
+     }
+    },
+    "pass_bands_0.02": false,
+    "wall_s": 15.284200429916382
+   },
+   {
+    "basis": "bspline2",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "kin": "hypo",
+    "rows": {
+     "0.05": {
+      "Tv_actual": 0.04999749987499375,
+      "p_err_max": 0.1599881376783274,
+      "U_err": 0.004382675257124611,
+      "U": 0.005615828434628704
+     },
+     "0.1": {
+      "Tv_actual": 0.0999949997499875,
+      "p_err_max": 0.11118203712453772,
+      "U_err": 0.00600594480887908,
+      "U": 0.006132835284591602
+     },
+     "0.2": {
+      "Tv_actual": 0.199989999499975,
+      "p_err_max": 0.07664907397566233,
+      "U_err": 0.0012006995167243167,
+      "U": 0.006773853648140977
+     },
+     "0.5": {
+      "Tv_actual": 0.4999749987499375,
+      "p_err_max": 0.03601838651739537,
+      "U_err": 0.00039055014820618217,
+      "U": 0.007936006686069006
+     }
+    },
+    "pass_bands_0.02": false,
+    "wall_s": 15.202136278152466
+   }
+  ]
+ },
+ "t2_reported": {
+  "build": "fd81cbdd3b1d4330c36a40a9364c4b3daf7d9926",
+  "date": "2026-11-18 19:56",
+  "wall_s": 9.58251428604126,
+  "results": [
+   {
+    "basis": "linear",
+    "stab": "off",
+    "kin": "hypo",
+    "rows": {
+     "0.05": {
+      "Tv_actual": 0.04999749987499375,
+      "p_err_max": 0.12403883714034829,
+      "U_err": 0.037079576175939696,
+      "U": 0.005802399236604448
+     },
+     "0.1": {
+      "Tv_actual": 0.0999949997499875,
+      "p_err_max": 0.08856150273448901,
+      "U_err": 0.002100529886250351,
+      "U": 0.006115261796202068
+     },
+     "0.2": {
+      "Tv_actual": 0.199989999499975,
+      "p_err_max": 0.061106997619915386,
+      "U_err": 0.000862922487890468,
+      "U": 0.006772333727514857
+     },
+     "0.5": {
+      "Tv_actual": 0.4999749987499375,
+      "p_err_max": 0.0279121731122671,
+      "U_err": 0.0007208314891888205,
+      "U": 0.007941007653363912
+     }
+    },
+    "pass_bands_0.02": false,
+    "wall_s": 3.159778356552124
+   },
+   {
+    "basis": "linear",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "kin": "hypo",
+    "rows": {
+     "0.05": {
+      "Tv_actual": 0.04999749987499375,
+      "p_err_max": 0.12518442878829578,
+      "U_err": 0.026727204037608095,
+      "U": 0.0057558158913821565
+     },
+     "0.1": {
+      "Tv_actual": 0.0999949997499875,
+      "p_err_max": 0.08953790883293684,
+      "U_err": 0.005183715184061064,
+      "U": 0.006129135436290837
+     },
+     "0.2": {
+      "Tv_actual": 0.199989999499975,
+      "p_err_max": 0.0618168768249005,
+      "U_err": 0.001510775473900098,
+      "U": 0.0067752489201776895
+     },
+     "0.5": {
+      "Tv_actual": 0.4999749987499375,
+      "p_err_max": 0.028581368358428533,
+      "U_err": 0.0005389060045845023,
+      "U": 0.007940189029618473
+     }
+    },
+    "pass_bands_0.02": false,
+    "wall_s": 3.19022274017334
+   },
+   {
+    "basis": "gimp",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "kin": "small",
+    "rows": {
+     "0.05": {
+      "Tv_actual": 0.04999749987499375,
+      "p_err_max": 0.12586163066093192,
+      "U_err": 0.03469134300998845,
+      "U": 0.005791652724736998
+     },
+     "0.1": {
+      "Tv_actual": 0.0999949997499875,
+      "p_err_max": 0.08988370593652732,
+      "U_err": 0.0047498033221378844,
+      "U": 0.006127182930547233
+     },
+     "0.2": {
+      "Tv_actual": 0.199989999499975,
+      "p_err_max": 0.062082286363776176,
+      "U_err": 0.001832132053761576,
+      "U": 0.00677669495247822
+     },
+     "0.5": {
+      "Tv_actual": 0.4999749987499375,
+      "p_err_max": 0.028738026770731003,
+      "U_err": 0.000404993254483329,
+      "U": 0.007939586452374893
+     }
+    },
+    "pass_bands_0.02": false,
+    "wall_s": 3.232513189315796
+   }
+  ]
+ },
+ "t3_gimp": {
+  "build": "fd81cbdd3b1d4330c36a40a9364c4b3daf7d9926",
+  "date": "2026-11-18 19:57",
+  "wall_s": 61.02424931526184,
+  "results": [
+   {
+    "basis": "gimp",
+    "stab": "off",
+    "rows": {
+     "0.04": {
+      "p_center": 1.0441954755704044,
+      "p_exact_quarter": 1.0559036017700802,
+      "err": 0.011708126199675872,
+      "band": 0.02,
+      "fe_err": 0.007950749345683832
+     },
+     "0.078": {
+      "p_center": 1.0761779843752126,
+      "p_exact_quarter": 1.0779022535926386,
+      "err": 0.0017242692174259666,
+      "band": 0.02,
+      "fe_err": 0.0020520195220053994
+     },
+     "0.12": {
+      "p_center": 1.0577762095420706,
+      "p_exact_quarter": 1.0534160787743718,
+      "err": 0.004360130767698811,
+      "band": 0.02,
+      "fe_err": 0.0017715146975120293
+     },
+     "0.2": {
+      "p_center": 0.9440048359440221,
+      "p_exact_quarter": 0.9405343911645728,
+      "err": 0.0034704447794492443,
+      "band": 0.02,
+      "fe_err": 0.00046004763206713994
+     },
+     "0.4": {
+      "p_center": 0.6586505272686718,
+      "p_exact_quarter": 0.6561762313264556,
+      "err": 0.0024742959422161537,
+      "band": 0.02,
+      "fe_err": 0.0009220916447198351
+     }
+    },
+    "peak": 1.0849550597996047,
+    "peak_gate": 1.0390679304096313,
+    "pass": true,
+    "wall_s": 30.512187480926514
+   },
+   {
+    "basis": "gimp",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "rows": {
+     "0.04": {
+      "p_center": 1.0447810212320359,
+      "p_exact_quarter": 1.0559036017700802,
+      "err": 0.01112258053804438,
+      "band": 0.02,
+      "fe_err": 0.008238331543045636
+     },
+     "0.078": {
+      "p_center": 1.0735979113148582,
+      "p_exact_quarter": 1.0779022535926386,
+      "err": 0.004304342277780426,
+      "band": 0.02,
+      "fe_err": 0.001368587703740039
+     },
+     "0.12": {
+      "p_center": 1.054323398942318,
+      "p_exact_quarter": 1.0534160787743718,
+      "err": 0.0009073201679461462,
+      "band": 0.02,
+      "fe_err": 0.0018369256333939544
+     },
+     "0.2": {
+      "p_center": 0.9417014871512267,
+      "p_exact_quarter": 0.9405343911645728,
+      "err": 0.0011670959866538766,
+      "band": 0.02,
+      "fe_err": 0.0016786294337588943
+     },
+     "0.4": {
+      "p_center": 0.658162572448757,
+      "p_exact_quarter": 0.6561762313264556,
+      "err": 0.0019863411223013383,
+      "band": 0.02,
+      "fe_err": 0.0013934761044050669
+     }
+    },
+    "peak": 1.0827450412928432,
+    "peak_gate": 1.0390679304096313,
+    "pass": true,
+    "wall_s": 30.512061834335327
+   }
+  ]
+ },
+ "t3_bspline2": {
+  "build": "fd81cbdd3b1d4330c36a40a9364c4b3daf7d9926",
+  "date": "2026-11-18 19:59",
+  "wall_s": 88.87968945503235,
+  "results": [
+   {
+    "basis": "bspline2",
+    "stab": "off",
+    "rows": {
+     "0.04": {
+      "p_center": 1.0445221820866066,
+      "p_exact_quarter": 1.0559036017700802,
+      "err": 0.011381419683473615,
+      "band": 0.02,
+      "fe_err": 0.007950749345683832
+     },
+     "0.078": {
+      "p_center": 1.0736490034649164,
+      "p_exact_quarter": 1.0779022535926386,
+      "err": 0.004253250127722152,
+      "band": 0.02,
+      "fe_err": 0.0020520195220053994
+     },
+     "0.12": {
+      "p_center": 1.0546015063470635,
+      "p_exact_quarter": 1.0534160787743718,
+      "err": 0.0011854275726916885,
+      "band": 0.02,
+      "fe_err": 0.0017715146975120293
+     },
+     "0.2": {
+      "p_center": 0.9437085480095664,
+      "p_exact_quarter": 0.9405343911645728,
+      "err": 0.0031741568449935587,
+      "band": 0.02,
+      "fe_err": 0.00046004763206713994
+     },
+     "0.4": {
+      "p_center": 0.6600474118046976,
+      "p_exact_quarter": 0.6561762313264556,
+      "err": 0.0038711804782419756,
+      "band": 0.02,
+      "fe_err": 0.0009220916447198351
+     }
+    },
+    "peak": 1.0809401189659813,
+    "peak_gate": 1.0390679304096313,
+    "pass": true,
+    "wall_s": 44.683100938797
+   },
+   {
+    "basis": "bspline2",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "rows": {
+     "0.04": {
+      "p_center": 1.0448570171498526,
+      "p_exact_quarter": 1.0559036017700802,
+      "err": 0.011046584620227673,
+      "band": 0.02,
+      "fe_err": 0.008238331543045636
+     },
+     "0.078": {
+      "p_center": 1.0713587080976452,
+      "p_exact_quarter": 1.0779022535926386,
+      "err": 0.006543545494993364,
+      "band": 0.02,
+      "fe_err": 0.001368587703740039
+     },
+     "0.12": {
+      "p_center": 1.0510949555571845,
+      "p_exact_quarter": 1.0534160787743718,
+      "err": 0.0023211232171873597,
+      "band": 0.02,
+      "fe_err": 0.0018369256333939544
+     },
+     "0.2": {
+      "p_center": 0.9413848715945149,
+      "p_exact_quarter": 0.9405343911645728,
+      "err": 0.0008504804299420687,
+      "band": 0.02,
+      "fe_err": 0.0016786294337588943
+     },
+     "0.4": {
+      "p_center": 0.6595511266764186,
+      "p_exact_quarter": 0.6561762313264556,
+      "err": 0.0033748953499629364,
+      "band": 0.02,
+      "fe_err": 0.0013934761044050669
+     }
+    },
+    "peak": 1.079028323415083,
+    "peak_gate": 1.0390679304096313,
+    "pass": true,
+    "wall_s": 44.19558835029602
+   }
+  ]
+ },
+ "t4": {
+  "build": "fd81cbdd3b1d4330c36a40a9364c4b3daf7d9926",
+  "date": "2026-11-18 19:59",
+  "wall_s": 17.98552918434143,
+  "results": [
+   {
+    "basis": "gimp",
+    "stab": "off",
+    "h": 0.5,
+    "t_end": 900.0,
+    "p_err": 0.028766917716351342,
+    "syy_err": 0.015363569257751473,
+    "worst_p_Y": 9.875,
+    "pass": false,
+    "wall_s": 2.002685308456421
+   },
+   {
+    "basis": "gimp",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "h": 0.5,
+    "t_end": 900.0,
+    "p_err": 0.028766734105751573,
+    "syy_err": 0.015364606830545741,
+    "worst_p_Y": 9.875,
+    "pass": false,
+    "wall_s": 1.9733953475952148
+   },
+   {
+    "basis": "bspline2",
+    "stab": "off",
+    "h": 0.5,
+    "t_end": 900.0,
+    "p_err": 0.05486355909235637,
+    "syy_err": 0.010617007231378418,
+    "worst_p_Y": 0.125,
+    "pass": false,
+    "wall_s": 7.003985166549683
+   },
+   {
+    "basis": "bspline2",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "h": 0.5,
+    "t_end": 900.0,
+    "p_err": 0.05486135963034462,
+    "syy_err": 0.01062133432268527,
+    "worst_p_Y": 0.125,
+    "pass": false,
+    "wall_s": 7.005463361740112
+   }
+  ]
+ },
+ "t4_reported": {
+  "build": "fd81cbdd3b1d4330c36a40a9364c4b3daf7d9926",
+  "date": "2026-11-18 19:59",
+  "wall_s": 9.023772239685059,
+  "results": [
+   {
+    "basis": "gimp",
+    "stab": "off",
+    "h": 1.0,
+    "t_end": 900.0,
+    "p_err": 0.05408373801448421,
+    "syy_err": 0.028085944035695365,
+    "worst_p_Y": 9.75,
+    "pass": false,
+    "wall_s": 0.9697129726409912
+   },
+   {
+    "basis": "gimp",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "h": 1.0,
+    "t_end": 900.0,
+    "p_err": 0.054084006471057315,
+    "syy_err": 0.028088760940256734,
+    "worst_p_Y": 9.75,
+    "pass": false,
+    "wall_s": 0.9715156555175781
+   },
+   {
+    "basis": "bspline2",
+    "stab": "off",
+    "h": 1.0,
+    "t_end": 900.0,
+    "p_err": 0.10947390186144554,
+    "syy_err": 0.02360136279116412,
+    "worst_p_Y": 0.25,
+    "pass": false,
+    "wall_s": 3.554699182510376
+   },
+   {
+    "basis": "bspline2",
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "h": 1.0,
+    "t_end": 900.0,
+    "p_err": 0.10946271797078684,
+    "syy_err": 0.023667404242028036,
+    "worst_p_Y": 0.25,
+    "pass": false,
+    "wall_s": 3.5278444290161133
+   }
+  ]
+ },
+ "t5": {
+  "build": "fd81cbdd3b1d4330c36a40a9364c4b3daf7d9926",
+  "date": "2026-11-18 19:59",
+  "wall_s": 5.182372808456421,
+  "results": [
+   {
+    "stab": [
+     "auto",
+     0.25
+    ],
+    "CB_lap": 0.0953969354792425,
+    "CB_lat": 0.014536392684684757,
+    "pmax": 0.029294667457944935,
+    "pass": true,
+    "wall_s": 2.4269156455993652
+   },
+   {
+    "stab": "off",
+    "CB_lap": 0.6214206470136209,
+    "CB_lat": 0.1572132343283039,
+    "pmax": 0.06511403388127132,
+    "pass": true,
+    "wall_s": 2.7554571628570557
+   }
+  ]
+ },
+ "diagnostic": {
+  "build": "fd81cbdd3b1d4330c36a40a9364c4b3daf7d9926",
+  "date": "2026-11-18 20:06",
+  "wall_s": 101.89042091369629,
+  "results": {
+   "t2": [
+    {
+     "basis": "gimp",
+     "stab": "off",
+     "unit": "p0",
+     "rows": {
+      "0.05": {
+       "Tv_actual": 0.04999749987499375,
+       "i_particle_p_err": 0.12458559184056309,
+       "ii_field_at_particles_err": 0.06077962694606055,
+       "iii_grid_node_err": 0.06204212253878236,
+       "residual_amp": 0.128074403067721,
+       "residual_projected": 0.09604367600721662,
+       "residual_projected_free": 0.00892675887474937,
+       "missing_nodes": 0
+      },
+      "0.1": {
+       "Tv_actual": 0.0999949997499875,
+       "i_particle_p_err": 0.08892135134676923,
+       "ii_field_at_particles_err": 0.0015975099112490983,
+       "iii_grid_node_err": 0.0014741473679721802,
+       "residual_amp": 0.0899959835501321,
+       "residual_projected": 0.06797763964493984,
+       "residual_projected_free": 0.004534350919271622,
+       "missing_nodes": 0
+      },
+      "0.2": {
+       "Tv_actual": 0.199989999499975,
+       "i_particle_p_err": 0.06139378479242481,
+       "ii_field_at_particles_err": 0.0017560518220605887,
+       "iii_grid_node_err": 0.0009718378480930035,
+       "residual_amp": 0.06231734608432304,
+       "residual_projected": 0.04746662801558231,
+       "residual_projected_free": 0.003378082795769594,
+       "missing_nodes": 0
+      },
+      "0.5": {
+       "Tv_actual": 0.49997499874993756,
+       "i_particle_p_err": 0.028089208774157666,
+       "ii_field_at_particles_err": 0.0007648479378238352,
+       "iii_grid_node_err": 0.0005567331893665274,
+       "residual_amp": 0.02862434390753197,
+       "residual_projected": 0.022316934777692247,
+       "residual_projected_free": 0.0017062868298229482,
+       "missing_nodes": 0
+      }
+     },
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    },
+    {
+     "basis": "gimp",
+     "stab": [
+      "auto",
+      0.25
+     ],
+     "unit": "p0",
+     "rows": {
+      "0.05": {
+       "Tv_actual": 0.04999749987499375,
+       "i_particle_p_err": 0.12571010003860864,
+       "ii_field_at_particles_err": 0.03989157885650231,
+       "iii_grid_node_err": 0.040721027041113834,
+       "residual_amp": 0.12924913039432268,
+       "residual_projected": 0.0960736935690453,
+       "residual_projected_free": 0.009146617279123559,
+       "missing_nodes": 0
+      },
+      "0.1": {
+       "Tv_actual": 0.0999949997499875,
+       "i_particle_p_err": 0.0898945362233068,
+       "ii_field_at_particles_err": 0.0026308294122391594,
+       "iii_grid_node_err": 0.0030115963494947106,
+       "residual_amp": 0.09132091943261651,
+       "residual_projected": 0.0684366467555345,
+       "residual_projected_free": 0.004560854745074515,
+       "missing_nodes": 0
+      },
+      "0.2": {
+       "Tv_actual": 0.199989999499975,
+       "i_particle_p_err": 0.062090123041320174,
+       "ii_field_at_particles_err": 0.0035314519794538454,
+       "iii_grid_node_err": 0.0018627884786663665,
+       "residual_amp": 0.06305314568703263,
+       "residual_projected": 0.047524342572519584,
+       "residual_projected_free": 0.0033514421070788883,
+       "missing_nodes": 0
+      },
+      "0.5": {
+       "Tv_actual": 0.49997499874993756,
+       "i_particle_p_err": 0.02874547394962453,
+       "ii_field_at_particles_err": 0.0008302693522838849,
+       "iii_grid_node_err": 0.0006431837135022466,
+       "residual_amp": 0.029302847742391926,
+       "residual_projected": 0.02234981819779042,
+       "residual_projected_free": 0.0017072942960843867,
+       "missing_nodes": 0
+      }
+     },
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    },
+    {
+     "basis": "bspline2",
+     "stab": "off",
+     "unit": "p0",
+     "rows": {
+      "0.05": {
+       "Tv_actual": 0.04999749987499375,
+       "i_particle_p_err": 0.15689188747828114,
+       "ii_field_at_particles_err": 0.011557638886918025,
+       "iii_grid_node_err": 0.018403507865390106,
+       "residual_amp": 0.15924249293056436,
+       "residual_projected": 0.10833804735793673,
+       "residual_projected_free": 0.012739976788832008,
+       "missing_nodes": 0
+      },
+      "0.1": {
+       "Tv_actual": 0.0999949997499875,
+       "i_particle_p_err": 0.11052045032442935,
+       "ii_field_at_particles_err": 0.005493847642605436,
+       "iii_grid_node_err": 0.007730076459331406,
+       "residual_amp": 0.11258316580121638,
+       "residual_projected": 0.07737063574743126,
+       "residual_projected_free": 0.006181327422605888,
+       "missing_nodes": 0
+      },
+      "0.2": {
+       "Tv_actual": 0.199989999499975,
+       "i_particle_p_err": 0.07666982338170857,
+       "ii_field_at_particles_err": 0.0021106519065505775,
+       "iii_grid_node_err": 0.0020424350760497967,
+       "residual_amp": 0.07784543488110977,
+       "residual_projected": 0.05356679298076002,
+       "residual_projected_free": 0.004463438557691764,
+       "missing_nodes": 0
+      },
+      "0.5": {
+       "Tv_actual": 0.49997499874993756,
+       "i_particle_p_err": 0.036152480457545474,
+       "ii_field_at_particles_err": 0.0011454479407080863,
+       "iii_grid_node_err": 0.0019618186274259464,
+       "residual_amp": 0.03680917306386704,
+       "residual_projected": 0.02517714154737745,
+       "residual_projected_free": 0.002288613471997386,
+       "missing_nodes": 0
+      }
+     },
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    },
+    {
+     "basis": "bspline2",
+     "stab": [
+      "auto",
+      0.25
+     ],
+     "unit": "p0",
+     "rows": {
+      "0.05": {
+       "Tv_actual": 0.04999749987499375,
+       "i_particle_p_err": 0.1599881376783274,
+       "ii_field_at_particles_err": 0.018734190525442663,
+       "iii_grid_node_err": 0.016795036541569056,
+       "residual_amp": 0.1636887628893317,
+       "residual_projected": 0.1095633612834865,
+       "residual_projected_free": 0.013489425754526487,
+       "missing_nodes": 0
+      },
+      "0.1": {
+       "Tv_actual": 0.0999949997499875,
+       "i_particle_p_err": 0.11118203712453772,
+       "ii_field_at_particles_err": 0.006563898310837137,
+       "iii_grid_node_err": 0.008886047077399335,
+       "residual_amp": 0.11359542178486479,
+       "residual_projected": 0.07790545304613067,
+       "residual_projected_free": 0.006188501788528585,
+       "missing_nodes": 0
+      },
+      "0.2": {
+       "Tv_actual": 0.199989999499975,
+       "i_particle_p_err": 0.07664907397566233,
+       "ii_field_at_particles_err": 0.003879983840774835,
+       "iii_grid_node_err": 0.002219762822963628,
+       "residual_amp": 0.07789251664310301,
+       "residual_projected": 0.05367083596670111,
+       "residual_projected_free": 0.004426264655240665,
+       "missing_nodes": 0
+      },
+      "0.5": {
+       "Tv_actual": 0.49997499874993756,
+       "i_particle_p_err": 0.03601838651739536,
+       "ii_field_at_particles_err": 0.0012382605875577617,
+       "iii_grid_node_err": 0.0022179188008578095,
+       "residual_amp": 0.03670422406412108,
+       "residual_projected": 0.025222406937315974,
+       "residual_projected_free": 0.0022899777358150967,
+       "missing_nodes": 0
+      }
+     },
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    }
+   ],
+   "t4": [
+    {
+     "basis": "gimp",
+     "stab": "off",
+     "h": 0.5,
+     "unit": "rhoF g H",
+     "i_particle_p_err": 0.028766917716351342,
+     "ii_field_at_particles_err": 9.891209904714865e-05,
+     "iii_grid_node_err": 0.00013235932122616085,
+     "residual_amp": 0.028766916803219623,
+     "residual_projected": 0.021985403274980164,
+     "residual_projected_free": 0.018749637904441892,
+     "missing_nodes": 0,
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    },
+    {
+     "basis": "gimp",
+     "stab": [
+      "auto",
+      0.25
+     ],
+     "h": 0.5,
+     "unit": "rhoF g H",
+     "i_particle_p_err": 0.028766734105751573,
+     "ii_field_at_particles_err": 9.890799742392364e-05,
+     "iii_grid_node_err": 0.00013235494287935126,
+     "residual_amp": 0.02876673309610455,
+     "residual_projected": 0.021985402659963193,
+     "residual_projected_free": 0.018749638519572186,
+     "missing_nodes": 0,
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    },
+    {
+     "basis": "bspline2",
+     "stab": "off",
+     "h": 0.5,
+     "unit": "rhoF g H",
+     "i_particle_p_err": 0.05486355909235637,
+     "ii_field_at_particles_err": 0.005279243971156662,
+     "iii_grid_node_err": 0.01357222235455482,
+     "residual_amp": 0.04958431512119971,
+     "residual_projected": 0.030518304463922376,
+     "residual_projected_free": 0.030518304463922376,
+     "missing_nodes": 0,
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    },
+    {
+     "basis": "bspline2",
+     "stab": [
+      "auto",
+      0.25
+     ],
+     "h": 0.5,
+     "unit": "rhoF g H",
+     "i_particle_p_err": 0.05486135963034462,
+     "ii_field_at_particles_err": 0.005279238847788193,
+     "iii_grid_node_err": 0.013572217043953633,
+     "residual_amp": 0.04958212078255687,
+     "residual_projected": 0.030518303882107932,
+     "residual_projected_free": 0.030518303882107932,
+     "missing_nodes": 0,
+     "note": "B-spline node values are coefficients, not point values: (iii) is indicative there"
+    }
+   ],
+   "reported_never_gated": true
+  },
+  "annotation": "2026-11-18 (ruling f69e450dd): on bspline2 the column 'ii_field_at_particles_err' (and the residual columns derived from it) omits fix 2's known affine term pi; it is the field without pi, not a field error. The fd81cbdd3 build predates fix 2, so pi was 0 there and these numbers are unaffected in value; the omission matters from build 7b7cdc9cf on, where the readout now adds the dump's 'pi'. Numbers left as recorded."
+ }
+}

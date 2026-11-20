@@ -72,6 +72,7 @@
 #include <Matrix.h>
 #include <Vector.h>
 
+#include <iosfwd>
 #include <memory>
 #include <vector>
 
@@ -109,7 +110,14 @@ class LadrunoMPMPointHost
   virtual int    mpmStageParameter(const char **, int, Parameter &) { return -2; }
   // WP-232k (D14): particle p's material refused the trial strain (the host names it)
   virtual void   mpmTrialRefused(int) {}
+  // WP-232l (tests/mpm_twophase_interface.md): `mpm kinematics small` (P6); the pore-pressure
+  // G2P blend alpha_p (P5); particle p's seepage drive lambda b_f (ndm values, P1)
+  virtual bool   mpmSmallKinematics(void) { return false; }
+  virtual double mpmPressureBlend(void) { return 1.0; }
+  virtual const double *mpmFluidDrive(int) { return 0; }
 };
+
+namespace ladruno_mpm { struct TwoPhaseProps; }
 
 // Shared liveness token: the host nulls `host` in its destructor.
 struct LadrunoMPMHostLink {
@@ -180,12 +188,27 @@ class LadrunoMPMPoint : public Element
   const double *internalForceAt(int k) const { return &fInt[ndm * k]; }
   bool refusedRayleigh(void) const { return betaK0 != 0.0 || betaKc != 0.0; }
   void setRayleigh(double am, double bk);
+  // WP-232l (tests/mpm_twophase_interface.md P3, P4): after repoint, in a two-phase epoch.
+  // ndfNode = ndm + 1 (every grid node carries p last); tp = the body's fluid constants, or 0
+  // for a single-phase particle (zero p rows); h = the grid spacing (the stabilization
+  // length); Sp, dSp = the p weights (nen, nen x ndm); pRef = the unconditioned projected
+  // p, pd, pdd per support node (3 x nen), the G2P references. The u-p blocks are built here
+  // from the step-start weights and volume.
+  // WP-232l fix 2 (interface 7b): aff = the affine-image coefficients a_d, grad a_d per axis
+  // (ndm x (ndm + 1), 0 = none); piStart = the known pressure term pi at the projection
+  int  setTwoPhase(int ndfNode, const ladruno_mpm::TwoPhaseProps *tp, double h,
+                   const std::vector<double> &Sp, const std::vector<double> &dSp,
+                   const std::vector<double> &pRef, const double *aff = 0, double piStart = 0.0);
+  bool twoPhase(void) const { return tpOn; }
+  // `mpm debug particleBlocks` (§7a Q1/Q2): set the pattern trial state, form K, C, M, R and
+  // R_static, write the JSON object, restore. 0, or -1 (message printed).
+  int  writeBlocks(const double scales[6], std::ostream &os, double lambda, long long id);
 
   // ---- Element ----------------------------------------------------------------
   int getNumExternalNodes(void) const { return nen; }
   const ID &getExternalNodes(void) { return connect; }
   Node **getNodePtrs(void) { return nodes.empty() ? 0 : nodes.data(); }
-  int getNumDOF(void) { return nen * ndm; }
+  int getNumDOF(void) { return nen * ndfN; }      // WP-232l: ndfN = ndm (+ 1 in a two-phase epoch)
   void setDomain(Domain *theDomain);
 
   int commitState(void);
@@ -196,6 +219,9 @@ class LadrunoMPMPoint : public Element
   const Matrix &getTangentStiff(void);
   const Matrix &getInitialStiff(void);
   const Matrix &getMass(void);
+  // WP-232l: [C_Ray(solid), 0; Q^T, S*] in a two-phase epoch (ADR-71 §3.2 obligation 2);
+  // otherwise Element::getDamp, bit for bit
+  const Matrix &getDamp(void);
 
   void zeroLoad(void);
   int addLoad(ElementalLoad *theLoad, double loadFactor);
@@ -248,6 +274,32 @@ class LadrunoMPMPoint : public Element
   Vector *P;                      // resisting force, sized numDOF
   Vector *Pinc;                   // incl. inertia and Rayleigh
   Matrix *Ki;                     // initial stiffness of this support
+
+  // WP-232l (two-phase, interface §1 P3-P6)
+  int    ndfN;                    // DOFs per node: ndm, or ndm + 1 in a two-phase epoch
+  bool   tpOn;                    // this particle carries the u-p blocks
+  bool   smallK;                  // `mpm kinematics small` (set at repoint)
+  double stabA;                   // alpha_st
+  std::vector<double> Sp, dSp, pRef;      // p weights, gradients; p, pd, pdd references
+  std::vector<double> Qb, Hb, Sb, Htb, Gs; // Q[(ndm k + i) nen + b], H, S, H~ [b nen + c], G[b ndm + i]
+  std::vector<double> pT;                  // trial nodal p of the last assembly
+  double tpAlpha, tpRhoF, tpK[3];          // the body's alpha, rhoF, kbar (fix 2's known term)
+  double affC[12];                         // fix 2: a_d and grad a_d, ndm x (ndm + 1)
+  bool   affOn;
+  double piStart_;
+  double piNow(double *grad) const;        // fix 2: pi and grad pi at the current drive
+  // WP-232l (review of record): the axes whose normal component a plate carries; their lumped
+  // mass is the signed, translation-consistent weight S'_a (B-spline affine plate image)
+  unsigned plateMask_ = 0u;
+ public:
+  void   setPlateMask(unsigned m) { plateMask_ = m; }
+ private:
+  double massW(int k, int a) const
+  { return ((plateMask_ & (1u << a)) && !Sc.empty()) ? Sc[ndm * k + a] : S[k]; }
+  int  dofU(int k, int a) const { return ndfN * k + a; }
+  int  dofP(int k) const { return ndfN * k + ndm; }
+  void compactTangent(Matrix &Kc, bool initial);
+  void assembleForceUP(void);
 
   LadrunoMPMPointHost *host(void) const { return (link && link->host) ? link->host : 0; }
   void resize(void);

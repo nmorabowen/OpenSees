@@ -27,6 +27,7 @@
 
 #include "LadrunoMPMPoint.h"
 #include "../../domain/pattern/ladrunoMPM/LadrunoMPMCore.h"
+#include "../ladrunoUP/LadrunoUPKernel.h"      // WP-232l: the u-p blocks at a particle (P3)
 
 #include <Domain.h>
 #include <Node.h>
@@ -44,6 +45,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
+#include <ostream>
 #include <string.h>
 
 namespace {
@@ -52,7 +55,7 @@ namespace {
 // cubic B-spline; 27 x 3 before). The pool is static and allocates a size only
 // when one is first used, so no element stores more (232i F2). The element is
 // serial (no threading opt-in), so one scratch per size is safe.
-const int MAX_DOF = 192;
+const int MAX_DOF = 260;            // WP-232l: 64 lattice nodes + a plate x (3 + p) (review of record)
 
 Matrix &scratchK(int n)
 {
@@ -62,6 +65,29 @@ Matrix &scratchK(int n)
 }
 
 Matrix &scratchM(int n)
+{
+  static Matrix *pool[MAX_DOF + 1] = {0};
+  if (pool[n] == 0) pool[n] = new Matrix(n, n);
+  return *pool[n];
+}
+
+// WP-232l: the two-phase layout's full-size returns (node-major [u, p]), apart from the
+// compact u-u scratch they are assembled from
+Matrix &scratchKF(int n)
+{
+  static Matrix *pool[MAX_DOF + 1] = {0};
+  if (pool[n] == 0) pool[n] = new Matrix(n, n);
+  return *pool[n];
+}
+
+Matrix &scratchMF(int n)
+{
+  static Matrix *pool[MAX_DOF + 1] = {0};
+  if (pool[n] == 0) pool[n] = new Matrix(n, n);
+  return *pool[n];
+}
+
+Matrix &scratchC(int n)
 {
   static Matrix *pool[MAX_DOF + 1] = {0};
   if (pool[n] == 0) pool[n] = new Matrix(n, n);
@@ -88,8 +114,12 @@ LadrunoMPMPoint::LadrunoMPMPoint(int tag, int particle, int hostTag, int nd, NDM
   : Element(tag, ELE_TAG_LadrunoMPMPoint), p(particle), hostPatternTag(hostTag), ndm(nd),
     nv(nd == 3 ? 6 : 3), nen(0), mat(ownedMat), st(ARMED), needUpdate(true), trialValid(false),
     alMode(0), nCorner(0), alSuppressed(false), cellH(0.0), Jc(1.0), alRel(0.0),
-    connect(0), J1(1.0), vol(0.0), mp(0.0), payloadDbTag(0), P(0), Pinc(0), Ki(0)
+    connect(0), J1(1.0), vol(0.0), mp(0.0), payloadDbTag(0), P(0), Pinc(0), Ki(0),
+    ndfN(nd), tpOn(false), smallK(false), stabA(0.0), tpAlpha(1.0), tpRhoF(0.0), affOn(false),
+    piStart_(0.0)
 {
+  for (int k = 0; k < 12; k++) affC[k] = 0.0;
+  tpK[0] = tpK[1] = tpK[2] = 0.0;
   for (int k = 0; k < 8; k++) corner[k] = -1;
   for (int k = 0; k < 9; k++) Fci[k] = (k % 4 == 0) ? 1.0 : 0.0;
   for (int k = 0; k < 6; k++) depsT[k] = 0.0;
@@ -104,8 +134,11 @@ LadrunoMPMPoint::LadrunoMPMPoint()
   : Element(0, ELE_TAG_LadrunoMPMPoint), p(-1), hostPatternTag(0), ndm(2), nv(3), nen(0),
     mat(0), st(RESTORED), needUpdate(true), trialValid(false), alMode(0), nCorner(0),
     alSuppressed(false), cellH(0.0), Jc(1.0), alRel(0.0), connect(0), J1(1.0), vol(0.0),
-    mp(0.0), payloadDbTag(0), P(0), Pinc(0), Ki(0)
+    mp(0.0), payloadDbTag(0), P(0), Pinc(0), Ki(0), ndfN(2), tpOn(false), smallK(false), stabA(0.0),
+    tpAlpha(1.0), tpRhoF(0.0), affOn(false), piStart_(0.0)
 {
+  for (int k = 0; k < 12; k++) affC[k] = 0.0;
+  tpK[0] = tpK[1] = tpK[2] = 0.0;
   for (int k = 0; k < 8; k++) corner[k] = -1;
   for (int k = 0; k < 9; k++) Fci[k] = (k % 4 == 0) ? 1.0 : 0.0;
   for (int k = 0; k < 6; k++) depsT[k] = 0.0;
@@ -143,9 +176,9 @@ LadrunoMPMPoint::setRayleigh(double am, double bk)
 void
 LadrunoMPMPoint::resize(void)
 {
-  const int n = nen * ndm;
-  if (P == 0 || P->Size() != n) { delete P; P = new Vector(n); }
-  if (Pinc == 0 || Pinc->Size() != n) { delete Pinc; Pinc = new Vector(n); }
+  const int n = nen * ndm, nf = nen * ndfN;     // WP-232l: the residuals carry every node DOF
+  if (P == 0 || P->Size() != nf) { delete P; P = new Vector(nf); }
+  if (Pinc == 0 || Pinc->Size() != nf) { delete Pinc; Pinc = new Vector(nf); }
   g.assign(n, 0.0);
   fInt.assign(n, 0.0);
   uT.assign(n, 0.0);
@@ -230,11 +263,22 @@ LadrunoMPMPoint::repoint(const ID &tags, const std::vector<double> &Sk,
     if (!all) corner[0] = -1;
   }
   ghostK.assign(nen, 0.0);
+  // WP-232l: a repoint is single-phase until setTwoPhase says otherwise
+  ndfN = ndm;
+  tpOn = false;
+  stabA = 0.0;
+  affOn = false;
+  piStart_ = 0.0;
+  std::vector<double>().swap(Sp); std::vector<double>().swap(dSp); std::vector<double>().swap(pRef);
+  std::vector<double>().swap(Qb); std::vector<double>().swap(Hb); std::vector<double>().swap(Sb);
+  std::vector<double>().swap(Htb); std::vector<double>().swap(Gs);
   LadrunoMPMPointHost *h = host();
+  smallK = false;
   if (h != 0) {
     for (int k = 0; k < nen; k++)
       if (k < (int)inactive.size() && inactive[k]) ghostK[k] = h->mpmGhostSpring(p);
     mp = h->mpmParticles().m[p];
+    smallK = h->mpmSmallKinematics();
   }
   resize();
   if (this->getDomain() != 0) refetchNodes();
@@ -314,8 +358,14 @@ LadrunoMPMPoint::computeTrial(void)
       for (int e = 0; e < nd; e++) s += Fuse[nd * a + e] * Fn[nd * e + c];
       F1loc[nd * a + c] = s;
     }
-  const int kst = (nd == 3) ? ladruno_hypo::hypoIncrementFromF(Fn, F1loc, deps, R1loc, &J)
-                            : ladruno_hypo::hypoIncrementFromFPlaneStrain(Fn, F1loc, deps, R1loc, &J);
+  int kst;
+  if (smallK) {                          // WP-232l (P6): sym(dF - I), R = I, V = V0
+    kst = ladruno_mpm::smallIncrement(nd, Fuse, deps, R1loc) ? 0 : -1;
+    J = 1.0;
+  } else {
+    kst = (nd == 3) ? ladruno_hypo::hypoIncrementFromF(Fn, F1loc, deps, R1loc, &J)
+                    : ladruno_hypo::hypoIncrementFromFPlaneStrain(Fn, F1loc, deps, R1loc, &J);
+  }
   if (kst != 0) return -2;
   for (int k = 0; k < nv; k++) depsT[k] = deps[k];
   // the trial centre stays in the real grid (interface A7)
@@ -355,14 +405,18 @@ LadrunoMPMPoint::computeTrial(void)
   }
   const Vector &sm = mat->getStress();
   for (int k = 0; k < nv; k++) sigHatT[k] = PP.sig0[nv * p + k] + sm(k);
-  if (nd == 3) ladruno_hypo::pushStress6(R1loc, sigHatT, sigT);
+  if (smallK) for (int k = 0; k < nv; k++) sigT[k] = sigHatT[k];   // WP-232l (P6)
+  else if (nd == 3) ladruno_hypo::pushStress6(R1loc, sigHatT, sigT);
   else ladruno_hypo::pushStressPlaneStrain(R1loc, sigHatT, sigT);
   for (int k = 0; k < nn; k++) { F1[k] = F1loc[k]; R1[k] = R1loc[k]; }
   J1 = J;
   vol = J * PP.V0[p];
-  // spatial gradients g_a = ∇S_a · F_rel⁻¹
+  // spatial gradients g_a = ∇S_a · F_rel⁻¹ (WP-232l, small: g_a = ∇S_a, F_rel⁻¹ taken as I)
   double Fi[9];
-  if (nd == 3) {
+  if (smallK) {
+    for (int k = 0; k < 9; k++) Fi[k] = 0.0;
+    for (int a = 0; a < nd; a++) Fi[nd * a + a] = 1.0;
+  } else if (nd == 3) {
     if (!(ladruno_hypo::inv3(Frel, Fi) > 0.0)) return -2;
   } else {
     const double det = Frel[0] * Frel[3] - Frel[1] * Frel[2];
@@ -551,6 +605,31 @@ LadrunoMPMPoint::g2p(ladruno_mpm::Particles &PP, double flip, bool quasiStatic)
       ap = flip * (ap + da) + (1.0 - flip) * apic;
     }
   }
+  // WP-232l (P5): p, pd, pdd <- alpha_p (x + sum Sp (x_a - xref_a)) + (1 - alpha_p) sum Sp x_a,
+  // xref the unconditioned projection (pRef)
+  if (tpOn && (int)PP.pw.size() > p) {
+    LadrunoMPMPointHost *h = host();
+    const double ap = (h != 0) ? h->mpmPressureBlend() : 1.0;
+    double inc[3] = {0.0, 0.0, 0.0}, pic[3] = {0.0, 0.0, 0.0};
+    for (int k = 0; k < nen; k++) {
+      const double val[3] = {nodes[k]->getTrialDisp()(ndm), nodes[k]->getTrialVel()(ndm),
+                             nodes[k]->getTrialAccel()(ndm)};
+      for (int q = 0; q < 3; q++) {
+        inc[q] += Sp[k] * (val[q] - pRef[3 * k + q]);
+        pic[q] += Sp[k] * val[q];
+      }
+    }
+    // WP-232l, the q + pi invariant (ruling on 89718fdad): p = q + pi_c on entry, with pi_c the
+    // pi of this step's projection (piStart_). G2P works on q: the FLIP increment carries no pi,
+    // the PIC part is Sum S^p c in q-space, so pi_c is added back to it. The host then moves p to
+    // q + pi at the new positions and drive (twoPhaseAfterStep).
+    if (affOn) pic[0] += piStart_;
+    double *tgt[3] = {&PP.pw[p], &PP.pwd[p], &PP.pwdd[p]};
+    for (int q = 0; q < 3; q++) {
+      if (quasiStatic && q > 0) break;
+      *tgt[q] = ap * (*tgt[q] + inc[q]) + (1.0 - ap) * pic[q];
+    }
+  }
   st = COMMITTED;
 }
 
@@ -558,6 +637,7 @@ int
 LadrunoMPMPoint::tangentCheck(double scale, double eps, double &rel, double &normK)
 {
   if (st != ARMED || mat == 0) return -1;
+  if (ndfN != ndm) return -1;        // WP-232l: the u-only check; a two-phase epoch skips it
   const int n = nen * ndm;
   std::vector<Vector> saved;
   for (int k = 0; k < nen; k++) saved.push_back(nodes[k]->getTrialDisp());
@@ -613,6 +693,7 @@ LadrunoMPMPoint::tangentCheck(double scale, double eps, double &rel, double &nor
 void
 LadrunoMPMPoint::assembleForce(void)
 {
+  if (ndfN != ndm) { assembleForceUP(); return; }     // WP-232l
   LadrunoMPMPointHost *h = host();
   if (h != 0) {
     const double *b = h->mpmBodyForce(p);
@@ -642,6 +723,23 @@ LadrunoMPMPoint::getResistingForceIncInertia(void)
 {
   if (P == 0) resize();
   if (st != ARMED) return *Pinc;     // COMMITTED: the converged cache
+  if (ndfN != ndm) {
+    // WP-232l (interface §1, LadrunoUP.cpp:1682-1708): R + M a + Damp v, every node DOF; the
+    // p-slot "velocity" is pdot. Damp carries the solid-only Rayleigh (obligation 2).
+    Vector R(this->getResistingForce());
+    const int nf = nen * ndfN;
+    Vector acc(nf), vel(nf);
+    for (int k = 0; k < nen; k++) {
+      const Vector &ak = nodes[k]->getTrialAccel();
+      const Vector &vk = nodes[k]->getTrialVel();
+      for (int c = 0; c < ndfN; c++) { acc(ndfN * k + c) = ak(c); vel(ndfN * k + c) = vk(c); }
+    }
+    R.addMatrixVector(1.0, this->getMass(), acc, 1.0);
+    const Matrix C(this->getDamp());
+    R.addMatrixVector(1.0, C, vel, 1.0);
+    *Pinc = R;
+    return *Pinc;
+  }
   // snapshot the static residual into a LOCAL before the Rayleigh forces
   // (betaK's getTangentStiff may re-enter; element guide, lint L1)
   Vector R(this->getResistingForce());
@@ -677,7 +775,10 @@ LadrunoMPMPoint::tangent(Matrix &K, bool initial)
   }
   const Matrix &Dm = initial ? mat->getInitialTangent() : mat->getTangent();
   double Dc[36];
-  if (nd == 3) {
+  if (smallK) {                          // WP-232l (P6): R = I, the material tangent as is
+    for (int r = 0; r < nv; r++)
+      for (int c = 0; c < nv; c++) Dc[nv * r + c] = Dm(r, c);
+  } else if (nd == 3) {
     double Dmat[36];
     for (int r = 0; r < 6; r++)
       for (int c = 0; c < 6; c++) Dmat[6 * r + c] = Dm(r, c);
@@ -731,8 +832,8 @@ LadrunoMPMPoint::tangent(Matrix &K, bool initial)
           for (int r = 0; r < nv; r++) s += Ba[r][i] * DB[r][k];
           K(nd * a + i, nd * b + k) += s * volm;
         }
-      // geometric (initial-stress) term: δ_ik g_a·σ·g_b V
-      if (!initial) {
+      // geometric (initial-stress) term: δ_ik g_a·σ·g_b V (none under `small`, WP-232l P6)
+      if (!initial && !smallK) {
         double s = 0.0;
         for (int j = 0; j < nd; j++)
           for (int l = 0; l < nd; l++) s += ga[j] * sg[3 * j + l] * gb[l];
@@ -915,7 +1016,7 @@ LadrunoMPMPoint::tangentPerComponent(Matrix &K, bool initial, const double *, do
           for (int r = 0; r < nv; r++) s += Ba[r][i] * DB[r][k];
           K(nd * a + i, nd * b + k) += s * volm;
         }
-      if (!initial)                    // geometric term: g'_{a,i} . sigma . g'_{b,i} V
+      if (!initial && !smallK)         // geometric term: g'_{a,i} . sigma . g'_{b,i} V
         for (int i = 0; i < nd; i++) {
           const double *ga = G(a, i), *gb = G(b, i);
           double s = 0.0;
@@ -931,6 +1032,27 @@ LadrunoMPMPoint::tangentPerComponent(Matrix &K, bool initial, const double *, do
 const Matrix &
 LadrunoMPMPoint::getTangentStiff(void)
 {
+  if (ndfN != ndm) {
+    // WP-232l (P3): [K_u, -Q; 0, H] on the node-major [u, p] layout (LadrunoUP.cpp:1360-1408)
+    const int nf = nen * ndfN;
+    Matrix &K = scratchKF(nf > 0 ? nf : 1);
+    K.Zero();
+    if (nf == 0) return K;
+    if (st == ARMED && (needUpdate || !trialValid)) this->update();
+    Matrix &Kc = scratchK(nen * ndm);
+    compactTangent(Kc, false);
+    for (int k = 0; k < nen; k++)
+      for (int a = 0; a < ndm; a++)
+        for (int l = 0; l < nen; l++)
+          for (int b = 0; b < ndm; b++) K(dofU(k, a), dofU(l, b)) = Kc(ndm * k + a, ndm * l + b);
+    if (tpOn)
+      for (int k = 0; k < nen; k++)
+        for (int b = 0; b < nen; b++) {
+          for (int i = 0; i < ndm; i++) K(dofU(k, i), dofP(b)) = -Qb[(ndm * k + i) * nen + b];
+          K(dofP(k), dofP(b)) = Hb[k * nen + b];
+        }
+    return K;
+  }
   const int n = nen * ndm;
   Matrix &K = scratchK(n > 0 ? n : 1);
   if (n == 0) return K;
@@ -939,9 +1061,37 @@ LadrunoMPMPoint::getTangentStiff(void)
   return K;
 }
 
+void
+LadrunoMPMPoint::compactTangent(Matrix &Kc, bool initial)
+{
+  tangent(Kc, initial);
+}
+
 const Matrix &
 LadrunoMPMPoint::getInitialStiff(void)
 {
+  if (ndfN != ndm) {
+    // WP-232l: [K0_u, -Q; 0, H] -- p rows NOT zero (ADR-71 §3.2, LadrunoUP.cpp:1417-1448)
+    const int nf = nen * ndfN;
+    if (Ki == 0) {
+      Ki = new Matrix(nf > 0 ? nf : 1, nf > 0 ? nf : 1);
+      if (nf > 0 && mat != 0) {
+        Matrix Kc(nen * ndm, nen * ndm);
+        compactTangent(Kc, true);
+        for (int k = 0; k < nen; k++)
+          for (int a = 0; a < ndm; a++)
+            for (int l = 0; l < nen; l++)
+              for (int b = 0; b < ndm; b++) (*Ki)(dofU(k, a), dofU(l, b)) = Kc(ndm * k + a, ndm * l + b);
+        if (tpOn)
+          for (int k = 0; k < nen; k++)
+            for (int b = 0; b < nen; b++) {
+              for (int i = 0; i < ndm; i++) (*Ki)(dofU(k, i), dofP(b)) = -Qb[(ndm * k + i) * nen + b];
+              (*Ki)(dofP(k), dofP(b)) = Hb[k * nen + b];
+            }
+      }
+    }
+    return *Ki;
+  }
   const int n = nen * ndm;
   if (Ki == 0) {
     Ki = new Matrix(n > 0 ? n : 1, n > 0 ? n : 1);
@@ -955,12 +1105,316 @@ LadrunoMPMPoint::getMass(void)
 {
   // one mass model: lumped, M_aa = S_a m_p I (the row sum of the consistent
   // N m_p Nᵀ, Σ S_a = 1). The inertia residual uses this same matrix (D1.7).
+  if (ndfN != ndm) {                    // WP-232l: [M_u, 0; 0, 0]
+    const int nf = nen * ndfN;
+    Matrix &M = scratchMF(nf > 0 ? nf : 1);
+    M.Zero();
+    for (int k = 0; k < nen; k++)
+      for (int a = 0; a < ndm; a++) M(dofU(k, a), dofU(k, a)) = massW(k, a) * mp;
+    return M;
+  }
   const int n = nen * ndm;
   Matrix &M = scratchM(n > 0 ? n : 1);
   M.Zero();
   for (int k = 0; k < nen; k++)
-    for (int a = 0; a < ndm; a++) M(ndm * k + a, ndm * k + a) = S[k] * mp;
+    for (int a = 0; a < ndm; a++) M(ndm * k + a, ndm * k + a) = massW(k, a) * mp;
   return M;
+}
+
+// WP-232l (P3): [C_Ray, 0; Q^T, S + alpha_st H~] (LadrunoUP.cpp:1450-1503). C_Ray =
+// alphaM M_u + betaK K_u(current), u-u only: never Element::getDamp in a two-phase epoch
+// (it would compose betaK getTangentStiff, which carries -Q and H; ADR-71 §3.2, obl. 2).
+const Matrix &
+LadrunoMPMPoint::getDamp(void)
+{
+  if (ndfN == ndm) return this->Element::getDamp();
+  const int nf = nen * ndfN;
+  Matrix &C = scratchC(nf > 0 ? nf : 1);
+  C.Zero();
+  if (nf == 0) return C;
+  if (alphaM != 0.0)
+    for (int k = 0; k < nen; k++)
+      for (int a = 0; a < ndm; a++) C(dofU(k, a), dofU(k, a)) += alphaM * massW(k, a) * mp;
+  if (betaK != 0.0) {
+    if (st == ARMED && (needUpdate || !trialValid)) this->update();
+    Matrix &Kc = scratchK(nen * ndm);
+    compactTangent(Kc, false);
+    for (int k = 0; k < nen; k++)
+      for (int a = 0; a < ndm; a++)
+        for (int l = 0; l < nen; l++)
+          for (int b = 0; b < ndm; b++) C(dofU(k, a), dofU(l, b)) += betaK * Kc(ndm * k + a, ndm * l + b);
+  }
+  if (tpOn)
+    for (int k = 0; k < nen; k++)
+      for (int b = 0; b < nen; b++) {
+        for (int i = 0; i < ndm; i++) C(dofP(b), dofU(k, i)) = Qb[(ndm * k + i) * nen + b];
+        C(dofP(k), dofP(b)) = Sb[k * nen + b] + stabA * Htb[k * nen + b];
+      }
+  return C;
+}
+
+// WP-232l (interface §1): R_static = [f' - S bf + ghost - Q p ; H p - f_seep], every node DOF
+void
+LadrunoMPMPoint::assembleForceUP(void)
+{
+  LadrunoMPMPointHost *h = host();
+  if (h != 0) {
+    const double *b = h->mpmBodyForce(p);
+    for (int a = 0; a < ndm; a++) bf[a] = b[a];
+  }
+  P->Zero();
+  for (int k = 0; k < nen; k++)
+    for (int a = 0; a < ndm; a++) {
+      const int r = ndm * k + a;
+      const double Sk = Sc.empty() ? S[k] : Sc[ndm * k + a];
+      (*P)(dofU(k, a)) = fInt[r] - Sk * bf[a] + ghostK[k] * uT[r];
+    }
+  if (!tpOn) return;
+  pT.assign(nen, 0.0);
+  for (int k = 0; k < nen; k++) pT[k] = nodes[k]->getTrialDisp()(ndm);
+  for (int k = 0; k < nen; k++)
+    for (int i = 0; i < ndm; i++) {
+      double s = 0.0;
+      for (int b = 0; b < nen; b++) s += Qb[(ndm * k + i) * nen + b] * pT[b];
+      (*P)(dofU(k, i)) -= s;
+    }
+  const double *drv = (h != 0) ? h->mpmFluidDrive(p) : 0;
+  for (int b = 0; b < nen; b++) {
+    double s = 0.0;
+    for (int c = 0; c < nen; c++) s += Hb[b * nen + c] * pT[c];
+    if (drv != 0)
+      for (int i = 0; i < ndm; i++) s -= Gs[b * ndm + i] * drv[i];
+    (*P)(dofP(b)) += s;
+  }
+  // WP-232l fix 2 (interface 7b): the affine image's known pressure pi in the coupling force
+  // (-alpha V dS'_{a,i} pi) and in the Darcy flux (V dS^p_b . kbar grad pi)
+  if (affOn && h != 0) {
+    double gpi[3] = {0, 0, 0};
+    const double pi = piNow(gpi);
+    const double Vp = h->mpmParticles().V[p];
+    for (int k = 0; k < nen; k++)
+      for (int i = 0; i < ndm; i++) {
+        const double dn = Sc.empty() ? dS[ndm * k + i] : dSc[(ndm * k + i) * ndm + i];
+        (*P)(dofU(k, i)) -= tpAlpha * Vp * dn * pi;
+      }
+    for (int b = 0; b < nen; b++) {
+      double s = 0.0;
+      for (int i = 0; i < ndm; i++) s += dSp[ndm * b + i] * tpK[i] * gpi[i];
+      (*P)(dofP(b)) += Vp * s;
+    }
+  }
+}
+
+// WP-232l fix 2: pi = rhoF sum_d drive_d a_d (drive = lambda b_f, the host's), its gradient
+double
+LadrunoMPMPoint::piNow(double *grad) const
+{
+  for (int i = 0; i < ndm; i++) grad[i] = 0.0;
+  LadrunoMPMPointHost *h = host();
+  const double *drv = (h != 0) ? h->mpmFluidDrive(p) : 0;
+  if (!affOn || drv == 0) return 0.0;
+  double pi = 0.0;
+  for (int d = 0; d < ndm; d++) {
+    pi += tpRhoF * drv[d] * affC[d * (ndm + 1)];
+    for (int i = 0; i < ndm; i++) grad[i] += tpRhoF * drv[d] * affC[d * (ndm + 1) + 1 + i];
+  }
+  return pi;
+}
+
+// `mpm debug particleBlocks` (tests/mpm_twophase_interface.md §7a Q1, Q2)
+int
+LadrunoMPMPoint::writeBlocks(const double sc[6], std::ostream &os, double lambda, long long id)
+{
+  LadrunoMPMPointHost *h = host();
+  if (st != ARMED || mat == 0 || h == 0 || (int)nodes.size() != nen) return -1;
+  for (int k = 0; k < nen; k++) if (nodes[k] == 0) return -1;
+  const int nf = nen * ndfN;
+  std::vector<Vector> sd, sv, sa;
+  for (int k = 0; k < nen; k++) {
+    sd.push_back(nodes[k]->getTrialDisp());
+    sv.push_back(nodes[k]->getTrialVel());
+    sa.push_back(nodes[k]->getTrialAccel());
+  }
+  std::vector<double> tv[6];             // u, p, v, pd, a, pdd as written
+  for (int k = 0; k < nen; k++) {
+    Vector d(ndfN), v(ndfN), a(ndfN);
+    for (int c = 0; c < ndfN; c++) {
+      const int j = ndfN * k + c;
+      const double s = std::sin(1.7 * j + 0.3);
+      const int kind = (c < ndm) ? 0 : 1;
+      d(c) = sc[kind] * s;
+      v(c) = sc[2 + kind] * s;
+      a(c) = sc[4 + kind] * s;
+      tv[kind].push_back(d(c));
+      tv[2 + kind].push_back(v(c));
+      tv[4 + kind].push_back(a(c));
+    }
+    nodes[k]->setTrialDisp(d);
+    nodes[k]->setTrialVel(v);
+    nodes[k]->setTrialAccel(a);
+  }
+  auto restore = [&]() {
+    for (int k = 0; k < nen; k++) {
+      nodes[k]->setTrialDisp(sd[k]);
+      nodes[k]->setTrialVel(sv[k]);
+      nodes[k]->setTrialAccel(sa[k]);
+    }
+    mat->revertToLastCommit();
+    needUpdate = true;
+    trialValid = false;
+  };
+  needUpdate = true;
+  trialValid = false;
+  if (this->update() < 0) { restore(); return -1; }
+  const Matrix K(this->getTangentStiff());
+  const Matrix C(this->getDamp());
+  const Matrix M(this->getMass());
+  const Vector Rs(this->getResistingForce());
+  const Vector R(this->getResistingForceIncInertia());
+  const ladruno_mpm::Particles &PP = h->mpmParticles();
+  os << std::setprecision(17);
+  auto vec = [&](const std::vector<double> &x) {
+    os << "[";
+    for (size_t i = 0; i < x.size(); i++) os << (i ? ", " : "") << x[i];
+    os << "]";
+  };
+  auto rows = [&](const std::vector<double> &x, int w) {   // x as rows of width w
+    os << "[";
+    for (int r = 0; w > 0 && r < (int)x.size() / w; r++) {
+      os << (r ? ", " : "") << "[";
+      for (int c = 0; c < w; c++) os << (c ? ", " : "") << x[w * r + c];
+      os << "]";
+    }
+    os << "]";
+  };
+  auto mat2 = [&](const Matrix &A) {
+    os << "[";
+    for (int r = 0; r < nf; r++) {
+      os << (r ? ", " : "") << "[";
+      for (int c = 0; c < nf; c++) os << (c ? ", " : "") << A(r, c);
+      os << "]";
+    }
+    os << "]";
+  };
+  auto vec2 = [&](const Vector &x) {
+    os << "[";
+    for (int i = 0; i < nf; i++) os << (i ? ", " : "") << x(i);
+    os << "]";
+  };
+  std::vector<double> crd;
+  for (int k = 0; k < nen; k++) {
+    const Vector &x = nodes[k]->getCrds();
+    for (int a = 0; a < ndm; a++) crd.push_back(a < x.Size() ? x(a) : 0.0);
+  }
+  const std::vector<double> &SpO = tpOn ? Sp : S, &dSpO = tpOn ? dSp : dS;
+  os << "{\"particle\": " << p << ", \"id\": " << id << ", \"ndm\": " << ndm << ", \"ndf\": "
+     << ndfN << ", \"nen\": " << nen << ", \"lambda\": " << lambda << ", \"V\": " << PP.V[p]
+     << ", \"m\": " << mp << ", \"alpha_st\": " << stabA << ", \"two_phase\": " << (tpOn ? 1 : 0);
+  {
+    double gpi[3];                       // fix 2: the known affine term at the particle (0 = none)
+    os << ", \"pi\": " << piNow(gpi);
+  }
+  os << ",\n \"nodes\": ";
+  os << "[";
+  for (int k = 0; k < nen; k++) os << (k ? ", " : "") << connect(k);
+  os << "],\n \"coords\": ";
+  rows(crd, ndm);
+  os << ",\n \"S\": "; vec(S);
+  os << ",\n \"dS\": "; rows(dS, ndm);
+  os << ",\n \"Sp\": "; vec(SpO);
+  os << ",\n \"dSp\": "; rows(dSpO, ndm);
+  os << ",\n \"trial\": {\"u\": "; rows(tv[0], ndm);
+  os << ", \"p\": "; vec(tv[1]);
+  os << ", \"v\": "; rows(tv[2], ndm);
+  os << ", \"pd\": "; vec(tv[3]);
+  os << ", \"a\": "; rows(tv[4], ndm);
+  os << ", \"pdd\": "; vec(tv[5]);
+  os << "},\n \"K\": "; mat2(K);
+  os << ",\n \"C\": "; mat2(C);
+  os << ",\n \"M\": "; mat2(M);
+  os << ",\n \"R\": "; vec2(R);
+  os << ",\n \"R_static\": "; vec2(Rs);
+  os << "}\n";
+  restore();
+  return 0;
+}
+
+int
+LadrunoMPMPoint::setTwoPhase(int ndfNode, const ladruno_mpm::TwoPhaseProps *tp, double h,
+                             const std::vector<double> &Spk, const std::vector<double> &dSpk,
+                             const std::vector<double> &pRefk, const double *aff, double piStart)
+{
+  if (ndfNode != ndm && ndfNode != ndm + 1) return -1;
+  ndfN = ndfNode;
+  tpOn = (tp != 0) && ndfN == ndm + 1;
+  if (nen * ndfN > MAX_DOF) {
+    opserr << "LadrunoMPMPoint " << this->getTag() << " -- " << nen
+           << " support nodes is out of range for a two-phase element (MPM host bug)\n";
+    return -1;
+  }
+  resize();
+  delete Ki;
+  Ki = 0;
+  index = -1;
+  if (!tpOn) return 0;
+  if ((int)Spk.size() != nen || (int)dSpk.size() != nen * ndm || (int)pRefk.size() != 3 * nen) {
+    opserr << "LadrunoMPMPoint " << this->getTag() << " -- two-phase weights of the wrong size"
+           << " (MPM host bug)\n";
+    return -1;
+  }
+  Sp = Spk;
+  dSp = dSpk;
+  pRef = pRefk;
+  tpAlpha = tp->alpha;
+  tpRhoF = tp->rhoF;
+  for (int i = 0; i < 3; i++) tpK[i] = tp->kbar[i];
+  affOn = false;
+  piStart_ = piStart;
+  if (aff != 0)
+    for (int k = 0; k < ndm * (ndm + 1); k++) {
+      affC[k] = aff[k];
+      if (aff[k] != 0.0) affOn = true;
+    }
+  LadrunoMPMPointHost *hh = host();
+  // V_p: the step-start volume (V0 under `small`, J_n V0 under hypo; interface §1)
+  const double Vp = (hh != 0) ? hh->mpmParticles().V[p] : 0.0;
+  // the u-row gradient of Q is component i's own (B-spline folds, P9)
+  std::vector<double> dNu(nen * ndm);
+  for (int k = 0; k < nen; k++)
+    for (int i = 0; i < ndm; i++)
+      dNu[ndm * k + i] = Sc.empty() ? dS[ndm * k + i] : dSc[(ndm * k + i) * ndm + i];
+  Qb.assign(nen * ndm * nen, 0.0);
+  Hb.assign(nen * nen, 0.0);
+  Sb.assign(nen * nen, 0.0);
+  Htb.assign(nen * nen, 0.0);
+  Gs.assign(nen * ndm, 0.0);
+  if (LADRUNO_MUTATE_MPM != LADRUNO_MUT_IDENT)           // WP-232l T11: IDENT cuts the coupling Q
+    ladruno_up::addQ(dNu.data(), Sp.data(), nen, nen, ndm, tp->alpha, Vp, Qb.data(), nen);
+  ladruno_up::addH(dSp.data(), nen, ndm, tp->kbar, Vp, Hb.data(), nen);
+  ladruno_up::addS(Sp.data(), nen, ladruno_up::oneOverQbar(tp->n, tp->Kf, tp->alpha, tp->Ks), Vp,
+                   Sb.data(), nen);
+  ladruno_up::addHtilde(dSp.data(), nen, ndm, 1.0, Vp, Htb.data(), nen);
+  // G[b, i] = dSp_{b,i} kbar_i rhoF Vp: f_seep[b] = sum_i G[b, i] drive_i (addFseep, unit drives)
+  for (int i = 0; i < ndm; i++) {
+    double unit[3] = {0.0, 0.0, 0.0};
+    unit[i] = 1.0;
+    std::vector<double> f(nen, 0.0);
+    ladruno_up::addFseep(dSp.data(), nen, ndm, tp->kbar, tp->rhoF, unit, Vp, f.data());
+    for (int b = 0; b < nen; b++) Gs[b * ndm + i] = f[b];
+  }
+  // alpha_st (P1 / §1): off, manual, or auto = alpha0 h^2 / (K_d + 4 G_d / 3) from the
+  // material's initial tangent, as LadrunoUP::stabAlphaValue reads it (LadrunoUP.cpp:749-772)
+  stabA = 0.0;
+  if (tp->stabMode == 2) {
+    stabA = tp->stabValue;
+  } else if (tp->stabMode == 1 && mat != 0) {
+    const Matrix &D0 = mat->getInitialTangent();
+    const double Gd = (ndm == 2) ? D0(2, 2) : D0(3, 3);
+    const double lam = D0(0, 1);
+    const double Kd = lam + 2.0 * Gd / 3.0;
+    if (Kd + 4.0 * Gd / 3.0 > 0.0 && h > 0.0) stabA = ladruno_up::stabAlphaAuto(h, Kd, Gd, tp->stabValue);
+  }
+  return 0;
 }
 
 void
@@ -1005,7 +1459,7 @@ LadrunoMPMPoint::sendSelf(int commitTag, Channel &theChannel)
   hdr(5) = mat->getClassTag();
   hdr(6) = matDbTag;
   hdr(7) = payloadDbTag;
-  hdr(8) = 0;
+  hdr(8) = ndfN;                       // WP-232l: DOFs per node (ndm, or ndm + 1)
   hdr(9) = 0;
   if (theChannel.sendID(dataTag, commitTag, hdr) < 0) {
     opserr << "LadrunoMPMPoint::sendSelf -- failed to send the header\n";
@@ -1045,6 +1499,8 @@ LadrunoMPMPoint::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
   nen = hdr(4);
   const int matClass = hdr(5), matDbTag = hdr(6);
   payloadDbTag = hdr(7);
+  ndfN = (hdr(8) == ndm + 1) ? ndm + 1 : ndm;   // WP-232l (0 in an older database: ndm)
+  tpOn = false;                                  // the next `mpm analyze` re-points and rebuilds
   connect = ID(nen > 0 ? nen : 1);
   if (nen > 0 && theChannel.recvID(payloadDbTag, commitTag, connect) < 0) {
     opserr << "LadrunoMPMPoint::recvSelf -- failed to receive the connectivity\n";
