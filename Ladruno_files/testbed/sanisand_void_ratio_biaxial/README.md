@@ -68,14 +68,15 @@ runs go through: `results/postpeak_bands.png`, `postpeak_curves.png`, `postpeak_
 | seed 4 | 20x40 | 675.2 | 4.85 | 551.7 | 13.21 (wall budget) | 57 | 143 / 116 |
 | seed 5 | 20x40 | 656.0 | 4.50 | 538.9 | 14.00 | 53 | 0 / 0 |
 | seed 6 | 20x40 | 689.8 | 3.91 | 565.7 | 14.00 | 77 | 0 / 0 |
+| white noise | 20x40 | 687.6 | 5.68 | 591.5 | 12.40 (wall budget) | 43 | 67 / 0 |
 | seed 1 | 10x20 | 742.1 | 5.47 | 671.2 | 14.00 | 4 | 0 / 0 |
 
-(Of 3200 Gauss points on 20x40, 800 on 10x20. The white-noise case was still running at this commit.)
+(Of 3200 Gauss points on 20x40, 800 on 10x20.)
 
 - Every case forms one through-going band and softens; the six seeds lose 17 to 18 % of their peak
-  by 14 %. Six of eight runs needed no relaxed step at all.
-- The homogeneous and seed 4 curves are NOT clean: they oscillate by tens of kPa after the peak,
-  took 8 h, and accepted steps at up to 10x the unbalance tolerance (0.1 kN). Read them as a trend.
+  by 14 %. Six of nine runs needed no relaxed step at all.
+- The homogeneous, seed 4 and white-noise runs are NOT clean: they hit the 8 h wall budget; the
+  first two oscillate by tens of kPa after the peak and accepted steps at up to 10x the unbalance tolerance (0.1 kN). Read them as a trend.
 - The post-peak slope is mesh dependent, as expected of a local softening model: seed 1 ends at
   495 kPa on 20x40 and 671 kPa on 10x20. Nothing here regularises the band width.
 - The separated points sit in the band. The cutoff was designed for footing edges (WP-152); inside a
