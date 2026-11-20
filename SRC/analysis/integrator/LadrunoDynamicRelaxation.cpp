@@ -59,6 +59,13 @@
 #include <string.h>
 #include <limits>
 
+// Ladruno WP-240: see the header. Identity unless a parallel interpreter set them.
+namespace Ladruno {
+static double drIdentity(double x) { return x; }
+double (*drAllreduceSum)(double) = drIdentity;
+double (*drAllreduceMax)(double) = drIdentity;
+}
+
 // Ladruno: read an optional trailing number. On failure the token is left in
 // place for the option loop: the Python reader advances past a token it cannot
 // convert, the Tcl reader does not, so only un-read when the count dropped.
@@ -217,7 +224,7 @@ LadrunoDynamicRelaxation::LadrunoDynamicRelaxation(int massMode_, double dtPseud
   dampMode(dampMode_), zetaTarget(zetaTarget_), cVisc(0.0), autoRefresh(autoRefresh_),
   massSafety(massSafety_), stabMargin(-1.0), marginWarned(false),
   marginEvery(marginEvery_ < 0 ? 0 : marginEvery_), marginCount(0),
-  haveBuiltOnce(false),
+  haveBuiltOnce(false), distributedSOE(false),
   UtC(0), VhalfC(0), AprevC(0), MstarC(0),                  // Ladruno WP-153
   snapFirstStep(true), snapStepCount(0), snapPrevKE(0.0), snapKE(0.0),
   snapRes(0.0), snapCVisc(0.0), haveSnap(false)
@@ -489,6 +496,32 @@ LadrunoDynamicRelaxation::domainChanged(void)
     haveBuiltOnce = false;
     marginCount = 0;
 
+    // Ladruno WP-240 (from jaabell/OpenSees 3c2f585b5): a run on several processes
+    // needs the system that adds the A and B contributions of the neighbouring
+    // processes at the interface DOFs. The count is a global reduction, so every
+    // process takes the same branch.
+    distributedSOE = theLinSOE->isDistributedDiagonal();
+    if (Ladruno::drAllreduceSum(1.0) > 1.5 && !distributedSOE) {
+        opserr << "LadrunoDynamicRelaxation::domainChanged - in a parallel run use "
+                  "`system MPIDiagonal` (the interface DOFs need the contributions of "
+                  "the neighbouring processes)\n";
+        return -1;
+    }
+    // A distributed diagonal system inverts A at its first solve and keeps it
+    // (MPIDiagonalSOE::zeroA/addA are no-ops once factored), so a rebuilt M* would
+    // never reach the solve while the kinetic energy used it. Keyed on the system,
+    // not on the process count: one process with MPIDiagonal has the same limit.
+    if (distributedSOE && (autoRefresh || recomputeEvery > 0)) {
+        static bool noted = false;
+        if (!noted) {
+            noted = true;
+            opserr << "LadrunoDynamicRelaxation: MPIDiagonal keeps the first M*: "
+                      "-noAutoRefresh and no -recompute are used\n";
+        }
+        autoRefresh = false;
+        recomputeEvery = 0;
+    }
+
     // build the fictitious mass (SOE-free element probe)
     if (this->buildFictitiousMass() < 0) {
         opserr << "LadrunoDynamicRelaxation::domainChanged - failed to build fictitious mass\n";
@@ -605,11 +638,25 @@ LadrunoDynamicRelaxation::update(const Vector &U)
 
     // true static residual norm = ||f_ext - f_int||_inf = ||M* .* a||_inf, from the
     // PRE-damping solved accel U -> the genuine static unbalance (no f_v pollution).
+    // Ladruno WP-240: with a distributed system the residual is the B of the
+    // solve, which holds the neighbours' contributions at the interface DOFs (the
+    // local M* . a has only this process's share of the mass), and the maximum is
+    // taken over the processes. Serial keeps M* . a: a general solver may
+    // overwrite B.
     residualNorm = 0.0;
-    for (int i = 0; i < size; i++) {
-        double r = fabs((*Mstar)(i) * U(i));
-        if (r > residualNorm) residualNorm = r;
+    if (distributedSOE) {
+        const Vector &B = this->getLinearSOE()->getB();
+        for (int i = 0; i < size; i++) {
+            double r = fabs(B(i));
+            if (r > residualNorm) residualNorm = r;
+        }
+    } else {
+        for (int i = 0; i < size; i++) {
+            double r = fabs((*Mstar)(i) * U(i));
+            if (r > residualNorm) residualNorm = r;
+        }
     }
+    residualNorm = Ladruno::drAllreduceMax(residualNorm);
 
     // viscous-critical damping (dampMode 1): lag the damping force at the known
     // half-step velocity so it stays fully explicit (LHS untouched):
@@ -628,7 +675,10 @@ LadrunoDynamicRelaxation::update(const Vector &U)
         double vi = (*Vfull)(i);
         kineticEnergy += (*Mstar)(i) * vi * vi;
     }
-    kineticEnergy *= 0.5;
+    // Ladruno WP-240: global, so every process zeroes its velocities at the same
+    // peaks. M* of a process holds its own elements' row sums, so the shares of
+    // an interface DOF add up to its mass.
+    kineticEnergy = 0.5 * Ladruno::drAllreduceSum(kineticEnergy);
 
     if (dampMode == 0) {
         // ---- Cundall kinetic damping: zero ALL velocities at each KE peak ----
@@ -649,12 +699,17 @@ LadrunoDynamicRelaxation::update(const Vector &U)
         prevKE = kineticEnergy;      // viscous: feed the watchdog, NEVER zero
     }
 
-    // push the (possibly damped) full-step snapshot to the nodes
+    // push the (possibly damped) full-step velocity and acceleration to the nodes.
+    // Ladruno WP-240 (from jaabell/OpenSees c8b0f3bc4, J. Abell): the displacements
+    // are those of newStep(), whose updateDomain() already brought the elements to
+    // them, so the elements are NOT updated again here; a second pass integrated
+    // every material point twice per step. Nothing else is lost: the other half of
+    // AnalysisModel::updateDomain() is ConstraintHandler::update(), which no
+    // handler overrides, and TransformationDOF_Group::setNodeDisp keeps the
+    // prescribed `sp` values that newStep() enforced. An element that reads the
+    // nodal velocity in update() therefore commits the state of v_{n+1/2}, the one
+    // its force in the residual was computed with (quirk WP-240).
     theModel->setResponse(*Ut, *Vfull, aWork);
-    if (theModel->updateDomain() < 0) {
-        opserr << "LadrunoDynamicRelaxation::update() - failed to update domain\n";
-        return -6;
-    }
 
     if (divergenceFactor > 0.0 && prevKE > 0.0) {
         if (kineticEnergy > divergenceFactor * prevKE) {
@@ -776,6 +831,13 @@ double LadrunoDynamicRelaxation::getResidualNorm(void) const
 double LadrunoDynamicRelaxation::getKineticEnergy(void) const
 {
     return kineticEnergy;
+}
+
+// Ladruno WP-240: max |u| over the equation DOFs, global in a parallel run
+double LadrunoDynamicRelaxation::getMaxDisplacement(void) const
+{
+    double m = (Ut != 0) ? Ut->pNorm(0) : 0.0;
+    return Ladruno::drAllreduceMax(m);
 }
 
 // (omega_max*dt/2)^2 for the mass actually in use, measured against the tangent at
