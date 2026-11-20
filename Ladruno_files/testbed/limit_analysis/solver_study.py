@@ -13,6 +13,7 @@ until the checker certifies it.
 Commands::
 
     python solver_study.py job    --case C --mesh M --formulation F --solver S --data DIR [--time-limit s] [--mem-gb g]
+                                  [--no-apex-zero]     Upper without the declared apex face (tag "noz" by default)
     python solver_study.py queue  --file JOBS.txt --data DIR           one job per line: case mesh formulation solver
     python solver_study.py table  --data DIR --out SUMMARY.json [--md SUMMARY.md] [--base TEXT] [--diag DIR --diag-out FILE]
     python solver_study.py recheck --old DIR --new DIR [--only TEXT]  stored results through the current checker, no solve
@@ -21,6 +22,10 @@ Commands::
 
 Solvers: ``clarabel-qdldl``, ``clarabel-faer``, ``scs``, ``qoco`` (0.3.2; reported ``not_run`` when absent).
 Presets (queue tag): see PRESETS; ``driver_presolve`` reduces and scales the program before the solver.
+Apex face (contract amendment 2, interface 19.2.1): a frictional Upper declares the conditions the reference's
+``find_apex_zero`` finds forced onto the apex as ``apex_zero`` (inside the result hash) and builds its interior
+field on that face. On by default; ``--no-apex-zero`` or the preset ``noz`` (key ``driver_apex_zero: false``)
+reproduces the behaviour before the amendment. A Lower never declares a face.
 Large data (problems, results, certificates) goes in ``--data``, outside git; the small row files are the
 record.
 """
@@ -59,7 +64,8 @@ PRESETS = {"nodyn": {"dynamic_regularization_enable": False},
            "relgap1e-3": {"reduced_tol_gap_rel": 1e-3, "reduced_tol_gap_abs": 1e-3},
            "presolve_relgap1e-3": {"driver_presolve": True, "reduced_tol_gap_rel": 1e-3, "reduced_tol_gap_abs": 1e-3},
            "nodyn_relgap1e-3": {"dynamic_regularization_enable": False, "reduced_tol_gap_rel": 1e-3,
-                                "reduced_tol_gap_abs": 1e-3}}
+                                "reduced_tol_gap_abs": 1e-3},
+           "noz": {"driver_apex_zero": False}}
 # Calibration of relgap1e-3 (2026-11-19, solver_study_results/presolve.md): Clarabel reports AlmostSolved when its
 # last good iterate meets the reduced tolerances; the default reduced gap 5e-5 is missed by Lower runs that break
 # down at gaps 5e-5 to 1e-3 with primal and dual residuals <= 2e-6. A looser gap changes only how close the stored
@@ -209,7 +215,7 @@ def solve_qoco(program, time_limit, overrides=None):
     return status, np.asarray(solution.x, dtype=float), wall, record, out
 
 
-DRIVER_KEYS = ("driver_presolve",)   # preset keys the driver consumes; never passed to a solver
+DRIVER_KEYS = ("driver_presolve", "driver_apex_zero")   # preset keys the driver consumes; never passed to a solver
 
 
 def solve_program(program, solver, time_limit, overrides=None):
@@ -535,6 +541,43 @@ def needs_lower_interior(geo, program):
     return not (homogeneous and np.all(geo.k > 0.0))
 
 
+def _plain(value):
+    """A JSON-safe copy of a reference info dict (numpy scalars to Python numbers)."""
+    return json.loads(json.dumps(value, default=lambda item: item.item() if hasattr(item, "item") else str(item)))
+
+
+def declare_apex_zero(row, program, time_limit, enabled):
+    """The apex face ``Z`` of interface 19.2.1 for one solved Upper program, or ``None``; records it in ``row``.
+
+    ``find_apex_zero`` reads only the program (not the solution), so it runs on the full program whatever the
+    presolve did. A failure (``no_interior_field`` or anything else) is recorded and the result goes to the checker
+    without ``Z``, as before the amendment; it never stops the row.
+    """
+    import limit_reference as ref
+    row["apex_zero_enabled"] = bool(enabled)
+    row["apex_zero_declared"] = False
+    row["n_apex_zero"] = 0
+    if not enabled:
+        return None
+    start = time.perf_counter()
+    face = None
+    try:
+        face, info = ref.find_apex_zero(program, time_limit)
+        row["apex_zero_info"] = _plain(info)
+    except Exception as error:
+        row["apex_zero_info"] = {"failed": f"{type(error).__name__}: {error}"[:400],
+                                 "code": getattr(error, "code", None)}
+        face = None
+    row["apex_zero_wall_s"] = round(time.perf_counter() - start, 3)
+    if face is not None and len(face):
+        row["apex_zero_declared"] = True
+        row["n_apex_zero"] = int(len(face))
+        row["n_apex_zero_flow"] = int((face[:, 0] == 0).sum())
+        row["n_apex_zero_jump"] = int((face[:, 0] == 1).sum())
+        return face
+    return None
+
+
 def worker(case, mesh, formulation, solver, data, time_limit, overrides=None, tag="", solve_only=False):
     import numpy as np
     import limit_certificate as lc
@@ -586,12 +629,17 @@ def worker(case, mesh, formulation, solver, data, time_limit, overrides=None, ta
             save()
             return
 
-        extra = None
-        t = time.perf_counter()
+        extra, face = None, None
         frictional = bool(np.any(geo.alpha > 0.0))
+        if program.bound == "upper" and frictional:
+            t = time.perf_counter()
+            face = declare_apex_zero(row, program, time_limit, (overrides or {}).get("driver_apex_zero", True))
+            phase("apex_zero", t)
+            save()
+        t = time.perf_counter()
         try:
             if program.bound == "upper" and frictional:
-                extra = ref.upper_interior_field(program, time_limit)[:2]
+                extra = ref.upper_interior_field(program, time_limit, apex_zero=face)[:2]
             elif program.bound == "lower" and needs_lower_interior(geo, program):
                 found = ref.lower_interior_field(program, time_limit)
                 extra = None if found is None else found[:2]
@@ -601,7 +649,9 @@ def worker(case, mesh, formulation, solver, data, time_limit, overrides=None, ta
         phase("interior", t)
         save()
 
-        doc, result_arrays = ref.export_result(data, program, status, x, record, wall, extra)
+        doc, result_arrays = ref.export_result(data, program, status, x, record, wall, extra, apex_zero=face)
+        row["result_apex_zero"] = "apex_zero" in result_arrays
+        row["result_sha256"] = doc.get("result_sha256")
         row["value_estimate"] = doc["value"]
         row["objective"] = doc["objective"]
         row["result_status"] = doc["solver_status"]
@@ -632,6 +682,24 @@ def worker(case, mesh, formulation, solver, data, time_limit, overrides=None, ta
         save()
 
 
+def read_gate(path, result_path=None):
+    """``read_gate_certificate`` with the bound result and its arrays (amendment 2, m1).
+
+    A method report that names result arrays (an interior field or a declared apex face) is refused for a gate
+    without them (``result_arrays_missing``). The result is taken from ``result_path`` or, by default, from beside the
+    certificate, where the worker keeps it; when no result file exists the certificate is read alone.
+    """
+    import limit_certificate as lc
+    path = Path(path)
+    if result_path is None:
+        result_path = path.with_name(path.name[: -len(".certificate.json")] + ".result.json")
+    result_path = Path(result_path)
+    if not result_path.exists():
+        return lc.read_gate_certificate(path)
+    result, arrays = lc.load_document(result_path)
+    return lc.read_gate_certificate(path, result=result, result_arrays=arrays)
+
+
 def certify(row, problem_path, result_path, directory, data):
     """Run the independent checker on one stored problem and result and write what it returns.
 
@@ -644,7 +712,7 @@ def certify(row, problem_path, result_path, directory, data):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     for stale in ("certificate_file", "gate_admissible", "gate_refusal", "interior_field", "kappa_method",
-                  "kappa_eq", "repair_mu", "method_failures_with_arrays"):
+                  "kappa_eq", "repair_mu", "rho_apex", "method_apex_zero", "method_failures_with_arrays"):
         row.pop(stale, None)
     cproblem, carrays = lc.load_document(problem_path)
     cresult, cfields = lc.load_document(result_path)
@@ -671,12 +739,14 @@ def certify(row, problem_path, result_path, directory, data):
     }
     row["kappa_eq"] = cert["checks"]["kappa_eq"]
     row["repair_mu"] = cert["checks"]["repair_mu"]
+    row["rho_apex"] = cert["checks"].get("rho_apex")
     if outcome.method is not None:
         row["interior_field"] = outcome.method["interior_field"]
+        row["method_apex_zero"] = outcome.method.get("apex_zero")
         row["kappa_method"] = outcome.method["kappa"]["method"]
         row["method_failures_with_arrays"] = lc.method_failures(cert, outcome.method, cfields)
     try:
-        lc.read_gate_certificate(path)
+        read_gate(path, result_path)
         row["gate_admissible"] = not row.get("method_failures_with_arrays")
         if not row["gate_admissible"]:
             row["gate_refusal"] = row["method_failures_with_arrays"][0]
@@ -765,7 +835,7 @@ def supervise(case, mesh, formulation, solver, data, time_limit=TIME_LIMIT_S, me
     cert = row.get("certificate", {})
     print(f"{case} m{mesh} {formulation} {solver} {tag}: {row['outcome']} status={row.get('solver_status')} "
           f"it={row.get('solver_info', {}).get('iterations')} wall={wall:.1f}s peak={peak:.2f}GB "
-          f"cert={cert.get('classification')} kappa={row.get('kappa_eq')}", flush=True)
+          f"cert={cert.get('classification')} kappa={row.get('kappa_eq')} n_Z={row.get('n_apex_zero')}", flush=True)
     return row
 
 
@@ -989,7 +1059,7 @@ def table(data, out, md=None, base=""):
         row["gate_value"] = None
         if file and file.endswith(".certificate.json") and not row.get("method_failures_with_arrays"):
             try:
-                certificate, method = lc.read_gate_certificate(data / file)
+                certificate, method = read_gate(data / file, row.get("recheck", {}).get("result_file"))
                 row["gate_value"], row["gate_floor"] = certificate["value_certified"], certificate["floor"]
                 row["kappa_eq"] = certificate["checks"]["kappa_eq"]
                 gate[index] = (certificate, method)
@@ -1139,6 +1209,8 @@ def main(argv=None):
         p.add_argument("--overrides", default="{}")
         p.add_argument("--tag", default="")
         p.add_argument("--solve-only", action="store_true")
+        p.add_argument("--no-apex-zero", action="store_true",
+                       help="Upper without the declared apex face of interface 19.2.1 (behaviour before amendment 2)")
     p = sub.add_parser("queue")
     p.add_argument("--file", required=True)
     p.add_argument("--data", required=True)
@@ -1164,6 +1236,10 @@ def main(argv=None):
     p.add_argument("--new", required=True)
     p.add_argument("--row", required=True)
     args = parser.parse_args(argv)
+    if args.command in ("job", "worker") and args.no_apex_zero:
+        overrides = dict(json.loads(args.overrides), driver_apex_zero=False)
+        args.overrides = json.dumps(overrides)
+        args.tag = args.tag or "noz"
     if args.command == "worker":
         worker(args.case, args.mesh, args.formulation, args.solver, args.data, args.time_limit, json.loads(args.overrides), args.tag, args.solve_only)
     elif args.command == "job":
