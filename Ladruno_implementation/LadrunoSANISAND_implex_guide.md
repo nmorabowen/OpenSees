@@ -1450,3 +1450,26 @@ evidence: [[152_sanisand_tension_cutoff]].
   only p_min, so a displacement test cannot tell a converged separated region from a stalled one.
 - **It is a constitutive choice about near-surface sand.** The owner and TIMs decide p_sep and p_contact, and how
   separated points are reported in the capacity. The p_r bracket (§13.4's cross-check) stays available.
+
+## 14. A heterogeneous initial void ratio — WP-238
+
+```python
+import sanisand_void_ratio_field as vf            # Ladruno_scripts/
+f = vf.field(centroids, mean=e0, std=s_e, theta=(theta_h, theta_v), seed=1, e_min=emin, e_max=emax)
+vf.apply(ops, ele_tags, f.values)                 # = setParameter -val e -ele tag voidRatio, per element
+```
+
+- **What it is.** An imperfection: a correlated, truncated Gaussian field on the initial void ratio, so a shear band
+  starts at the weakest path instead of from round-off. The concrete practice of a strength field, put on the quantity
+  that varies in a sand bed. Plan: [[238_sanisand_void_ratio_field]].
+- **It does not regularise.** No internal length is added; a band is still one element wide. Judge by the peak load and
+  its settlement, over several seeds, on a FULL (not symmetric) mesh.
+- **The field is a function of position**, so a coarse and a fine mesh see the same realisation. Do not draw one
+  random number per element: that field changes with the mesh.
+- **theta** (the scale of fluctuation, per axis) should span a few elements of the coarsest mesh. **std and theta are
+  data**; the script supplies no default.
+- **`setParameter -val e -ele tag voidRatio`** sets every Gauss point of the element. Set it before the first analysis
+  step: the point is then bit-identical to one constructed with that void ratio. In the plastic stage a point with
+  strain history refuses it. A value that is not finite and positive is refused.
+- **Check it landed.** Read `psi` at one Gauss point before and after. On vanilla `ManzariDafalias` the same command
+  without the material tag does nothing and says nothing (LEDGER_quirks, WP-238).
