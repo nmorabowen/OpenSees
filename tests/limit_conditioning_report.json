@@ -1,7 +1,7 @@
 {
  "capacity": {
   "block_entries_max": 36000000.0,
-  "dense_entries_max": 4000000.0,
+  "dense_entries_max": 36000000.0,
   "sparse_rows_max": 250000.0
  },
  "checker": {
@@ -14,22 +14,18 @@
  "rows": [
   {
    "case": "tresca_strip_vm_thin_slab",
-   "completeness": {
-    "count_below": 1436,
-    "route": "inertia",
-    "shift": 0.003994582050316388
-   },
+   "completeness": null,
    "elements": 192,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 79.56131274127718,
-   "kappa_estimate": 52.525587866982264,
+   "kappa_eq": 52.525587884186734,
+   "kappa_estimate": 52.52558786698185,
    "literal_zeros": 1164,
    "mesh": 0,
-   "method": "eigen_normal_rows",
+   "method": "dense_svd",
    "n_rows": 4168,
    "n_unknowns": 3445,
    "nnz": 8722,
-   "perturbation_bound": 3.1176769455185608e-12,
+   "perturbation_bound": 2.1414305722529664e-11,
    "problem_sha256": "9b57c9711bfb7f9dca333e9d1cded21bb4efd07b6f522954ef615efb0c432399",
    "proofs": [
     {
@@ -39,77 +35,35 @@
     },
     {
      "count": 104,
-     "residual_bound": 3.305082426794756e-14,
-     "route": "null_space_basis"
+     "residual_bound": 2.1414305722529664e-11,
+     "route": "dense_svd_blocks"
     }
    ],
    "rank": 2732,
    "refusal": null,
-   "residual": 3.1176769455185608e-12,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 3.995e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 104 row blocks",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1436,
    "rows_with_entries": 2836,
-   "seconds": 0.5,
-   "sigma_max_upper": 5.028490259090184,
-   "sigma_min_lower": 0.06320270601167889,
+   "seconds": 10.2,
+   "sigma_max_upper": 3.4993272595418237,
+   "sigma_min_lower": 0.0666213820825283,
    "unknowns": 4609
   },
   {
    "case": "tresca_strip_vm_thin_slab",
    "completeness": null,
    "elements": 192,
-   "formulation": "upper.p2c-vertex.v0",
-   "kappa_eq": 80.76769597976754,
-   "kappa_estimate": 80.76769596976067,
-   "literal_zeros": 530,
-   "mesh": 0,
-   "method": "dense_svd",
-   "n_rows": 1320,
-   "n_unknowns": 853,
-   "nnz": 5143,
-   "perturbation_bound": 6.075243853622161e-12,
-   "problem_sha256": "9b57c9711bfb7f9dca333e9d1cded21bb4efd07b6f522954ef615efb0c432399",
-   "proofs": [
-    {
-     "count": 547,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    },
-    {
-     "count": 128,
-     "residual_bound": 6.075243853622161e-12,
-     "route": "dense_svd_blocks"
-    }
-   ],
-   "rank": 645,
-   "refusal": null,
-   "residual": null,
-   "route": "dense singular value decomposition of the whole reduced system",
-   "rows_skipped": 675,
-   "rows_with_entries": 773,
-   "seconds": 0.9,
-   "sigma_max_upper": 4.009446945398464,
-   "sigma_min_lower": 0.0496417150045092,
-   "unknowns": 1383
-  },
-  {
-   "case": "tresca_strip_vm_thin_slab",
-   "completeness": {
-    "count_below": 1399,
-    "route": "inertia",
-    "shift": 0.0011197074599757911
-   },
-   "elements": 192,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 153.84048905670306,
-   "kappa_estimate": 141.83873456328462,
+   "kappa_eq": 141.83873472229686,
+   "kappa_estimate": 141.83873456329698,
    "literal_zeros": 1348,
    "mesh": 0,
-   "method": "eigen_normal_rows",
+   "method": "dense_svd",
    "n_rows": 3821,
    "n_unknowns": 4418,
    "nnz": 16086,
-   "perturbation_bound": 3.700825017741233e-12,
+   "perturbation_bound": 3.926284839582599e-11,
    "problem_sha256": "9b57c9711bfb7f9dca333e9d1cded21bb4efd07b6f522954ef615efb0c432399",
    "proofs": [
     {
@@ -120,13 +74,13 @@
    ],
    "rank": 2422,
    "refusal": null,
-   "residual": 3.700825017741233e-12,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 1.120e-03; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1399,
    "rows_with_entries": 2422,
-   "seconds": 0.2,
-   "sigma_max_upper": 5.147815070498648,
-   "sigma_min_lower": 0.033462030068048265,
+   "seconds": 11.9,
+   "sigma_max_upper": 5.002946735127147,
+   "sigma_min_lower": 0.035272076735049236,
    "unknowns": 5766
   },
   {
@@ -134,19 +88,19 @@
    "completeness": {
     "count_below": 6656,
     "route": "inertia",
-    "shift": 0.0008155935318404501
+    "shift": 0.0008155933242836724
    },
    "elements": 1536,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 382.0834584164495,
-   "kappa_estimate": 242.6174349355572,
+   "kappa_eq": 382.0835070212338,
+   "kappa_estimate": 242.61743493556332,
    "literal_zeros": 4840,
    "mesh": 1,
    "method": "eigen_normal_rows",
    "n_rows": 32788,
    "n_unknowns": 32025,
    "nnz": 89441,
-   "perturbation_bound": 9.327316221102656e-11,
+   "perturbation_bound": 9.321940350997523e-11,
    "problem_sha256": "c0c17bc3f180fd11e074ea58f7c939bbbd4ebeaa4526fcf5a472ec117a14efda",
    "proofs": [
     {
@@ -162,539 +116,17 @@
    ],
    "rank": 26132,
    "refusal": null,
-   "residual": 9.327316221102656e-11,
+   "residual": 9.321940350997523e-11,
    "route": "inertia of the factorised A_hat A_hat^T at shift 8.156e-04; sigma_max from a norm bound; null-space basis from left singular vectors of 1184 row blocks",
    "rows_skipped": 6656,
    "rows_with_entries": 27316,
-   "seconds": 5.2,
+   "seconds": 1.8,
    "sigma_max_upper": 10.911767348459405,
-   "sigma_min_lower": 0.028558596579091346,
+   "sigma_min_lower": 0.028558592946156657,
    "unknowns": 36865
   },
   {
    "case": "tresca_strip_vm_thin_slab",
-   "completeness": {
-    "count_below": 3239,
-    "route": "inertia",
-    "shift": 0.0007716681591882857
-   },
-   "elements": 1536,
-   "formulation": "upper.p2c-vertex.v0",
-   "kappa_eq": 260.21233073766837,
-   "kappa_estimate": 231.65390993449822,
-   "literal_zeros": 1918,
-   "mesh": 1,
-   "method": "eigen_normal_rows",
-   "n_rows": 8120,
-   "n_unknowns": 6503,
-   "nnz": 52008,
-   "perturbation_bound": 5.557933626374124e-11,
-   "problem_sha256": "c0c17bc3f180fd11e074ea58f7c939bbbd4ebeaa4526fcf5a472ec117a14efda",
-   "proofs": [
-    {
-     "count": 1951,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    },
-    {
-     "count": 1288,
-     "residual_bound": 1.3008578305504933e-12,
-     "route": "null_space_basis"
-    }
-   ],
-   "rank": 4881,
-   "refusal": null,
-   "residual": 5.557933626374124e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 7.717e-04; sigma_max from a norm bound; null-space basis from subspace iteration",
-   "rows_skipped": 3239,
-   "rows_with_entries": 6169,
-   "seconds": 43.3,
-   "sigma_max_upper": 7.228416147407709,
-   "sigma_min_lower": 0.02777891473058207,
-   "unknowns": 8421
-  },
-  {
-   "case": "tresca_strip_vm_thin_slab",
-   "completeness": {
-    "count_below": 5783,
-    "route": "inertia",
-    "shift": 0.00025210598441297087
-   },
-   "elements": 1536,
-   "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 625.0670168342536,
-   "kappa_estimate": 588.4795685121602,
-   "literal_zeros": 5594,
-   "mesh": 1,
-   "method": "eigen_normal_rows",
-   "n_rows": 27656,
-   "n_unknowns": 40492,
-   "nnz": 150840,
-   "perturbation_bound": 5.240375494645602e-11,
-   "problem_sha256": "c0c17bc3f180fd11e074ea58f7c939bbbd4ebeaa4526fcf5a472ec117a14efda",
-   "proofs": [
-    {
-     "count": 5783,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    }
-   ],
-   "rank": 21873,
-   "refusal": null,
-   "residual": 5.240375494645602e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 2.521e-04; sigma_max from a norm bound",
-   "rows_skipped": 5783,
-   "rows_with_entries": 21873,
-   "seconds": 0.8,
-   "sigma_max_upper": 9.92471662064953,
-   "sigma_min_lower": 0.015877844060489317,
-   "unknowns": 46086
-  },
-  {
-   "case": "tresca_strip_vm_thin_slab",
-   "completeness": {
-    "count_below": 5436,
-    "route": "inertia",
-    "shift": 0.0017418116579141754
-   },
-   "elements": 768,
-   "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 179.73183167776784,
-   "kappa_estimate": 108.92048014246494,
-   "literal_zeros": 4380,
-   "mesh": 2,
-   "method": "eigen_normal_rows",
-   "n_rows": 16780,
-   "n_unknowns": 14053,
-   "nnz": 36118,
-   "perturbation_bound": 2.3995407968051095e-11,
-   "problem_sha256": "427742299443d479d11e2b06ab0b41acca0ea5830af6e567b8b277b343d8f671",
-   "proofs": [
-    {
-     "count": 4972,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    },
-    {
-     "count": 464,
-     "residual_bound": 3.7773662065042967e-14,
-     "route": "null_space_basis"
-    }
-   ],
-   "rank": 11344,
-   "refusal": null,
-   "residual": 2.3995407968051095e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 1.742e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 464 row blocks",
-   "rows_skipped": 5436,
-   "rows_with_entries": 11808,
-   "seconds": 0.3,
-   "sigma_max_upper": 7.501111028826277,
-   "sigma_min_lower": 0.04173501687933967,
-   "unknowns": 18433
-  },
-  {
-   "case": "tresca_strip_vm_thin_slab",
-   "completeness": {
-    "count_below": 2095,
-    "route": "inertia",
-    "shift": 0.0020501971754756316
-   },
-   "elements": 768,
-   "formulation": "upper.p2c-vertex.v0",
-   "kappa_eq": 135.69400667268593,
-   "kappa_estimate": 110.8583280675542,
-   "literal_zeros": 1554,
-   "mesh": 2,
-   "method": "eigen_normal_rows",
-   "n_rows": 4668,
-   "n_unknowns": 3501,
-   "nnz": 22539,
-   "perturbation_bound": 3.4277699296472925e-11,
-   "problem_sha256": "427742299443d479d11e2b06ab0b41acca0ea5830af6e567b8b277b343d8f671",
-   "proofs": [
-    {
-     "count": 1579,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    },
-    {
-     "count": 516,
-     "residual_bound": 3.7347957193171823e-10,
-     "route": "null_space_basis"
-    }
-   ],
-   "rank": 2573,
-   "refusal": null,
-   "residual": 3.4277699296472925e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 2.050e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 1 row blocks",
-   "rows_skipped": 2095,
-   "rows_with_entries": 3089,
-   "seconds": 1.9,
-   "sigma_max_upper": 6.144102863728398,
-   "sigma_min_lower": 0.04527910269868356,
-   "unknowns": 5055
-  },
-  {
-   "case": "tresca_strip_vm_thin_slab",
-   "completeness": {
-    "count_below": 4351,
-    "route": "inertia",
-    "shift": 0.000758156702409037
-   },
-   "elements": 768,
-   "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 258.08704384834556,
-   "kappa_estimate": 241.21550749254345,
-   "literal_zeros": 4252,
-   "mesh": 2,
-   "method": "eigen_normal_rows",
-   "n_rows": 14561,
-   "n_unknowns": 18794,
-   "nnz": 69420,
-   "perturbation_bound": 1.2128613193366281e-11,
-   "problem_sha256": "427742299443d479d11e2b06ab0b41acca0ea5830af6e567b8b277b343d8f671",
-   "proofs": [
-    {
-     "count": 4351,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    }
-   ],
-   "rank": 10210,
-   "refusal": null,
-   "residual": 1.2128613193366281e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 7.582e-04; sigma_max from a norm bound",
-   "rows_skipped": 4351,
-   "rows_with_entries": 10210,
-   "seconds": 0.2,
-   "sigma_max_upper": 7.106335201783055,
-   "sigma_min_lower": 0.027534645272463992,
-   "unknowns": 23046
-  },
-  {
-   "case": "tresca_strip_vm_thin_slab",
-   "completeness": {
-    "count_below": 21116,
-    "route": "inertia",
-    "shift": 0.0004449108745782585
-   },
-   "elements": 3072,
-   "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 465.1382939143577,
-   "kappa_estimate": 292.280409628786,
-   "literal_zeros": 16956,
-   "mesh": 3,
-   "method": "eigen_normal_rows",
-   "n_rows": 67348,
-   "n_unknowns": 56773,
-   "nnz": 146974,
-   "perturbation_bound": 8.930801529394503e-11,
-   "problem_sha256": "8b2c437531c07cf0e283a6d185c837276f6104b939dcecdc9a45bcb28dfd2cf6",
-   "proofs": [
-    {
-     "count": 19164,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    },
-    {
-     "count": 1952,
-     "residual_bound": 3.508304562687974e-14,
-     "route": "null_space_basis"
-    }
-   ],
-   "rank": 46232,
-   "refusal": null,
-   "residual": 8.930801529394503e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 4.449e-04; sigma_max from a norm bound; null-space basis from left singular vectors of 1952 row blocks",
-   "rows_skipped": 21116,
-   "rows_with_entries": 48184,
-   "seconds": 1.4,
-   "sigma_max_upper": 9.811119432374758,
-   "sigma_min_lower": 0.021092908411839348,
-   "unknowns": 73729
-  },
-  {
-   "case": "tresca_strip_vm_thin_slab",
-   "completeness": {
-    "count_below": 7239,
-    "route": "inertia",
-    "shift": 0.0004822626319033598
-   },
-   "elements": 3072,
-   "formulation": "upper.p2c-vertex.v0",
-   "kappa_eq": 342.2807299613828,
-   "kappa_estimate": 311.5678996272502,
-   "literal_zeros": 5138,
-   "mesh": 3,
-   "method": "eigen_normal_rows",
-   "n_rows": 17508,
-   "n_unknowns": 14173,
-   "nnz": 94195,
-   "perturbation_bound": 7.011601154990085e-11,
-   "problem_sha256": "8b2c437531c07cf0e283a6d185c837276f6104b939dcecdc9a45bcb28dfd2cf6",
-   "proofs": [
-    {
-     "count": 5179,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    },
-    {
-     "count": 2060,
-     "residual_bound": 1.5519223516102525e-12,
-     "route": "null_space_basis"
-    }
-   ],
-   "rank": 10269,
-   "refusal": null,
-   "residual": 7.011601154990085e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 4.823e-04; sigma_max from a norm bound; null-space basis from subspace iteration",
-   "rows_skipped": 7239,
-   "rows_with_entries": 12329,
-   "seconds": 32.4,
-   "sigma_max_upper": 7.516648189193972,
-   "sigma_min_lower": 0.0219604772668389,
-   "unknowns": 19311
-  },
-  {
-   "case": "tresca_strip_vm_thin_slab",
-   "completeness": {
-    "count_below": 14863,
-    "route": "inertia",
-    "shift": 0.0001841731521987774
-   },
-   "elements": 3072,
-   "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 731.3158800923796,
-   "kappa_estimate": 688.5099440827189,
-   "literal_zeros": 14668,
-   "mesh": 3,
-   "method": "eigen_normal_rows",
-   "n_rows": 56777,
-   "n_unknowns": 77498,
-   "nnz": 288216,
-   "perturbation_bound": 4.1874048798630755e-11,
-   "problem_sha256": "8b2c437531c07cf0e283a6d185c837276f6104b939dcecdc9a45bcb28dfd2cf6",
-   "proofs": [
-    {
-     "count": 14863,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    }
-   ],
-   "rank": 41914,
-   "refusal": null,
-   "residual": 4.1874048798630755e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 1.842e-04; sigma_max from a norm bound",
-   "rows_skipped": 14863,
-   "rows_with_entries": 41914,
-   "seconds": 1.0,
-   "sigma_max_upper": 9.92471662064953,
-   "sigma_min_lower": 0.013571039397361154,
-   "unknowns": 92166
-  },
-  {
-   "case": "tresca_strip_weighted_insensitive",
-   "completeness": {
-    "count_below": 1424,
-    "route": "inertia",
-    "shift": 0.003967789037249824
-   },
-   "elements": 192,
-   "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 79.82948485773368,
-   "kappa_estimate": 52.70244119766713,
-   "literal_zeros": 1152,
-   "mesh": 0,
-   "method": "eigen_normal_rows",
-   "n_rows": 4168,
-   "n_unknowns": 3457,
-   "nnz": 8746,
-   "perturbation_bound": 3.106165015895788e-12,
-   "problem_sha256": "7f663ecd3127d1af0fe22972a00048758071d47506a48ff4171721b5dda6120e",
-   "proofs": [
-    {
-     "count": 1320,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    },
-    {
-     "count": 104,
-     "residual_bound": 3.305082426794756e-14,
-     "route": "null_space_basis"
-    }
-   ],
-   "rank": 2744,
-   "refusal": null,
-   "residual": 3.106165015895788e-12,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 3.968e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 104 row blocks",
-   "rows_skipped": 1424,
-   "rows_with_entries": 2848,
-   "seconds": 0.1,
-   "sigma_max_upper": 5.028490259090184,
-   "sigma_min_lower": 0.06299038842667712,
-   "unknowns": 4609
-  },
-  {
-   "case": "tresca_strip_weighted_insensitive",
-   "completeness": null,
-   "elements": 192,
-   "formulation": "upper.p2c-vertex.v0",
-   "kappa_eq": 80.76769597976754,
-   "kappa_estimate": 80.76769596976067,
-   "literal_zeros": 530,
-   "mesh": 0,
-   "method": "dense_svd",
-   "n_rows": 1320,
-   "n_unknowns": 853,
-   "nnz": 5143,
-   "perturbation_bound": 6.075243853622161e-12,
-   "problem_sha256": "7f663ecd3127d1af0fe22972a00048758071d47506a48ff4171721b5dda6120e",
-   "proofs": [
-    {
-     "count": 547,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    },
-    {
-     "count": 128,
-     "residual_bound": 6.075243853622161e-12,
-     "route": "dense_svd_blocks"
-    }
-   ],
-   "rank": 645,
-   "refusal": null,
-   "residual": null,
-   "route": "dense singular value decomposition of the whole reduced system",
-   "rows_skipped": 675,
-   "rows_with_entries": 773,
-   "seconds": 0.2,
-   "sigma_max_upper": 4.009446945398464,
-   "sigma_min_lower": 0.0496417150045092,
-   "unknowns": 1383
-  },
-  {
-   "case": "tresca_strip_weighted_insensitive",
-   "completeness": {
-    "count_below": 1399,
-    "route": "inertia",
-    "shift": 0.0011197074599757905
-   },
-   "elements": 192,
-   "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 153.84048905670315,
-   "kappa_estimate": 141.83873456328462,
-   "literal_zeros": 1348,
-   "mesh": 0,
-   "method": "eigen_normal_rows",
-   "n_rows": 3821,
-   "n_unknowns": 4418,
-   "nnz": 16086,
-   "perturbation_bound": 3.700825017741233e-12,
-   "problem_sha256": "7f663ecd3127d1af0fe22972a00048758071d47506a48ff4171721b5dda6120e",
-   "proofs": [
-    {
-     "count": 1399,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    }
-   ],
-   "rank": 2422,
-   "refusal": null,
-   "residual": 3.700825017741233e-12,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 1.120e-03; sigma_max from a norm bound",
-   "rows_skipped": 1399,
-   "rows_with_entries": 2422,
-   "seconds": 0.0,
-   "sigma_max_upper": 5.147815070498648,
-   "sigma_min_lower": 0.03346203006804825,
-   "unknowns": 5766
-  },
-  {
-   "case": "tresca_strip_weighted_insensitive",
-   "completeness": {
-    "count_below": 6608,
-    "route": "inertia",
-    "shift": 0.0008130741186271374
-   },
-   "elements": 1536,
-   "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 382.6749676184228,
-   "kappa_estimate": 242.99302513397438,
-   "literal_zeros": 4792,
-   "mesh": 1,
-   "method": "eigen_normal_rows",
-   "n_rows": 32788,
-   "n_unknowns": 32073,
-   "nnz": 89537,
-   "perturbation_bound": 9.320466039044181e-11,
-   "problem_sha256": "212b69c0516a1c6b6830d6953f3bb5097e4a08c1155b9e05f82e1a9eb9302eb9",
-   "proofs": [
-    {
-     "count": 5424,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    },
-    {
-     "count": 1184,
-     "residual_bound": 5.765926283411436e-14,
-     "route": "null_space_basis"
-    }
-   ],
-   "rank": 26180,
-   "refusal": null,
-   "residual": 9.320466039044181e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 8.131e-04; sigma_max from a norm bound; null-space basis from left singular vectors of 1184 row blocks",
-   "rows_skipped": 6608,
-   "rows_with_entries": 27364,
-   "seconds": 0.9,
-   "sigma_max_upper": 10.911767348459405,
-   "sigma_min_lower": 0.028514452921676002,
-   "unknowns": 36865
-  },
-  {
-   "case": "tresca_strip_weighted_insensitive",
-   "completeness": {
-    "count_below": 3239,
-    "route": "inertia",
-    "shift": 0.000771670539391876
-   },
-   "elements": 1536,
-   "formulation": "upper.p2c-vertex.v0",
-   "kappa_eq": 260.21192941672007,
-   "kappa_estimate": 231.65390993451018,
-   "literal_zeros": 1918,
-   "mesh": 1,
-   "method": "eigen_normal_rows",
-   "n_rows": 8120,
-   "n_unknowns": 6503,
-   "nnz": 52008,
-   "perturbation_bound": 5.5516851780637994e-11,
-   "problem_sha256": "212b69c0516a1c6b6830d6953f3bb5097e4a08c1155b9e05f82e1a9eb9302eb9",
-   "proofs": [
-    {
-     "count": 1951,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    },
-    {
-     "count": 1288,
-     "residual_bound": 1.3008578305504933e-12,
-     "route": "null_space_basis"
-    }
-   ],
-   "rank": 4881,
-   "refusal": null,
-   "residual": 5.5516851780637994e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 7.717e-04; sigma_max from a norm bound; null-space basis from subspace iteration",
-   "rows_skipped": 3239,
-   "rows_with_entries": 6169,
-   "seconds": 37.5,
-   "sigma_max_upper": 7.228416147407709,
-   "sigma_min_lower": 0.027778957573584798,
-   "unknowns": 8421
-  },
-  {
-   "case": "tresca_strip_weighted_insensitive",
    "completeness": {
     "count_below": 5783,
     "route": "inertia",
@@ -711,6 +143,314 @@
    "n_unknowns": 40492,
    "nnz": 150840,
    "perturbation_bound": 5.240375494645602e-11,
+   "problem_sha256": "c0c17bc3f180fd11e074ea58f7c939bbbd4ebeaa4526fcf5a472ec117a14efda",
+   "proofs": [
+    {
+     "count": 5783,
+     "residual_bound": null,
+     "route": "shape_forced_zeros"
+    }
+   ],
+   "rank": 21873,
+   "refusal": null,
+   "residual": 5.240375494645602e-11,
+   "route": "inertia of the factorised A_hat A_hat^T at shift 2.521e-04; sigma_max from a norm bound",
+   "rows_skipped": 5783,
+   "rows_with_entries": 21873,
+   "seconds": 1.8,
+   "sigma_max_upper": 9.92471662064953,
+   "sigma_min_lower": 0.01587784406048931,
+   "unknowns": 46086
+  },
+  {
+   "case": "tresca_strip_vm_thin_slab",
+   "completeness": {
+    "count_below": 5436,
+    "route": "inertia",
+    "shift": 0.0017418118924617588
+   },
+   "elements": 768,
+   "formulation": "lower.p1d-vertex.v0",
+   "kappa_eq": 179.73181957864315,
+   "kappa_estimate": 108.92048014246781,
+   "literal_zeros": 4380,
+   "mesh": 2,
+   "method": "eigen_normal_rows",
+   "n_rows": 16780,
+   "n_unknowns": 14053,
+   "nnz": 36118,
+   "perturbation_bound": 2.40336331142218e-11,
+   "problem_sha256": "427742299443d479d11e2b06ab0b41acca0ea5830af6e567b8b277b343d8f671",
+   "proofs": [
+    {
+     "count": 4972,
+     "residual_bound": null,
+     "route": "shape_forced_zeros"
+    },
+    {
+     "count": 464,
+     "residual_bound": 3.7773662065042967e-14,
+     "route": "null_space_basis"
+    }
+   ],
+   "rank": 11344,
+   "refusal": null,
+   "residual": 2.40336331142218e-11,
+   "route": "inertia of the factorised A_hat A_hat^T at shift 1.742e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 464 row blocks",
+   "rows_skipped": 5436,
+   "rows_with_entries": 11808,
+   "seconds": 0.5,
+   "sigma_max_upper": 7.501111028826277,
+   "sigma_min_lower": 0.041735019688843154,
+   "unknowns": 18433
+  },
+  {
+   "case": "tresca_strip_vm_thin_slab",
+   "completeness": {
+    "count_below": 4351,
+    "route": "inertia",
+    "shift": 0.0007581567024090377
+   },
+   "elements": 768,
+   "formulation": "upper.p2d-jump-bernstein.v0",
+   "kappa_eq": 258.0870438483454,
+   "kappa_estimate": 241.2155074925434,
+   "literal_zeros": 4252,
+   "mesh": 2,
+   "method": "eigen_normal_rows",
+   "n_rows": 14561,
+   "n_unknowns": 18794,
+   "nnz": 69420,
+   "perturbation_bound": 1.2128613193366281e-11,
+   "problem_sha256": "427742299443d479d11e2b06ab0b41acca0ea5830af6e567b8b277b343d8f671",
+   "proofs": [
+    {
+     "count": 4351,
+     "residual_bound": null,
+     "route": "shape_forced_zeros"
+    }
+   ],
+   "rank": 10210,
+   "refusal": null,
+   "residual": 1.2128613193366281e-11,
+   "route": "inertia of the factorised A_hat A_hat^T at shift 7.582e-04; sigma_max from a norm bound",
+   "rows_skipped": 4351,
+   "rows_with_entries": 10210,
+   "seconds": 0.4,
+   "sigma_max_upper": 7.106335201783055,
+   "sigma_min_lower": 0.027534645272464006,
+   "unknowns": 23046
+  },
+  {
+   "case": "tresca_strip_vm_thin_slab",
+   "completeness": {
+    "count_below": 21116,
+    "route": "inertia",
+    "shift": 0.0004449108730617022
+   },
+   "elements": 3072,
+   "formulation": "lower.p1d-vertex.v0",
+   "kappa_eq": 465.13829469475667,
+   "kappa_estimate": 292.2804096287986,
+   "literal_zeros": 16956,
+   "mesh": 3,
+   "method": "eigen_normal_rows",
+   "n_rows": 67348,
+   "n_unknowns": 56773,
+   "nnz": 146974,
+   "perturbation_bound": 8.928438242053565e-11,
+   "problem_sha256": "8b2c437531c07cf0e283a6d185c837276f6104b939dcecdc9a45bcb28dfd2cf6",
+   "proofs": [
+    {
+     "count": 19164,
+     "residual_bound": null,
+     "route": "shape_forced_zeros"
+    },
+    {
+     "count": 1952,
+     "residual_bound": 3.508304562687974e-14,
+     "route": "null_space_basis"
+    }
+   ],
+   "rank": 46232,
+   "refusal": null,
+   "residual": 8.928438242053565e-11,
+   "route": "inertia of the factorised A_hat A_hat^T at shift 4.449e-04; sigma_max from a norm bound; null-space basis from left singular vectors of 1952 row blocks",
+   "rows_skipped": 21116,
+   "rows_with_entries": 48184,
+   "seconds": 2.5,
+   "sigma_max_upper": 9.811119432374758,
+   "sigma_min_lower": 0.02109290837645012,
+   "unknowns": 73729
+  },
+  {
+   "case": "tresca_strip_vm_thin_slab",
+   "completeness": {
+    "count_below": 14863,
+    "route": "inertia",
+    "shift": 0.0001841731521987774
+   },
+   "elements": 3072,
+   "formulation": "upper.p2d-jump-bernstein.v0",
+   "kappa_eq": 731.3158800923796,
+   "kappa_estimate": 688.509944082719,
+   "literal_zeros": 14668,
+   "mesh": 3,
+   "method": "eigen_normal_rows",
+   "n_rows": 56777,
+   "n_unknowns": 77498,
+   "nnz": 288216,
+   "perturbation_bound": 4.1874048798630755e-11,
+   "problem_sha256": "8b2c437531c07cf0e283a6d185c837276f6104b939dcecdc9a45bcb28dfd2cf6",
+   "proofs": [
+    {
+     "count": 14863,
+     "residual_bound": null,
+     "route": "shape_forced_zeros"
+    }
+   ],
+   "rank": 41914,
+   "refusal": null,
+   "residual": 4.1874048798630755e-11,
+   "route": "inertia of the factorised A_hat A_hat^T at shift 1.842e-04; sigma_max from a norm bound",
+   "rows_skipped": 14863,
+   "rows_with_entries": 41914,
+   "seconds": 1.8,
+   "sigma_max_upper": 9.92471662064953,
+   "sigma_min_lower": 0.013571039397361154,
+   "unknowns": 92166
+  },
+  {
+   "case": "tresca_strip_weighted_insensitive",
+   "completeness": null,
+   "elements": 192,
+   "formulation": "lower.p1d-vertex.v0",
+   "kappa_eq": 52.70244121504727,
+   "kappa_estimate": 52.70244119766709,
+   "literal_zeros": 1152,
+   "mesh": 0,
+   "method": "dense_svd",
+   "n_rows": 4168,
+   "n_unknowns": 3457,
+   "nnz": 8746,
+   "perturbation_bound": 2.1488898372163775e-11,
+   "problem_sha256": "7f663ecd3127d1af0fe22972a00048758071d47506a48ff4171721b5dda6120e",
+   "proofs": [
+    {
+     "count": 1320,
+     "residual_bound": null,
+     "route": "shape_forced_zeros"
+    },
+    {
+     "count": 104,
+     "residual_bound": 2.1488898372163775e-11,
+     "route": "dense_svd_blocks"
+    }
+   ],
+   "rank": 2744,
+   "refusal": null,
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
+   "rows_skipped": 1424,
+   "rows_with_entries": 2848,
+   "seconds": 8.8,
+   "sigma_max_upper": 3.4993272599824103,
+   "sigma_min_lower": 0.06639782103648179,
+   "unknowns": 4609
+  },
+  {
+   "case": "tresca_strip_weighted_insensitive",
+   "completeness": null,
+   "elements": 192,
+   "formulation": "upper.p2d-jump-bernstein.v0",
+   "kappa_eq": 141.83873472229686,
+   "kappa_estimate": 141.83873456329698,
+   "literal_zeros": 1348,
+   "mesh": 0,
+   "method": "dense_svd",
+   "n_rows": 3821,
+   "n_unknowns": 4418,
+   "nnz": 16086,
+   "perturbation_bound": 3.926284839582599e-11,
+   "problem_sha256": "7f663ecd3127d1af0fe22972a00048758071d47506a48ff4171721b5dda6120e",
+   "proofs": [
+    {
+     "count": 1399,
+     "residual_bound": null,
+     "route": "shape_forced_zeros"
+    }
+   ],
+   "rank": 2422,
+   "refusal": null,
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
+   "rows_skipped": 1399,
+   "rows_with_entries": 2422,
+   "seconds": 10.7,
+   "sigma_max_upper": 5.002946735127147,
+   "sigma_min_lower": 0.035272076735049236,
+   "unknowns": 5766
+  },
+  {
+   "case": "tresca_strip_weighted_insensitive",
+   "completeness": {
+    "count_below": 6608,
+    "route": "inertia",
+    "shift": 0.0008130740420703202
+   },
+   "elements": 1536,
+   "formulation": "lower.p1d-vertex.v0",
+   "kappa_eq": 382.6749856311279,
+   "kappa_estimate": 242.9930251339575,
+   "literal_zeros": 4792,
+   "mesh": 1,
+   "method": "eigen_normal_rows",
+   "n_rows": 32788,
+   "n_unknowns": 32073,
+   "nnz": 89537,
+   "perturbation_bound": 9.319145270833031e-11,
+   "problem_sha256": "212b69c0516a1c6b6830d6953f3bb5097e4a08c1155b9e05f82e1a9eb9302eb9",
+   "proofs": [
+    {
+     "count": 5424,
+     "residual_bound": null,
+     "route": "shape_forced_zeros"
+    },
+    {
+     "count": 1184,
+     "residual_bound": 5.765926283411436e-14,
+     "route": "null_space_basis"
+    }
+   ],
+   "rank": 26180,
+   "refusal": null,
+   "residual": 9.319145270833031e-11,
+   "route": "inertia of the factorised A_hat A_hat^T at shift 8.131e-04; sigma_max from a norm bound; null-space basis from left singular vectors of 1184 row blocks",
+   "rows_skipped": 6608,
+   "rows_with_entries": 27364,
+   "seconds": 2.7,
+   "sigma_max_upper": 10.911767348459405,
+   "sigma_min_lower": 0.028514451579486278,
+   "unknowns": 36865
+  },
+  {
+   "case": "tresca_strip_weighted_insensitive",
+   "completeness": {
+    "count_below": 5783,
+    "route": "inertia",
+    "shift": 0.00025210598441297055
+   },
+   "elements": 1536,
+   "formulation": "upper.p2d-jump-bernstein.v0",
+   "kappa_eq": 625.0670168342541,
+   "kappa_estimate": 588.4795685121604,
+   "literal_zeros": 5594,
+   "mesh": 1,
+   "method": "eigen_normal_rows",
+   "n_rows": 27656,
+   "n_unknowns": 40492,
+   "nnz": 150840,
+   "perturbation_bound": 5.240375494645602e-11,
    "problem_sha256": "212b69c0516a1c6b6830d6953f3bb5097e4a08c1155b9e05f82e1a9eb9302eb9",
    "proofs": [
     {
@@ -725,9 +465,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 2.521e-04; sigma_max from a norm bound",
    "rows_skipped": 5783,
    "rows_with_entries": 21873,
-   "seconds": 1.0,
+   "seconds": 2.0,
    "sigma_max_upper": 9.92471662064953,
-   "sigma_min_lower": 0.01587784406048931,
+   "sigma_min_lower": 0.015877844060489307,
    "unknowns": 46086
   },
   {
@@ -735,19 +475,19 @@
    "completeness": {
     "count_below": 5412,
     "route": "inertia",
-    "shift": 0.001728367455714089
+    "shift": 0.001728367823580169
    },
    "elements": 768,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 180.42950461082586,
-   "kappa_estimate": 109.34326894066835,
+   "kappa_eq": 180.42948541111642,
+   "kappa_estimate": 109.34326894067497,
    "literal_zeros": 4356,
    "mesh": 2,
    "method": "eigen_normal_rows",
    "n_rows": 16780,
    "n_unknowns": 14077,
    "nnz": 36166,
-   "perturbation_bound": 2.4036220574534176e-11,
+   "perturbation_bound": 2.4067141040990937e-11,
    "problem_sha256": "253f3c430458453a36c493e5cacbb079fbca9ea0b0ea9789c1ddde553bff5602",
    "proofs": [
     {
@@ -763,68 +503,26 @@
    ],
    "rank": 11368,
    "refusal": null,
-   "residual": 2.4036220574534176e-11,
+   "residual": 2.4067141040990937e-11,
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.728e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 464 row blocks",
    "rows_skipped": 5412,
    "rows_with_entries": 11832,
-   "seconds": 0.2,
+   "seconds": 0.9,
    "sigma_max_upper": 7.501111028826277,
-   "sigma_min_lower": 0.041573638662954056,
+   "sigma_min_lower": 0.04157364308685285,
    "unknowns": 18433
-  },
-  {
-   "case": "tresca_strip_weighted_insensitive",
-   "completeness": {
-    "count_below": 2095,
-    "route": "inertia",
-    "shift": 0.0020474713663179737
-   },
-   "elements": 768,
-   "formulation": "upper.p2c-vertex.v0",
-   "kappa_eq": 135.78430169014126,
-   "kappa_estimate": 110.85832806755147,
-   "literal_zeros": 1554,
-   "mesh": 2,
-   "method": "eigen_normal_rows",
-   "n_rows": 4668,
-   "n_unknowns": 3501,
-   "nnz": 22539,
-   "perturbation_bound": 3.4100014513718425e-11,
-   "problem_sha256": "253f3c430458453a36c493e5cacbb079fbca9ea0b0ea9789c1ddde553bff5602",
-   "proofs": [
-    {
-     "count": 1579,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    },
-    {
-     "count": 516,
-     "residual_bound": 3.7347957193171823e-10,
-     "route": "null_space_basis"
-    }
-   ],
-   "rank": 2573,
-   "refusal": null,
-   "residual": 3.4100014513718425e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 2.047e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 1 row blocks",
-   "rows_skipped": 2095,
-   "rows_with_entries": 3089,
-   "seconds": 2.0,
-   "sigma_max_upper": 6.144102863728398,
-   "sigma_min_lower": 0.04524899260997928,
-   "unknowns": 5055
   },
   {
    "case": "tresca_strip_weighted_insensitive",
    "completeness": {
     "count_below": 4351,
     "route": "inertia",
-    "shift": 0.0007581567024090376
+    "shift": 0.000758156702409037
    },
    "elements": 768,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 258.08704384834544,
-   "kappa_estimate": 241.21550749254345,
+   "kappa_eq": 258.08704384834556,
+   "kappa_estimate": 241.2155074925435,
    "literal_zeros": 4252,
    "mesh": 2,
    "method": "eigen_normal_rows",
@@ -846,9 +544,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 7.582e-04; sigma_max from a norm bound",
    "rows_skipped": 4351,
    "rows_with_entries": 10210,
-   "seconds": 0.2,
+   "seconds": 0.5,
    "sigma_max_upper": 7.106335201783055,
-   "sigma_min_lower": 0.027534645272464003,
+   "sigma_min_lower": 0.027534645272463992,
    "unknowns": 23046
   },
   {
@@ -856,19 +554,19 @@
    "completeness": {
     "count_below": 21068,
     "route": "inertia",
-    "shift": 0.00044308241566109124
+    "shift": 0.0004430824143147704
    },
    "elements": 3072,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 466.09704419865665,
-   "kappa_estimate": 292.8828629481843,
+   "kappa_eq": 466.09704492661666,
+   "kappa_estimate": 292.88286294821023,
    "literal_zeros": 16908,
    "mesh": 3,
    "method": "eigen_normal_rows",
    "n_rows": 67348,
    "n_unknowns": 56821,
    "nnz": 147070,
-   "perturbation_bound": 8.923692613528606e-11,
+   "perturbation_bound": 8.927463553876474e-11,
    "problem_sha256": "cf1b42153e1c24f1efc6bf572ef6ea92e93f5b928b1959da69c1c0621e3b14df",
    "proofs": [
     {
@@ -884,68 +582,26 @@
    ],
    "rank": 46280,
    "refusal": null,
-   "residual": 8.923692613528606e-11,
+   "residual": 8.927463553876474e-11,
    "route": "inertia of the factorised A_hat A_hat^T at shift 4.431e-04; sigma_max from a norm bound; null-space basis from left singular vectors of 1952 row blocks",
    "rows_skipped": 21068,
    "rows_with_entries": 48232,
-   "seconds": 1.5,
+   "seconds": 3.1,
    "sigma_max_upper": 9.811119432374758,
-   "sigma_min_lower": 0.02104952081222195,
+   "sigma_min_lower": 0.021049520779346374,
    "unknowns": 73729
-  },
-  {
-   "case": "tresca_strip_weighted_insensitive",
-   "completeness": {
-    "count_below": 7239,
-    "route": "inertia",
-    "shift": 0.0004822893283743129
-   },
-   "elements": 3072,
-   "formulation": "upper.p2c-vertex.v0",
-   "kappa_eq": 342.27125662832566,
-   "kappa_estimate": 311.567899627266,
-   "literal_zeros": 5138,
-   "mesh": 3,
-   "method": "eigen_normal_rows",
-   "n_rows": 17508,
-   "n_unknowns": 14173,
-   "nnz": 94195,
-   "perturbation_bound": 7.023426004291964e-11,
-   "problem_sha256": "cf1b42153e1c24f1efc6bf572ef6ea92e93f5b928b1959da69c1c0621e3b14df",
-   "proofs": [
-    {
-     "count": 5179,
-     "residual_bound": null,
-     "route": "shape_forced_zeros"
-    },
-    {
-     "count": 2060,
-     "residual_bound": 1.5519221563533089e-12,
-     "route": "null_space_basis"
-    }
-   ],
-   "rank": 10269,
-   "refusal": null,
-   "residual": 7.023426004291964e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 4.823e-04; sigma_max from a norm bound; null-space basis from subspace iteration",
-   "rows_skipped": 7239,
-   "rows_with_entries": 12329,
-   "seconds": 51.8,
-   "sigma_max_upper": 7.516648189193972,
-   "sigma_min_lower": 0.02196108508567035,
-   "unknowns": 19311
   },
   {
    "case": "tresca_strip_weighted_insensitive",
    "completeness": {
     "count_below": 14863,
     "route": "inertia",
-    "shift": 0.0001841731521987774
+    "shift": 0.0001841731521987775
    },
    "elements": 3072,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 731.3158800923796,
-   "kappa_estimate": 688.509944082719,
+   "kappa_eq": 731.3158800923794,
+   "kappa_estimate": 688.5099440827188,
    "literal_zeros": 14668,
    "mesh": 3,
    "method": "eigen_normal_rows",
@@ -967,9 +623,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.842e-04; sigma_max from a norm bound",
    "rows_skipped": 14863,
    "rows_with_entries": 41914,
-   "seconds": 0.9,
+   "seconds": 2.2,
    "sigma_max_upper": 9.92471662064953,
-   "sigma_min_lower": 0.013571039397361154,
+   "sigma_min_lower": 0.013571039397361158,
    "unknowns": 92166
   },
   {
@@ -977,19 +633,19 @@
    "completeness": {
     "count_below": 5492,
     "route": "inertia",
-    "shift": 0.0015722544557111593
+    "shift": 0.0015722785128815147
    },
    "elements": 768,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 134.1288372675292,
-   "kappa_estimate": 87.31055105448219,
+   "kappa_eq": 134.12781112248615,
+   "kappa_estimate": 87.31055105448182,
    "literal_zeros": 4428,
    "mesh": 0,
    "method": "eigen_normal_rows",
    "n_rows": 16816,
    "n_unknowns": 14005,
    "nnz": 35962,
-   "perturbation_bound": 1.2801284885948716e-11,
+   "perturbation_bound": 1.2809132796948813e-11,
    "problem_sha256": "f902edb10757163fc5fc1f77955dc7f2e7e060295c03fc674ca410a878f11fb8",
    "proofs": [
     {
@@ -1005,13 +661,13 @@
    ],
    "rank": 11324,
    "refusal": null,
-   "residual": 1.2801284885948716e-11,
+   "residual": 1.2809132796948813e-11,
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.572e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 464 row blocks",
    "rows_skipped": 5492,
    "rows_with_entries": 11788,
-   "seconds": 0.2,
+   "seconds": 0.7,
    "sigma_max_upper": 5.31843156257283,
-   "sigma_min_lower": 0.039651663810108574,
+   "sigma_min_lower": 0.039651967165228785,
    "unknowns": 18433
   },
   {
@@ -1085,19 +741,19 @@
    "completeness": {
     "count_below": 25328,
     "route": "inertia",
-    "shift": 0.0003573744286260586
+    "shift": 0.0003573744328085137
    },
    "elements": 6144,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 610.2012165725737,
-   "kappa_estimate": 369.0840535763164,
+   "kappa_eq": 610.2012129984402,
+   "kappa_estimate": 369.0840535762009,
    "literal_zeros": 18088,
    "mesh": 1,
    "method": "eigen_normal_rows",
    "n_rows": 131764,
    "n_unknowns": 129369,
    "nnz": 363473,
-   "perturbation_bound": 2.7521903450667817e-10,
+   "perturbation_bound": 2.752149920609182e-10,
    "problem_sha256": "6f61b4e2467335e527a97aba1308c329a7dbbc63df12fb01640f8542e7a3e036",
    "proofs": [
     {
@@ -1113,13 +769,13 @@
    ],
    "rank": 106436,
    "refusal": null,
-   "residual": 2.7521903450667817e-10,
+   "residual": 2.752149920609182e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 3.574e-04; sigma_max from a norm bound; null-space basis from left singular vectors of 4928 row blocks",
    "rows_skipped": 25328,
    "rows_with_entries": 111364,
-   "seconds": 5.2,
+   "seconds": 11.9,
    "sigma_max_upper": 11.535452599136837,
-   "sigma_min_lower": 0.018904342183927586,
+   "sigma_min_lower": 0.01890434229465605,
    "unknowns": 147457
   },
   {
@@ -1183,7 +839,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 16160,
    "rows_with_entries": 96,
-   "seconds": 0.1,
+   "seconds": 0.2,
    "sigma_max_upper": 9.848857801797818,
    "sigma_min_lower": 0.999999999998285,
    "unknowns": 184326
@@ -1193,19 +849,19 @@
    "completeness": {
     "count_below": 21228,
     "route": "inertia",
-    "shift": 0.00040160924494137945
+    "shift": 0.0004016091480698239
    },
    "elements": 3072,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 346.6744428786329,
-   "kappa_estimate": 222.44698504186078,
+   "kappa_eq": 346.6744846388565,
+   "kappa_estimate": 222.44698504188838,
    "literal_zeros": 17052,
    "mesh": 2,
    "method": "eigen_normal_rows",
    "n_rows": 67420,
    "n_unknowns": 56677,
    "nnz": 146662,
-   "perturbation_bound": 4.35054986498394e-11,
+   "perturbation_bound": 4.338919782503647e-11,
    "problem_sha256": "8575f9120e118e05bc8590d68925644be67bf20128448f464a3dbaf3df56b7a1",
    "proofs": [
     {
@@ -1221,13 +877,13 @@
    ],
    "rank": 46192,
    "refusal": null,
-   "residual": 4.35054986498394e-11,
+   "residual": 4.338919782503647e-11,
    "route": "inertia of the factorised A_hat A_hat^T at shift 4.016e-04; sigma_max from a norm bound; null-space basis from left singular vectors of 1952 row blocks",
    "rows_skipped": 21228,
    "rows_with_entries": 48144,
-   "seconds": 1.6,
+   "seconds": 2.7,
    "sigma_max_upper": 6.9474215840672295,
-   "sigma_min_lower": 0.020040189655686415,
+   "sigma_min_lower": 0.020040187241655853,
    "unknowns": 73729
   },
   {
@@ -1258,7 +914,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 5121,
    "rows_with_entries": 27,
-   "seconds": 0.0,
+   "seconds": 0.1,
    "sigma_max_upper": 5.291502622129452,
    "sigma_min_lower": 0.9999999999997268,
    "unknowns": 19311
@@ -1291,7 +947,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 14153,
    "rows_with_entries": 48,
-   "seconds": 0.0,
+   "seconds": 0.1,
    "sigma_max_upper": 7.000000000000618,
    "sigma_min_lower": 0.9999999999993778,
    "unknowns": 92166
@@ -1301,19 +957,19 @@
    "completeness": {
     "count_below": 83420,
     "route": "inertia",
-    "shift": 0.00010022761793357387
+    "shift": 0.00010022761790868985
    },
    "elements": 12288,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 938.3912467261821,
-   "kappa_estimate": 614.9351743181534,
+   "kappa_eq": 938.3912468434432,
+   "kappa_estimate": 614.9351743180974,
    "literal_zeros": 66876,
    "mesh": 3,
    "method": "eigen_normal_rows",
    "n_rows": 270004,
    "n_unknowns": 228037,
    "nnz": 592318,
-   "perturbation_bound": 2.0901230721706083e-10,
+   "perturbation_bound": 2.0901247194214496e-10,
    "problem_sha256": "318b092dc3960c68278775fab9889ef62fa8cf793fdbfdcdb3305894d88f9e09",
    "proofs": [
     {
@@ -1329,13 +985,13 @@
    ],
    "rank": 186584,
    "refusal": null,
-   "residual": 2.0901230721706083e-10,
+   "residual": 2.0901247194214496e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.002e-04; sigma_max from a norm bound; null-space basis from left singular vectors of 8000 row blocks",
    "rows_skipped": 83420,
    "rows_with_entries": 194584,
-   "seconds": 9.5,
+   "seconds": 18.1,
    "sigma_max_upper": 9.394576335115149,
-   "sigma_min_lower": 0.010011363989050975,
+   "sigma_min_lower": 0.010011363987799959,
    "unknowns": 294913
   },
   {
@@ -1366,7 +1022,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 18417,
    "rows_with_entries": 51,
-   "seconds": 0.1,
+   "seconds": 0.2,
    "sigma_max_upper": 7.211102550928659,
    "sigma_min_lower": 0.9999999999993204,
    "unknowns": 75471
@@ -1399,7 +1055,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 52889,
    "rows_with_entries": 96,
-   "seconds": 0.2,
+   "seconds": 0.3,
    "sigma_max_upper": 9.848857801797818,
    "sigma_min_lower": 0.9999999999982847,
    "unknowns": 368646
@@ -1409,19 +1065,19 @@
    "completeness": {
     "count_below": 5326,
     "route": "inertia",
-    "shift": 0.0015106689920334595
+    "shift": 0.001510746989087934
    },
    "elements": 768,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 136.83554287928595,
-   "kappa_estimate": 89.0736547681769,
+   "kappa_eq": 136.832010553535,
+   "kappa_estimate": 89.07365476818245,
    "literal_zeros": 4262,
    "mesh": 0,
    "method": "eigen_normal_rows",
    "n_rows": 16816,
    "n_unknowns": 14171,
    "nnz": 36294,
-   "perturbation_bound": 1.3284303622363921e-11,
+   "perturbation_bound": 1.3329305730950721e-11,
    "problem_sha256": "c0ae6f067cb620c3a591ecc445b863128827939aa87790c862848f1fd816a83f",
    "proofs": [
     {
@@ -1437,13 +1093,13 @@
    ],
    "rank": 11490,
    "refusal": null,
-   "residual": 1.3284303622363921e-11,
+   "residual": 1.3329305730950721e-11,
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.511e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 464 row blocks",
    "rows_skipped": 5326,
    "rows_with_entries": 11954,
-   "seconds": 0.3,
+   "seconds": 0.5,
    "sigma_max_upper": 5.31843156257283,
-   "sigma_min_lower": 0.038867325335674385,
+   "sigma_min_lower": 0.03886832869777948,
    "unknowns": 18433
   },
   {
@@ -1517,19 +1173,19 @@
    "completeness": {
     "count_below": 24660,
     "route": "inertia",
-    "shift": 0.0003508303639844477
+    "shift": 0.0003508303345132384
    },
    "elements": 6144,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 615.8659472531692,
-   "kappa_estimate": 372.5104429607793,
+   "kappa_eq": 615.8659731021669,
+   "kappa_estimate": 372.51044296068255,
    "literal_zeros": 17420,
    "mesh": 1,
    "method": "eigen_normal_rows",
    "n_rows": 131764,
    "n_unknowns": 130037,
    "nnz": 364809,
-   "perturbation_bound": 2.2555802075082793e-10,
+   "perturbation_bound": 2.255367489895336e-10,
    "problem_sha256": "f1072523815eaf916a0494ac0b94ec9a854434c6e3e49cf30e49fd74b6896951",
    "proofs": [
     {
@@ -1545,13 +1201,13 @@
    ],
    "rank": 107104,
    "refusal": null,
-   "residual": 2.2555802075082793e-10,
+   "residual": 2.255367489895336e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 3.508e-04; sigma_max from a norm bound; null-space basis from left singular vectors of 4928 row blocks",
    "rows_skipped": 24660,
    "rows_with_entries": 112032,
-   "seconds": 5.4,
+   "seconds": 10.9,
    "sigma_max_upper": 11.535452599136837,
-   "sigma_min_lower": 0.0187304601765794,
+   "sigma_min_lower": 0.01873045939042845,
    "unknowns": 147457
   },
   {
@@ -1625,19 +1281,19 @@
    "completeness": {
     "count_below": 20894,
     "route": "inertia",
-    "shift": 0.00039320469559778556
+    "shift": 0.0003932047496560796
    },
    "elements": 3072,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 350.3598484054509,
-   "kappa_estimate": 224.81177185566122,
+   "kappa_eq": 350.3598243129984,
+   "kappa_estimate": 224.8117718555744,
    "literal_zeros": 16718,
    "mesh": 2,
    "method": "eigen_normal_rows",
    "n_rows": 67420,
    "n_unknowns": 57011,
    "nnz": 147330,
-   "perturbation_bound": 4.3325511778344755e-11,
+   "perturbation_bound": 4.330645968374491e-11,
    "problem_sha256": "11243b4ab7392d06a6d22e512f317e32c5bd6e3cef809d52a307a7ce3c6a74a5",
    "proofs": [
     {
@@ -1653,13 +1309,13 @@
    ],
    "rank": 46526,
    "refusal": null,
-   "residual": 4.3325511778344755e-11,
+   "residual": 4.330645968374491e-11,
    "route": "inertia of the factorised A_hat A_hat^T at shift 3.932e-04; sigma_max from a norm bound; null-space basis from left singular vectors of 1952 row blocks",
    "rows_skipped": 20894,
    "rows_with_entries": 48478,
-   "seconds": 1.4,
+   "seconds": 2.9,
    "sigma_max_upper": 6.9474215840672295,
-   "sigma_min_lower": 0.019829388600566426,
+   "sigma_min_lower": 0.019829389964132024,
    "unknowns": 73729
   },
   {
@@ -1723,7 +1379,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 14153,
    "rows_with_entries": 48,
-   "seconds": 0.0,
+   "seconds": 0.1,
    "sigma_max_upper": 7.000000000000618,
    "sigma_min_lower": 0.9999999999993778,
    "unknowns": 92166
@@ -1733,19 +1389,19 @@
    "completeness": {
     "count_below": 82750,
     "route": "inertia",
-    "shift": 9.915741010813449e-05
+    "shift": 9.915741023399692e-05
    },
    "elements": 12288,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 943.4417062180064,
-   "kappa_estimate": 618.2447715992228,
+   "kappa_eq": 943.4417039838893,
+   "kappa_estimate": 618.2447715986581,
    "literal_zeros": 66206,
    "mesh": 3,
    "method": "eigen_normal_rows",
    "n_rows": 270004,
    "n_unknowns": 228707,
    "nnz": 593658,
-   "perturbation_bound": 2.0950593593231873e-10,
+   "perturbation_bound": 2.0916217992290343e-10,
    "problem_sha256": "c5c081bcb3b5e690e5f7a7897c86c8b37051d5bd57e3a5e55530a45080d6a843",
    "proofs": [
     {
@@ -1761,13 +1417,13 @@
    ],
    "rank": 187254,
    "refusal": null,
-   "residual": 2.0950593593231873e-10,
+   "residual": 2.0916217992290343e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 9.916e-05; sigma_max from a norm bound; null-space basis from left singular vectors of 8000 row blocks",
    "rows_skipped": 82750,
    "rows_with_entries": 195254,
-   "seconds": 8.9,
+   "seconds": 18.7,
    "sigma_max_upper": 9.394576335115149,
-   "sigma_min_lower": 0.009957770865118286,
+   "sigma_min_lower": 0.009957770888698784,
    "unknowns": 294913
   },
   {
@@ -1798,7 +1454,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 18417,
    "rows_with_entries": 51,
-   "seconds": 0.1,
+   "seconds": 0.2,
    "sigma_max_upper": 7.211102550928659,
    "sigma_min_lower": 0.9999999999993204,
    "unknowns": 75471
@@ -1831,29 +1487,25 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 52889,
    "rows_with_entries": 96,
-   "seconds": 0.1,
+   "seconds": 0.3,
    "sigma_max_upper": 9.848857801797818,
    "sigma_min_lower": 0.9999999999982847,
    "unknowns": 368646
   },
   {
    "case": "upper3d_fixed_phi00",
-   "completeness": {
-    "count_below": 462,
-    "route": "inertia",
-    "shift": 0.000424480397157245
-   },
+   "completeness": null,
    "elements": 243,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 337.9107900879829,
-   "kappa_estimate": 190.29987097251546,
+   "kappa_eq": 190.29987132249556,
+   "kappa_estimate": 190.29987097245257,
    "literal_zeros": 420,
    "mesh": 0,
-   "method": "eigen_normal_rows",
+   "method": "dense_svd",
    "n_rows": 4686,
    "n_unknowns": 5413,
    "nnz": 27233,
-   "perturbation_bound": 1.813446001466466e-11,
+   "perturbation_bound": 3.97387587922267e-11,
    "problem_sha256": "38cc220caeae021575cd17162a19cf9bc1ee86cd8c2bf127c7c1be9745641309",
    "proofs": [
     {
@@ -1864,33 +1516,29 @@
    ],
    "rank": 4224,
    "refusal": null,
-   "residual": 1.813446001466466e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 4.245e-04; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 462,
    "rows_with_entries": 4224,
-   "seconds": 0.1,
-   "sigma_max_upper": 6.961949520626797,
-   "sigma_min_lower": 0.020602921613761115,
+   "seconds": 33.5,
+   "sigma_max_upper": 4.132815889769052,
+   "sigma_min_lower": 0.02171738667529255,
    "unknowns": 5833
   },
   {
    "case": "upper3d_fixed_phi00",
-   "completeness": {
-    "count_below": 2446,
-    "route": "inertia",
-    "shift": 0.007515564756853441
-   },
+   "completeness": null,
    "elements": 243,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 62.91622759830838,
-   "kappa_estimate": 54.772449196593165,
+   "kappa_eq": 54.772449224202816,
+   "kappa_estimate": 54.77244919659327,
    "literal_zeros": 2208,
    "mesh": 0,
-   "method": "eigen_normal_rows",
+   "method": "dense_svd",
    "n_rows": 5586,
    "n_unknowns": 5088,
    "nnz": 34130,
-   "perturbation_bound": 1.3163851282154331e-11,
+   "perturbation_bound": 4.523754542304016e-11,
    "problem_sha256": "38cc220caeae021575cd17162a19cf9bc1ee86cd8c2bf127c7c1be9745641309",
    "proofs": [
     {
@@ -1901,13 +1549,13 @@
    ],
    "rank": 3140,
    "refusal": null,
-   "residual": 1.3163851282154331e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 7.516e-03; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 2446,
    "rows_with_entries": 3140,
-   "seconds": 0.1,
-   "sigma_max_upper": 5.454356057323312,
-   "sigma_min_lower": 0.08669235689315172,
+   "seconds": 16.7,
+   "sigma_max_upper": 5.005203240767514,
+   "sigma_min_lower": 0.09138176787164409,
    "unknowns": 7296
   },
   {
@@ -1915,12 +1563,12 @@
    "completeness": {
     "count_below": 950,
     "route": "inertia",
-    "shift": 0.0004708844782447362
+    "shift": 0.0004708844782447366
    },
    "elements": 463,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 326.9300904003642,
-   "kappa_estimate": 206.6370082776335,
+   "kappa_eq": 326.93009040036407,
+   "kappa_estimate": 206.63700827763336,
    "literal_zeros": 840,
    "mesh": 1,
    "method": "eigen_normal_rows",
@@ -1942,9 +1590,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 4.709e-04; sigma_max from a norm bound",
    "rows_skipped": 950,
    "rows_with_entries": 8122,
-   "seconds": 0.2,
+   "seconds": 0.6,
    "sigma_max_upper": 7.094341059605194,
-   "sigma_min_lower": 0.021699871831673073,
+   "sigma_min_lower": 0.02169987183167308,
    "unknowns": 11113
   },
   {
@@ -1952,19 +1600,19 @@
    "completeness": {
     "count_below": 4143,
     "route": "inertia",
-    "shift": 0.0046168438740055735
+    "shift": 0.0046160164608127375
    },
    "elements": 463,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 130.0819560275428,
-   "kappa_estimate": 119.30950030666277,
+   "kappa_eq": 130.0936140092581,
+   "kappa_estimate": 119.30950030666037,
    "literal_zeros": 3700,
    "mesh": 1,
    "method": "eigen_normal_rows",
    "n_rows": 10318,
    "n_unknowns": 10196,
    "nnz": 68474,
-   "perturbation_bound": 6.835783576310293e-11,
+   "perturbation_bound": 6.963072465381342e-11,
    "problem_sha256": "3b64524f8fca2655d0766aa7f790ec14f17ed378942b6c8ea1a1fc76c1acaddc",
    "proofs": [
     {
@@ -1980,13 +1628,13 @@
    ],
    "rank": 6175,
    "refusal": null,
-   "residual": 6.835783576310293e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 4.617e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 1 row blocks",
+   "residual": 6.963072465381342e-11,
+   "route": "inertia of the factorised A_hat A_hat^T at shift 4.616e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 1 row blocks",
    "rows_skipped": 4143,
    "rows_with_entries": 6217,
-   "seconds": 0.2,
+   "seconds": 0.4,
    "sigma_max_upper": 8.838725567191473,
-   "sigma_min_lower": 0.06794736054952935,
+   "sigma_min_lower": 0.06794127163353665,
    "unknowns": 13896
   },
   {
@@ -1994,12 +1642,12 @@
    "completeness": {
     "count_below": 1242,
     "route": "inertia",
-    "shift": 3.56529627352294e-05
+    "shift": 3.565296273522939e-05
    },
    "elements": 949,
    "formulation": "lower.p1d-vertex.v0",
    "kappa_eq": 1302.6946906307871,
-   "kappa_estimate": 748.4539948607592,
+   "kappa_estimate": 748.4539948607593,
    "literal_zeros": 1120,
    "mesh": 2,
    "method": "eigen_normal_rows",
@@ -2021,7 +1669,7 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 3.565e-05; sigma_max from a norm bound",
    "rows_skipped": 1242,
    "rows_with_entries": 17460,
-   "seconds": 0.7,
+   "seconds": 1.3,
    "sigma_max_upper": 7.77839543482784,
    "sigma_min_lower": 0.005971004173711192,
    "unknowns": 22777
@@ -2031,19 +1679,19 @@
    "completeness": {
     "count_below": 7178,
     "route": "inertia",
-    "shift": 0.003262128226792056
+    "shift": 0.0032621046187046175
    },
    "elements": 949,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 154.7328269179239,
-   "kappa_estimate": 141.93955525745525,
+   "kappa_eq": 154.7333868186951,
+   "kappa_estimate": 141.9395552574527,
    "literal_zeros": 6424,
    "mesh": 2,
    "method": "eigen_normal_rows",
    "n_rows": 20242,
    "n_unknowns": 22052,
    "nnz": 153730,
-   "perturbation_bound": 1.4820193655524974e-10,
+   "perturbation_bound": 1.4800882545251797e-10,
    "problem_sha256": "e5903bd742b257361a3f1073a056ce1a5a808c388e38113e0f330b29154a80be",
    "proofs": [
     {
@@ -2059,13 +1707,13 @@
    ],
    "rank": 13064,
    "refusal": null,
-   "residual": 1.4820193655524974e-10,
+   "residual": 1.4800882545251797e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 3.262e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 1 row blocks",
    "rows_skipped": 7178,
    "rows_with_entries": 13094,
-   "seconds": 0.5,
+   "seconds": 1.2,
    "sigma_max_upper": 8.837571983954915,
-   "sigma_min_lower": 0.05711504248961143,
+   "sigma_min_lower": 0.057114835819564364,
    "unknowns": 28476
   },
   {
@@ -2073,12 +1721,12 @@
    "completeness": {
     "count_below": 5870,
     "route": "inertia",
-    "shift": 1.0676019813150133e-05
+    "shift": 1.067601981315008e-05
    },
    "elements": 2840,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 8300.278539485818,
-   "kappa_estimate": 3546.8795009465607,
+   "kappa_eq": 8300.278539485837,
+   "kappa_estimate": 3546.8795009465653,
    "literal_zeros": 5080,
    "mesh": 3,
    "method": "eigen_normal_rows",
@@ -2100,9 +1748,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.068e-05; sigma_max from a norm bound",
    "rows_skipped": 5870,
    "rows_with_entries": 54199,
-   "seconds": 42.8,
+   "seconds": 45.2,
    "sigma_max_upper": 27.110627661658526,
-   "sigma_min_lower": 0.003266231070763315,
+   "sigma_min_lower": 0.003266231070763307,
    "unknowns": 68161
   },
   {
@@ -2152,12 +1800,12 @@
    "completeness": {
     "count_below": 2394,
     "route": "inertia",
-    "shift": 6.864268176240225e-08
+    "shift": 6.864268176473988e-08
    },
    "elements": 1944,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 50481.13789291256,
-   "kappa_estimate": 25758.650270167243,
+   "kappa_eq": 50481.1378920474,
+   "kappa_estimate": 25758.650269772486,
    "literal_zeros": 1724,
    "mesh": 4,
    "method": "eigen_normal_rows",
@@ -2184,9 +1832,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 6.864e-08; sigma_max from a norm bound; null-space basis from left singular vectors of 502 row blocks",
    "rows_skipped": 2394,
    "rows_with_entries": 37246,
-   "seconds": 3.4,
+   "seconds": 6.7,
    "sigma_max_upper": 13.183147513643892,
-   "sigma_min_lower": 0.0002611499673721653,
+   "sigma_min_lower": 0.00026114996737664094,
    "unknowns": 46657
   },
   {
@@ -2194,19 +1842,19 @@
    "completeness": {
     "count_below": 10352,
     "route": "inertia",
-    "shift": 0.0017233519271763291
+    "shift": 0.0017233546291809355
    },
    "elements": 1944,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 243.4566630909896,
-   "kappa_estimate": 225.08294944110474,
+   "kappa_eq": 243.45631787463574,
+   "kappa_estimate": 225.08294944109824,
    "literal_zeros": 9462,
    "mesh": 4,
    "method": "eigen_normal_rows",
    "n_rows": 38328,
    "n_unknowns": 48864,
    "nnz": 334702,
-   "perturbation_bound": 7.457371122272158e-08,
+   "perturbation_bound": 7.238856439556406e-08,
    "problem_sha256": "ab433ca8d5ae55e7e5c790e8469931d978278b2f9af553c227adee3a88d7fe39",
    "proofs": [
     {
@@ -2222,13 +1870,13 @@
    ],
    "rank": 27976,
    "refusal": null,
-   "residual": 7.457371122272158e-08,
+   "residual": 7.238856439556406e-08,
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.723e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 1 row blocks",
    "rows_skipped": 10352,
    "rows_with_entries": 27988,
-   "seconds": 2.3,
+   "seconds": 4.8,
    "sigma_max_upper": 10.106464515358686,
-   "sigma_min_lower": 0.041512375907253325,
+   "sigma_min_lower": 0.04151243477100012,
    "unknowns": 58326
   },
   {
@@ -2257,7 +1905,7 @@
    "route": null,
    "rows_skipped": null,
    "rows_with_entries": 455862,
-   "seconds": 1.1,
+   "seconds": 1.7,
    "sigma_max_upper": null,
    "sigma_min_lower": null,
    "unknowns": 545281
@@ -2288,29 +1936,25 @@
    "route": null,
    "rows_skipped": null,
    "rows_with_entries": 369393,
-   "seconds": 1.3,
+   "seconds": 2.1,
    "sigma_max_upper": null,
    "sigma_min_lower": null,
    "unknowns": 681606
   },
   {
    "case": "upper3d_fixed_phi10",
-   "completeness": {
-    "count_below": 830,
-    "route": "inertia",
-    "shift": 0.0005011091137342783
-   },
+   "completeness": null,
    "elements": 276,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 357.5062209112768,
-   "kappa_estimate": 201.49413396484812,
+   "kappa_eq": 201.4941343928126,
+   "kappa_estimate": 201.49413396483115,
    "literal_zeros": 720,
    "mesh": 0,
-   "method": "eigen_normal_rows",
+   "method": "dense_svd",
    "n_rows": 5577,
    "n_unknowns": 5905,
    "nnz": 29857,
-   "perturbation_bound": 3.9871759027711114e-11,
+   "perturbation_bound": 4.987207264852156e-11,
    "problem_sha256": "0ff80bccaf0eb9d8636549e93a3353813e55eac348164a0d7411fa41ac789442",
    "proofs": [
     {
@@ -2321,13 +1965,13 @@
    ],
    "rank": 4747,
    "refusal": null,
-   "residual": 3.9871759027711114e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 5.011e-04; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 830,
    "rows_with_entries": 4747,
-   "seconds": 0.1,
-   "sigma_max_upper": 8.002943239810131,
-   "sigma_min_lower": 0.022385465683396433,
+   "seconds": 47.0,
+   "sigma_max_upper": 4.754526837392717,
+   "sigma_min_lower": 0.023596353569894854,
    "unknowns": 6625
   },
   {
@@ -2358,7 +2002,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1854,
    "rows_with_entries": 180,
-   "seconds": 0.0,
+   "seconds": 0.1,
    "sigma_max_upper": 7.811287554590166,
    "sigma_min_lower": 0.999999999997417,
    "unknowns": 8286
@@ -2368,12 +2012,12 @@
    "completeness": {
     "count_below": 1136,
     "route": "inertia",
-    "shift": 0.0005720217320042175
+    "shift": 0.0005720217320042173
    },
    "elements": 390,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 431.27872544597784,
-   "kappa_estimate": 257.46774347633607,
+   "kappa_eq": 431.2787254459779,
+   "kappa_estimate": 257.467743476336,
    "literal_zeros": 1000,
    "mesh": 1,
    "method": "eigen_normal_rows",
@@ -2395,9 +2039,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 5.720e-04; sigma_max from a norm bound",
    "rows_skipped": 1136,
    "rows_with_entries": 6871,
-   "seconds": 0.2,
+   "seconds": 1.0,
    "sigma_max_upper": 10.314881842274064,
-   "sigma_min_lower": 0.023916973487638705,
+   "sigma_min_lower": 0.0239169734876387,
    "unknowns": 9361
   },
   {
@@ -2438,12 +2082,12 @@
    "completeness": {
     "count_below": 2272,
     "route": "inertia",
-    "shift": 0.00018320407722030395
+    "shift": 0.00018320407722030376
    },
    "elements": 976,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 1084.6991740307246,
-   "kappa_estimate": 628.5630618145777,
+   "kappa_eq": 1084.699174030725,
+   "kappa_estimate": 628.563061814578,
    "literal_zeros": 1980,
    "mesh": 2,
    "method": "eigen_normal_rows",
@@ -2465,9 +2109,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.832e-04; sigma_max from a norm bound",
    "rows_skipped": 2272,
    "rows_with_entries": 17798,
-   "seconds": 1.0,
+   "seconds": 3.2,
    "sigma_max_upper": 14.681700565983354,
-   "sigma_min_lower": 0.013535274034944077,
+   "sigma_min_lower": 0.01353527403494407,
    "unknowns": 23425
   },
   {
@@ -2498,7 +2142,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 4257,
    "rows_with_entries": 720,
-   "seconds": 0.1,
+   "seconds": 0.2,
    "sigma_max_upper": 15.52417588555037,
    "sigma_min_lower": 0.9999999999799756,
    "unknowns": 29286
@@ -2508,12 +2152,12 @@
    "completeness": {
     "count_below": 5622,
     "route": "inertia",
-    "shift": 2.9821645954895108e-05
+    "shift": 2.982164595489521e-05
    },
    "elements": 2608,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 5478.56284821648,
-   "kappa_estimate": 2678.1201946074275,
+   "kappa_eq": 5478.562848216471,
+   "kappa_estimate": 2678.120194607423,
    "literal_zeros": 4860,
    "mesh": 3,
    "method": "eigen_normal_rows",
@@ -2535,29 +2179,25 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 2.982e-05; sigma_max from a norm bound",
    "rows_skipped": 5622,
    "rows_with_entries": 49692,
-   "seconds": 11.4,
+   "seconds": 25.3,
    "sigma_max_upper": 29.91409417130339,
-   "sigma_min_lower": 0.0054602082699556475,
+   "sigma_min_lower": 0.005460208269955656,
    "unknowns": 62593
   },
   {
    "case": "upper3d_fixed_phi10",
-   "completeness": {
-    "count_below": 71901,
-    "route": "inertia",
-    "shift": 0.8999999993124487
-   },
+   "completeness": null,
    "elements": 2608,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 52.418144765530826,
-   "kappa_estimate": 35.17101613939976,
+   "kappa_eq": 35.17101614779313,
+   "kappa_estimate": 35.17101613940013,
    "literal_zeros": 2637,
    "mesh": 3,
-   "method": "eigen_normal_columns",
+   "method": "dense_svd",
    "n_rows": 6345,
    "n_unknowns": 75609,
    "nnz": 12360,
-   "perturbation_bound": 1.5884888004538575e-08,
+   "perturbation_bound": 2.320368856021039e-10,
    "problem_sha256": "56cbf4e2346d1ea65bfabffc4843d94eeb79e64c19dc3788377ec50f2be09ae4",
    "proofs": [
     {
@@ -2568,13 +2208,13 @@
    ],
    "rank": 3708,
    "refusal": null,
-   "residual": 1.5884888004538575e-08,
-   "route": "inertia of the factorised A_hat^T A_hat at shift 9.000e-01; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 2637,
    "rows_with_entries": 3708,
-   "seconds": 0.1,
-   "sigma_max_upper": 49.72821799600979,
-   "sigma_min_lower": 0.9486832893160713,
+   "seconds": 16.1,
+   "sigma_max_upper": 35.17101613963179,
+   "sigma_min_lower": 0.9999999997679525,
    "unknowns": 78246
   },
   {
@@ -2582,19 +2222,19 @@
    "completeness": {
     "count_below": 3866,
     "route": "inertia",
-    "shift": 1.097204955330729e-06
+    "shift": 1.097204958137796e-06
    },
    "elements": 2208,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 12359.105145656573,
-   "kappa_estimate": 6480.874635049689,
+   "kappa_eq": 12359.07881417941,
+   "kappa_estimate": 6480.874634001855,
    "literal_zeros": 2924,
    "mesh": 4,
    "method": "eigen_normal_rows",
    "n_rows": 45474,
    "n_unknowns": 50069,
    "nnz": 265911,
-   "perturbation_bound": 5.769158347100666e-10,
+   "perturbation_bound": 5.722458231351269e-10,
    "problem_sha256": "0178e09b28ab9ec9f9b6519cfee580329f52779eda192bfdef3a7301d982a43d",
    "proofs": [
     {
@@ -2610,13 +2250,13 @@
    ],
    "rank": 41608,
    "refusal": null,
-   "residual": 5.769158347100666e-10,
+   "residual": 5.722458231351269e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.097e-06; sigma_max from a norm bound; null-space basis from left singular vectors of 578 row blocks",
    "rows_skipped": 3866,
    "rows_with_entries": 42186,
-   "seconds": 7.1,
+   "seconds": 12.8,
    "sigma_max_upper": 12.942456085762352,
-   "sigma_min_lower": 0.0010472000952521055,
+   "sigma_min_lower": 0.0010472023263508638,
    "unknowns": 52993
   },
   {
@@ -2647,7 +2287,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 7740,
    "rows_with_entries": 720,
-   "seconds": 0.1,
+   "seconds": 0.2,
    "sigma_max_upper": 15.526261265857977,
    "sigma_min_lower": 0.9999999999799714,
    "unknowns": 66246
@@ -2678,7 +2318,7 @@
    "route": null,
    "rows_skipped": null,
    "rows_with_entries": 418346,
-   "seconds": 0.8,
+   "seconds": 1.6,
    "sigma_max_upper": null,
    "sigma_min_lower": null,
    "unknowns": 500737
@@ -2688,19 +2328,19 @@
    "completeness": {
     "count_below": 600060,
     "route": "inertia",
-    "shift": 0.8999996707928415
+    "shift": 0.8999995254174585
    },
    "elements": 20864,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 104.83632251497217,
-   "kappa_estimate": 70.32070466829612,
+   "kappa_eq": 104.83633098205414,
+   "kappa_estimate": 70.32070466829609,
    "literal_zeros": 11034,
    "mesh": 5,
    "method": "eigen_normal_columns",
    "n_rows": 25866,
    "n_unknowns": 614892,
    "nnz": 49440,
-   "perturbation_bound": 2.536864474878734e-07,
+   "perturbation_bound": 2.536875474823949e-07,
    "problem_sha256": "1d841b5fcf354205bc82b0338a086c613525f7bab664e56bc9c5a1c04b91cb5d",
    "proofs": [
     {
@@ -2711,33 +2351,29 @@
    ],
    "rank": 14832,
    "refusal": null,
-   "residual": 2.536864474878734e-07,
+   "residual": 2.536875474823949e-07,
    "route": "inertia of the factorised A_hat^T A_hat at shift 9.000e-01; sigma_max from a norm bound",
    "rows_skipped": 11034,
    "rows_with_entries": 14832,
-   "seconds": 0.6,
+   "seconds": 1.1,
    "sigma_max_upper": 99.45643599201958,
-   "sigma_min_lower": 0.9486829908385592,
+   "sigma_min_lower": 0.9486829142183973,
    "unknowns": 625926
   },
   {
    "case": "upper3d_fixed_phi20",
-   "completeness": {
-    "count_below": 1002,
-    "route": "inertia",
-    "shift": 0.0023098028174807325
-   },
+   "completeness": null,
    "elements": 291,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 159.48988632000874,
-   "kappa_estimate": 94.36016314809255,
+   "kappa_eq": 94.360163245672,
+   "kappa_estimate": 94.36016314808958,
    "literal_zeros": 880,
    "mesh": 0,
-   "method": "eigen_normal_rows",
+   "method": "dense_svd",
    "n_rows": 5973,
    "n_unknowns": 6105,
    "nnz": 30573,
-   "perturbation_bound": 3.0574740557513284e-11,
+   "perturbation_bound": 5.1840688704690656e-11,
    "problem_sha256": "535e4c0696873a144e03e5ff8a6a4e90a2f493470b455952bacb429a3e58140c",
    "proofs": [
     {
@@ -2748,13 +2384,13 @@
    ],
    "rank": 4971,
    "refusal": null,
-   "residual": 3.0574740557513284e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 2.310e-03; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1002,
    "rows_with_entries": 4971,
-   "seconds": 0.1,
-   "sigma_max_upper": 7.665148958269472,
-   "sigma_min_lower": 0.048060407685599084,
+   "seconds": 73.8,
+   "sigma_max_upper": 4.780297017518563,
+   "sigma_min_lower": 0.050660118137701715,
    "unknowns": 6985
   },
   {
@@ -2785,7 +2421,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1764,
    "rows_with_entries": 216,
-   "seconds": 0.0,
+   "seconds": 0.1,
    "sigma_max_upper": 8.544477161680424,
    "sigma_min_lower": 0.9999999999966275,
    "unknowns": 8736
@@ -2795,12 +2431,12 @@
    "completeness": {
     "count_below": 1430,
     "route": "inertia",
-    "shift": 0.00018141462324167712
+    "shift": 0.0001814146232416771
    },
    "elements": 429,
    "formulation": "lower.p1d-vertex.v0",
    "kappa_eq": 796.1176987408229,
-   "kappa_estimate": 458.0395437457775,
+   "kappa_estimate": 458.0395437457776,
    "literal_zeros": 1240,
    "mesh": 1,
    "method": "eigen_normal_rows",
@@ -2822,9 +2458,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.814e-04; sigma_max from a norm bound",
    "rows_skipped": 1430,
    "rows_with_entries": 7486,
-   "seconds": 0.2,
+   "seconds": 0.5,
    "sigma_max_upper": 10.722926058316498,
-   "sigma_min_lower": 0.01346902106971919,
+   "sigma_min_lower": 0.013469021069719188,
    "unknowns": 10297
   },
   {
@@ -2855,7 +2491,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1953,
    "rows_with_entries": 468,
-   "seconds": 0.1,
+   "seconds": 0.9,
    "sigma_max_upper": 12.529964086152226,
    "sigma_min_lower": 0.999999999989445,
    "unknowns": 12876
@@ -2865,12 +2501,12 @@
    "completeness": {
     "count_below": 2568,
     "route": "inertia",
-    "shift": 6.486095701172932e-05
+    "shift": 6.486095701172961e-05
    },
    "elements": 951,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 1882.3432350304017,
-   "kappa_estimate": 1057.1928703980602,
+   "kappa_eq": 1882.3432350303976,
+   "kappa_estimate": 1057.192870398058,
    "literal_zeros": 2240,
    "mesh": 2,
    "method": "eigen_normal_rows",
@@ -2892,9 +2528,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 6.486e-05; sigma_max from a norm bound",
    "rows_skipped": 2568,
    "rows_with_entries": 17355,
-   "seconds": 0.8,
+   "seconds": 1.9,
    "sigma_max_upper": 15.15963962705227,
-   "sigma_min_lower": 0.00805360007937523,
+   "sigma_min_lower": 0.008053600079375247,
    "unknowns": 22825
   },
   {
@@ -2925,7 +2561,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 3294,
    "rows_with_entries": 720,
-   "seconds": 0.1,
+   "seconds": 3.1,
    "sigma_max_upper": 15.524175300811828,
    "sigma_min_lower": 0.9999999999799746,
    "unknowns": 28536
@@ -2935,12 +2571,12 @@
    "completeness": {
     "count_below": 5834,
     "route": "inertia",
-    "shift": 3.0052300246190604e-05
+    "shift": 3.0052300246190614e-05
    },
    "elements": 2567,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 5244.533534643048,
-   "kappa_estimate": 2554.8594595359705,
+   "kappa_eq": 5244.5335346430475,
+   "kappa_estimate": 2554.85945953597,
    "literal_zeros": 5060,
    "mesh": 3,
    "method": "eigen_normal_rows",
@@ -2962,29 +2598,25 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 3.005e-05; sigma_max from a norm bound",
    "rows_skipped": 5834,
    "rows_with_entries": 48736,
-   "seconds": 14.8,
+   "seconds": 36.8,
    "sigma_max_upper": 28.747131599552,
-   "sigma_min_lower": 0.005481351469994667,
+   "sigma_min_lower": 0.005481351469994668,
    "unknowns": 61609
   },
   {
    "case": "upper3d_fixed_phi20",
-   "completeness": {
-    "count_below": 70788,
-    "route": "inertia",
-    "shift": 0.8999999999998894
-   },
+   "completeness": null,
    "elements": 2567,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 51.89810236596174,
-   "kappa_estimate": 34.828149572329146,
+   "kappa_eq": 34.82814958040256,
+   "kappa_estimate": 34.82814957232974,
    "literal_zeros": 2592,
    "mesh": 3,
-   "method": "eigen_normal_columns",
+   "method": "dense_svd",
    "n_rows": 6228,
    "n_unknowns": 74424,
    "nnz": 12120,
-   "perturbation_bound": 1.5024084833117142e-08,
+   "perturbation_bound": 2.253204214185137e-10,
    "problem_sha256": "f763b4be9da8ee33e2becff1e57eaa5cbc98d09db401c8c3b6ef215d34551e07",
    "proofs": [
     {
@@ -2995,13 +2627,13 @@
    ],
    "rank": 3636,
    "refusal": null,
-   "residual": 1.5024084833117142e-08,
-   "route": "inertia of the factorised A_hat^T A_hat at shift 9.000e-01; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 2592,
    "rows_with_entries": 3636,
-   "seconds": 0.1,
-   "sigma_max_upper": 49.23486250415142,
-   "sigma_min_lower": 0.9486832901320675,
+   "seconds": 12.3,
+   "sigma_max_upper": 34.828149572554445,
+   "sigma_min_lower": 0.9999999997746618,
    "unknowns": 77016
   },
   {
@@ -3009,19 +2641,19 @@
    "completeness": {
     "count_below": 4602,
     "route": "inertia",
-    "shift": 5.116085580973135e-05
+    "shift": 5.116085494157872e-05
    },
    "elements": 2328,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 2095.248193355574,
-   "kappa_estimate": 1177.3575032856652,
+   "kappa_eq": 2095.2481869193784,
+   "kappa_estimate": 1177.3575032840308,
    "literal_zeros": 3564,
    "mesh": 4,
    "method": "eigen_normal_rows",
    "n_rows": 48318,
    "n_unknowns": 52309,
    "nnz": 273911,
-   "perturbation_bound": 6.887330433952135e-10,
+   "perturbation_bound": 6.875505825473871e-10,
    "problem_sha256": "e05445b49409ee7066837313e5797a41939e85b15459ec2f8281c0a1a08a6f24",
    "proofs": [
     {
@@ -3037,13 +2669,13 @@
    ],
    "rank": 43716,
    "refusal": null,
-   "residual": 6.887330433952135e-10,
+   "residual": 6.875505825473871e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 5.116e-05; sigma_max from a norm bound; null-space basis from left singular vectors of 618 row blocks",
    "rows_skipped": 4602,
    "rows_with_entries": 44334,
-   "seconds": 10.4,
+   "seconds": 19.8,
    "sigma_max_upper": 14.986542578458515,
-   "sigma_min_lower": 0.00715263357629118,
+   "sigma_min_lower": 0.007152633598262683,
    "unknowns": 55873
   },
   {
@@ -3074,7 +2706,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 7416,
    "rows_with_entries": 864,
-   "seconds": 0.2,
+   "seconds": 0.4,
    "sigma_max_upper": 17.00095133996249,
    "sigma_min_lower": 0.9999999999737177,
    "unknowns": 69846
@@ -3105,7 +2737,7 @@
    "route": null,
    "rows_skipped": null,
    "rows_with_entries": 411054,
-   "seconds": 0.8,
+   "seconds": 1.5,
    "sigma_max_upper": null,
    "sigma_min_lower": null,
    "unknowns": 492865
@@ -3115,11 +2747,11 @@
    "completeness": {
     "count_below": 590670,
     "route": "inertia",
-    "shift": 0.8999996607381849
+    "shift": 0.8999999993565428
    },
    "elements": 20536,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 103.79623726499713,
+   "kappa_eq": 103.79621773876833,
    "kappa_estimate": 69.63476150982267,
    "literal_zeros": 10872,
    "mesh": 5,
@@ -3127,7 +2759,7 @@
    "n_rows": 25416,
    "n_unknowns": 605214,
    "nnz": 48480,
-   "perturbation_bound": 2.3994008036433215e-07,
+   "perturbation_bound": 2.399411622952077e-07,
    "problem_sha256": "085028c2e23ad2690d0d4ba409afbd2395bc96c8bc0fcce81c67addc5b6f9991",
    "proofs": [
     {
@@ -3138,13 +2770,13 @@
    ],
    "rank": 14544,
    "refusal": null,
-   "residual": 2.3994008036433215e-07,
+   "residual": 2.399411622952077e-07,
    "route": "inertia of the factorised A_hat^T A_hat at shift 9.000e-01; sigma_max from a norm bound",
    "rows_skipped": 10872,
    "rows_with_entries": 14544,
-   "seconds": 0.6,
+   "seconds": 1.1,
    "sigma_max_upper": 98.46972500830285,
-   "sigma_min_lower": 0.9486829927842623,
+   "sigma_min_lower": 0.9486831712512774,
    "unknowns": 616086
   },
   {
@@ -3152,12 +2784,12 @@
    "completeness": {
     "count_below": 1074,
     "route": "inertia",
-    "shift": 0.00039126457040915367
+    "shift": 0.0003912645704091539
    },
    "elements": 323,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 380.01339917703643,
-   "kappa_estimate": 227.63286020001274,
+   "kappa_eq": 380.0133991770363,
+   "kappa_estimate": 227.6328602000127,
    "literal_zeros": 940,
    "mesh": 0,
    "method": "eigen_normal_rows",
@@ -3179,9 +2811,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 3.913e-04; sigma_max from a norm bound",
    "rows_skipped": 1074,
    "rows_with_entries": 5571,
-   "seconds": 0.1,
+   "seconds": 0.2,
    "sigma_max_upper": 7.516820077391813,
-   "sigma_min_lower": 0.01978040799000869,
+   "sigma_min_lower": 0.019780407990008696,
    "unknowns": 7753
   },
   {
@@ -3212,7 +2844,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1836,
    "rows_with_entries": 216,
-   "seconds": 0.0,
+   "seconds": 0.1,
    "sigma_max_upper": 8.544235267578545,
    "sigma_min_lower": 0.9999999999966273,
    "unknowns": 9696
@@ -3222,12 +2854,12 @@
    "completeness": {
     "count_below": 1590,
     "route": "inertia",
-    "shift": 0.0003592507898264375
+    "shift": 0.0003592507898264382
    },
    "elements": 494,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 564.1915933762207,
-   "kappa_estimate": 325.18235452058104,
+   "kappa_eq": 564.1915933762201,
+   "kappa_estimate": 325.1823545205806,
    "literal_zeros": 1380,
    "mesh": 1,
    "method": "eigen_normal_rows",
@@ -3249,9 +2881,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 3.593e-04; sigma_max from a norm bound",
    "rows_skipped": 1590,
    "rows_with_entries": 8763,
-   "seconds": 0.2,
+   "seconds": 0.4,
    "sigma_max_upper": 10.693636367415037,
-   "sigma_min_lower": 0.018953909439561933,
+   "sigma_min_lower": 0.01895390943956195,
    "unknowns": 11857
   },
   {
@@ -3282,7 +2914,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1908,
    "rows_with_entries": 468,
-   "seconds": 0.0,
+   "seconds": 0.1,
    "sigma_max_upper": 12.529964086152221,
    "sigma_min_lower": 0.9999999999894464,
    "unknowns": 14826
@@ -3292,12 +2924,12 @@
    "completeness": {
     "count_below": 2920,
     "route": "inertia",
-    "shift": 1.069842376934768e-05
+    "shift": 1.0698423769347738e-05
    },
    "elements": 1053,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 4783.963848318266,
-   "kappa_estimate": 2607.5822701552147,
+   "kappa_eq": 4783.963848318253,
+   "kappa_estimate": 2607.582270155208,
    "literal_zeros": 2540,
    "mesh": 2,
    "method": "eigen_normal_rows",
@@ -3319,9 +2951,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.070e-05; sigma_max from a norm bound",
    "rows_skipped": 2920,
    "rows_with_entries": 19298,
-   "seconds": 1.2,
+   "seconds": 2.0,
    "sigma_max_upper": 15.647320377004965,
-   "sigma_min_lower": 0.0032707856650098966,
+   "sigma_min_lower": 0.0032707856650099052,
    "unknowns": 25273
   },
   {
@@ -3352,7 +2984,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 3222,
    "rows_with_entries": 720,
-   "seconds": 0.1,
+   "seconds": 0.2,
    "sigma_max_upper": 15.52417499192112,
    "sigma_min_lower": 0.9999999999799734,
    "unknowns": 31596
@@ -3362,12 +2994,12 @@
    "completeness": {
     "count_below": 6296,
     "route": "inertia",
-    "shift": 0.00014321690878175226
+    "shift": 0.00014321690878175218
    },
    "elements": 2850,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 2406.909249695006,
-   "kappa_estimate": 1166.9301483715678,
+   "kappa_eq": 2406.9092496950066,
+   "kappa_estimate": 1166.9301483715676,
    "literal_zeros": 5460,
    "mesh": 3,
    "method": "eigen_normal_rows",
@@ -3389,29 +3021,25 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.432e-04; sigma_max from a norm bound",
    "rows_skipped": 6296,
    "rows_with_entries": 54415,
-   "seconds": 18.3,
+   "seconds": 36.1,
    "sigma_max_upper": 28.80353660118492,
-   "sigma_min_lower": 0.01196702227341342,
+   "sigma_min_lower": 0.011967022273413418,
    "unknowns": 68401
   },
   {
    "case": "upper3d_fixed_phi30",
-   "completeness": {
-    "count_below": 79323,
-    "route": "inertia",
-    "shift": 0.8999995686962703
-   },
+   "completeness": null,
    "elements": 2850,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 51.89777438171189,
-   "kappa_estimate": 34.82814954554264,
+   "kappa_eq": 34.828149553616115,
+   "kappa_estimate": 34.8281495455433,
    "literal_zeros": 2547,
    "mesh": 3,
-   "method": "eigen_normal_columns",
+   "method": "dense_svd",
    "n_rows": 6183,
    "n_unknowns": 82959,
    "nnz": 12120,
-   "perturbation_bound": 1.4832208120370046e-08,
+   "perturbation_bound": 2.2532042124521868e-10,
    "problem_sha256": "36c8a0e19a72f086c3c68c8ab162b2c3cabf4b6cb40d06cb1b7da44d29b594c6",
    "proofs": [
     {
@@ -3422,13 +3050,13 @@
    ],
    "rank": 3636,
    "refusal": null,
-   "residual": 1.4832208120370046e-08,
-   "route": "inertia of the factorised A_hat^T A_hat at shift 9.000e-01; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 2547,
    "rows_with_entries": 3636,
-   "seconds": 0.1,
-   "sigma_max_upper": 49.23453955897632,
-   "sigma_min_lower": 0.9486830629161997,
+   "seconds": 12.1,
+   "sigma_max_upper": 34.82814954576795,
+   "sigma_min_lower": 0.9999999997746604,
    "unknowns": 85506
   },
   {
@@ -3436,19 +3064,19 @@
    "completeness": {
     "count_below": 4940,
     "route": "inertia",
-    "shift": 1.684502797373286e-05
+    "shift": 1.6845027962907508e-05
    },
    "elements": 2584,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 3575.6430133178815,
-   "kappa_estimate": 2048.111517025621,
+   "kappa_eq": 3575.642900746543,
+   "kappa_estimate": 2048.111517010425,
    "literal_zeros": 3804,
    "mesh": 4,
    "method": "eigen_normal_rows",
    "n_rows": 53694,
    "n_unknowns": 58213,
    "nnz": 308684,
-   "perturbation_bound": 6.76031120712537e-10,
+   "perturbation_bound": 6.749596797809338e-10,
    "problem_sha256": "9022276689d9068b40f49cda535246656df9e694f572fd71964ce1e769a3aa7d",
    "proofs": [
     {
@@ -3464,13 +3092,13 @@
    ],
    "rank": 48754,
    "refusal": null,
-   "residual": 6.76031120712537e-10,
+   "residual": 6.749596797809338e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.685e-05; sigma_max from a norm bound; null-space basis from left singular vectors of 680 row blocks",
    "rows_skipped": 4940,
    "rows_with_entries": 49434,
-   "seconds": 18.3,
+   "seconds": 29.6,
    "sigma_max_upper": 14.675108012581104,
-   "sigma_min_lower": 0.004104187123245253,
+   "sigma_min_lower": 0.004104187252456657,
    "unknowns": 62017
   },
   {
@@ -3501,7 +3129,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 7776,
    "rows_with_entries": 864,
-   "seconds": 0.2,
+   "seconds": 0.3,
    "sigma_max_upper": 17.000465347317135,
    "sigma_min_lower": 0.9999999999737175,
    "unknowns": 77526
@@ -3532,7 +3160,7 @@
    "route": null,
    "rows_skipped": null,
    "rows_with_entries": 457574,
-   "seconds": 1.0,
+   "seconds": 1.7,
    "sigma_max_upper": null,
    "sigma_min_lower": null,
    "unknowns": 547201
@@ -3542,19 +3170,19 @@
    "completeness": {
     "count_below": 658824,
     "route": "inertia",
-    "shift": 0.8999999999527503
+    "shift": 0.8999999024264614
    },
    "elements": 22800,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 103.79553669990807,
-   "kappa_estimate": 69.63476145623459,
+   "kappa_eq": 103.79554232365817,
+   "kappa_estimate": 69.63476145623457,
    "literal_zeros": 10638,
    "mesh": 5,
    "method": "eigen_normal_columns",
    "n_rows": 25182,
    "n_unknowns": 673368,
    "nnz": 48480,
-   "perturbation_bound": 2.3688586967662828e-07,
+   "perturbation_bound": 2.3688541901490286e-07,
    "problem_sha256": "943e35bb42bc9f3074611b47d98b15af483f1608ab187101c93fc44ea52f48fd",
    "proofs": [
     {
@@ -3565,33 +3193,29 @@
    ],
    "rank": 14544,
    "refusal": null,
-   "residual": 2.3688586967662828e-07,
+   "residual": 2.3688541901490286e-07,
    "route": "inertia of the factorised A_hat^T A_hat at shift 9.000e-01; sigma_max from a norm bound",
    "rows_skipped": 10638,
    "rows_with_entries": 14544,
-   "seconds": 0.5,
+   "seconds": 1.1,
    "sigma_max_upper": 98.46907911795265,
-   "sigma_min_lower": 0.9486831731757871,
+   "sigma_min_lower": 0.9486831217751491,
    "unknowns": 684006
   },
   {
    "case": "upper3d_roller_phi00",
-   "completeness": {
-    "count_below": 1254,
-    "route": "inertia",
-    "shift": 0.00033992032878114387
-   },
+   "completeness": null,
    "elements": 243,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 377.6089816080205,
-   "kappa_estimate": 211.51206932579177,
+   "kappa_eq": 211.5120697011633,
+   "kappa_estimate": 211.51206932581087,
    "literal_zeros": 1132,
    "mesh": 0,
-   "method": "eigen_normal_rows",
+   "method": "dense_svd",
    "n_rows": 5478,
    "n_unknowns": 4701,
    "nnz": 23505,
-   "perturbation_bound": 2.3046627631074115e-11,
+   "perturbation_bound": 3.432597897857673e-11,
    "problem_sha256": "8ac8fd8ca0d2dd3eb09e28bb37b4a9358693536a72fd8d447dc410511cb5a809",
    "proofs": [
     {
@@ -3602,33 +3226,29 @@
    ],
    "rank": 4224,
    "refusal": null,
-   "residual": 2.3046627631074115e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 3.399e-04; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1254,
    "rows_with_entries": 4224,
-   "seconds": 0.1,
-   "sigma_max_upper": 6.961949520626797,
-   "sigma_min_lower": 0.018436927773751142,
+   "seconds": 28.8,
+   "sigma_max_upper": 4.110573977301016,
+   "sigma_min_lower": 0.019434228898183806,
    "unknowns": 5833
   },
   {
    "case": "upper3d_roller_phi00",
-   "completeness": {
-    "count_below": 792,
-    "route": "inertia",
-    "shift": 0.007818671421846871
-   },
+   "completeness": null,
    "elements": 243,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 61.68463571426281,
-   "kappa_estimate": 53.70027263653186,
+   "kappa_eq": 53.700272670469474,
+   "kappa_estimate": 53.70027263653222,
    "literal_zeros": 792,
    "mesh": 0,
-   "method": "eigen_normal_rows",
+   "method": "dense_svd",
    "n_rows": 4218,
    "n_unknowns": 6504,
    "nnz": 42138,
-   "perturbation_bound": 1.6372501473594634e-11,
+   "perturbation_bound": 5.7827239668131596e-11,
    "problem_sha256": "8ac8fd8ca0d2dd3eb09e28bb37b4a9358693536a72fd8d447dc410511cb5a809",
    "proofs": [
     {
@@ -3639,13 +3259,13 @@
    ],
    "rank": 3426,
    "refusal": null,
-   "residual": 1.6372501473594634e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 7.819e-03; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 792,
    "rows_with_entries": 3426,
-   "seconds": 0.1,
-   "sigma_max_upper": 5.454356057323312,
-   "sigma_min_lower": 0.08842325149797631,
+   "seconds": 20.9,
+   "sigma_max_upper": 5.00520324078011,
+   "sigma_min_lower": 0.09320629099026048,
    "unknowns": 7296
   },
   {
@@ -3653,12 +3273,12 @@
    "completeness": {
     "count_below": 2258,
     "route": "inertia",
-    "shift": 0.0002358246712465729
+    "shift": 0.00023582467124657285
    },
    "elements": 463,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 461.97395242937756,
-   "kappa_estimate": 291.9918126209323,
+   "kappa_eq": 461.9739524293776,
+   "kappa_estimate": 291.99181262093236,
    "literal_zeros": 2044,
    "mesh": 1,
    "method": "eigen_normal_rows",
@@ -3680,9 +3300,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 2.358e-04; sigma_max from a norm bound",
    "rows_skipped": 2258,
    "rows_with_entries": 8122,
-   "seconds": 0.2,
+   "seconds": 0.4,
    "sigma_max_upper": 7.094341059605194,
-   "sigma_min_lower": 0.015356582383699897,
+   "sigma_min_lower": 0.015356582383699895,
    "unknowns": 11113
   },
   {
@@ -3690,19 +3310,19 @@
    "completeness": {
     "count_below": 1350,
     "route": "inertia",
-    "shift": 0.004665181967676906
+    "shift": 0.004665401332471888
    },
    "elements": 463,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 129.40628190729507,
-   "kappa_estimate": 118.69259313829345,
+   "kappa_eq": 129.40323956070782,
+   "kappa_estimate": 118.69259313829347,
    "literal_zeros": 1308,
    "mesh": 1,
    "method": "eigen_normal_rows",
    "n_rows": 7990,
    "n_unknowns": 12588,
    "nnz": 82350,
-   "perturbation_bound": 7.878555788865451e-11,
+   "perturbation_bound": 7.863896748600364e-11,
    "problem_sha256": "7928f58937f8a08507098db196a4066dc9b0cf9508ec3821cf9dea8b520ffde4",
    "proofs": [
     {
@@ -3718,13 +3338,13 @@
    ],
    "rank": 6640,
    "refusal": null,
-   "residual": 7.878555788865451e-11,
+   "residual": 7.863896748600364e-11,
    "route": "inertia of the factorised A_hat A_hat^T at shift 4.665e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 1 row blocks",
    "rows_skipped": 1350,
    "rows_with_entries": 6682,
-   "seconds": 0.4,
+   "seconds": 0.6,
    "sigma_max_upper": 8.838725567191473,
-   "sigma_min_lower": 0.06830213678129951,
+   "sigma_min_lower": 0.06830374260487429,
    "unknowns": 13896
   },
   {
@@ -3732,12 +3352,12 @@
    "completeness": {
     "count_below": 3486,
     "route": "inertia",
-    "shift": 1.2132808082989842e-05
+    "shift": 1.2132808082989827e-05
    },
    "elements": 949,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 2233.1141868210184,
-   "kappa_estimate": 1283.0165526631558,
+   "kappa_eq": 2233.1141868210198,
+   "kappa_estimate": 1283.0165526631565,
    "literal_zeros": 3220,
    "mesh": 2,
    "method": "eigen_normal_rows",
@@ -3759,9 +3379,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.213e-05; sigma_max from a norm bound",
    "rows_skipped": 3486,
    "rows_with_entries": 17460,
-   "seconds": 1.1,
+   "seconds": 1.9,
    "sigma_max_upper": 7.77839543482784,
-   "sigma_min_lower": 0.003483205418125477,
+   "sigma_min_lower": 0.003483205418125475,
    "unknowns": 22777
   },
   {
@@ -3769,19 +3389,19 @@
    "completeness": {
     "count_below": 2274,
     "route": "inertia",
-    "shift": 0.0033274313381729237
+    "shift": 0.0033274202718545304
    },
    "elements": 949,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 153.2069390833868,
-   "kappa_estimate": 140.53918701716543,
+   "kappa_eq": 153.2071938180369,
+   "kappa_estimate": 140.53918701716958,
    "literal_zeros": 2244,
    "mesh": 2,
    "method": "eigen_normal_rows",
    "n_rows": 16150,
    "n_unknowns": 26232,
    "nnz": 178734,
-   "perturbation_bound": 3.513834052359029e-10,
+   "perturbation_bound": 3.4996663159170706e-10,
    "problem_sha256": "02d45249ca54021018b752d6699955ecc09d84409ca7f285923662ab5cbe2cef",
    "proofs": [
     {
@@ -3797,13 +3417,13 @@
    ],
    "rank": 13876,
    "refusal": null,
-   "residual": 3.513834052359029e-10,
+   "residual": 3.4996663159170706e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 3.327e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 1 row blocks",
    "rows_skipped": 2274,
    "rows_with_entries": 13906,
-   "seconds": 1.1,
+   "seconds": 2.0,
    "sigma_max_upper": 8.837571983954915,
-   "sigma_min_lower": 0.057683888450671544,
+   "sigma_min_lower": 0.05768379254078132,
    "unknowns": 28476
   },
   {
@@ -3811,12 +3431,12 @@
    "completeness": {
     "count_below": 6830,
     "route": "inertia",
-    "shift": 1.0667436637921942e-05
+    "shift": 1.066743663792214e-05
    },
    "elements": 2840,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 8303.64810224598,
-   "kappa_estimate": 3548.3061495324664,
+   "kappa_eq": 8303.648102245903,
+   "kappa_estimate": 3548.3061495324378,
    "literal_zeros": 5952,
    "mesh": 3,
    "method": "eigen_normal_rows",
@@ -3838,9 +3458,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.067e-05; sigma_max from a norm bound",
    "rows_skipped": 6830,
    "rows_with_entries": 54199,
-   "seconds": 42.5,
+   "seconds": 51.7,
    "sigma_max_upper": 27.110627661658526,
-   "sigma_min_lower": 0.003264905656867325,
+   "sigma_min_lower": 0.0032649056568673555,
    "unknowns": 68161
   },
   {
@@ -3890,12 +3510,12 @@
    "completeness": {
     "count_below": 5690,
     "route": "inertia",
-    "shift": 6.46211561889345e-08
+    "shift": 6.462115618971042e-08
    },
    "elements": 1944,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 52048.52462427051,
-   "kappa_estimate": 26548.064308863413,
+   "kappa_eq": 52048.52462395575,
+   "kappa_estimate": 26548.06430872024,
    "literal_zeros": 4830,
    "mesh": 4,
    "method": "eigen_normal_rows",
@@ -3922,9 +3542,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 6.462e-08; sigma_max from a norm bound; null-space basis from left singular vectors of 502 row blocks",
    "rows_skipped": 5690,
    "rows_with_entries": 37118,
-   "seconds": 8.5,
+   "seconds": 18.5,
    "sigma_max_upper": 13.183147513643892,
-   "sigma_min_lower": 0.0002532857099948712,
+   "sigma_min_lower": 0.0002532857099964029,
    "unknowns": 46657
   },
   {
@@ -3932,19 +3552,19 @@
    "completeness": {
     "count_below": 3180,
     "route": "inertia",
-    "shift": 0.0017585861742714162
+    "shift": 0.0017585851889085034
    },
    "elements": 1944,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 241.00026692723114,
-   "kappa_estimate": 222.81763977175626,
+   "kappa_eq": 241.00032816327732,
+   "kappa_estimate": 222.81763977175788,
    "literal_zeros": 3168,
    "mesh": 4,
    "method": "eigen_normal_rows",
    "n_rows": 32424,
    "n_unknowns": 55158,
    "nnz": 372243,
-   "perturbation_bound": 7.721197500954871e-10,
+   "perturbation_bound": 6.804386346459859e-10,
    "problem_sha256": "ce3c78612d82f236aaa6dcdbc58afa6550d3fc0744e4517eed4c8ac14e054ea5",
    "proofs": [
     {
@@ -3960,13 +3580,13 @@
    ],
    "rank": 29244,
    "refusal": null,
-   "residual": 7.721197500954871e-10,
+   "residual": 6.804386346459859e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.759e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 1 row blocks",
    "rows_skipped": 3180,
    "rows_with_entries": 29256,
-   "seconds": 3.3,
+   "seconds": 7.8,
    "sigma_max_upper": 10.106464515358686,
-   "sigma_min_lower": 0.04193549096113775,
+   "sigma_min_lower": 0.041935480305701385,
    "unknowns": 58326
   },
   {
@@ -3995,7 +3615,7 @@
    "route": null,
    "rows_skipped": null,
    "rows_with_entries": 455726,
-   "seconds": 1.0,
+   "seconds": 2.3,
    "sigma_max_upper": null,
    "sigma_min_lower": null,
    "unknowns": 545281
@@ -4026,29 +3646,25 @@
    "route": null,
    "rows_skipped": null,
    "rows_with_entries": 370744,
-   "seconds": 1.1,
+   "seconds": 2.8,
    "sigma_max_upper": null,
    "sigma_min_lower": null,
    "unknowns": 681606
   },
   {
    "case": "upper3d_roller_phi10",
-   "completeness": {
-    "count_below": 1502,
-    "route": "inertia",
-    "shift": 0.0001805755415322059
-   },
+   "completeness": null,
    "elements": 276,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 595.5528737374797,
-   "kappa_estimate": 335.6596171602974,
+   "kappa_eq": 335.6596182245627,
+   "kappa_estimate": 335.65961716047326,
    "literal_zeros": 1324,
    "mesh": 0,
-   "method": "eigen_normal_rows",
+   "method": "dense_svd",
    "n_rows": 6249,
    "n_unknowns": 5301,
    "nnz": 26705,
-   "perturbation_bound": 4.229812725809258e-11,
+   "perturbation_bound": 4.477084794408351e-11,
    "problem_sha256": "cb808e3dd0db0a26069563f8119f43b8cb575a56163966326e4f539be1f4ef82",
    "proofs": [
     {
@@ -4059,13 +3675,13 @@
    ],
    "rank": 4747,
    "refusal": null,
-   "residual": 4.229812725809258e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 1.806e-04; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1502,
    "rows_with_entries": 4747,
-   "seconds": 0.1,
-   "sigma_max_upper": 8.002943239810131,
-   "sigma_min_lower": 0.013437838339334143,
+   "seconds": 106.8,
+   "sigma_max_upper": 4.754526837387622,
+   "sigma_min_lower": 0.014164726941346732,
    "unknowns": 6625
   },
   {
@@ -4096,7 +3712,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 672,
    "rows_with_entries": 180,
-   "seconds": 0.0,
+   "seconds": 0.4,
    "sigma_max_upper": 7.811287554590166,
    "sigma_min_lower": 0.999999999997417,
    "unknowns": 8286
@@ -4106,12 +3722,12 @@
    "completeness": {
     "count_below": 1832,
     "route": "inertia",
-    "shift": 0.00021893798545842303
+    "shift": 0.0002189379854584245
    },
    "elements": 390,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 697.1139862136248,
-   "kappa_estimate": 416.16785517454616,
+   "kappa_eq": 697.1139862136225,
+   "kappa_estimate": 416.1678551745448,
    "literal_zeros": 1628,
    "mesh": 1,
    "method": "eigen_normal_rows",
@@ -4133,9 +3749,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 2.189e-04; sigma_max from a norm bound",
    "rows_skipped": 1832,
    "rows_with_entries": 6871,
-   "seconds": 0.3,
+   "seconds": 3.5,
    "sigma_max_upper": 10.314881842274064,
-   "sigma_min_lower": 0.014796549841582369,
+   "sigma_min_lower": 0.014796549841582417,
    "unknowns": 9361
   },
   {
@@ -4166,7 +3782,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 696,
    "rows_with_entries": 468,
-   "seconds": 0.0,
+   "seconds": 0.9,
    "sigma_max_upper": 12.529964086152226,
    "sigma_min_lower": 0.9999999999894316,
    "unknowns": 11706
@@ -4176,12 +3792,12 @@
    "completeness": {
     "count_below": 3802,
     "route": "inertia",
-    "shift": 3.3147651171129136e-05
+    "shift": 3.3147651171129096e-05
    },
    "elements": 976,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 2550.074011131721,
-   "kappa_estimate": 1477.7128266454026,
+   "kappa_eq": 2550.0740111317223,
+   "kappa_estimate": 1477.7128266454038,
    "literal_zeros": 3394,
    "mesh": 2,
    "method": "eigen_normal_rows",
@@ -4203,9 +3819,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 3.315e-05; sigma_max from a norm bound",
    "rows_skipped": 3802,
    "rows_with_entries": 17792,
-   "seconds": 1.9,
+   "seconds": 15.2,
    "sigma_max_upper": 14.681700565983354,
-   "sigma_min_lower": 0.005757362532182988,
+   "sigma_min_lower": 0.0057573625321829846,
    "unknowns": 23425
   },
   {
@@ -4236,7 +3852,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1524,
    "rows_with_entries": 720,
-   "seconds": 0.1,
+   "seconds": 9.7,
    "sigma_max_upper": 15.52417588555037,
    "sigma_min_lower": 0.9999999999799756,
    "unknowns": 29286
@@ -4246,12 +3862,12 @@
    "completeness": {
     "count_below": 6589,
     "route": "inertia",
-    "shift": 2.9651167696194866e-05
+    "shift": 2.9651167696194694e-05
    },
    "elements": 2608,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 5494.300935992,
-   "kappa_estimate": 2685.80803520014,
+   "kappa_eq": 5494.300935992015,
+   "kappa_estimate": 2685.8080352001466,
    "literal_zeros": 5737,
    "mesh": 3,
    "method": "eigen_normal_rows",
@@ -4273,29 +3889,25 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 2.965e-05; sigma_max from a norm bound",
    "rows_skipped": 6589,
    "rows_with_entries": 49685,
-   "seconds": 13.6,
+   "seconds": 47.7,
    "sigma_max_upper": 29.91409417130339,
-   "sigma_min_lower": 0.005444567838529285,
+   "sigma_min_lower": 0.0054445678385292694,
    "unknowns": 62593
   },
   {
    "case": "upper3d_roller_phi10",
-   "completeness": {
-    "count_below": 73578,
-    "route": "inertia",
-    "shift": 0.899999728087403
-   },
+   "completeness": null,
    "elements": 2608,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 52.41815266409233,
-   "kappa_estimate": 35.17101613939976,
+   "kappa_eq": 35.17101614779313,
+   "kappa_estimate": 35.17101613940013,
    "literal_zeros": 960,
    "mesh": 3,
-   "method": "eigen_normal_columns",
+   "method": "dense_svd",
    "n_rows": 4668,
    "n_unknowns": 77286,
    "nnz": 12360,
-   "perturbation_bound": 1.58904877558332e-08,
+   "perturbation_bound": 2.320368856021039e-10,
    "problem_sha256": "4f2c9da5c17f525826af050fb5181b1a6263482f0b7cc487bc7d648c7fad512f",
    "proofs": [
     {
@@ -4306,13 +3918,13 @@
    ],
    "rank": 3708,
    "refusal": null,
-   "residual": 1.58904877558332e-08,
-   "route": "inertia of the factorised A_hat^T A_hat at shift 9.000e-01; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 960,
    "rows_with_entries": 3708,
-   "seconds": 0.1,
-   "sigma_max_upper": 49.72821799600979,
-   "sigma_min_lower": 0.9486831463649574,
+   "seconds": 70.8,
+   "sigma_max_upper": 35.17101613963179,
+   "sigma_min_lower": 0.9999999997679525,
    "unknowns": 78246
   },
   {
@@ -4320,19 +3932,19 @@
    "completeness": {
     "count_below": 6658,
     "route": "inertia",
-    "shift": 1.0956526663040175e-06
+    "shift": 1.095652665000376e-06
    },
    "elements": 2208,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 12368.130305550614,
-   "kappa_estimate": 6485.4639693523195,
+   "kappa_eq": 12368.17546555764,
+   "kappa_estimate": 6485.463968635893,
    "literal_zeros": 5542,
    "mesh": 4,
    "method": "eigen_normal_rows",
    "n_rows": 48162,
    "n_unknowns": 47451,
    "nnz": 251891,
-   "perturbation_bound": 6.244858154582564e-10,
+   "perturbation_bound": 6.324810655817212e-10,
    "problem_sha256": "ce510793caf235e18314ab30b5da5937461f18a11ae8cd6b82686412751da6bd",
    "proofs": [
     {
@@ -4348,13 +3960,13 @@
    ],
    "rank": 41504,
    "refusal": null,
-   "residual": 6.244858154582564e-10,
+   "residual": 6.324810655817212e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.096e-06; sigma_max from a norm bound; null-space basis from left singular vectors of 578 row blocks",
    "rows_skipped": 6658,
    "rows_with_entries": 42082,
-   "seconds": 8.9,
+   "seconds": 65.0,
    "sigma_max_upper": 12.942456085762352,
-   "sigma_min_lower": 0.0010464359418944664,
+   "sigma_min_lower": 0.0010464321210354706,
    "unknowns": 52993
   },
   {
@@ -4385,7 +3997,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 2688,
    "rows_with_entries": 720,
-   "seconds": 0.1,
+   "seconds": 3.5,
    "sigma_max_upper": 15.526261265857977,
    "sigma_min_lower": 0.9999999999799714,
    "unknowns": 66246
@@ -4416,7 +4028,7 @@
    "route": null,
    "rows_skipped": null,
    "rows_with_entries": 418182,
-   "seconds": 0.9,
+   "seconds": 2.0,
    "sigma_max_upper": null,
    "sigma_min_lower": null,
    "unknowns": 500737
@@ -4426,19 +4038,19 @@
    "completeness": {
     "count_below": 607254,
     "route": "inertia",
-    "shift": 0.8999996565430937
+    "shift": 0.8999999999699323
    },
    "elements": 20864,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 104.83632334629851,
-   "kappa_estimate": 70.32070466829612,
+   "kappa_eq": 104.83630334294114,
+   "kappa_estimate": 70.3207046682961,
    "literal_zeros": 3840,
    "mesh": 5,
    "method": "eigen_normal_columns",
    "n_rows": 18672,
    "n_unknowns": 622086,
    "nnz": 49440,
-   "perturbation_bound": 2.537102492024139e-07,
+   "perturbation_bound": 2.536871410861985e-07,
    "problem_sha256": "14b4cf7043cbeba96634d8c7a0c7f42b4b9756ceb1065d64b51d96594505c144",
    "proofs": [
     {
@@ -4449,33 +4061,29 @@
    ],
    "rank": 14832,
    "refusal": null,
-   "residual": 2.537102492024139e-07,
+   "residual": 2.536871410861985e-07,
    "route": "inertia of the factorised A_hat^T A_hat at shift 9.000e-01; sigma_max from a norm bound",
    "rows_skipped": 3840,
    "rows_with_entries": 14832,
-   "seconds": 0.6,
+   "seconds": 4.0,
    "sigma_max_upper": 99.45643599201958,
-   "sigma_min_lower": 0.9486829833157356,
+   "sigma_min_lower": 0.9486831643297942,
    "unknowns": 625926
   },
   {
    "case": "upper3d_roller_phi20",
-   "completeness": {
-    "count_below": 1650,
-    "route": "inertia",
-    "shift": 0.0013564754540272485
-   },
+   "completeness": null,
    "elements": 291,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 208.12039191093666,
-   "kappa_estimate": 123.13178257057834,
+   "kappa_eq": 123.13178272069807,
+   "kappa_estimate": 123.13178257058102,
    "literal_zeros": 1456,
    "mesh": 0,
-   "method": "eigen_normal_rows",
+   "method": "dense_svd",
    "n_rows": 6621,
    "n_unknowns": 5529,
    "nnz": 27637,
-   "perturbation_bound": 3.599730545457681e-11,
+   "perturbation_bound": 4.6949577043117873e-11,
    "problem_sha256": "ea3b6680f455f8ed50a7653863d13b1428dab90d195e38ad24ae78b0ec1b0019",
    "proofs": [
     {
@@ -4486,13 +4094,13 @@
    ],
    "rank": 4971,
    "refusal": null,
-   "residual": 3.599730545457681e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 1.356e-03; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1650,
    "rows_with_entries": 4971,
-   "seconds": 0.1,
-   "sigma_max_upper": 7.665148958269472,
-   "sigma_min_lower": 0.036830360004077384,
+   "seconds": 142.2,
+   "sigma_max_upper": 4.780297017513672,
+   "sigma_min_lower": 0.03882260868712428,
    "unknowns": 6985
   },
   {
@@ -4523,7 +4131,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 648,
    "rows_with_entries": 216,
-   "seconds": 0.0,
+   "seconds": 0.3,
    "sigma_max_upper": 8.544477161680424,
    "sigma_min_lower": 0.9999999999966275,
    "unknowns": 8736
@@ -4533,12 +4141,12 @@
    "completeness": {
     "count_below": 2150,
     "route": "inertia",
-    "shift": 0.0001806639581444704
+    "shift": 0.00018066395814447044
    },
    "elements": 429,
    "formulation": "lower.p1d-vertex.v0",
    "kappa_eq": 797.7699290285816,
-   "kappa_estimate": 458.9901425298844,
+   "kappa_estimate": 458.99014252988457,
    "literal_zeros": 1882,
    "mesh": 1,
    "method": "eigen_normal_rows",
@@ -4560,7 +4168,7 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.807e-04; sigma_max from a norm bound",
    "rows_skipped": 2150,
    "rows_with_entries": 7486,
-   "seconds": 0.2,
+   "seconds": 1.9,
    "sigma_max_upper": 10.722926058316498,
    "sigma_min_lower": 0.013441125903772099,
    "unknowns": 10297
@@ -4593,7 +4201,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 720,
    "rows_with_entries": 468,
-   "seconds": 0.0,
+   "seconds": 0.2,
    "sigma_max_upper": 12.529964086152226,
    "sigma_min_lower": 0.999999999989445,
    "unknowns": 12876
@@ -4603,12 +4211,12 @@
    "completeness": {
     "count_below": 3744,
     "route": "inertia",
-    "shift": 2.2603543207979957e-05
+    "shift": 2.260354320797973e-05
    },
    "elements": 951,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 3188.6311943357814,
-   "kappa_estimate": 1790.8435238351678,
+   "kappa_eq": 3188.6311943357973,
+   "kappa_estimate": 1790.8435238351772,
    "literal_zeros": 3316,
    "mesh": 2,
    "method": "eigen_normal_rows",
@@ -4630,9 +4238,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 2.260e-05; sigma_max from a norm bound",
    "rows_skipped": 3744,
    "rows_with_entries": 17355,
-   "seconds": 1.2,
+   "seconds": 2.9,
    "sigma_max_upper": 15.15963962705227,
-   "sigma_min_lower": 0.004754278153579361,
+   "sigma_min_lower": 0.0047542781535793366,
    "unknowns": 22825
   },
   {
@@ -4663,7 +4271,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1176,
    "rows_with_entries": 720,
-   "seconds": 0.1,
+   "seconds": 0.2,
    "sigma_max_upper": 15.524175300811828,
    "sigma_min_lower": 0.9999999999799746,
    "unknowns": 28536
@@ -4673,12 +4281,12 @@
    "completeness": {
     "count_below": 6784,
     "route": "inertia",
-    "shift": 9.125097547929881e-06
+    "shift": 9.125097547929873e-06
    },
    "elements": 2567,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 9520.21640130014,
-   "kappa_estimate": 4636.4663980572495,
+   "kappa_eq": 9520.216401300144,
+   "kappa_estimate": 4636.466398057253,
    "literal_zeros": 5914,
    "mesh": 3,
    "method": "eigen_normal_rows",
@@ -4700,29 +4308,25 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 9.125e-06; sigma_max from a norm bound",
    "rows_skipped": 6784,
    "rows_with_entries": 48734,
-   "seconds": 16.1,
+   "seconds": 34.2,
    "sigma_max_upper": 28.747131599552,
-   "sigma_min_lower": 0.00301958804167793,
+   "sigma_min_lower": 0.0030195880416779286,
    "unknowns": 61609
   },
   {
    "case": "upper3d_roller_phi20",
-   "completeness": {
-    "count_below": 72432,
-    "route": "inertia",
-    "shift": 0.8999999999996376
-   },
+   "completeness": null,
    "elements": 2567,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 51.89810236596909,
-   "kappa_estimate": 34.82814957232914,
+   "kappa_eq": 34.82814958040256,
+   "kappa_estimate": 34.82814957232974,
    "literal_zeros": 948,
    "mesh": 3,
-   "method": "eigen_normal_columns",
+   "method": "dense_svd",
    "n_rows": 4584,
    "n_unknowns": 76068,
    "nnz": 12120,
-   "perturbation_bound": 1.5024087872259806e-08,
+   "perturbation_bound": 2.253204214185137e-10,
    "problem_sha256": "cb7d8373686a7f3d68dd216fa0dc0676a39ac910757919b0ad75f710e881ca10",
    "proofs": [
     {
@@ -4733,13 +4337,13 @@
    ],
    "rank": 3636,
    "refusal": null,
-   "residual": 1.5024087872259806e-08,
-   "route": "inertia of the factorised A_hat^T A_hat at shift 9.000e-01; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 948,
    "rows_with_entries": 3636,
-   "seconds": 0.1,
-   "sigma_max_upper": 49.23486250415142,
-   "sigma_min_lower": 0.9486832901319332,
+   "seconds": 15.8,
+   "sigma_max_upper": 34.828149572554445,
+   "sigma_min_lower": 0.9999999997746618,
    "unknowns": 77016
   },
   {
@@ -4747,19 +4351,19 @@
    "completeness": {
     "count_below": 7324,
     "route": "inertia",
-    "shift": 4.891154092503189e-05
+    "shift": 4.891154068362047e-05
    },
    "elements": 2328,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 2142.8855465958222,
-   "kappa_estimate": 1204.1250249553473,
+   "kappa_eq": 2142.885141441511,
+   "kappa_estimate": 1204.125024951886,
    "literal_zeros": 6104,
    "mesh": 4,
    "method": "eigen_normal_rows",
    "n_rows": 50910,
    "n_unknowns": 49769,
    "nnz": 260555,
-   "perturbation_bound": 7.199478287133181e-10,
+   "perturbation_bound": 7.012113225622766e-10,
    "problem_sha256": "14aca85467250c432813af0e4b9fb3efd54b7ff29bb50c1b9daa5f39614f0a6a",
    "proofs": [
     {
@@ -4775,13 +4379,13 @@
    ],
    "rank": 43586,
    "refusal": null,
-   "residual": 7.199478287133181e-10,
+   "residual": 7.012113225622766e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 4.891e-05; sigma_max from a norm bound; null-space basis from left singular vectors of 618 row blocks",
    "rows_skipped": 7324,
    "rows_with_entries": 44204,
-   "seconds": 25.0,
+   "seconds": 50.6,
    "sigma_max_upper": 14.986542578458515,
-   "sigma_min_lower": 0.006993627168873329,
+   "sigma_min_lower": 0.00699362849115521,
    "unknowns": 55873
   },
   {
@@ -4812,7 +4416,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 2592,
    "rows_with_entries": 864,
-   "seconds": 0.2,
+   "seconds": 0.4,
    "sigma_max_upper": 17.00095133996249,
    "sigma_min_lower": 0.9999999999737177,
    "unknowns": 69846
@@ -4843,7 +4447,7 @@
    "route": null,
    "rows_skipped": null,
    "rows_with_entries": 410892,
-   "seconds": 0.8,
+   "seconds": 1.6,
    "sigma_max_upper": null,
    "sigma_min_lower": null,
    "unknowns": 492865
@@ -4853,11 +4457,11 @@
    "completeness": {
     "count_below": 597750,
     "route": "inertia",
-    "shift": 0.8999999999949704
+    "shift": 0.8999999999897721
    },
    "elements": 20536,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 103.79621770199618,
+   "kappa_eq": 103.79621770222143,
    "kappa_estimate": 69.63476150982267,
    "literal_zeros": 3792,
    "mesh": 5,
@@ -4865,7 +4469,7 @@
    "n_rows": 18336,
    "n_unknowns": 612294,
    "nnz": 48480,
-   "perturbation_bound": 2.3994189917098866e-07,
+   "perturbation_bound": 2.3994060695681624e-07,
    "problem_sha256": "22a670d967fa9dabe87b38fca784b40f69e726b624d5fbd87841cb4250b8512d",
    "proofs": [
     {
@@ -4876,33 +4480,29 @@
    ],
    "rank": 14544,
    "refusal": null,
-   "residual": 2.3994189917098866e-07,
+   "residual": 2.3994060695681624e-07,
    "route": "inertia of the factorised A_hat^T A_hat at shift 9.000e-01; sigma_max from a norm bound",
    "rows_skipped": 3792,
    "rows_with_entries": 14544,
-   "seconds": 0.5,
+   "seconds": 1.0,
    "sigma_max_upper": 98.46972500830285,
-   "sigma_min_lower": 0.9486831715873699,
+   "sigma_min_lower": 0.9486831715853112,
    "unknowns": 616086
   },
   {
    "case": "upper3d_roller_phi30",
-   "completeness": {
-    "count_below": 1758,
-    "route": "inertia",
-    "shift": 0.0002923822341111297
-   },
+   "completeness": null,
    "elements": 323,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 439.60101840726486,
-   "kappa_estimate": 263.3265971785997,
+   "kappa_eq": 263.326597946367,
+   "kappa_estimate": 263.3265971786742,
    "literal_zeros": 1544,
    "mesh": 0,
-   "method": "eigen_normal_rows",
+   "method": "dense_svd",
    "n_rows": 7329,
    "n_unknowns": 6209,
    "nnz": 31843,
-   "perturbation_bound": 3.351822153796708e-11,
+   "perturbation_bound": 5.234808931777728e-11,
    "problem_sha256": "28f4dc27c91997d241e528019bf9369b07eb3c7a46d006029a9ffaf0dcd3f9df",
    "proofs": [
     {
@@ -4913,13 +4513,13 @@
    ],
    "rank": 5571,
    "refusal": null,
-   "residual": 3.351822153796708e-11,
-   "route": "inertia of the factorised A_hat A_hat^T at shift 2.924e-04; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1758,
    "rows_with_entries": 5571,
-   "seconds": 0.2,
-   "sigma_max_upper": 7.516820077391813,
-   "sigma_min_lower": 0.01709918713251914,
+   "seconds": 56.4,
+   "sigma_max_upper": 4.746231992826933,
+   "sigma_min_lower": 0.018024126806186216,
    "unknowns": 7753
   },
   {
@@ -4950,7 +4550,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 684,
    "rows_with_entries": 216,
-   "seconds": 0.0,
+   "seconds": 0.1,
    "sigma_max_upper": 8.544235267578545,
    "sigma_min_lower": 0.9999999999966273,
    "unknowns": 9696
@@ -4960,12 +4560,12 @@
    "completeness": {
     "count_below": 2314,
     "route": "inertia",
-    "shift": 0.0003100154044033546
+    "shift": 0.00031001540440335484
    },
    "elements": 494,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 607.3427601579494,
-   "kappa_estimate": 350.05331926063536,
+   "kappa_eq": 607.3427601579492,
+   "kappa_estimate": 350.05331926063513,
    "literal_zeros": 2008,
    "mesh": 1,
    "method": "eigen_normal_rows",
@@ -4987,9 +4587,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 3.100e-04; sigma_max from a norm bound",
    "rows_skipped": 2314,
    "rows_with_entries": 8747,
-   "seconds": 0.3,
+   "seconds": 0.5,
    "sigma_max_upper": 10.693636367415037,
-   "sigma_min_lower": 0.017607250911551135,
+   "sigma_min_lower": 0.01760725091155114,
    "unknowns": 11857
   },
   {
@@ -5030,12 +4630,12 @@
    "completeness": {
     "count_below": 4072,
     "route": "inertia",
-    "shift": 1.0665557214182819e-05
+    "shift": 1.0665557214182813e-05
    },
    "elements": 1053,
    "formulation": "lower.p1d-vertex.v0",
    "kappa_eq": 4791.360621276832,
-   "kappa_estimate": 2611.5968903662056,
+   "kappa_estimate": 2611.5968903662065,
    "literal_zeros": 3592,
    "mesh": 2,
    "method": "eigen_normal_rows",
@@ -5057,9 +4657,9 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.067e-05; sigma_max from a norm bound",
    "rows_skipped": 4072,
    "rows_with_entries": 19298,
-   "seconds": 1.5,
+   "seconds": 2.7,
    "sigma_max_upper": 15.647320377004965,
-   "sigma_min_lower": 0.0032657363145492417,
+   "sigma_min_lower": 0.0032657363145492412,
    "unknowns": 25273
   },
   {
@@ -5090,7 +4690,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 1152,
    "rows_with_entries": 720,
-   "seconds": 0.1,
+   "seconds": 0.3,
    "sigma_max_upper": 15.52417499192112,
    "sigma_min_lower": 0.9999999999799734,
    "unknowns": 31596
@@ -5100,12 +4700,12 @@
    "completeness": {
     "count_below": 7220,
     "route": "inertia",
-    "shift": 5.485693435596228e-05
+    "shift": 5.485693435596219e-05
    },
    "elements": 2850,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 3889.1404772272253,
-   "kappa_estimate": 1885.498716983204,
+   "kappa_eq": 3889.1404772272285,
+   "kappa_estimate": 1885.4987169832057,
    "literal_zeros": 6294,
    "mesh": 3,
    "method": "eigen_normal_rows",
@@ -5127,29 +4727,25 @@
    "route": "inertia of the factorised A_hat A_hat^T at shift 5.486e-05; sigma_max from a norm bound",
    "rows_skipped": 7220,
    "rows_with_entries": 54415,
-   "seconds": 24.8,
+   "seconds": 64.8,
    "sigma_max_upper": 28.80353660118492,
-   "sigma_min_lower": 0.007406144563263627,
+   "sigma_min_lower": 0.0074061445632636206,
    "unknowns": 68401
   },
   {
    "case": "upper3d_roller_phi30",
-   "completeness": {
-    "count_below": 80946,
-    "route": "inertia",
-    "shift": 0.8999999999996712
-   },
+   "completeness": null,
    "elements": 2850,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 51.89776194633253,
-   "kappa_estimate": 34.82814954554264,
+   "kappa_eq": 34.828149553616115,
+   "kappa_estimate": 34.8281495455433,
    "literal_zeros": 924,
    "mesh": 3,
-   "method": "eigen_normal_columns",
+   "method": "dense_svd",
    "n_rows": 4560,
    "n_unknowns": 84582,
    "nnz": 12120,
-   "perturbation_bound": 1.4832338869135544e-08,
+   "perturbation_bound": 2.2532042124521868e-10,
    "problem_sha256": "14554b14bff2d0389ef6c0df7e668c978f5376a2cad517f09daae787934ab419",
    "proofs": [
     {
@@ -5160,13 +4756,13 @@
    ],
    "rank": 3636,
    "refusal": null,
-   "residual": 1.4832338869135544e-08,
-   "route": "inertia of the factorised A_hat^T A_hat at shift 9.000e-01; sigma_max from a norm bound",
+   "residual": null,
+   "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 924,
    "rows_with_entries": 3636,
-   "seconds": 0.1,
-   "sigma_max_upper": 49.23453955897632,
-   "sigma_min_lower": 0.9486832902330115,
+   "seconds": 29.2,
+   "sigma_max_upper": 34.82814954576795,
+   "sigma_min_lower": 0.9999999997746604,
    "unknowns": 85506
   },
   {
@@ -5174,19 +4770,19 @@
    "completeness": {
     "count_below": 7826,
     "route": "inertia",
-    "shift": 1.6842949396582806e-05
+    "shift": 1.6842949344917686e-05
    },
    "elements": 2584,
    "formulation": "lower.p1d-vertex.v0",
-   "kappa_eq": 3575.8684387416206,
-   "kappa_estimate": 2048.2378920851042,
+   "kappa_eq": 3575.8682984127668,
+   "kappa_estimate": 2048.237892094277,
    "literal_zeros": 6484,
    "mesh": 4,
    "method": "eigen_normal_rows",
    "n_rows": 56430,
    "n_unknowns": 55533,
    "nnz": 294680,
-   "perturbation_bound": 7.21148145595434e-10,
+   "perturbation_bound": 7.197745913865657e-10,
    "problem_sha256": "1cce01a7ae8050b39ebc745bf6834637d6ae537ec074901df8e98b10e66db09e",
    "proofs": [
     {
@@ -5202,13 +4798,13 @@
    ],
    "rank": 48604,
    "refusal": null,
-   "residual": 7.21148145595434e-10,
+   "residual": 7.197745913865657e-10,
    "route": "inertia of the factorised A_hat A_hat^T at shift 1.684e-05; sigma_max from a norm bound; null-space basis from left singular vectors of 680 row blocks",
    "rows_skipped": 7826,
    "rows_with_entries": 49284,
-   "seconds": 22.6,
+   "seconds": 58.6,
    "sigma_max_upper": 14.675108012581104,
-   "sigma_min_lower": 0.0041039283922160745,
+   "sigma_min_lower": 0.0041039285532677465,
    "unknowns": 62017
   },
   {
@@ -5239,7 +4835,7 @@
    "route": "dense singular value decomposition of the whole reduced system",
    "rows_skipped": 2736,
    "rows_with_entries": 864,
-   "seconds": 0.2,
+   "seconds": 0.6,
    "sigma_max_upper": 17.000465347317135,
    "sigma_min_lower": 0.9999999999737175,
    "unknowns": 77526
@@ -5270,7 +4866,7 @@
    "route": null,
    "rows_skipped": null,
    "rows_with_entries": 457434,
-   "seconds": 1.0,
+   "seconds": 2.1,
    "sigma_max_upper": null,
    "sigma_min_lower": null,
    "unknowns": 547201
@@ -5280,19 +4876,19 @@
    "completeness": {
     "count_below": 665766,
     "route": "inertia",
-    "shift": 0.8999999997798536
+    "shift": 0.899999999930395
    },
    "elements": 22800,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 103.79553670990232,
-   "kappa_estimate": 69.63476145623459,
+   "kappa_eq": 103.7955367011968,
+   "kappa_estimate": 69.6347614562346,
    "literal_zeros": 3696,
    "mesh": 5,
    "method": "eigen_normal_columns",
    "n_rows": 18240,
    "n_unknowns": 680310,
    "nnz": 48480,
-   "perturbation_bound": 2.3688629146823168e-07,
+   "perturbation_bound": 2.3688586341754005e-07,
    "problem_sha256": "be731a0a8216bfc117d4e9609b91a1e9fa7918e91d5db1d777e91e53e2e43843",
    "proofs": [
     {
@@ -5303,13 +4899,13 @@
    ],
    "rank": 14544,
    "refusal": null,
-   "residual": 2.3688629146823168e-07,
+   "residual": 2.3688586341754005e-07,
    "route": "inertia of the factorised A_hat^T A_hat at shift 9.000e-01; sigma_max from a norm bound",
    "rows_skipped": 3696,
    "rows_with_entries": 14544,
-   "seconds": 0.5,
+   "seconds": 1.2,
    "sigma_max_upper": 98.46907911795265,
-   "sigma_min_lower": 0.9486831730844403,
+   "sigma_min_lower": 0.9486831731640082,
    "unknowns": 684006
   }
  ],
