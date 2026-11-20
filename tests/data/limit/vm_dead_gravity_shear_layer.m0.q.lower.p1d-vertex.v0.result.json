@@ -1,0 +1,23 @@
+{
+ "arrays": "vm_dead_gravity_shear_layer.m0.q.lower.p1d-vertex.v0.result.npz",
+ "bound": "lower",
+ "format": "ladruno-limit-result",
+ "format_version": 0,
+ "formulation": "lower.p1d-vertex.v0",
+ "objective": -0.7,
+ "problem_sha256": "4176d584a0a42e628efa9c59df25bcee59f774f34078299317e30700f99d1c9e",
+ "producer": {
+  "name": "analytic-fixture",
+  "version": "0"
+ },
+ "query_id": "q",
+ "result_sha256": "6af30ef33dd00c24bd0d9b00a7ca7355efc6ee720588a3c1aac36751e77677e2",
+ "solver": {
+  "name": "none",
+  "settings": {},
+  "version": "0"
+ },
+ "solver_status": "solved",
+ "value": 0.7,
+ "wall_time_s": null
+}
