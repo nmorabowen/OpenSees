@@ -72,7 +72,7 @@ body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
 fix xmin x
 fix xmax x
 fix ymin xy
-gridvel footing box -0.5 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+gridvel footing box -0.5 -0.25 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
 series linear 10.0
 dt 1.0
 steps 60
@@ -102,7 +102,7 @@ body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
 fix xmin x
 fix xmax x
 fix ymin xy
-gridvel footing box -0.25 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+gridvel footing box -0.25 -0.125 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
 series linear 10.0
 dt 1.0
 steps 60
@@ -130,7 +130,7 @@ body 1 box 0.0 -6.0 12.0 0.0 ppc 2 mat 1 rho 2.0
 fix xmin x
 fix xmax x
 fix ymin xy
-gridvel footing box -0.125 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+gridvel footing box -0.125 -0.0625 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
 series linear 10.0
 dt 1.0
 steps 60
@@ -710,7 +710,7 @@ pforce 1 box 0.0 -0.25 12.0 0.0 0.0 -2.5
 fix xmin x
 fix xmax x
 fix ymin xy
-gridvel footing box -0.5 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+gridvel footing box -0.5 -0.25 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
 series linear 10.0
 dt 1.0
 steps 110
@@ -740,7 +740,7 @@ pforce 1 box 0.0 -0.125 12.0 0.0 0.0 -1.25
 fix xmin x
 fix xmax x
 fix ymin xy
-gridvel footing box -0.25 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+gridvel footing box -0.25 -0.125 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
 series linear 10.0
 dt 1.0
 steps 110
@@ -770,7 +770,7 @@ pforce 1 box 0.0 -0.0625 12.0 0.0 0.0 -0.625
 fix xmin x
 fix xmax x
 fix ymin xy
-gridvel footing box -0.125 0.0 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
+gridvel footing box -0.125 -0.0625 1.0 1.0e9 v 0.0 -0.002 start 10.0 track y
 series linear 10.0
 dt 1.0
 steps 110
