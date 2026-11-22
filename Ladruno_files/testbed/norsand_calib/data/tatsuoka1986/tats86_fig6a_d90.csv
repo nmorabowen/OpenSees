@@ -1,0 +1,46 @@
+# id: tats86_fig6a_d90
+# kind: PS
+# sigma3_kPa: 4.9
+# e0: 0.7
+# e0_definition: e_0.05 = void ratio at sigma_c' = 0.05 kgf/cm2 = 4.9 kPa; the void ratio at the test sigma_3' is NOT reported
+# source: Tatsuoka, Sakamoto, Kawamura & Fukushima (1986) Soils and Foundations 26(1):65-84, Fig. 6(a), journal p. 73
+# eps_v_convention: dilation_negative
+# material: saturated air-pluviated Toyoura sand, isotropic consolidation, delta = 90 deg, drained plane strain compression (eps_2 = 0)
+# D_r_assumed: 0.729
+# D_r_basis: (0.977 - e_0.05)/(0.977 - 0.597); e_max/e_min are not in the paper (README)
+# stress_method: C-2-T (membrane and plate-friction corrected)
+# strain_type: eps_a = average axial strain from EXTERNAL boundary displacements; eps_v from specimen volume change
+# digitisation: TIMs Workbench tests_data.py; solid line read by eye on a 0.05-0.1 % grid (TIMs); resolution not quantified by the digitiser
+# units: eps_a_pct [%] compression positive | sr = sigma1'/sigma3' [-] | eps_v_pct [%] dilation negative
+eps_a_pct,sr,eps_v_pct
+0,1,
+0,,0
+0.03,3,
+0.11,3.5,
+0.32,4,
+0.5,4.5,
+0.5,,0.05
+0.68,5,
+0.86,5.5,
+1,,-0.3
+1.15,6,
+1.47,6.5,
+1.47,,-0.72
+1.74,6.52,
+2.34,,-1.54
+2.45,5.34,
+2.77,4.78,
+3.1,4.51,
+3.1,,-1.92
+3.64,4.34,
+4.18,4.29,
+4.18,,-2.02
+4.93,4.26,
+5.26,,-2.14
+5.9,4.34,
+6.34,,-2.3
+6.9,4.48,
+7.4,,-2.38
+7.97,4.62,
+8.83,4.68,
+8.9,,-2.4

@@ -1,0 +1,21 @@
+# Ottawa F65, 16 monotonic drained triaxial tests (7 loose e0 0.724: 6 TC + 1 TE; 3 dense e0 0.584 TC; 6 'test density' e0 0.604: 3 TC + 3 TE).
+# D_r_derived = (0.7389 - e0)/(0.7389 - 0.4915): averages of 9 e_max/e_min trials, Characterization Tests.pdf slide 7 (std 0.0247 / 0.0183 -> D_r at e0 0.724 is within the scatter of e_max).
+# sigma3_eff_start = (horizontal - pore) of row 1; p_eff_start from row 1. q_peak_signed = deviator stress at max |q|. phi_peak_deg_derived = max asin((s1'-s3')/(s1'+s3')) from effective stresses (s1' = larger of vertical/horizontal).
+# eps_a_at_phi_peak and eps_v_end are read from the file (compression positive).
+test_id,mode,e0,D_r_derived,sigma3_nominal_kPa,sigma3_eff_start_kPa,p_eff_start_kPa,n_rows,eps_a_end_pct,q_peak_signed_kPa,eps_a_at_q_peak_pct,phi_peak_deg_derived,eps_a_at_phi_peak_pct,eps_v_end_pct,source_file
+ottawa_f65_TC_e584_s100,TC,0.584,0.626,100,99.95,100.02,201,20,390.56,4.702,40.76,5.3,-7.744,Dense - eo=0.584/Triaxial Compression - eo=0.584/100kPa_Drained_Comp_eo_0_584.txt
+ottawa_f65_TC_e584_s200,TC,0.584,0.626,200,200.06,199.98,201,20,733.97,5.4,40.02,5.601,-8.125,Dense - eo=0.584/Triaxial Compression - eo=0.584/200kPa_Drained_Comp_eo_0_584.txt
+ottawa_f65_TC_e584_s300,TC,0.584,0.626,300,300.03,300.03,141,14,1081.9,5.301,39.86,5.6,-6.898,Dense - eo=0.584/Triaxial Compression - eo=0.584/300kPa_Drained_Comp_eo_0_584.txt
+ottawa_f65_TC_e724_s100,TC,0.724,0.06,100,99.95,99.97,201,20,306.17,19.8,37.3,16.3,-4.153,Loose - eo=0.724/Triaxial Compression - eo=0.724/100kPa_Drained_Comp_eo_0_724.txt
+ottawa_f65_TC_e724_s200,TC,0.724,0.06,200,199.98,199.86,202,20,568.69,13.6,35.92,13.5,-3.12,Loose - eo=0.724/Triaxial Compression - eo=0.724/200kPa_Drained_Comp_eo_0_724.txt
+ottawa_f65_TC_e724_s300,TC,0.724,0.06,300,300.03,300.07,201,20,804.59,15.7,34.96,13.2,-2.011,Loose - eo=0.724/Triaxial Compression - eo=0.724/300kPa_Drained_Comp_eo_0_724.txt
+ottawa_f65_TC_e724_s500,TC,0.724,0.06,500,499.86,499.83,201,20,1352.9,20,35.08,19.8,-2.003,Loose - eo=0.724/Triaxial Compression - eo=0.724/500kPa_Drained_Comp_eo_0_724.txt
+ottawa_f65_TC_e724_s600,TC,0.724,0.06,600,599.93,599.88,201,20,1644.4,16,35.32,16,-2.186,Loose - eo=0.724/Triaxial Compression - eo=0.724/600kPa_Drained_Comp_eo_0_724.txt
+ottawa_f65_TC_e724_s700,TC,0.724,0.06,700,699.93,699.94,133,13.1,1964.4,13.1,35.7,12.8,-0.9398,Loose - eo=0.724/Triaxial Compression - eo=0.724/700kPa_Drained_Comp_eo_0_724.txt
+ottawa_f65_TE_e724_s200,TE,0.724,0.06,200,199.94,199.93,151,-15,-139.04,-6.701,32.39,-6.502,0.3249,Loose - eo=0.724/Triaxial Extension - eo=0.724/200kPa_Drained_Extension_eo_0_724.txt
+ottawa_f65_TC_e604_s100,TC,0.604,0.545,100,99.92,99.83,202,20,341.75,4.402,38.66,4.8,-6.511,Test Density - eo=0.604/Triaxial Compression - eo=0.604/100kPa_Drained_Comp_eo_0_604.txt
+ottawa_f65_TC_e604_s200,TC,0.604,0.545,200,200.06,200.12,201,20,630.93,4.9,37.53,5.001,-4.87,Test Density - eo=0.604/Triaxial Compression - eo=0.604/200kPa_Drained_Comp_eo_0_604.txt
+ottawa_f65_TC_e604_s300,TC,0.604,0.545,300,300.03,300.09,141,14,949.32,7.302,37.37,8.603,-4.523,Test Density - eo=0.604/Triaxial Compression - eo=0.604/300kPa_Drained_Comp_eo_0_604.txt
+ottawa_f65_TE_e604_s100,TE,0.604,0.545,100,99.98,100.0,82,-8.081,-81.876,-3.501,44.09,-3.6,-1.329,Test Density - eo=0.604/Triaxial Extension - eo=0.604/100kPa_Drained_Extension_eo_0_604.txt
+ottawa_f65_TE_e604_s200,TE,0.604,0.545,200,199.92,199.94,151,-15,-145.5,-3.601,35.04,-3.301,-1.613,Test Density - eo=0.604/Triaxial Extension - eo=0.604/200kPa_Drained_Extension_eo_0_604.txt
+ottawa_f65_TE_e604_s300,TE,0.604,0.545,300,300.03,300.03,121,-12,-223.52,-4.103,36.44,-3.7,-1.275,Test Density - eo=0.604/Triaxial Extension - eo=0.604/300kPa_Drained_Extension_eo_0_604.txt

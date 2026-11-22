@@ -1,0 +1,71 @@
+# id: ft84_fig5a_sc2p0
+# kind: TC
+# sigma3_kPa: 196.0
+# e0: 0.677
+# e0_definition: e_0.3 = void ratio at sigma_c' = 0.3 kgf/cm2 (29.4 kPa), the paper's density label (figure legend); for sigma_c' != 0.3 the void ratio at the shear stress is NOT reported (p. 35, Fig. 4)
+# source: Fukushima & Tatsuoka (1984) Soils and Foundations 24(4):30-48, Fig. 5(a), journal p. 36 (PDF page 7), dense, sigma_c' 0.1-4 kgf/cm2; Table 1 test 66 (p. 32)
+# eps_v_convention: dilation_negative
+# eps_a_sign: 1
+# phi_peak_deg: 40.5
+# eps_peak_pct: 6.67
+# phi_peak_note: Table 1 phi (mid-height, UNCORRECTED for membrane forces, t0 = 0.3 mm); the digitised maximum sr 4.711 vs 4.705 from Table 1 (difference +0.005) is the calibration check of the digitisation
+# sigma3_f_kPa: 197.18
+# material: Toyoura sand (D50 0.16 mm, Uc 1.46, Gs 2.64, e_max 0.977, e_min 0.605), saturated, air-pluviated, 7 cm diameter x 15 cm, lubricated ends (p. 33)
+# test: drained isotropically consolidated triaxial compression, axial strain rate 0.25 %/min; sr = sigma1'/sigma3' at the MID-HEIGHT of the sample, UNCORRECTED for membrane forces (the figure title says so); eps_a = axial strain
+# caveat_membrane: membrane t0 = 0.3 mm, latex, E_m 15.2 kgf/cm2: at sigma_c' <= 0.1 kgf/cm2 the uncorrected stress ratios are biased (paper Figs. 7, 12-17); at the lowest stresses sigma3' drifted during the test: (sigma3')_f = 197.18 kPa vs sigma_c' = 196.00 kPa
+# uncertainty: sr +-0.05 (1 px = 0.01; calibration cross-checked against Table 1 phi, see phi_peak_note), +-0.1 where markers of neighbouring curves merge; eps_a +-0.1 %; eps_v +-0.15 % (scan skew handled by a bilinear map between the frame lines)
+# digitisation: marker-chain / column-cluster tracker on the native 1-bit scan (data/_digitise); rows fill ONE of sr / eps_v (the two traces are digitised at different eps_a); the first row (0,1,0) is the assumed isotropic start, not digitised
+# units: eps_a_pct [%] compression positive | sr [-] | eps_v_pct [%] dilation negative
+eps_a_pct,sr,eps_v_pct
+0,1,0
+0.7061,3.178,
+0.8822,3.3725,
+1.0637,3.5271,
+1.2453,3.6626,
+1.4223,3.781,
+1.6084,3.886,
+1.7959,3.9791,
+2.1674,4.128,
+2.4561,4.2238,
+2.5,,-0.4803
+2.7479,4.3041,
+3,,-0.7911
+3.0078,4.3683,
+3.3125,4.4258,
+3.5,,-1.0626
+4,,-1.2655
+4.1978,4.5535,
+4.4827,4.5964,
+4.5,,-1.547
+4.7897,4.6207,
+5,,-1.8679
+5.0794,4.6461,
+5.4727,4.67,
+5.5,,-2.1004
+5.8883,4.6858,
+6,,-2.3723
+6.2624,4.6984,
+6.5,,-2.723
+6.6716,4.7108,
+7,,-3.06
+7.0748,4.7076,
+7.4808,4.7039,
+7.5,,-3.1983
+7.8865,4.6876,
+8,,-3.4508
+8.3017,4.6662,
+8.5,,-3.7428
+9,,-4.0151
+9.5,,-4.2088
+9.528,4.6035,
+9.9374,4.5733,
+10,,-4.4025
+10.5,,-4.5962
+11,,-4.8491
+11.168,4.4846,
+11.5,,-5.043
+12,,-5.1877
+12.016,4.4226,
+12.5,,-5.3127
+13,,-5.4673
+13.5,,-5.4151
