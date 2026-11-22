@@ -2398,7 +2398,7 @@ features:
   - feature: LadrunoNDFiberSection3d
     classtag: 33001          # SEC_TAG family; per-registry band (33001 is independently MAT_TAG_LadrunoRebarBuckling, ELE_TAG_BezierTet10, ... — no collision)
     tag_symbol: SEC_TAG_LadrunoNDFiberSection3d
-    pr: TBD
+    pr: 1137
     feature_class: material
     required_tiers: [T0, T1]
     pytest: tests/test_ladrunoNDFiberSection3d.py
@@ -2432,7 +2432,7 @@ features:
   - feature: LadrunoUniaxialFiber
     classtag: 33030          # ND_TAG family
     tag_symbol: ND_TAG_LadrunoUniaxialFiber
-    pr: TBD
+    pr: 1137
     feature_class: material
     required_tiers: [T0, T1]
     pytest: tests/test_ladrunoNDFiberSection3d.py
