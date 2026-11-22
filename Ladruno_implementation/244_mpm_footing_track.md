@@ -94,10 +94,33 @@ pre-join 120.26. It passes either way.
 
 ## #1107's MPM half
 
-PENDING (esmeralda L4 r3, both boxes).
+**The configuration matters first.** L4 r3 sits on a stagnating ladder, so where it gives up
+depends on round-off from the BLAS build. On esmeralda, the branch's C++ with the default configure
+(apt MKL 2020, the sequential preload, as 232j's warrant build) reproduces the committed 232j record
+**bit for bit**: every q equal, 502 failed attempts, a stop at t = 57 (s = 0.094 m). With spack
+oneMKL 2024 the same case stops at s = 0.010 m, and so does 232j's own merge commit `3e738308c`.
+The Windows build stops at 0.010 m too, at either thread count. So nothing regressed, and only
+the apt-MKL configuration can answer #1107.
 
-On Windows (`ae3e57ad6`, 1 thread or the default) L4 r3 stops at s = 0.010 m (s/h 0.08) with
-**either** box (124–146 failed attempts): long before the box differs, and short of the
-committed esmeralda record's s = 0.094 m. Non-associated DP stagnation is sensitive to round-off,
-so the platform alone moves where the ladder gives up. The committed L4 r3 record is left as it
-was; it is re-established only from the esmeralda build.
+**On that configuration** (`tests/data/mpm/wp244/apt_l4_r3_lead*.json`, build `0a8613c01`):
+
+| Box | Stops at | Failed attempts | q_max (band [110.28, 134.78]) | After the join |
+|---|---|---|---|---|
+| 0 (the 232j record) | t = 57, s = 0.094 m, **s/h 0.75** | 502 | 115.64 @ s/h 0.14 | — |
+| −h/2 | t = 74, s = 0.128 m, **s/h 1.02** | 725 | 115.64 @ s/h 0.14 (unchanged) | 103 → 115 by s/h 0.7; dip to 101.6 at 0.82; 102–103 to the stop |
+
+The two runs are bit-identical before s = h/2. With the fix the run passes s/h 0.75 and stops
+at s ≈ h, at a similar failure rate per unit of s (670 per h before the old stop, 830 per h
+after it), exactly as L4 r2 does on both platforms.
+
+**Answer.** The 232j stop at s/h 0.75 sat at the onset of the #1112 window, and the fixed box
+moves it to s ≈ h. Its cause is still the Newton stagnation of non-associated DP, which #1107
+tracks and which the FE shares. L4 r3 stays a miss: it does not reach s = 0.2 m, and q_max is
+unchanged. #1107 stands for both halves; only the stop location of its MPM half was set by the
+artifact.
+
+**The L4 r3 record.** The committed `antilocking/footing_mildcone_r3_al.json` and the
+`L4_R3_MISS` text (stop t = 57) describe the old box. With the fix, on the record's own
+configuration, the stop moves to t = 74 (s = 0.128 m). Updating the record and the miss text is a
+gate-record change: it is the owner's call. The fixed-box warrant record is prepared on the apt
+build and is not committed.

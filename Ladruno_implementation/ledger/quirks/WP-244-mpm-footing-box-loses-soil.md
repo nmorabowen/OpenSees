@@ -22,4 +22,21 @@ particle centre, and the soil next to the footing interpolates almost entirely f
 unbounded above (`hi_y = 1e9`), so `translate y` and `track y` select the same rows. Translating
 a zero-thickness box (`lo_y = hi_y`) is worse: it holds a node row only when s is a multiple of h.
 
-**Fix.** Measured in WP-244 (#1136); see the follow-up below.
+**Fix (WP-244, #1136).** Start the box's lower bound half a cell below the footing base
+(`box <x0> -h/2 <B/2> 1.0e9 … track y`): a node row is prescribed once the base is nearer to it
+than to the row above, so the soil–row gap stays within ±h/2. No C++ change. Before s = h/2 the
+rows, and so the results, are bit-identical. The HS footing then runs to s = 2h with no step drop
+above 4 % (55–92 % before). Residual: q steps up 2–16 % when a row joins (s/h = k + ½) and dips a
+few percent when a particle row crosses it (k + ¾). Results: `Ladruno_implementation/244_mpm_footing_track.md`.
+
+**Extreme case (P1).** When the overlap is thin enough, the only prescribed row's nodal mass
+falls under the mode-A mass cutoff, the row leaves the active set, and nothing is prescribed for
+that step (a free block lags exactly one step; `mpm massCutoff 1e-14` removes it).
+
+**Also learned (a record is tied to its BLAS build).** On the stagnating non-associated
+Drucker–Prager ladder of 232j L4 r3, where the run gives up depends on the MKL the module links.
+The branch's C++ on esmeralda reproduces the 232j record bit for bit with the default configure
+(apt MKL 2020, sequential preload: stop at s = 0.094 m, 502 failed attempts). With spack oneMKL
+2024 it stops at s = 0.010 m, on 232j's own merge commit too. The Windows build stops at 0.010 m
+as well. Compare such a record only on its own build configuration. Within one build, the thread
+count alone moves results by about 1e-13.
