@@ -108,10 +108,10 @@ the apt-MKL configuration can answer #1107.
 | Box | Stops at | Failed attempts | q_max (band [110.28, 134.78]) | After the join |
 |---|---|---|---|---|
 | 0 (the 232j record) | t = 57, s = 0.094 m, **s/h 0.75** | 502 | 115.64 @ s/h 0.14 | — |
-| −h/2 | t = 74, s = 0.128 m, **s/h 1.02** | 725 | 115.64 @ s/h 0.14 (unchanged) | 103 → 115 by s/h 0.7; dip to 101.6 at 0.82; 102–103 to the stop |
+| −h/2 | t = 74, s = 0.128 m, **s/h 1.02** | 725 | 115.64 @ s/h 0.14 (unchanged) | 103 → 115 by s/h 0.7; dip to 100.0 at s/h 0.83 (a 13.5 % drawdown from 115.6); 102–103 to the stop |
 
 The two runs are bit-identical before s = h/2. With the fix the run passes s/h 0.75 and stops
-at s ≈ h, at a similar failure rate per unit of s (670 per h before the old stop, 830 per h
+at s ≈ h, at a similar failure rate per unit of s (670 per h before the old stop, 820 per h
 after it), exactly as L4 r2 does on both platforms.
 
 **Answer.** The 232j stop at s/h 0.75 sat at the onset of the #1112 window, and the fixed box

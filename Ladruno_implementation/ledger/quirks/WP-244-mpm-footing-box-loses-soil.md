@@ -26,8 +26,8 @@ a zero-thickness box (`lo_y = hi_y`) is worse: it holds a node row only when s i
 (`box <x0> -h/2 <B/2> 1.0e9 … track y`): a node row is prescribed once the base is nearer to it
 than to the row above, so the soil–row gap stays within ±h/2. No C++ change. Before s = h/2 the
 rows, and so the results, are bit-identical. The HS footing then runs to s = 2h with no step drop
-above 4 % (55–92 % before). Residual: q steps up 2–16 % when a row joins (s/h = k + ½) and dips a
-few percent when a particle row crosses it (k + ¾). Results: `Ladruno_implementation/244_mpm_footing_track.md`.
+above 4 % (55–92 % before). Residual: q steps up 2–16 % when a row joins (s/h = k + ½) and dips when a
+particle row crosses it (k + ¾): 1.5–4 % for HS, 13–15 % for softening DP (L4). Results: `Ladruno_implementation/244_mpm_footing_track.md`.
 
 **Extreme case (P1).** When the overlap is thin enough, the only prescribed row's nodal mass
 falls under the mode-A mass cutoff, the row leaves the active set, and nothing is prescribed for
