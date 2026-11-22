@@ -149,3 +149,28 @@ def test_f1_artifact_window(r):
           f"worst drop {100 * w_old:.1f} %")
     assert new["reached"] and abs(new["curve"][-1][0] - 2.0 * h) < 1e-9, new["stopped"]
     assert w_new <= 0.05, w_new
+
+
+def test_footing_decks_keep_the_half_cell_lead():
+    """Every footing gridvel in the 232f / 232j case files starts its box half a cell below the
+    surface (lo_y = -h/2), and the 232k S3 harness's default lead is 0.5: a regression to 0.0
+    brings #1112 back while every record-reading test still passes."""
+    import ladruno_mpm_soil_s_harness as S
+    assert S.FOOTING_LEAD == 0.5
+    here = Path(__file__).resolve().parent
+    seen = 0
+    for name in ("mpm_implicit_cases.txt", "mpm_antilocking_cases.txt"):
+        h = None
+        for line in (here / name).read_text(encoding="utf-8").splitlines():
+            tok = line.split()
+            if not tok:
+                continue
+            if tok[0] == "case":
+                h = None
+            elif tok[0] == "h":
+                h = float(tok[1])
+            elif tok[:3] == ["gridvel", "footing", "box"] and "track" in tok:
+                assert h is not None, (name, line)
+                assert float(tok[4]) == pytest.approx(-0.5 * h, abs=1e-12), (name, line)
+                seen += 1
+    assert seen == 9, seen          # 232f r1-r3, 232j L3 r1-r3, 232j L4 r1-r3

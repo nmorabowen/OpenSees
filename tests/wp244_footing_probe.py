@@ -31,23 +31,17 @@ def main():
     ap.add_argument("--wall-cap", type=float, default=None)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
+    wrong = ([o for o, v in (("--case", a.case), ("--cases-file", a.cases_file),
+                             ("--steps", a.steps), ("--al-off", a.al_off)) if v]
+             if a.what == "s3" else
+             [o for o, v in (("--deck", a.deck), ("--wall-cap", a.wall_cap)) if v])
+    if wrong:
+        ap.error(f"{', '.join(wrong)} do(es) not apply to mode {a.what}")
     sys.path.insert(0, a.tests)
     from _testbed import ops
     t0 = time.time()
     if a.what == "s3":
         import ladruno_mpm_soil_s_harness as S
-        h = 0.5 / 2 ** (a.r - 1)
-
-        class Proxy:                                  # the footing box's lo_y -> -lead*h
-            def __getattr__(self, k):
-                return getattr(ops, k)
-
-            def mpm(self, *args):
-                if len(args) > 4 and args[0] == "gridvel" and args[1] == "footing":
-                    args = list(args)
-                    args[4] = -a.lead * h
-                return ops.mpm(*args)
-        pops = Proxy()
         n = 4 * 2 ** (a.r - 1)
         if a.deck:
             ref = S.load(f"s3_fe_{a.mat}_{a.deck}_n{n}.json")
@@ -55,8 +49,9 @@ def main():
         else:
             ref = S.load(f"s3_fe_{a.mat}_n{n}.json")
             extra = ()
-        res = S.s3_run(pops, ref["decks"][a.mat]["cmd"], a.r, "fbar", extra_opts=extra,
-                       s_end=a.s_end, log=lambda m: print(m, flush=True), wall_cap=a.wall_cap)
+        res = S.s3_run(ops, ref["decks"][a.mat]["cmd"], a.r, "fbar", extra_opts=extra,
+                       s_end=a.s_end, log=lambda m: print(m, flush=True), wall_cap=a.wall_cap,
+                       lead=a.lead)
         res["fe_q_at"] = ref.get("q_at")
     else:
         import ladruno_mpm_antilocking_harness as A

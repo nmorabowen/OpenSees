@@ -1,9 +1,10 @@
 # WP-244 — the MPM footing box keeps the soil (fix #1112)
 
 PR #1136, program #1075. Gates pre-registered in `wp-briefs.md` "WP-244" (`de4d8df6c`) before any
-footing number on the fix was read. Builds: Windows `ae3e57ad6` (C++ identical to the branch head;
-the branch changes only `tests/` and docs), esmeralda `0a8613c01` (the branch head, OpenSeesPy,
-the WP-238/239 configure). Evidence: `tests/data/mpm/wp244/`.
+footing number on the fix was read. Builds: Windows `ae3e57ad6` for the local runs (the branch changes no
+C++; the later merge of `origin/ladruno` brought RC/fiber sources only, none under `ladrunoMPM`), and on
+esmeralda `0a8613c01` (the branch, OpenSeesPy) with two BLAS configurations: spack oneMKL 2024
+(the WP-238/239 configure) and the default apt MKL 2020 (232j's warrant configuration). Evidence: `tests/data/mpm/wp244/`.
 
 ## The defect, made precise
 
