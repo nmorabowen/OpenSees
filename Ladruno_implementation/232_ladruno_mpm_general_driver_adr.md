@@ -881,7 +881,9 @@ Slice column: **S1** = slice 1; **P*n*** = phase *n* of §9.
 >     - the 3D mode-A legs (mode A's 1.3e-12 strain round-off, amplified by ModifiedEuler
 >       substepping);
 >     - the IntScheme-2 shear legs (outside the FE Gauss-point envelope; the Gauss points
->       themselves split onto different return-map branches).
+>       themselves split onto different return-map branches). The plane-strain mode-A leg
+>       holds on Windows (0.94) and misses on Linux only (Zone-A, from step 22): accepted under
+>       the same ruling, a strict xfail on Linux.
 >   - **S1 option legs pass**, including the `-implex` boundary-value leg (σ RMS 0.0186 ρgl0
 >     against 0.02). Under `-implex`, particle stress output shows the trial (equilibrated)
 >     stress, not the committed one (quirk).
@@ -1204,6 +1206,22 @@ ADR-88).
   SANISAND and HS admitted at particles; SANISAND mode F only on B-spline bases (the K0 gimp
   miss, owner's decision); the K0p plastic meter passes on every admitted leg; S1 (3D mode A,
   IntScheme-2 shear) and S2 are owner-accepted misses; S3 SANISAND reported only. Found #1109–#1112.
+- **2026-11-18** — #1108 merged as cfe478254 (head 65708be90). Zone-A at ffec57a09 was red on two
+  tests: a scheme-3 admission test spent ManzariDafalias' once-per-process warning latch (now in a
+  child process), and the IntScheme-2 plane-strain mode-A shear leg missed on Linux only (owner-
+  accepted under the IntScheme-2 ruling).
+  - **Release note** (shipped: 232i + 232j in `ladruno-v20261118` at 3e738308c, 232k in
+    `ladruno-v20261118b` at cfe478254):
+    - `mpm grid … -basis bspline2 | bspline3`: quadratic and cubic B-spline bases, with images
+      behind `fix` faces; `mpm particleBodyForce`, `mpm particleVelocity` (232i, #1099).
+    - `mpm antiLocking off | fbar`: the cell-centre F-bar on the step increment, modes F and A;
+      symmetric systems refused with `fbar`; mode-A restart pack 3 (232j, #1105).
+    - Soil particles: `LadrunoSANISAND` (IntScheme 1, 2, 129; `-implex`) and `LadrunoHS` /
+      `-smallStrain`, serial; `mpm stage <matTag> <s>`; `mpm gridvel … affine | translate |
+      profile`; SANISAND in mode F only on B-spline bases; mode-A restart pack 4 (232k, #1108).
+    - Behaviour changes: mode F now applies `gridvel` in both projections and refuses `pforce`,
+      both of which it used to accept and ignore (#1109); restart packs older than 4 are refused
+      when the model has soil particles.
 - **2026-11-18** — 232l (phase 6, two-phase particles) kicked off: saturated Biot u-p at
   single-point particles; route E (stabilized equal-order, monolithic, mode A) and route S
   (semi-implicit, mode F), each gated on its own, compared in a reported row (amendment
@@ -1211,7 +1229,8 @@ ADR-88).
 - **2026-11-19** — 232l closed (amendment "232l, 2026-11-19", after the kickoff amendment): routes
   E and S shipped; T2p/T4p after the owner's carrier decision; T7 a recorded miss with the 0.5 cap;
   the review of record blocked `d77caf8fd` (route-S translation), fixed and gated by T13 on
-  `cd503bdbb`. Follow-ups #1124–#1127.
+  `cd503bdbb`. Follow-ups #1124–#1127. #1116 merged as ae3e57ad6 (head 45bffc7d0) after test-only
+  Linux fixes (T0 record tolerance rel 1e-10; T10 bit for bit on the Windows baseline, rel 1e-8 on GCC).
 
 ---
 
