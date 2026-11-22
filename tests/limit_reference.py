@@ -1066,12 +1066,14 @@ def _clarabel_cones(clarabel, n_zero, cones, extra_nonneg=0):
     return out
 
 
-def _clarabel_solve(matrix, b, c, cones, time_limit):
+def _clarabel_solve(matrix, b, c, cones, time_limit, overrides=None):
     import clarabel
     n = matrix.shape[1]
     settings = clarabel.DefaultSettings()
     settings.verbose = False
     settings.time_limit = float(time_limit)
+    for name, value in (overrides or {}).items():
+        setattr(settings, name, value)
     solver = clarabel.DefaultSolver(sp.csc_matrix((n, n)), np.asarray(c, float), sp.csc_matrix(matrix),
                                     np.asarray(b, float), cones, settings)
     start = time.perf_counter()
@@ -1085,6 +1087,8 @@ def _clarabel_solve(matrix, b, c, cones, time_limit):
                      "tol_feas": float(settings.tol_feas), "max_iter": int(settings.max_iter),
                      "status_raw": str(solution.status).split(".")[-1]},
     }
+    if overrides:                                   # the main solve keeps its frozen record layout
+        record["settings"].update(defaults=False, overrides=dict(overrides))
     return status, np.asarray(solution.x, dtype=float), wall, record
 
 
@@ -1341,6 +1345,11 @@ def face_projection(program, velocity, footing_velocity, apex_zero=None):
     return y[:n_v].reshape(np.shape(velocity)), y[n_v: n_v + 6 * n_f].reshape(n_f, 6), move
 
 
+CLEARANCE_RETRIES = ({}, {"dynamic_regularization_enable": False},
+                     {"static_regularization_constant": 1e-7, "max_iter": 400},
+                     {"reduced_tol_gap_rel": 1e-3, "reduced_tol_gap_abs": 1e-3, "reduced_tol_feas": 1e-6})
+
+
 class _ClearanceProgram:
     """The capped clearance program shared by :func:`find_apex_zero` and :func:`upper_interior_field`.
 
@@ -1415,7 +1424,13 @@ class _ClearanceProgram:
         b = np.concatenate([self.b_eq, self.b_cone, self.bounds, self.bounds, cap, -held])
         c = np.zeros(self.n_var + self.n_s)
         c[self.n_var:] = -weight / self.s_max
-        status, x, _, _ = _clarabel_solve(self.matrix, b, c, cones, time_limit)
+        # Producer retries (the clearance program only builds Z and the interior field; the checker judges
+        # both): Clarabel at its defaults first, then the settings that cleared the solver study's
+        # numerical errors, each only after a numerical_error.
+        for overrides in CLEARANCE_RETRIES:
+            status, x, _, _ = _clarabel_solve(self.matrix, b, c, cones, time_limit, overrides)
+            if status != "numerical_error":
+                break
         return status, x
 
     def field(self, x):
@@ -1452,9 +1467,18 @@ class _ClearanceProgram:
 #   1e-6 sits between, more than two decades from each. (The 18.3 diagnosis eliminated the rows exactly and
 #   saw about 1e-11; this program keeps them as solver rows.)
 # Z = 305 conditions (26 flow, 279 jump), the count of the 18.3 diagnosis.
+#
+# Recalibration, 2026-11-22 (driver solver_study.py at 6ebc5c766, Clarabel 0.11.1 faer, 8 threads, a Linux
+# workstation). upper3d_{fixed,roller}_phi10 mesh 4 (2,208 tets, mesh 0 refined once): the conditions the
+# clearance program cannot raise sit at 1e-13 to 1e-8 of their kind's scale, except three jump conditions
+# (coefficient 0 of facets 20, 34, 35) at 3.7e-6 (fixed) and 6.1e-6 (roller), with nothing between 1e-8
+# and 1e-6. With the old 1e-6 the three were left out of Z, the interior field could not clear them and the
+# checker refused it (interior_field_invalid); with 1e-4 both cases certify. 1e-4 keeps more than a decade
+# below the smallest raised argument of the mesh-0 calibration (2.5e-3). Facet 34 was raised only to 6.7e-4
+# of its cap: the second solve for partial conditions in find_apex_zero is for that case.
 Z_CAP_FRACTION = 1e-3
 Z_SLACK_FRACTION = 1e-6
-Z_APEX_ARGUMENT_REL = 1e-6
+Z_APEX_ARGUMENT_REL = 1e-4
 Z_ROW_FORCED_REL = 1e-10
 Z_ROW_PROBES = 2
 Z_ROW_PROBE_SEED = 237
@@ -1517,6 +1541,23 @@ def find_apex_zero(program, time_limit=CLARABEL_TIME_LIMIT_S):
     s = x[clear.n_var:]
     stuck = s < Z_SLACK_FRACTION * cap
     at_cap = s > 0.99 * cap
+    partial = ~at_cap & ~stuck
+    info["n_partial_first"] = int(partial.sum())
+    if partial.any():
+        # Second solve for the conditions left between the two thresholds (solver noise, or a vertex of
+        # the LP): the conditions that reached their cap are held at half their value and only the partial
+        # ones are raised. A raisable partial condition then clears (the cone argument: half the first
+        # field plus half its own maximiser keeps the others at half), a forced one stays stuck.
+        held = np.where(at_cap, 0.5 * s, 0.0)
+        status2, x2 = clear.solve(cap, held, partial.astype(float), time_limit)
+        info["status_second"] = status2
+        if status2 in contract.SOLVER_STATUS_WITH_VALUE:
+            s2 = x2[clear.n_var:]
+            raised2 = partial & (s2 >= Z_SLACK_FRACTION * cap)
+            stuck = stuck | (partial & ~raised2)
+            at_cap = at_cap | raised2
+            x = x2
+            s = np.where(partial, s2, s)
     velocity, _ = clear.field(x)
     flow, jump, vol, jmp = condition_arguments(geo, velocity)
     key = clear.key

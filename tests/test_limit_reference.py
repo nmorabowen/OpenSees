@@ -1402,7 +1402,7 @@ def test_finder_returns_no_face_where_no_condition_is_forced(name, formulation, 
     program, _, _, _ = solved(name, 0, formulation)
     face, info = lr.find_apex_zero(program)
     assert face is None and info["n_stuck"] == 0 and info["n_partial"] == 0, info
-    assert info["min_argument_raised"] > 1e3 * lr.Z_APEX_ARGUMENT_REL
+    assert info["min_argument_raised"] > 1e2 * lr.Z_APEX_ARGUMENT_REL   # two decades clear of the 2026-11-22 threshold
     runs = lr.run_case(name, 0, [formulation], tmp_path, solve_it=True)
     doc, fields = runs[formulation][1]
     assert "apex_zero" not in fields and "interior_footing_velocity" in fields
