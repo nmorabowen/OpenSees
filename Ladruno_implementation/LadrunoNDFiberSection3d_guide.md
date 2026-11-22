@@ -94,7 +94,15 @@ The resultant uses a force map `b`, with `s = Σ A bᵀσ` and `K = Σ A bᵀ D 
 
 `modelC` is the default because the oracle and its calibration use it. Its tangent is
 unsymmetric (`∂V/∂γ = Σ D11 φ A`, while `∂(work)/∂γ` would carry `φ²`), so use an unsymmetric
-solver: `UmfPack`, `SparseGEN`, `Mumps`, `FullGeneral`, or `Pardiso` in its unsymmetric mode.
+solver. On the desktop that is plain `system Pardiso`: with no flag it stores the full matrix and
+factors it as real unsymmetric (MKL mtype 11). `UmfPack`, `SparseGEN`, `Mumps` and `FullGeneral` also
+work. **Do not use `system Pardiso -symmetric` or `-spd` with `modelC`.** They store only the upper
+triangle, so the solve uses a symmetrised tangent. Newton then still converges, but on a wrong
+Jacobian. The fork's Pardiso warns ("an assembled element matrix is UNSYMMETRIC") at the first
+assembly where that happens. On a cracking RC cantilever (forceBeamColumn, 40 strips, axial load,
+displacement control), plain `Pardiso` and `UmfPack` give identical histories (89 vs 90 Newton
+iterations over 15 steps). `-symmetric` warned with an asymmetry of 1e-3 of the matrix scale. The
+`conjugate` resultant is symmetric whenever the fibre tangent is.
 
 Fail-closed geometry: a fibre centroid outside `|y| ≤ hy/2`, `|z| ≤ hz/2` (measured from the
 centroid) would get a negative `φ`. Such a section refuses its first state determination, so

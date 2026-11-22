@@ -38,7 +38,8 @@
 //     centroid) is refused at the first state determination.
 //   * stock DDM sensitivities use the stock sqrt(alpha) kinematics, so they are
 //     refused under the parabolic profile.
-// The modelC resultant gives an unsymmetric tangent: use an unsymmetric solver.
+// The modelC resultant gives an unsymmetric tangent: use an unsymmetric solver
+// (plain `system Pardiso`, UmfPack, Mumps); not Pardiso -symmetric / -spd.
 
 #ifndef LadrunoNDFiberSection3d_h
 #define LadrunoNDFiberSection3d_h

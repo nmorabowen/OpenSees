@@ -50,7 +50,8 @@
 //               computes it (06 §1.4). Not work-conjugate: an elastic rectangle
 //               gives K_VV = G A sum(phi A)/A (= G A for the continuum), and the
 //               tangent is NOT symmetric once the fibre couples eps and gamma.
-//               It needs an unsymmetric solver (UmfPack, SparseGEN, Mumps).
+//               It needs an unsymmetric solver: plain `system Pardiso` (mtype 11),
+//               UmfPack, SparseGEN, Mumps -- not Pardiso -symmetric / -spd.
 //   conjugate : b = a. Work-conjugate and symmetric whenever D is. An elastic
 //               rectangle gives K_VV = G A mean(phi^2) = 6/5 G A in the
 //               continuum: a kinematically imposed parabola STIFFENS the section.
