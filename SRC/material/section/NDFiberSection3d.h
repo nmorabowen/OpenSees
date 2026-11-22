@@ -93,6 +93,8 @@ class NDFiberSection3d : public SectionForceDeformation
     // AddingSensitivity:END ///////////////////////////////////////////
 
   protected:
+    // Ladruno WP-245: empty section with a caller-chosen classTag (for subclasses).
+    NDFiberSection3d(int tag, int classTag, int numFibers, double a, bool compCentroid);
     
     //  private:
     int numFibers, sizeFibers;                   // number of fibers in the section

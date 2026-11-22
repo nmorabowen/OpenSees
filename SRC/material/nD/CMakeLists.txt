@@ -71,6 +71,7 @@ target_sources(OPS_Material
     LadrunoSANISANDSasME.cpp
     LadrunoRCConcrete.cpp
     LadrunoRCFiniteStrain.cpp
+    LadrunoUniaxialFiber.cpp
     LadrunoConcrete3D.cpp
     LadrunoHS.cpp
     IncrementalElasticIsotropicThreeDimensional.cpp
@@ -165,6 +166,7 @@ target_sources(OPS_Material
     LadrunoSANISANDPlaneStrain.h
     LadrunoRCConcrete.h
     LadrunoRCFiniteStrain.h
+    LadrunoUniaxialFiber.h
     LadrunoRCKernel.h
     LadrunoHardening.h
     LadrunoConcrete3D.h

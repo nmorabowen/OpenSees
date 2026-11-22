@@ -113,6 +113,7 @@ void* OPS_LayeredMembraneSection();	// M. J. Nunez - UChile
 void* OPS_ElasticMembraneSection();	// M. J. Nunez - UChile
 void* OPS_PipeSection();
 void* OPS_LadrunoShellModifierSection();	// N. Mora-Bowen (Ladruno) — ADR 91
+void* OPS_LadrunoNDFiberSection3d();	// N. Mora-Bowen (Ladruno) — WP-245
 
 namespace {
     static FiberSection2d* theActiveFiberSection2d = 0;
@@ -243,6 +244,21 @@ namespace {
 	return theSec;
     }
 
+    // Ladruno WP-245: the shear-profile NDFiber section is an NDFiberSection3d
+    // subclass, so the stock fibre/patch/layer commands fill it through the
+    // active NDFiberSection3d pointer. 3D only.
+    static void* OPS_LadrunoNDFiberSection()
+    {
+	if (OPS_GetNDM() != 3) {
+	    opserr << "ERROR section LadrunoNDFiber: 3D models only (ndm 3); use the 3D section "
+		      "in a 3D model\n";
+	    return 0;
+	}
+	void* theSec = OPS_LadrunoNDFiberSection3d();
+	theActiveNDFiberSection3d = (NDFiberSection3d*)theSec;
+	return theSec;
+    }
+
     static void* OPS_NDFiberSectionWarping()
     {
 	void* theSec = 0;
@@ -308,6 +324,7 @@ namespace {
 	functionMap.insert(std::make_pair("ElasticMembraneSection", &OPS_ElasticMembraneSection));
 	functionMap.insert(std::make_pair("Pipe", &OPS_PipeSection));
 	functionMap.insert(std::make_pair("LadrunoShellModifier", &OPS_LadrunoShellModifierSection)); // Ladruno: ADR 91
+	functionMap.insert(std::make_pair("LadrunoNDFiber", &OPS_LadrunoNDFiberSection)); // Ladruno: WP-245
 
 	return 0;
     }

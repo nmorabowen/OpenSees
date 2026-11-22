@@ -2394,3 +2394,61 @@ features:
       point with the geometric term, lumped mass, alphaM / betaK Rayleigh; G2P
       batched at the last particle commit (ADR 232 §5.3 amendment). Database
       restart through the broker in mode A.
+
+  - feature: LadrunoNDFiberSection3d
+    classtag: 33001          # SEC_TAG family; per-registry band (33001 is independently MAT_TAG_LadrunoRebarBuckling, ELE_TAG_BezierTet10, ... — no collision)
+    tag_symbol: SEC_TAG_LadrunoNDFiberSection3d
+    pr: TBD
+    feature_class: material
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoNDFiberSection3d.py
+    tests:
+      - tests/test_ladrunoNDFiberSection3d.py
+      - tests/test_ladrunoNDFiberSection3d_cpp.py
+    tcl: WAIVED(classic-Tcl runs through OpenSees.exe inside tests/test_ladrunoNDFiberSection3d.py::test_classic_tcl_engine_gives_the_same_section)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/section/NDFiberSection3d.h
+      - SRC/material/section/NDFiberSection3d.cpp
+      - SRC/material/section/CMakeLists.txt
+      - SRC/material/section/Makefile
+      - SRC/Makefile
+      - SRC/interpreter/OpenSeesSectionCommands.cpp
+      - SRC/material/section/TclModelBuilderSectionCommand.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      WP-245 (program #1131, rcbf-3). NDFiber 3D section with a chosen shear-strain
+      profile: `-shearProfile uniform [-alpha a]` (the stock sqrt(alpha) rule) or
+      `-shearProfile parabolic -shearDepth hy hz [-shearResultant modelC|conjugate]`
+      (Model C's 1.5(1-(2y/h)^2); modelC V = sum tau A, unsymmetric, k = 1;
+      conjugate V = sum tau phi A, symmetric, k -> 6/5). Thin subclass of the stock
+      NDFiberSection3d through a protected classTag constructor. Shear map in the
+      header-only LadrunoFiberShearKernel.h, gated in g++ (rc_section_gpp.cpp).
+      Not wired into SRC/runtime (OpenSeesRT), which this fork does not build.
+
+  - feature: LadrunoUniaxialFiber
+    classtag: 33030          # ND_TAG family
+    tag_symbol: ND_TAG_LadrunoUniaxialFiber
+    pr: TBD
+    feature_class: material
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoNDFiberSection3d.py
+    tcl: WAIVED(classic-Tcl runs through OpenSees.exe inside tests/test_ladrunoNDFiberSection3d.py::test_classic_tcl_engine_gives_the_same_section)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/nD/CMakeLists.txt
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/TclModelBuilderNDMaterialCommand.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      WP-245 (program #1131, rcbf-3). A UniaxialMaterial as an NDFiber beam fibre
+      (BeamFiber order 3, BeamFiber2d order 2; other views refused): axial strain
+      drives the uniaxial law, zero shear stress and stiffness (no dowel, as Model
+      C), so reinforcing bars sit in the same NDFiber / LadrunoNDFiber section as
+      the concrete. `nDMaterial LadrunoUniaxialFiber $tag $uniTag [-rho rho]`.

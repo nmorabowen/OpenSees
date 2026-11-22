@@ -195,6 +195,56 @@ NDFiberSection3d::NDFiberSection3d(int tag, int num, double a, bool compCentroid
     code(5) = SECTION_RESPONSE_T;
 }
 
+// Ladruno WP-245: the same empty-section constructor with a caller-chosen classTag,
+// so a subclass (LadrunoNDFiberSection3d) registers its own tag. Stock is unchanged.
+NDFiberSection3d::NDFiberSection3d(int tag, int classTag, int num, double a, bool compCentroid): 
+    SectionForceDeformation(tag, classTag),
+    numFibers(0), sizeFibers(num), theMaterials(0), matData(0),
+    Abar(0.0), QyBar(0.0), QzBar(0.0), yBar(0.0), zBar(0.0), computeCentroid(compCentroid),
+    alpha(a), sectionIntegr(0), e(6), s(0), ks(0), 
+    parameterID(0), dedh(6)
+{
+    if (sizeFibers != 0) {
+	theMaterials = new NDMaterial *[sizeFibers];
+
+	if (theMaterials == 0) {
+	    opserr << "NDFiberSection3d::NDFiberSection3d -- failed to allocate Material pointers";
+	    exit(-1);
+	}
+
+	matData = new double [sizeFibers*3];
+
+	if (matData == 0) {
+	    opserr << "NDFiberSection3d::NDFiberSection3d -- failed to allocate double array for material data\n";
+	    exit(-1);
+	}
+
+
+	for (int i = 0; i < sizeFibers; i++) {
+	    matData[i*3] = 0.0;
+	    matData[i*3+1] = 0.0;
+	    matData[i*3+2] = 0.0;
+	    theMaterials[i] = 0;
+	}    
+    }
+
+    s = new Vector(sData, 6);
+    ks = new Matrix(kData, 6, 6);
+
+    for (int i = 0; i < 6; i++)
+	sData[i] = 0.0;
+
+    for (int i = 0; i < 6*6; i++)
+	kData[i] = 0.0;
+
+    code(0) = SECTION_RESPONSE_P;
+    code(1) = SECTION_RESPONSE_MZ;
+    code(2) = SECTION_RESPONSE_MY;
+    code(3) = SECTION_RESPONSE_VY;
+    code(4) = SECTION_RESPONSE_VZ;
+    code(5) = SECTION_RESPONSE_T;
+}
+
 NDFiberSection3d::NDFiberSection3d(int tag, int num, NDMaterial **mats,
 				   SectionIntegration &si, double a, bool compCentroid):
   SectionForceDeformation(tag, SEC_TAG_NDFiberSection3d),
