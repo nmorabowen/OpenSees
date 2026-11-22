@@ -84,7 +84,7 @@ hold totals only; the per-interval counts above come from the run logs.
 The L4 r2 gate value now comes after the join: q_max is 127.77 at t = 98, where it was the
 pre-join 120.26. It passes either way.
 
-## Changed records — for the owner's acceptance (bands unchanged)
+## Changed records — accepted by the owner, 2026-11-22 (bands unchanged)
 
 | Record | Before | After | Gate |
 |---|---|---|---|
