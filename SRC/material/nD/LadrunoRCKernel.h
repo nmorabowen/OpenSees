@@ -570,7 +570,90 @@ struct Params {
     double betaC = 170.0;          // MCFT softening coefficient C in beta = 1/(0.8 + C eps1) (-betaC)
     double crackedNu = -1.0;       // <0 => off. >=0: Poisson ratio of C0 once eps1 >= crackStrain
                                    // (irreversible latch RCHist::nuCracked) (-crackedNu)
+    // --- Ladruno WP-241 (defaults = pre-WP-241 behaviour, byte-identical) ---
+    // addonPlane: where the MCFT add-ons (beta, tension stiffening, cracked-nu latch) read the
+    //   principal tensile strain eps1 and its direction p1.
+    //   0 membrane (default): the x-y block {exx, eyy, gxy}, 2D p1 (shell / plane views).
+    //   1 spatial: the full 3x3 strain tensor, 3D p1 (frame-covariant; for beam fibres, where
+    //     the shear sits in gxy AND gxz). The fixed-crack interlock is x-y only and is refused
+    //     with spatial (parser); the kernel skips it defensively.
+    int    addonPlane = 0;         // -addonPlane {membrane|spatial}
+    // crackGate: what opens the cracked-nu latch and the tension-stiffening floor.
+    //   0 strain (default): eps1 >= crackStrain. eps1 is the TOTAL principal strain, so Poisson
+    //     expansion under compression opens it with no crack (WP-241 probe: at ~0.42 fc in
+    //     uniaxial compression of a plane-stress point).
+    //   1 damage: tensile damage has started, i.e. the tensile threshold xt is past the peak of
+    //     the tension backbone (latch: committed xt; floor: trial xt), and for the floor also
+    //     eps1 >= crackStrain. The Lubliner tensile measure is zero without a tensile principal
+    //     stress, so compression alone never opens it.
+    int    crackGate = 0;          // -crackGate {strain|damage}
+    // --- Ladruno WP-243 BeamFiber view: smeared transverse ties (read only by driveBeamFiber) ---
+    // Tie ratios per lateral direction of the fibre frame (y = index 1, z = index 2), yield stress,
+    // modulus and the bilinear kinematic hardening ratio b (Et = b Es once yielded). rho = 0 in a
+    // direction leaves that lateral normal stress free (sigma = 0), so a cover fibre is the
+    // default. Inert in every other view.
+    double tieRhoY = 0.0, tieRhoZ = 0.0;   // -ties rhoY rhoZ fyt Es
+    double tieFy = 0.0, tieEs = 0.0;
+    double tieB = 0.0;                     // -tieHardening b, 0 <= b < 1
+    // Model C crack check (BeamFiber view only, read by driveBeamFiber): 0 none | 1 sum.
+    //   sum: the principal tension q = n1.sig.n1 <= v_ci,max tan(theta) + sum_i rho_i <fyt - f_si> w_i
+    // with sin(theta) = |n1_x| (theta = strut angle from the fibre axis), crack width
+    // w = e1 / (sin(theta)/smx + cos(theta)/smt), v_ci,max = 0.18 sqrt(fc) / (0.31 + 24 w/(a_g + 16))
+    // (SI: MPa, mm) and tie weights w_i = n1_i^2 / (n1_y^2 + n1_z^2).
+    int    crackCheck = 0;                 // -crackCheck sum smx smt (absent = 0)
+    double ccSmx = 0.0, ccSmt = 0.0;       // crack-spacing parameters along x and transverse
 };
+
+// Strain abscissa of the tension backbone's maximum stress (the crack-onset threshold used by
+// crackGate = damage). The post-peak regularization stretches only the softening branch, so
+// this does not move under -autoRegularization.
+inline double backbonePeakAbscissa(const Backbone& b)
+{
+    double ymax = -1.0e300, xp = 0.0;
+    for (int i = 0; i < b.n; ++i) if (b.y[i] > ymax) { ymax = b.y[i]; xp = b.x[i]; }
+    return xp;
+}
+
+// Ladruno WP-241: principal tensile strain of the FULL 3x3 strain tensor (engineering shear in,
+// tensor shear gamma/2 used). Returns e1 = <lambda_max> and three Voigt 6-vectors over
+// {00,11,22,01,12,02}, built from the m eigenvectors v_k that share lambda_max (multiplicity
+// m = 1, 2 or 3, relative tolerance 1e-9 of the strain scale, as eps1FromMembrane):
+//   P1[]   = d e1 / d eps (engineering dual) = (1/m) sum_k (vx^2, vy^2, vz^2, vx vy, vy vz, vx vz)
+//   inj[]  = TS injection weights            =       sum_k (vx^2, vy^2, vz^2, vx vy, vy vz, vx vz)
+//   meas[] = TS measured quantity weights    = (1/m) sum_k (vx^2, vy^2, vz^2, 2vx vy, 2vy vz, 2vx vz)
+// so meas . inj = 1 for every m (each of the m normals is pinned to sigma_ts). For an x-y state
+// whose largest principal lies in x-y these equal the membrane vectors exactly: m = 1 gives
+// (a, b, ab) / (a, b, 2ab); the in-plane equibiaxial m = 2 gives (1,1,0) / (0.5,0.5,0).
+inline double eps1Spatial(const double eps6[6], double P1[6], double inj[6], double meas[6], int* mult)
+{
+    double A[3][3] = {
+        { eps6[0],       0.5 * eps6[3], 0.5 * eps6[5] },
+        { 0.5 * eps6[3], eps6[1],       0.5 * eps6[4] },
+        { 0.5 * eps6[5], 0.5 * eps6[4], eps6[2]       }
+    };
+    double S[3], V[3][3];
+    eig3x3sym(A, S, V);
+    double scale = 0.0;
+    for (int a = 0; a < 6; ++a) scale += fabs(eps6[a]);
+    scale += 1.0e-30;
+    int m = 1;
+    if (S[0] - S[1] < 1.0e-9 * scale) m = 2;
+    if (S[0] - S[2] < 1.0e-9 * scale) m = 3;
+    for (int a = 0; a < 6; ++a) { P1[a] = 0.0; inj[a] = 0.0; meas[a] = 0.0; }
+    for (int k = 0; k < m; ++k) {
+        double vx = V[0][k], vy = V[1][k], vz = V[2][k];
+        double w[6] = { vx*vx, vy*vy, vz*vz, vx*vy, vy*vz, vx*vz };
+        for (int a = 0; a < 6; ++a) {
+            inj[a]  += w[a];
+            P1[a]   += w[a] / m;
+            meas[a] += (a < 3 ? 1.0 : 2.0) * w[a] / m;
+        }
+    }
+    if (mult) *mult = m;
+    double lam = S[0];
+    if (m > 1) { lam = 0.0; for (int k = 0; k < m; ++k) lam += S[k]; lam /= m; }
+    return macauley(lam);
+}
 
 inline void setupParams(Params& P)    // call after ht/hc are filled
 {
@@ -605,6 +688,11 @@ struct RCHist {
     double eps1_old;        // committed in-plane principal tensile strain at step n-1
     // --- Ladruno C2: cracked-Poisson latch (0/1), set once eps1 >= crackStrain with crackedNu on ---
     double nuCracked;
+    // --- Ladruno WP-241: crackGate = damage tension-stiffening onset scale (latch) ---
+    // < 0: the floor has not opened. >= 0: s = min(1, q_on / sigma_ts(e1_on)), frozen on the step
+    // the damage-gated floor first opens; the floor is then s * sigma_ts(e1). Unused (stays -1)
+    // under crackGate = strain.
+    double tsScale;
 };
 
 inline void histZero(RCHist& h)
@@ -616,6 +704,7 @@ inline void histZero(RCHist& h)
     h.cracked2 = 0.0; h.slipCum = 0.0;
     h.xt_old = h.xc_old = 0.0; h.eps1_old = 0.0;
     h.nuCracked = 0.0;
+    h.tsScale = -1.0;
 }
 
 inline double equivTensile(const double Si[3], double fcft, double Kc)
@@ -667,11 +756,24 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // stress (sig2_eff ~ eps2 + nu eps1). The effective stress is incremental, so the switch is
     // stress-continuous; the step that cracks uses the cracked operator for its whole increment.
     // Off (crackedNu < 0, the default) => C0(E, nu) exactly as before.
+    // Ladruno WP-241: the add-on principal strain, membrane (default) or spatial, computed once.
+    const bool spatial = (P.addonPlane == 1);
+    double sp_P1[6], sp_inj[6], sp_meas[6]; int sp_mult = 1;
+    const double e1_sp = spatial ? eps1Spatial(eps6, sp_P1, sp_inj, sp_meas, &sp_mult) : 0.0;
+    // crackGate = damage: crack onset = tensile threshold past the backbone peak
+    const double xtPeak = (P.crackGate == 1) ? backbonePeakAbscissa(P.ht) : 0.0;
     double nuCr = in.nuCracked;
     if (P.crackedNu >= 0.0 && nuCr < 0.5) {
-        double p1c[2]; int dgc = 0;
-        if (eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1c, &dgc) >= P.crackStrain && P.crackStrain > 0.0)
-            nuCr = 1.0;
+        if (P.crackGate == 1) {
+            // WP-241: the COMMITTED threshold (the predictor needs nu before this step's
+            // damage is known), so the latch lags the crack by one step; stress-continuous.
+            if (in.xt > xtPeak) nuCr = 1.0;
+        } else {
+            double p1c[2]; int dgc = 0;
+            double e1c = spatial ? e1_sp : eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1c, &dgc);
+            if (e1c >= P.crackStrain && P.crackStrain > 0.0)
+                nuCr = 1.0;
+        }
     }
     const double nuAct = (P.crackedNu >= 0.0 && nuCr >= 0.5) ? P.crackedNu : P.nu;
     double C0[6][6]; elasticTangent(E, nuAct, C0);
@@ -688,8 +790,8 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     decompose(seff, P.cdf, D);
 
     // MCFT beta from in-plane membrane principal tensile strain (gxy = eps6[3] engineering)
-    double p1[2]; int degen = 0;
-    double e1 = eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1, &degen);
+    double p1[2] = { 1.0, 0.0 }; int degen = 0;
+    double e1 = spatial ? e1_sp : eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1, &degen);
     // IMPL-EX: freeze beta over the step from the extrapolated (committed) eps1, so the
     // returned tangent carries no beta cross-term (constant secant). eps1 itself is a
     // pure function of strain, so this is the only path-frozen quantity here.
@@ -789,26 +891,46 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     //   inject g=sigma_ts-q to BOTH normals -> ts_inj=(1,1,0), ts_meas=(0.5,0.5,0),
     //   ts_meas.ts_inj = 1 (each in-plane normal reaches sigma_ts; the rank-1 (0.5,0.5,0)
     //   reuse would only reach the half-way point -- self-consistency coeff 0.5).
+    // Ladruno WP-241: the vectors live on an index list -- membrane {0,1,3} (the original
+    // arithmetic, term for term), spatial all six (eps1Spatial's multiplicity-aware vectors).
     bool   ts_active = false;
-    double ts_inj[3] = {0,0,0}, ts_meas[3] = {0,0,0}, ts_P1eps[6] = {0,0,0,0,0,0}, ts_dsig = 0.0;
-    if (P.tensStiffMode != 0 && e1_ts >= P.crackStrain) {
-        if (degen) {
+    double ts_inj[6] = {0,0,0,0,0,0}, ts_meas[6] = {0,0,0,0,0,0}, ts_P1eps[6] = {0,0,0,0,0,0}, ts_dsig = 0.0;
+    const int ts_idx_m[3] = { 0, 1, 3 }, ts_idx_s[6] = { 0, 1, 2, 3, 4, 5 };
+    const int* ts_idx = spatial ? ts_idx_s : ts_idx_m;
+    const int  ts_n   = spatial ? 6 : 3;
+    const bool ts_gate = (P.crackGate == 1) ? (new_xt > xtPeak) : true;   // WP-241 crackGate
+    // WP-241 crackGate = damage: the gate opens when tensile damage starts, and under tension-
+    // compression (Lubliner) that is BELOW ft, where the bare principal stress q is already under
+    // sigma_ts(e1). Injecting the full floor there is a stress JUMP (no root for a lateral balance).
+    // So the floor is scaled by s = min(1, q / sigma_ts(e1)) taken on the step it first opens
+    // (delta = 0 there: continuous), and frozen at commit (RCHist::tsScale). The gate stays shut
+    // while q <= 0. crackGate = strain: s = 1 always (byte-identical).
+    double tsScale = in.tsScale;
+    if (P.tensStiffMode != 0 && e1_ts >= P.crackStrain && ts_gate) {
+        if (spatial) {
+            for (int k = 0; k < 6; ++k) { ts_inj[k] = sp_inj[k]; ts_meas[k] = sp_meas[k]; ts_P1eps[k] = sp_P1[k]; }
+        } else if (degen) {
             ts_inj[0] = 1.0;  ts_inj[1] = 1.0;
             ts_meas[0] = 0.5; ts_meas[1] = 0.5;
             ts_P1eps[0] = 0.5; ts_P1eps[1] = 0.5;         // de1/d(exx)=de1/d(eyy)=0.5 (mean)
         } else {
             double a = p1[0]*p1[0], b = p1[1]*p1[1], ab = p1[0]*p1[1];
-            ts_inj[0] = a;  ts_inj[1] = b;  ts_inj[2] = ab;
-            ts_meas[0] = a; ts_meas[1] = b; ts_meas[2] = 2.0*ab;
+            ts_inj[0] = a;  ts_inj[1] = b;  ts_inj[3] = ab;
+            ts_meas[0] = a; ts_meas[1] = b; ts_meas[3] = 2.0*ab;
             ts_P1eps[0] = a; ts_P1eps[1] = b; ts_P1eps[3] = ab;   // de1/deps (membrane)
         }
-        double q      = ts_meas[0]*sig6[0] + ts_meas[1]*sig6[1] + ts_meas[2]*sig6[3];
+        double q = 0.0;
+        for (int k = 0; k < ts_n; ++k) q += ts_meas[ts_idx[k]] * sig6[ts_idx[k]];
         double sig_ts = tensStiff(e1_ts, P.tensStiffMode, P.ftPeak, P.tensStiffC, P.tensStiffAlpha, &ts_dsig);
+        if (P.crackGate == 1) {
+            if (tsScale < 0.0 && q > 0.0 && sig_ts > 0.0)      // onset step: open at q
+                tsScale = (q < sig_ts) ? q / sig_ts : 1.0;
+            const double s = (tsScale < 0.0) ? 0.0 : tsScale;   // q <= 0: still shut
+            sig_ts *= s; ts_dsig *= s;
+        }
         double delta  = sig_ts - q;
         if (delta > 0.0) {
-            sig6[0] += delta * ts_inj[0];
-            sig6[1] += delta * ts_inj[1];
-            sig6[3] += delta * ts_inj[2];
+            for (int k = 0; k < ts_n; ++k) sig6[ts_idx[k]] += delta * ts_inj[ts_idx[k]];
             ts_active = true;
         }
     }
@@ -843,7 +965,9 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // shearRetMode 3 (rots) = rotating-coaxial: skip the fixed-crack shear entirely, so the
     // membrane shear stays smeared/spectral (no capture, no clip, no friction). il_active
     // stays false => the tangent carries no crack cross-term either.
-    if (P.interlockOn && P.shearRetMode != 3) {
+    // WP-241: the fixed crack is an x-y object (2D normal, scalar slip); the spatial add-on
+    // plane refuses -interlock in the parser and the kernel skips it here as a backstop.
+    if (P.interlockOn && P.shearRetMode != 3 && !spatial) {
         if (cracked < 0.5 && e1 >= P.crackStrain && !degen) {   // freeze crack normal
             cracked = 1.0; crk_c = p1[0]; crk_s = p1[1];
         }
@@ -937,6 +1061,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // by the host material at commit (so a mid-step explicit pass never corrupts it).
     out.xt_old = in.xt_old; out.xc_old = in.xc_old; out.eps1_old = in.eps1_old;
     out.nuCracked = nuCr;   // Ladruno (C2)
+    out.tsScale = tsScale;  // Ladruno WP-241 (damage-gated TS onset scale)
 
     // tangent
     if (do_tangent) {
@@ -977,7 +1102,8 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
                 double dbeta = dBetaCompr(e1, P.betaFloor, P.betaC);
                 if (dbeta != 0.0) {
                     double P1[6] = { 0,0,0,0,0,0 };
-                    if (degen) { P1[0] = 0.5; P1[1] = 0.5; }   // equibiaxial blend
+                    if (spatial) { for (int k = 0; k < 6; ++k) P1[k] = sp_P1[k]; }   // WP-241: 3D dual
+                    else if (degen) { P1[0] = 0.5; P1[1] = 0.5; }   // equibiaxial blend
                     else { P1[0] = p1[0]*p1[0]; P1[1] = p1[1]*p1[1]; P1[3] = p1[0]*p1[1]; }
                     double coef = (1.0 - dc_bar) * dbeta;
                     for (int a = 0; a < 6; ++a)
@@ -998,16 +1124,15 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
             // => constant secant). Placed before the interlock tangent so the interlock cross-term
             // reads the floored Dtan (consistent with the floored stress order).
             if (P.tangentMode == 0 && ts_active && !implexExplicit) {
-                const int vidx[3] = { 0, 1, 3 };
                 double row[6];                                              // d(q)/deps, all cols
                 for (int c = 0; c < 6; ++c) {
                     double acc = 0.0;
-                    for (int k = 0; k < 3; ++k) acc += ts_meas[k] * Dtan6[vidx[k]][c];
+                    for (int k = 0; k < ts_n; ++k) acc += ts_meas[ts_idx[k]] * Dtan6[ts_idx[k]][c];
                     row[c] = acc;
                 }
-                for (int a = 0; a < 3; ++a)
+                for (int a = 0; a < ts_n; ++a)
                     for (int c = 0; c < 6; ++c)
-                        Dtan6[vidx[a]][c] += ts_inj[a] * (ts_dsig * ts_P1eps[c] - row[c]);
+                        Dtan6[ts_idx[a]][c] += ts_inj[ts_idx[a]] * (ts_dsig * ts_P1eps[c] - row[c]);
             }
             // Phase-2a interlock CONSISTENT tangent. The stress clips the crack-shear
             // tau_sm = m_sigma.sig_ip to +/- v_ci,max via sig_ip += dtau*m_eps. Below the
@@ -1029,33 +1154,41 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
                 // sensitivity m_eps (x) (m_sigma.Dtan_ip), then add the friction stiffness
                 // G*m_eps (x) m_eps (full when sliding-elastic; floored to betaSrMin*G when
                 // capped/plastic for conditioning). v_ci,max(w) coupling omitted (2nd order).
+                // Ladruno WP-241: the smeared crack shear depends on ALL six strains (eps_zz and
+                // the transverse shears enter the in-plane stresses through C0 and the spectral
+                // spine), so its removal spans all six columns -- the same fix the TS pinning
+                // tangent got (quirk LEGACY-tension-stiffening-pinning-tangent-must-span). With
+                // columns {0,1,3} only, a condensed view (eps_zz Newton in PlaneStress /
+                // PlateFiber) kept the pinned-away eps_zz sensitivity. The friction stiffness
+                // G m_eps (x) m_eps is a function of the in-plane slip only (columns {0,1,3}).
                 double c = crk_c, s = crk_s, c2 = c*c, s2 = s*s, cs = c*s;
                 const int vidx[3] = { 0, 1, 3 };
                 double msig[3] = { -cs, cs, c2 - s2 };
-                double row[3];
-                for (int j = 0; j < 3; ++j) {
+                double row[6];
+                for (int j = 0; j < 6; ++j) {
                     double acc = 0.0;
-                    for (int k = 0; k < 3; ++k) acc += msig[k] * Dtan6[vidx[k]][vidx[j]];
+                    for (int k = 0; k < 3; ++k) acc += msig[k] * Dtan6[vidx[k]][j];
                     row[j] = acc;
                 }
                 double gcoef = (il_capped ? P.betaSrMin : 1.0) * il_Gint;
+                double mfull[6] = { il_m[0], il_m[1], 0.0, il_m[2], 0.0, 0.0 };
                 for (int a = 0; a < 3; ++a)
-                    for (int c3 = 0; c3 < 3; ++c3)
-                        Dtan6[vidx[a]][vidx[c3]] += -il_m[a] * row[c3] + gcoef * il_m[a] * il_m[c3];
+                    for (int j = 0; j < 6; ++j)
+                        Dtan6[vidx[a]][j] += -il_m[a] * row[j] + gcoef * il_m[a] * mfull[j];
             } else if (il_capped) {
                 double c = crk_c, s = crk_s, c2 = c*c, s2 = s*s, cs = c*s;
                 const int vidx[3] = { 0, 1, 3 };
                 double msig[3] = { -cs, cs, c2 - s2 };       // m_sigma (tensor shear projector)
-                double row[3];
-                for (int j = 0; j < 3; ++j) {
+                double row[6];                                // WP-241: all six columns (above)
+                for (int j = 0; j < 6; ++j) {
                     double acc = 0.0;
-                    for (int k = 0; k < 3; ++k) acc += msig[k] * Dtan6[vidx[k]][vidx[j]];
+                    for (int k = 0; k < 3; ++k) acc += msig[k] * Dtan6[vidx[k]][j];
                     row[j] = acc;
                 }
                 double fac = 1.0 - P.betaSrMin;
                 for (int a = 0; a < 3; ++a)
-                    for (int c3 = 0; c3 < 3; ++c3)
-                        Dtan6[vidx[a]][vidx[c3]] -= fac * il_m[a] * row[c3];
+                    for (int j = 0; j < 6; ++j)
+                        Dtan6[vidx[a]][j] -= fac * il_m[a] * row[j];
             }
         }
     }
@@ -1065,6 +1198,228 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
         *residual = sqrt(sn);
     }
     return STATUS_OK;
+}
+
+// ===========================================================================
+// Ladruno WP-243: the BeamFiber view.
+//
+// A beam fibre imposes the retained components {0, 3, 5} = (eps_xx, gamma_xy, gamma_xz). The
+// lateral block {1, 2, 4} = (eps_yy, eps_zz, gamma_yz) is solved so that the concrete balances the
+// smeared ties of its own direction:
+//   r = ( sig_yy + rhoY f_s(eps_yy),  sig_zz + rhoZ f_s(eps_zz),  sig_yz ) = 0.
+// A direction with rho = 0 is stress-free, so a fibre with no ties is the uniaxial-stress fibre
+// with two shears. The retained tangent is the static condensation of the same Jacobian:
+//   D_RR - D_RL (D_LL + T)^-1 D_LR,   T = diag(rhoY Et_y, rhoZ Et_z, 0).
+// Root selection: Newton starts from the COMMITTED lateral strain (in.strain), with a backtracking
+// line search on |r|, so it follows the branch the fibre is on through the cracking fold (where
+// rho fyt < f_cr, the lateral residual is not monotonic in eps_yy).
+// The caller supplies the view's Params (addonPlane = spatial). Returns STATUS_OK, or
+// STATUS_NO_CONVERGE when the lateral balance is not met: the caller must refuse the trial, never
+// report a stress (stock BeamFiberMaterial returns 0 there).
+// ===========================================================================
+
+// Bilinear kinematic-hardening bar, one direction. Committed plastic strain epN in, trial epNew and
+// tangent Et out. b = 0 is elastic-perfectly plastic; b > 0 gives Et = b Es past yield.
+inline double tieUpdate(double eps, double epN, double Es, double fy, double b, double& Et, double& epNew)
+{
+    const double H   = (b > 0.0) ? b * Es / (1.0 - b) : 0.0;   // linear kinematic modulus
+    const double sTr = Es * (eps - epN);
+    const double xi  = sTr - H * epN;                          // relative to the back stress H epN
+    const double f   = fabs(xi) - fy;
+    if (f <= 0.0) { Et = Es; epNew = epN; return sTr; }
+    const double dg = f / (Es + H);
+    epNew = epN + (xi > 0.0 ? dg : -dg);
+    Et = Es * H / (Es + H);
+    return Es * (eps - epNew);
+}
+
+inline bool solve3x3(const double A[3][3], const double b[3], double x[3])
+{
+    double M[3][4];
+    for (int i = 0; i < 3; ++i) { for (int j = 0; j < 3; ++j) M[i][j] = A[i][j]; M[i][3] = b[i]; }
+    for (int c = 0; c < 3; ++c) {
+        int piv = c; double best = fabs(M[c][c]);
+        for (int r = c + 1; r < 3; ++r) if (fabs(M[r][c]) > best) { best = fabs(M[r][c]); piv = r; }
+        if (!(best > 1.0e-300)) return false;
+        if (piv != c) for (int j = 0; j < 4; ++j) { double t = M[piv][j]; M[piv][j] = M[c][j]; M[c][j] = t; }
+        for (int r = 0; r < 3; ++r) {
+            if (r == c) continue;
+            const double f = M[r][c] / M[c][c];
+            for (int j = c; j < 4; ++j) M[r][j] -= f * M[c][j];
+        }
+    }
+    for (int i = 0; i < 3; ++i) x[i] = M[i][3] / M[i][i];
+    return true;
+}
+
+// Model C `sum` crack-check cap at a full strain (Params::crackCheck). Pure function of the strain
+// and the committed tie plastic strains (the tie stresses are re-evaluated here), so its strain
+// gradient, ties included, can be taken by central differences. Writes the principal data the
+// caller injects along (as eps1Spatial). Returns the cap; *e1out = e1.
+inline double crackCheckCap(const Params& P, const double eps6[6], const double tieEpN[2],
+                            double P1[6], double inj[6], double meas[6], double* e1out)
+{
+    int m = 1;
+    const double e1 = eps1Spatial(eps6, P1, inj, meas, &m);
+    if (e1out) *e1out = e1;
+    double s2 = P1[0];                                   // n1_x^2 (multiplicity-averaged)
+    if (s2 < 0.0) s2 = 0.0;
+    if (s2 > 1.0) s2 = 1.0;
+    const double st = sqrt(s2), ct = sqrt(1.0 - s2);
+    const double sth = 1.0 / (st / P.ccSmx + ct / P.ccSmt + 1.0e-12);
+    const double w = e1 * sth;
+    const double vci = 0.18 * P.sqrtFc / (0.31 + 24.0 * w / (P.aggSize + 16.0));
+    double th = atan2(st, ct);
+    const double thLo = 1.0e-3, thHi = 1.5707963267948966 - 1.0e-3;   // pi/2 (no M_PI on MSVC)
+    if (th < thLo) th = thLo;
+    if (th > thHi) th = thHi;
+    double cap = vci * tan(th);
+    const double rho[2] = {P.tieRhoY, P.tieRhoZ};
+    const double ty = P1[1], tz = P1[2], tt = ty + tz;
+    const double wt[2] = {tt > 1.0e-30 ? ty / tt : 0.5, tt > 1.0e-30 ? tz / tt : 0.5};
+    for (int d = 0; d < 2; ++d) {
+        if (!(rho[d] > 0.0)) continue;
+        double Et, epNew;
+        const double fs = tieUpdate(eps6[1 + d], tieEpN[d], P.tieEs, P.tieFy, P.tieB, Et, epNew);
+        const double res = P.tieFy - fs;
+        if (res > 0.0) cap += rho[d] * res * wt[d];
+    }
+    return cap;
+}
+
+// Apply the cap to (sig6, Dtan6) in place: when q = meas.sig > cap, inject (cap - q) along inj
+// (the rank-1 machinery of the TS floor, pushing down instead of up). Tangent:
+// Dtan += inj (x) (d cap/d eps - meas.Dtan), d cap/d eps by central differences (h = 1e-9),
+// the direction derivative of n1 omitted as in the TS floor. Returns true when the cap binds.
+inline bool applyCrackCheck(const Params& P, const double eps6[6], const double tieEpN[2],
+                            double sig6[6], double Dtan6[6][6])
+{
+    double P1[6], inj[6], meas[6], e1 = 0.0;
+    const double cap = crackCheckCap(P, eps6, tieEpN, P1, inj, meas, &e1);
+    if (!(e1 > 0.0)) return false;
+    double q = 0.0;
+    for (int a = 0; a < 6; ++a) q += meas[a] * sig6[a];
+    if (q <= cap) return false;
+    double g[6];
+    for (int k = 0; k < 6; ++k) {
+        const double h = 1.0e-9;
+        double ep[6], em[6], d1[6], d2[6], d3[6];
+        for (int a = 0; a < 6; ++a) { ep[a] = eps6[a]; em[a] = eps6[a]; }
+        ep[k] += h; em[k] -= h;
+        g[k] = (crackCheckCap(P, ep, tieEpN, d1, d2, d3, 0) - crackCheckCap(P, em, tieEpN, d1, d2, d3, 0)) / (2.0 * h);
+    }
+    double mD[6];
+    for (int k = 0; k < 6; ++k) { mD[k] = 0.0; for (int a = 0; a < 6; ++a) mD[k] += meas[a] * Dtan6[a][k]; }
+    const double delta = cap - q;
+    for (int a = 0; a < 6; ++a) {
+        sig6[a] += delta * inj[a];
+        for (int k = 0; k < 6; ++k) Dtan6[a][k] += inj[a] * (g[k] - mD[k]);
+    }
+    return true;
+}
+
+// eps6: retained {0,3,5} set by the caller; lateral {1,2,4} overwritten with the converged values.
+// tieEpN: committed tie plastic strains (y, z). tieEp/tieSig: trial plastic strains and bar stresses.
+// iters (optional): Newton iterations used.
+inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, const double tieEpN[2],
+                          double sig6[6], double Dtan6[6][6], RCHist& out,
+                          double tieEp[2], double tieSig[2], int* iters = 0,
+                          bool do_implex = false, double time_factor = 1.0, bool* crackCheckBinds = 0)
+{
+    static const int L[3] = {1, 2, 4};
+    const double rho[2] = {P.tieRhoY, P.tieRhoZ};
+    double Et[2] = {0.0, 0.0};
+    bool ccActive = false;
+    double r[3], J[3][3];
+    for (int a = 0; a < 3; ++a) eps6[L[a]] = in.strain[L[a]];
+
+    auto evaluate = [&]() -> double {
+        returnMap3D(P, eps6, in, sig6, Dtan6, out, true, 0, do_implex, time_factor);
+        for (int d = 0; d < 2; ++d) {
+            Et[d] = 0.0; tieEp[d] = tieEpN[d]; tieSig[d] = 0.0;
+            if (rho[d] > 0.0)
+                tieSig[d] = tieUpdate(eps6[1 + d], tieEpN[d], P.tieEs, P.tieFy, P.tieB, Et[d], tieEp[d]);
+        }
+        // Model C crack check: its tie dependence sits in the eps_yy/eps_zz columns of Dtan6
+        ccActive = (P.crackCheck == 1) && applyCrackCheck(P, eps6, tieEpN, sig6, Dtan6);
+        r[0] = sig6[1] + rho[0] * tieSig[0];
+        r[1] = sig6[2] + rho[1] * tieSig[1];
+        r[2] = sig6[4];
+        for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) J[i][j] = Dtan6[L[i]][L[j]];
+        J[0][0] += rho[0] * Et[0];
+        J[1][1] += rho[1] * Et[1];
+        return sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+    };
+    auto stressScale = [&]() -> double {
+        double s = 0.0; for (int a = 0; a < 6; ++a) s += sig6[a] * sig6[a];
+        s = sqrt(s);
+        return (s > P.ftPeak) ? s : (P.ftPeak > 0.0 ? P.ftPeak : 1.0);
+    };
+
+    double rn = evaluate();
+    bool conv = false;
+    int it = 0;
+    for (; it < 50; ++it) {
+        if (rn <= 1.0e-10 * stressScale()) { conv = true; break; }
+        double dx[3];
+        if (!solve3x3(J, r, dx)) break;
+        const double base[3] = {eps6[1], eps6[2], eps6[4]};
+        double lam = 1.0, rnew = rn;
+        for (int ls = 0; ls < 8; ++ls) {               // backtracking on |r|; the last try is kept
+            for (int a = 0; a < 3; ++a) eps6[L[a]] = base[a] - lam * dx[a];
+            rnew = evaluate();
+            if (rnew < rn) break;
+            lam *= 0.5;
+        }
+        rn = rnew;
+    }
+    if (iters) *iters = it;
+    if (crackCheckBinds) *crackCheckBinds = ccActive;
+    if (!conv) conv = (rn <= 1.0e-6 * stressScale());  // a stalled but balanced point is accepted
+    if (!conv) return STATUS_NO_CONVERGE;
+
+    // condensed tangent at the converged state (J and Dtan6 belong to the last evaluate())
+    double T[3][6];
+    for (int k = 0; k < 6; ++k) {
+        const double rhs[3] = {Dtan6[L[0]][k], Dtan6[L[1]][k], Dtan6[L[2]][k]};
+        double c[3];
+        if (!solve3x3(J, rhs, c)) return STATUS_NO_CONVERGE;
+        for (int i = 0; i < 3; ++i) T[i][k] = c[i];
+    }
+    double Dc[6][6];
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+        double v = Dtan6[i][j];
+        for (int a = 0; a < 3; ++a) v -= Dtan6[i][L[a]] * T[a][j];
+        Dc[i][j] = v;
+    }
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) Dtan6[i][j] = Dc[i][j];
+    return STATUS_OK;
+}
+
+// Elastic BeamFiber tangent (getInitialTangent, revertToStart): the same condensation on C0 with
+// the elastic tie stiffness rho Es.
+inline void beamFiberInitialTangent(const Params& P, double D[6][6])
+{
+    static const int L[3] = {1, 2, 4};
+    elasticTangent(P.E, P.nu, D);
+    double J[3][3];
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) J[i][j] = D[L[i]][L[j]];
+    J[0][0] += P.tieRhoY * P.tieEs;
+    J[1][1] += P.tieRhoZ * P.tieEs;
+    double T[3][6];
+    for (int k = 0; k < 6; ++k) {
+        const double rhs[3] = {D[L[0]][k], D[L[1]][k], D[L[2]][k]};
+        double c[3] = {0.0, 0.0, 0.0};
+        solve3x3(J, rhs, c);
+        for (int i = 0; i < 3; ++i) T[i][k] = c[i];
+    }
+    double Dc[6][6];
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
+        double v = D[i][j];
+        for (int a = 0; a < 3; ++a) v -= D[i][L[a]] * T[a][j];
+        Dc[i][j] = v;
+    }
+    for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) D[i][j] = Dc[i][j];
 }
 
 } // namespace ladruno_rc_kernel

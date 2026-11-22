@@ -184,6 +184,29 @@ static const OptSpec kLadrunoRCOptions[] = {
   {"-autoRegularization", 1, "PR-277"},
   // Ladruno C2 (#877): cracked Poisson ratio and the MCFT strut coefficient
   {"-betaC", 1, "PR-877"}, {"-crackedNu", 1, "PR-877"},
+  // Ladruno WP-241: spatial add-on plane (beam fibres) and the damage crack gate
+  {"-addonPlane", 1, "WP-241"}, {"-crackGate", 1, "WP-241"},
+  // Ladruno WP-243: smeared ties of the BeamFiber view (LadrunoRCConcrete only; RCF refuses them)
+  {"-ties", 4, "WP-243"}, {"-tieHardening", 1, "WP-243"}, {"-crackCheck", 3, "WP-243"},
+};
+
+// ---------------------------------------------------------------------------
+// LadrunoNDFiber (WP-245, section 33001): the shear-profile NDFiber section.
+// `section LadrunoNDFiber $tag -shearProfile uniform|parabolic ...`; the fibre
+// block (Tcl braces / later openseespy fibre calls) is not an option.
+// ---------------------------------------------------------------------------
+static const OptSpec kLadrunoNDFiberOptions[] = {
+  {"-shearProfile",   1, "WP-245"},
+  {"-shearDepth",     2, "WP-245"},
+  {"-shearResultant", 1, "WP-245"},
+  {"-alpha",          1, "WP-245"},
+  {"-noCentroid",     0, "WP-245"},
+};
+
+// LadrunoUniaxialFiber (WP-245, nD 33030): a uniaxial material as a beam fibre.
+// `nDMaterial LadrunoUniaxialFiber $tag $uniTag`; no options yet.
+static const OptSpec kLadrunoUniaxialFiberOptions[] = {
+  {"-rho",            1, "WP-245"},
 };
 
 // ---------------------------------------------------------------------------
@@ -208,6 +231,8 @@ inline size_t count(const OptSpec (&)[N]) { return N; }
 static const OptTable kOptTables[] = {
   {"LadrunoRCConcrete",     kLadrunoRCOptions, count(kLadrunoRCOptions)},
   {"LadrunoRCFiniteStrain", kLadrunoRCOptions, count(kLadrunoRCOptions)},
+  {"LadrunoNDFiber",        kLadrunoNDFiberOptions, count(kLadrunoNDFiberOptions)},
+  {"LadrunoUniaxialFiber",  kLadrunoUniaxialFiberOptions, count(kLadrunoUniaxialFiberOptions)},
 };
 
 }  // namespace ladruno_opt

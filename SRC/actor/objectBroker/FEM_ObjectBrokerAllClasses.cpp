@@ -232,6 +232,7 @@
 #include "ElasticPlateSection.h"
 #include "ElasticMembranePlateSection.h"
 #include "LadrunoShellModifierSection.h" // N. Mora-Bowen (Ladruno) — ADR 91
+#include "LadrunoNDFiberSection3d.h" // N. Mora-Bowen (Ladruno) — WP-245
 #include "MembranePlateFiberSection.h"
 #include "DoubleMembranePlateFiberSection.h"
 #include "Bidirectional.h"
@@ -258,6 +259,7 @@
 #include "InitDefGradNDMaterial.h" // Ladruno — multiplicative staged-activation wrapper (stress-free birth)
 #include "StagedStrainNDMaterial.h" // Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
 #include "LadrunoRCConcrete.h"     // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
+#include "LadrunoUniaxialFiber.h"  // Ladruno — WP-245 uniaxial bar as an NDFiber beam fibre
 #include "LadrunoRCFiniteStrain.h" // Ladruno — finite-strain (Hencky) view of the RC plastic-damage material (ADR 19 Phase 4b)
 #include "LadrunoConcrete3D.h"     // Ladruno — CDPM2-grade solid-concrete plastic-damage (ADR 31)
 #include "LadrunoHS.h"             // Ladruno — Hardening Soil + HSsmall with mc/mn Lode cross-section (WP-210)
@@ -2370,6 +2372,9 @@ FEM_ObjectBrokerAllClasses::getNewSection(int classTag)
 	case SEC_TAG_ElasticMembranePlateSection:
 		return new ElasticMembranePlateSection();
 
+	case SEC_TAG_LadrunoNDFiberSection3d: // N. Mora-Bowen (Ladruno) — WP-245
+		return new LadrunoNDFiberSection3d();
+
 	case SEC_TAG_LadrunoShellModifier: // N. Mora-Bowen (Ladruno) — ADR 91
 		return new LadrunoShellModifierSection();
 
@@ -2455,6 +2460,9 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_StagedStrainNDMaterial:             // Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
     return new StagedStrainNDMaterial();
+
+  case ND_TAG_LadrunoUniaxialFiber:               // Ladruno — WP-245 uniaxial bar as an NDFiber beam fibre
+    return new LadrunoUniaxialFiber();
 
   case ND_TAG_LadrunoRCConcrete:                  // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
     return new LadrunoRCConcrete();
