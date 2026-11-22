@@ -191,6 +191,25 @@ static const OptSpec kLadrunoRCOptions[] = {
 };
 
 // ---------------------------------------------------------------------------
+// LadrunoNDFiber (WP-245, section 33001): the shear-profile NDFiber section.
+// `section LadrunoNDFiber $tag -shearProfile uniform|parabolic ...`; the fibre
+// block (Tcl braces / later openseespy fibre calls) is not an option.
+// ---------------------------------------------------------------------------
+static const OptSpec kLadrunoNDFiberOptions[] = {
+  {"-shearProfile",   1, "WP-245"},
+  {"-shearDepth",     2, "WP-245"},
+  {"-shearResultant", 1, "WP-245"},
+  {"-alpha",          1, "WP-245"},
+  {"-noCentroid",     0, "WP-245"},
+};
+
+// LadrunoUniaxialFiber (WP-245, nD 33030): a uniaxial material as a beam fibre.
+// `nDMaterial LadrunoUniaxialFiber $tag $uniTag`; no options yet.
+static const OptSpec kLadrunoUniaxialFiberOptions[] = {
+  {"-rho",            1, "WP-245"},
+};
+
+// ---------------------------------------------------------------------------
 // Ladruno WP-185 (apeGmsh#1667): the registry `ladrunoSchema` reads. One row
 // per command that parses with a table above: the name it refuses under (the
 // first argument of its reportUnknown call) and the table it gates on. The
@@ -212,6 +231,8 @@ inline size_t count(const OptSpec (&)[N]) { return N; }
 static const OptTable kOptTables[] = {
   {"LadrunoRCConcrete",     kLadrunoRCOptions, count(kLadrunoRCOptions)},
   {"LadrunoRCFiniteStrain", kLadrunoRCOptions, count(kLadrunoRCOptions)},
+  {"LadrunoNDFiber",        kLadrunoNDFiberOptions, count(kLadrunoNDFiberOptions)},
+  {"LadrunoUniaxialFiber",  kLadrunoUniaxialFiberOptions, count(kLadrunoUniaxialFiberOptions)},
 };
 
 }  // namespace ladruno_opt

@@ -1145,6 +1145,7 @@ SECTION_LIBS = $(FE)/material/section/SectionForceDeformation.o \
 	$(FE)/material/section/SectionAggregator.o \
 	$(FE)/material/section/ParallelSection.o \
 	$(FE)/material/section/LadrunoShellModifierSection.o \
+	$(FE)/material/section/LadrunoNDFiberSection3d.o \
 	$(FE)/material/section/PipeSection.o \
 	$(FE)/material/section/GenericSection1d.o \
 	$(FE)/material/section/ElasticPlateSection.o \

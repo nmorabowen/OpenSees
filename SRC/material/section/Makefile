@@ -11,6 +11,7 @@ OBJS       = SectionForceDeformation.o \
 	SectionAggregator.o \
 	ParallelSection.o \
 	LadrunoShellModifierSection.o \
+	LadrunoNDFiberSection3d.o \
 	PipeSection.o \
 	ElasticPlateSection.o \
 	ElasticMembranePlateSection.o \

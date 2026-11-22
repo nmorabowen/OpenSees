@@ -136,6 +136,8 @@ GLOBS = [
     "SRC/domain/pattern/ladrunoPorousOverlay/*.cpp", "SRC/domain/pattern/ladrunoPorousOverlay/*.h",
     "SRC/domain/pattern/ladrunoMPM/*.cpp", "SRC/domain/pattern/ladrunoMPM/*.h",   # WP-232
     "SRC/material/section/LadrunoShellModifierSection.*",
+    "SRC/material/section/LadrunoNDFiberSection3d.*", "SRC/material/section/LadrunoFiberShearKernel.h",
+    "SRC/material/nD/LadrunoUniaxialFiber.*",
     # WP-122: stamped files that were missing here (a re-stamp would not have maintained them)
     "SRC/analysis/handler/LadrunoAutoPenaltyReduce.*",
     "SRC/analysis/handler/LadrunoContactAbort.*",

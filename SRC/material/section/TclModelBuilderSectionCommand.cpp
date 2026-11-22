@@ -46,6 +46,7 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 #include <FiberSection2d.h>
 #include <NDFiberSection2d.h>
 #include <NDFiberSection3d.h>
+#include <LadrunoNDFiberSection3d.h> // Ladruno WP-245
 #include <NDFiberSectionWarping2d.h>
 #include <FiberSection2dInt.h>
 #include <FiberSection3d.h>
@@ -121,6 +122,10 @@ extern void *OPS_LadrunoShellModifierSection(void); // N. Mora-Bowen (Ladruno) â
 int
 TclCommand_addFiberSection (ClientData clientData, Tcl_Interp *interp, int argc,
 			    TCL_Char **argv, TclModelBuilder *theBuilder);
+
+int
+TclCommand_addLadrunoNDFiberSection (ClientData clientData, Tcl_Interp *interp, int argc,
+				     TCL_Char **argv, Domain *theDomain, TclModelBuilder *theTclBuilder); // Ladruno WP-245
 
 int
 TclCommand_addFiberSectionAsym (ClientData clientData, Tcl_Interp* interp, int argc,
@@ -365,6 +370,11 @@ TclModelBuilderSectionCommand (ClientData clientData, Tcl_Interp *interp, int ar
 	return TclCommand_addFiberSection (clientData, interp, argc, argv,
 					   theTclBuilder);
 
+	// Ladruno WP-245: shear-profile NDFiber section (3D)
+	else if (strcmp(argv[1], "LadrunoNDFiber") == 0)
+		return TclCommand_addLadrunoNDFiberSection (clientData, interp, argc, argv,
+							theDomain, theTclBuilder);
+
 	else if (strcmp(argv[1], "FiberAsym") == 0 || strcmp(argv[1], "fiberSecAsym") == 0)
 		return TclCommand_addFiberSectionAsym (clientData, interp, argc, argv, theTclBuilder); //Xinlong
 
@@ -528,6 +538,8 @@ static int currentSectionTag = 0;
 static bool currentSectionIsND = false;
 static bool currentSectionIsWarping = false;
 static bool currentSectionComputeCentroid = true;
+static bool currentSectionIsLadruno = false;          // Ladruno WP-245
+static ladruno_shear::Spec currentLadrunoSpec;        // Ladruno WP-245
 
 int
 buildSection(Tcl_Interp *interp, TclModelBuilder *theTclModelBuilder,
@@ -563,6 +575,7 @@ TclCommand_addFiberSection (ClientData clientData, Tcl_Interp *interp, int argc,
     currentSectionIsND = false;
     currentSectionIsWarping = false;
     currentSectionComputeCentroid = true;
+    currentSectionIsLadruno = false; // Ladruno WP-245
     if (strcmp(argv[1],"NDFiber") == 0)
       currentSectionIsND = true;
     if (strcmp(argv[1],"NDFiberWarping") == 0) {
@@ -1874,7 +1887,19 @@ buildSection(Tcl_Interp *interp, TclModelBuilder *theTclModelBuilder,
 	
 	 //SectionForceDeformation *section = new FiberSection(secTag, numFibers, fiber);
 	 SectionForceDeformation *section = 0;
-	 if (currentSectionIsND)
+	 if (currentSectionIsND && currentSectionIsLadruno) {   // Ladruno WP-245
+	   LadrunoNDFiberSection3d *lsec = new LadrunoNDFiberSection3d(secTag, numFibers > 0 ? numFibers : 1,
+								     currentLadrunoSpec, currentSectionComputeCentroid);
+	   for (i = 0; i < numFibers; i++)
+	     if (lsec->addFiber(*fiber[i]) < 0) {
+	       opserr << "WARNING - LadrunoNDFiber " << secTag << ": failed to add fibre " << i << endln;
+	       delete lsec;
+	       lsec = 0;
+	       break;
+	     }
+	   section = lsec;
+	 }
+	 else if (currentSectionIsND)
 	   section = new NDFiberSection3d(secTag, numFibers, fiber, currentSectionComputeCentroid);
 	 else
 	   section = new FiberSection3d(secTag, numFibers, fiber, theTorsion, currentSectionComputeCentroid);
@@ -2577,6 +2602,69 @@ int buildSectionThermal(Tcl_Interp *interp, TclModelBuilder *theTclModelBuilder,
 }
 ///--Adding function for building FiberSectionThermal:[END] by UoE OpenSees Group --///  
 //Changes made by L.Jiang [SIF]
+
+
+// Ladruno WP-245 (program #1131, rcbf-3)
+//   section LadrunoNDFiber $tag -shearProfile uniform|parabolic [options] { fibres }
+// The options are parsed by LadrunoNDFiberSection3d::parseOptions (the same
+// fail-closed parser openseespy uses); the brace block is the stock fibre /
+// patch / layer builder, so a LadrunoNDFiber section takes every fibre command
+// an NDFiber section takes. No -GJ / -torsion: an ND section carries torsion
+// through its fibres.
+int
+TclCommand_addLadrunoNDFiberSection (ClientData clientData, Tcl_Interp *interp, int argc,
+				     TCL_Char **argv, Domain *theDomain, TclModelBuilder *theTclModelBuilder)
+{
+    int secTag;
+    if (argc < 4) {
+	opserr << "WARNING want: section LadrunoNDFiber $tag -shearProfile uniform|parabolic ... { fibres }\n";
+	return TCL_ERROR;
+    }
+    if (theTclModelBuilder->getNDM() != 3) {
+	opserr << "ERROR section LadrunoNDFiber: 3D models only (ndm 3)\n";
+	return TCL_ERROR;
+    }
+    if (Tcl_GetInt(interp, argv[2], &secTag) != TCL_OK) {
+	opserr << "WARNING section LadrunoNDFiber: invalid tag " << argv[2] << endln;
+	return TCL_ERROR;
+    }
+
+    // options: argv[3 .. argc-2]; argv[argc-1] is the fibre block
+    OPS_ResetInputNoBuilder(clientData, interp, 3, argc - 1, argv, theDomain);
+    ladruno_shear::Spec spec;
+    bool compCentroid = true;
+    if (LadrunoNDFiberSection3d::parseOptions(secTag, spec, compCentroid) < 0)
+	return TCL_ERROR;
+
+    currentSectionTag = secTag;
+    currentSectionIsND = true;
+    currentSectionIsWarping = false;
+    currentSectionComputeCentroid = compCentroid;
+    currentSectionIsLadruno = true;
+    currentLadrunoSpec = spec;
+
+    SectionRepres *fiberSectionRepr = new FiberSectionRepr(secTag, 30, 30);
+    if (theTclModelBuilder->addSectionRepres(*fiberSectionRepr) < 0) {
+	opserr << "WARNING - cannot add section representation\n";
+	currentSectionIsLadruno = false;
+	return TCL_ERROR;
+    }
+
+    if (Tcl_Eval(interp, argv[argc - 1]) != TCL_OK) {
+	opserr << "WARNING - error reading information in { } \n";
+	currentSectionIsLadruno = false;
+	return TCL_ERROR;
+    }
+
+    ElasticMaterial unusedTorsion(0, 0.0);   // buildSection's signature; an ND section ignores it
+    int ok = buildSection(interp, theTclModelBuilder, secTag, unusedTorsion);
+    currentSectionIsLadruno = false;
+    if (ok != TCL_OK) {
+	opserr << "WARNING - error constructing the section\n";
+	return TCL_ERROR;
+    }
+    return TCL_OK;
+}
 
 int
 TclCommand_addFiberSectionAsym(ClientData clientData, Tcl_Interp* interp, int argc,
