@@ -1231,6 +1231,17 @@ ADR-88).
   the review of record blocked `d77caf8fd` (route-S translation), fixed and gated by T13 on
   `cd503bdbb`. Follow-ups #1124–#1127. #1116 merged as ae3e57ad6 (head 45bffc7d0) after test-only
   Linux fixes (T0 record tolerance rel 1e-10; T10 bit for bit on the Windows baseline, rel 1e-8 on GCC).
+- **2026-11-22** — WP-244 (#1136, the fix for #1112; not a §9 phase). The rough rigid footing of
+  232f, 232j L3/L4 and 232k S3 lost the soil before each node row joined (q collapsed from s/h ≈ 0.75
+  to 1). `translate` is not the fix: these boxes are unbounded above, so it selects the same rows as
+  `track`. The fix starts the footing box's lower bound at −h/2, still `track y`. There is no C++
+  change and no command changes meaning. Runs that end before s = h/2 are bit-identical.
+  - HS S3 now runs to s = 2h at r2 and r3 with no step drop above 4 % (55 % and 92 % before).
+  - Records changed, for the owner's acceptance: S3 HS r3, L3 r3 and L4 r2. Every band is unchanged.
+  - #1107's MPM half: on 232j's own build configuration (apt MKL, which reproduces its record bit for
+    bit), the L4 r3 stop moves from s/h 0.75 to 1.02, then the DP stagnation stops it. L4 r3 stays
+    a miss.
+  - Review of record: the Fable critic (AMEND, applied). Results: `244_mpm_footing_track.md`.
 
 ---
 
