@@ -516,12 +516,13 @@ def patch_interior_solves(overrides):
     import scipy.sparse as sp
     import limit_reference as ref
 
-    def patched(matrix, b, c, cones, time_limit):
+    def patched(matrix, b, c, cones, time_limit, extra=None):
+        # ``extra`` is the reference's own per-call retry overrides (CLEARANCE_RETRIES); they apply on top.
         n = matrix.shape[1]
         settings = clarabel.DefaultSettings()
         settings.verbose = False
         settings.time_limit = float(time_limit)
-        for key, value in overrides.items():
+        for key, value in {**overrides, **(extra or {})}.items():
             setattr(settings, key, value)
         start = time.perf_counter()
         solution = clarabel.DefaultSolver(sp.csc_matrix((n, n)), np.asarray(c, float), sp.csc_matrix(matrix),
