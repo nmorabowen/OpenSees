@@ -1320,11 +1320,13 @@ inline bool applyCrackCheck(const Params& P, const double eps6[6], const double 
 
 // eps6: retained {0,3,5} set by the caller; lateral {1,2,4} overwritten with the converged values.
 // tieEpN: committed tie plastic strains (y, z). tieEp/tieSig: trial plastic strains and bar stresses.
-// iters (optional): Newton iterations used.
+// iters (optional): Newton iterations used. rootScan (optional, WP-247): true when the Newton stalled and
+// the Model C root scan found the balanced state.
 inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, const double tieEpN[2],
                           double sig6[6], double Dtan6[6][6], RCHist& out,
                           double tieEp[2], double tieSig[2], int* iters = 0,
-                          bool do_implex = false, double time_factor = 1.0, bool* crackCheckBinds = 0)
+                          bool do_implex = false, double time_factor = 1.0, bool* crackCheckBinds = 0,
+                          bool* rootScan = 0)
 {
     static const int L[3] = {1, 2, 4};
     const double rho[2] = {P.tieRhoY, P.tieRhoZ};
@@ -1356,6 +1358,15 @@ inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, con
         return (s > P.ftPeak) ? s : (P.ftPeak > 0.0 ? P.ftPeak : 1.0);
     };
 
+    // Ladruno WP-247: the lateral unknowns live in a physical box, Model C's bracket [-0.01, 0.15] for the
+    // normals (and +-0.15 for gamma_yz). A fibre fully cracked in a lateral direction has a nearly flat
+    // sigma there, so without the box a near-singular Jacobian sent Newton to eps_yy ~ 3e4 with a small
+    // residual (a cover fibre of a high-axial-load column, Sezen-Moehle 2CHD12), and the state never recovered.
+    auto box = [](int a, double x) -> double {
+        const double lo = (a == 2) ? -0.15 : -0.01, hi = 0.15;
+        return x < lo ? lo : (x > hi ? hi : x);
+    };
+
     double rn = evaluate();
     bool conv = false;
     int it = 0;
@@ -1366,16 +1377,92 @@ inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, con
         const double base[3] = {eps6[1], eps6[2], eps6[4]};
         double lam = 1.0, rnew = rn;
         for (int ls = 0; ls < 8; ++ls) {               // backtracking on |r|; the last try is kept
-            for (int a = 0; a < 3; ++a) eps6[L[a]] = base[a] - lam * dx[a];
+            for (int a = 0; a < 3; ++a) eps6[L[a]] = box(a, base[a] - lam * dx[a]);
             rnew = evaluate();
             if (rnew < rn) break;
             lam *= 0.5;
         }
         rn = rnew;
     }
-    if (iters) *iters = it;
-    if (crackCheckBinds) *crackCheckBinds = ccActive;
     if (!conv) conv = (rn <= 1.0e-6 * stressScale());  // a stalled but balanced point is accepted
+
+    // Ladruno WP-247: when Newton stalls, Model C's root rule. Where rho fyt < f_cr the lateral residual
+    // r_y(eps_yy) = sigma_yy + rho f_s is not monotone past the tension peak (the concrete softens faster
+    // than the ties stiffen), and a full Newton step from the uncracked side lands on the falling branch and
+    // cycles there, although a root sits next to the committed strain. The rule: along one lateral normal
+    // (y, then z), sample the committed value plus geometric offsets +-[1e-8, 1e-1], take the INCREASING
+    // sign change of that direction's residual nearest the committed value (the stable root on the branch
+    // continuous with the committed state), and bisect it; the other two lateral unknowns are solved by a
+    // 2x2 Newton at every sample. The point is accepted on the same balance test as the stalled-Newton
+    // branch above, so a bracket around a jump (no root) still refuses. It runs only when Newton failed,
+    // so every state Newton reaches is byte-identical.
+    bool scanned = false;
+    // Cost: the walk goes outward from the committed value and stops at the first bracket, so a root next
+    // to the committed strain costs a few samples; the inner solve is capped (12 iterations, 4 halvings)
+    // and the whole scan has a budget of kScanBudget return maps, past which the trial is refused as before.
+    // Without the caps, a force-based element whose global Newton was diverging scanned every refused
+    // fibre in full on every element iteration, and one analyze step ran for minutes.
+    static const int kScanBudget = 3000;
+    int nEval = 0;
+    if (!conv) {
+        for (int ax = 0; ax < 2 && !conv && nEval < kScanBudget; ++ax) {
+            const int o1 = (ax == 0) ? 1 : 0;              // the other normal (index into L)
+            bool innerOk = false;
+            auto innerAt = [&](double x) -> double {       // r[ax] after balancing the other two
+                eps6[L[ax]] = box(ax, x);
+                eps6[L[o1]] = box(o1, in.strain[L[o1]]);
+                eps6[L[2]]  = box(2, in.strain[L[2]]);
+                evaluate(); ++nEval;
+                auto q2 = [&]() { return sqrt(r[o1] * r[o1] + r[2] * r[2]); };
+                double qn = q2();
+                for (int k = 0; k < 12 && qn > 1.0e-10 * stressScale(); ++k) {
+                    const double a = J[o1][o1], b = J[o1][2], c = J[2][o1], d = J[2][2];
+                    const double det = a * d - b * c;
+                    if (!(fabs(det) > 1.0e-300)) break;
+                    const double d1 = ( d * r[o1] - b * r[2]) / det;
+                    const double d2 = (-c * r[o1] + a * r[2]) / det;
+                    const double b1 = eps6[L[o1]], b2 = eps6[L[2]];
+                    double lam = 1.0, qt = qn;
+                    for (int ls = 0; ls < 4; ++ls) {
+                        eps6[L[o1]] = box(o1, b1 - lam * d1); eps6[L[2]] = box(2, b2 - lam * d2);
+                        evaluate(); ++nEval; qt = q2();
+                        if (qt < qn) break;
+                        lam *= 0.5;
+                    }
+                    qn = qt;
+                }
+                innerOk = (qn <= 1.0e-8 * stressScale());
+                return r[ax];
+            };
+            // walk outward: interval k spans offsets (off[k-1], off[k]] on each side (off[-1] = 0, the committed
+            // value itself); the first interval holding an increasing sign change is the nearest one
+            const double x0 = in.strain[L[ax]];
+            double lo = 0.0, hi = 0.0; bool found = false;
+            const double g0 = innerAt(x0); const bool ok0 = innerOk;
+            double gR = g0, gL = g0; bool okR = ok0, okL = ok0; double xR = x0, xL = x0;
+            for (int k = 0; k < 41 && !found && nEval < kScanBudget; ++k) {
+                const double off = 1.0e-8 * pow(10.0, 7.0 * k / 40.0);
+                const double xr = x0 + off, gr = innerAt(xr); const bool okr = innerOk;
+                if (okR && okr && gR <= 0.0 && gr >= 0.0) { lo = xR; hi = xr; found = true; break; }
+                xR = xr; gR = gr; okR = okr;
+                const double xl = x0 - off, gl = innerAt(xl); const bool okl = innerOk;
+                if (okl && okL && gl <= 0.0 && gL >= 0.0) { lo = xl; hi = xL; found = true; break; }
+                xL = xl; gL = gl; okL = okl;
+            }
+            if (!found) continue;
+            for (int k = 0; k < 60; ++k) {
+                const double m = 0.5 * (lo + hi);
+                if (innerAt(m) <= 0.0) lo = m; else hi = m;
+            }
+            innerAt(0.5 * (lo + hi));                       // leaves eps6, sig6, Dtan6, J, out at the root
+            rn = sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+            conv = innerOk && (rn <= 1.0e-6 * stressScale());
+            scanned = conv;
+        }
+    }
+    if (iters) *iters = it;
+    if (rootScan) *rootScan = scanned;
+    if (crackCheckBinds) *crackCheckBinds = ccActive;
     if (!conv) return STATUS_NO_CONVERGE;
 
     // condensed tangent at the converged state (J and Dtan6 belong to the last evaluate())

@@ -549,6 +549,36 @@ $$
   residual folds at cracking and has more than one root; starting from the committed state follows
   the branch the fibre is on, the rule of the rotating-MCFT strip reference. The g++ gate checks it
   against nested bracketing bisection from the same committed state (B3).
+- **Root scan when Newton stalls (WP-247).** Past the tension peak, `σyy` softens faster than light
+  ties stiffen (`ρ fyt < f_cr`), so `r_y(εyy)` is not monotone. On the crack-onset step a full Newton
+  step from the uncracked side can land on the falling branch and cycle there, although a root sits
+  next to the committed strain. Without the scan the view refused that trial. A force-based column
+  of the lab set (Sezen–Moehle 2CLD12) then stopped at 0.22 % drift, on the step where its first
+  core fibre cracked in shear. When Newton fails, the driver now applies Model C's rule:
+  - It samples the committed lateral normal plus geometric offsets `±[1e-8, 1e-1]`, along y and
+    then z.
+  - It takes the **increasing** sign change of that direction's residual nearest the committed
+    value and bisects it.
+  - At every sample, the other two lateral unknowns are balanced by a 2×2 Newton.
+
+  The result is accepted on the same balance test as a stalled Newton, so a bracket around a jump
+  still refuses. Every state that Newton reaches is unchanged. The scan runs only on the steps where
+  Newton fails, and its cost is capped:
+  - It walks outward from the committed value and stops at the first bracket.
+  - The 2×2 inner solve takes at most 12 iterations and 4 halvings per sample.
+  - The whole scan has a budget of 3000 return maps. Past it, the trial refuses as before.
+
+  The g++ gate `rc_rootscan_gpp.cpp` covers it on that fibre:
+  - R1: the scan runs on the crack-onset step only.
+  - R2: every step matches nested bisection to 2e-16.
+  - R3: γxz with ties in z gives the same fibre.
+  - R4: a long cracking ramp converges throughout.
+- **Lateral box (WP-247).** The lateral unknowns stay in Model C's bracket: `εyy, εzz ∈ [−0.01, 0.15]`,
+  `γyz ∈ ±0.15`. Newton's iterates and the scan's samples are projected into it. A cover fibre that is
+  fully cracked in y has a nearly flat `σyy`. Without the box, a near-singular Jacobian sent Newton to
+  `εyy ≈ 3e4` with a small residual, and the fibre never left that state. This was a high-axial-load
+  column (2CHD12), which then refused 250 steps later. Gate R5 replays a tension–crush–unload path:
+  every lateral strain stays below 1e-5. With the box removed, the same gate fails with `εyy = 3.3e4`.
 - **Add-ons.** The view sets `-addonPlane spatial` on its copy (the fibre's shear sits in γxy and
   γxz) and resolves an **unset** `-crackGate` to `damage`. An explicit `-crackGate strain` is kept:
   in a fibre it opens the latch from Poisson expansion at ~0.5 f′c, `σyy` is pinned above zero and
