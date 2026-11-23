@@ -247,6 +247,15 @@ So s/B = 0.05 at r3 (s = 0.8h) is past the range in which this footing condition
 the tracked box before the top row leaves, or s_end/h ≤ 0.5 at every rung) is filed as #1112;
 r3 stays a reported row.
 
+**Follow-up (WP-244, #1136, 2026-11-22).** The footing box now starts half a cell below the base
+(`lo_y = −h/2`, `FOOTING_LEAD` in the S3 harness), so the lowest prescribed row stays within ±h/2
+of the soil. Effects:
+- S3 HS r3 now reaches s/B 0.05 at 928.6 kPa, 0.969 × FE n16 (reported row).
+- HS runs to s = 2h at r2 and r3 with no step drop above 4 %.
+- The r1 and r2 gate records end before s = h/2, so they are unchanged.
+
+See `244_mpm_footing_track.md`.
+
 **S3 SANISAND, the v0 deck (reported).** MPM r1 (fbar, gimp, mode A, K9 ladder) against the FE
 v0 n4 record (`s3_fe_sanisand_v0_tims_r1sep_n4.json`, linearly interpolated at the MPM's s) over
 the common range:

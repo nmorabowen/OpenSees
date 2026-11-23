@@ -233,7 +233,7 @@ acceleration take FLIP increments (`mpm flip`, default 1); quasi-static leaves v
 | Command | What it does |
 |---|---|
 | `mpm mode explicit\|implicit\|quasiStatic` | the engine mode |
-| `mpm gridvel <name> box <lo..> <hi..> v <value\|free ..> [start <t0>] [track x\|y\|z]` | prescribed grid velocity on every grid node in the closed box: Δu = v·dt per step; absent before `start`; `track` moves the box's lower bound with v. A non-zero value needs `constraints Transformation`, `Penalty` or `Lagrange` (Plain assumes homogeneous: refused) |
+| `mpm gridvel <name> box <lo..> <hi..> v <value\|free ..> [start <t0>] [track x\|y\|z]` | prescribed grid velocity on every grid node in the closed box: Δu = v·dt per step; absent before `start`; `track` moves the box's lower bound with v. For a rigid footing pushed into soil, start the lower bound half a cell below the footing base (`lo = −h/2`): a bound at the base loses the soil before each node row joins (WP-244, #1112). A non-zero value needs `constraints Transformation`, `Penalty` or `Lagrange` (Plain assumes homogeneous: refused) |
 | `mpm condForce <name>` | the grid internal force Σ V σ·∇S over the gridvel's nodes at the last accepted step (resisting-force sign) — e.g. a footing load |
 | `mpm pforce <body> box <lo..> <hi..> <f..>` | a constant force per particle (initial centre in the box), scaled by the time series |
 | `mpm rayleigh <alphaM> <betaK>` | Rayleigh damping on the particle elements (applied at once to live ones; `0 0` clears it) |

@@ -2074,3 +2074,24 @@ Done when: every gated row is green (or a reported miss with diagnosis); the rep
 Ladruno_implementation/232l_mpm_two_phase.md; the ci/ gates are clean; ladrunoBuild matches your
 head on the exe and the pyd. Report per the Worker rules.
 ```
+
+## WP-244 — the footing box keeps the soil (fix #1112; not a §9 phase)
+
+Draft #1136, branch `wp/244-mpm-footing-track`. Pre-registered 2026-11-20, before any footing
+number on the fix was read.
+
+**The defect and the fix under test.** Every footing box is `box <x0> 0.0 <B/2> 1.0e9 … track y`.
+Its upper bound is 1e9, so `translate y` (232k D17) selects the same rows as `track y`; switching
+modes is not a fix. The fix under test is a **half-cell lead**: `lo_y = −h/2` instead of 0, still
+`track y`. No C++ change; `track` and `translate` keep their meaning. Before s = h/2 the selected
+node set is identical, so every run that ends before s = h/2 is bit-identical (S3 r1 / r2, L4 r1,
+L3 r1 / r2). Prescribed nodes are always active ones: the gridvel loop walks `want`
+(`LadrunoMPMImplicit.cpp:826`), which holds only nodes above the mass cutoff (`:754-768`).
+
+| Row | Setting | Gate |
+|---|---|---|
+| P1 rigid-translation patch (the 232l T13 lesson) | Mode A QS, `gimp`, ppc 2, h = 0.25, a stress-free elastic block x ∈ [0, 2], y ∈ [−2, 0] (E = 1e5 kPa, ν = 0.3), no gravity, no `fix`; the footing box spans the block's full width (x ∈ [−h, 2 + h]) and carries it down at Δs = h/10 per step to s = 2.5 h. Run at lead 0 and lead 0.5. | Each lead, every step: max abs(σ_ij) over the particles ≤ 1e-8 E Δs/h; abs(condForce_y) ≤ 1e-8 E Δs/h × 2 m; every particle's displacement equals s within 1e-9 h. Both leads reported. |
+| F1 the artifact window (HS S3, `s3_run`) | The 232k S3 HS deck, r2 and r3, to s = 2h (0.5 m and 0.25 m). Lead 0.5, beside lead 0 (the reproduction). | Lead 0.5 reaches s = 2h, and no accepted step drops q by more than 5 % of the running maximum after s = 0.01 m. Lead 0 is reported (expected to fail: #1112). |
+| F2 the existing gates on the fix | 232j L4 r1–r3 (`mpm_antilocking_warrant.py`), 232k S3 HS r1 / r2 (+ r3 reported), 232j L3 r1 (r2, r3 as recorded), 232f `footing_mildcone_r1..r3` (reported, as before). | Each gate unchanged, its band unchanged. Records ending before s = h/2 must be bit-identical. A record that changes is reported for the owner's acceptance, never re-banded. |
+| F3 #1107's MPM half | L4 r3 with the fix, to s = 0.2 m (s/h = 1.6); L4 r2 extended to s = 0.4 m (s/h = 1.6). | Reported: whether L4 r3 now reaches s = 0.2 m, its q_max against the [110.28, 134.78] band, the failed attempts and halvings, and where the failures cluster in s/h. |
+| F4 SANISAND S3 | The 232k SANISAND probe deck(s) at r1 / r2 with the fix. | Reported only, as in 232k. |
