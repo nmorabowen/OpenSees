@@ -35,6 +35,7 @@
 #include "TclModelBuilder.h"
 #include "TclUniaxialMaterialTester.h"
 #include "TclPlaneStressMaterialTester.h"
+#include "TclNDMaterialTester.h"  // Ladruno WP-248
 #include "TclSectionTester.h"
 
 #include <tcl.h>
@@ -198,6 +199,16 @@ specifyModelBuilder(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Cha
   }
   
   
+  // Ladruno WP-248: nD material tester with explicit commit (ndTest)
+  else if (strcmp(argv[1],"testNDMaterial") == 0) {
+    if (argc != 2) {
+      opserr << "WARNING want: model testNDMaterial (it commits only on ndTest commit)
+";
+      return TCL_ERROR;
+    }
+    theBuilder = new TclNDMaterialTester(theDomain, interp);
+  }
+
   else if ((strcmp(argv[1],"sectionTest") == 0) || (strcmp(argv[1],"TestSection") == 0) ||
 	   (strcmp(argv[1],"testSection") == 0) || (strcmp(argv[1],"SectionForceDeformationTest") == 0)) {
     int count = 1;

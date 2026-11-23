@@ -84,6 +84,7 @@ target_sources(OPS_InterpTcl PRIVATE
     # Model Builders
     "${OPS_SRC_DIR}/modelbuilder/tcl/TclModelBuilder.cpp"
     "${OPS_SRC_DIR}/modelbuilder/tcl/TclPlaneStressMaterialTester.cpp"
+    "${OPS_SRC_DIR}/modelbuilder/tcl/TclNDMaterialTester.cpp"
     "${OPS_SRC_DIR}/modelbuilder/tcl/TclSectionTester.cpp"
     "${OPS_SRC_DIR}/modelbuilder/tcl/TclUniaxialMaterialTester.cpp"
     "${OPS_SRC_DIR}/optimization/tcl/TclOptimizationBuilder.cpp"
