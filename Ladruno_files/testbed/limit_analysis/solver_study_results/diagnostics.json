@@ -1,5 +1,5 @@
 {
- "data": "C:/Users/nmora/limit_study_237d/diag",
+ "data": "diag",
  "date": "2026-11-19",
  "failed_jobs": [
   "dp_prandtl_cohesion_thin_slab.m1.q.upper.p2c-vertex.v0.clarabel-faer.base: incomplete",

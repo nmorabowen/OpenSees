@@ -1,6 +1,6 @@
 # Lower-bound stall study and the `presolve` / `relgap1e-3` presets
 
-Driver `Ladruno_files/testbed/limit_analysis/solver_study.py` (this commit; base 17ee1b4fc), reference c7b047674, checker 94593291e, clarabel 0.11.1 faer, qoco 0.3.2, date 2026-11-19, workstation (other workers were running; walls are indicative). Data: `C:\Users\nmora\limit_study_237d_presolve` (after), `C:\Users\nmora\limit_study_237d`, `...\diag`, `C:\Users\nmora\limit_study_237d_prandtl` (before). Every value below is a checker-certified bound unless the classification says otherwise.
+Driver `Ladruno_files/testbed/limit_analysis/solver_study.py` (this commit; base 17ee1b4fc), reference c7b047674, checker 94593291e, clarabel 0.11.1 faer, qoco 0.3.2, date 2026-11-19, workstation (other workers were running; walls are indicative). Data: `limit_study_237d_presolve` (after), `limit_study_237d`, `...\diag`, `limit_study_237d_prandtl` (before). Every value below is a checker-certified bound unless the classification says otherwise.
 
 ## Rank deficiency of the Lower equality block (`rankstudy`)
 

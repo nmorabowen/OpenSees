@@ -881,6 +881,18 @@ def stored_result(old, row):
     return path if same else None
 
 
+def portable_path(path, base):
+    """``path`` relative to the data directory ``base``, so that committed summaries name no machine paths.
+
+    Readers join it back with ``Path(data) / stored``; a stored absolute path (rows written before 2026-11-22) still
+    reads, because joining onto an absolute path keeps it.
+    """
+    try:
+        return os.path.relpath(Path(path), Path(base))
+    except ValueError:      # another drive: nothing relative exists
+        return str(path)
+
+
 def recheck_one(old, new, row_name):
     """Worker of ``recheck``: the amended checker on one stored problem and result. Writes the new row."""
     old, new = Path(old), Path(new)
@@ -890,7 +902,7 @@ def recheck_one(old, new, row_name):
                               "value_certified": previous.get("value_certified"),
                               "reasons": previous.get("reasons"), "file": row.get("certificate_file")}
     result = stored_result(old, row)
-    row["recheck"] = {"result_file": None if result is None else str(result)}
+    row["recheck"] = {"result_file": None if result is None else portable_path(result, new)}
     start = time.perf_counter()
     try:
         if result is None:
@@ -975,7 +987,7 @@ def gate_records(data, rows, case):
     certificates, results, methods, refusals = [], [], [], []
     for row in offered:
         path = data / row["certificate_file"]
-        results.append(json.loads(Path(row["recheck"]["result_file"]).read_text(encoding="utf-8")))
+        results.append(json.loads((Path(data) / row["recheck"]["result_file"]).read_text(encoding="utf-8")))
         if path.name.endswith(".refusal.json"):
             refusals.append(lc.load_document(path)[0])
             continue
@@ -1060,7 +1072,8 @@ def table(data, out, md=None, base=""):
         row["gate_value"] = None
         if file and file.endswith(".certificate.json") and not row.get("method_failures_with_arrays"):
             try:
-                certificate, method = read_gate(data / file, row.get("recheck", {}).get("result_file"))
+                stored = row.get("recheck", {}).get("result_file")
+                certificate, method = read_gate(data / file, None if stored is None else Path(data) / stored)
                 row["gate_value"], row["gate_floor"] = certificate["value_certified"], certificate["floor"]
                 row["kappa_eq"] = certificate["checks"]["kappa_eq"]
                 gate[index] = (certificate, method)
@@ -1110,7 +1123,7 @@ def table(data, out, md=None, base=""):
                         if r.get("recheck") and r["recheck"].get("outcome") not in (None, "completed")]
     gates = gate_verdicts(data, rows)
     summary = {"format": "ladruno-limit-solver-study-summary", "format_version": 1,
-               "date": datetime.date.today().isoformat(), "reference_checker_base": base, "data": str(data),
+               "date": datetime.date.today().isoformat(), "reference_checker_base": base, "data": Path(data).name,
                "driver": "Ladruno_files/testbed/limit_analysis/solver_study.py",
                "counts": {"rows": len(rows), "failed_jobs": len(failures), "failed_rechecks": len(recheck_failures),
                           "certified_gate_admissible": sum(r["gate_value"] is not None for r in rows),
@@ -1178,7 +1191,7 @@ def diagnostics(data, out, base=""):
     failures = [stem_of(r["case"], r["mesh"], r["formulation"], r["solver"], r.get("tag", "")) + f": {r['outcome']}"
                 for r in rows if r["outcome"] in FAILED_OUTCOMES]
     doc = {"format": "ladruno-limit-solver-study-diagnostics", "date": datetime.date.today().isoformat(),
-           "reference_checker_base": base, "data": str(data), "failed_jobs": failures, "rows": rows}
+           "reference_checker_base": base, "data": Path(data).name, "failed_jobs": failures, "rows": rows}
     Path(out).write_text(json.dumps(doc, indent=1, sort_keys=True) + chr(10), encoding="utf-8")
 
 

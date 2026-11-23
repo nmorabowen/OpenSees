@@ -560,7 +560,7 @@
   "failed_rechecks": 1,
   "rows": 141
  },
- "data": "C:\\Users\\nmora\\limit_study_237d_a1",
+ "data": "limit_study_237d_a1",
  "date": "2026-11-19",
  "driver": "Ladruno_files/testbed/limit_analysis/solver_study.py",
  "failed_jobs": [
@@ -2933,7 +2933,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.097,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\dp_prandtl_cohesion_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\dp_prandtl_cohesion_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.085,
     "supervisor_wall_s": 0.67,
     "wall_s": 0.509
@@ -3062,7 +3062,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.097,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\dp_prandtl_cohesion_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\dp_prandtl_cohesion_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.087,
     "supervisor_wall_s": 0.67,
     "wall_s": 0.468
@@ -3191,7 +3191,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.102,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\scs\\dp_prandtl_cohesion_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\scs\\dp_prandtl_cohesion_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.094,
     "supervisor_wall_s": 0.89,
     "wall_s": 0.616
@@ -3315,7 +3315,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.062,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\dp_prandtl_cohesion_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\dp_prandtl_cohesion_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.049,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.309
@@ -3444,7 +3444,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.062,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\dp_prandtl_cohesion_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\dp_prandtl_cohesion_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.048,
     "supervisor_wall_s": 0.49,
     "wall_s": 0.317
@@ -3577,7 +3577,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.061,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\scs\\dp_prandtl_cohesion_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\scs\\dp_prandtl_cohesion_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.049,
     "supervisor_wall_s": 0.45,
     "wall_s": 0.281
@@ -3701,7 +3701,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.064,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\dp_prandtl_cohesion_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\dp_prandtl_cohesion_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.047,
     "supervisor_wall_s": 0.47,
     "wall_s": 0.3
@@ -3830,7 +3830,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.064,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\dp_prandtl_cohesion_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\dp_prandtl_cohesion_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.049,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.306
@@ -4035,7 +4035,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.092,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\dp_prandtl_surcharge_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\dp_prandtl_surcharge_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.082,
     "supervisor_wall_s": 0.7,
     "wall_s": 0.512
@@ -4164,7 +4164,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.062,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\dp_prandtl_surcharge_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\dp_prandtl_surcharge_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.049,
     "supervisor_wall_s": 0.49,
     "wall_s": 0.301
@@ -4293,7 +4293,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.064,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\dp_prandtl_surcharge_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\dp_prandtl_surcharge_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.046,
     "supervisor_wall_s": 0.48,
     "wall_s": 0.319
@@ -4422,7 +4422,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.503,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.508,
     "supervisor_wall_s": 5.41,
     "wall_s": 5.227
@@ -4551,7 +4551,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.504,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\tresca_strip_vm_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\tresca_strip_vm_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.509,
     "supervisor_wall_s": 5.34,
     "wall_s": 5.139
@@ -4680,7 +4680,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.504,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\scs\\tresca_strip_vm_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\scs\\tresca_strip_vm_thin_slab.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.508,
     "supervisor_wall_s": 5.28,
     "wall_s": 4.995
@@ -4804,7 +4804,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.095,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.086,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.413
@@ -4933,7 +4933,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.095,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\tresca_strip_vm_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\tresca_strip_vm_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.1,
     "supervisor_wall_s": 0.67,
     "wall_s": 0.392
@@ -5062,7 +5062,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.095,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\scs\\tresca_strip_vm_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\scs\\tresca_strip_vm_thin_slab.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.1,
     "supervisor_wall_s": 0.67,
     "wall_s": 0.391
@@ -5186,7 +5186,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.478,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.483,
     "supervisor_wall_s": 5.57,
     "wall_s": 5.371
@@ -5315,7 +5315,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.478,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\tresca_strip_vm_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\tresca_strip_vm_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.483,
     "supervisor_wall_s": 6.07,
     "wall_s": 5.675
@@ -5444,7 +5444,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.478,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\scs\\tresca_strip_vm_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\scs\\tresca_strip_vm_thin_slab.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.483,
     "supervisor_wall_s": 6.77,
     "wall_s": 6.381
@@ -5568,7 +5568,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.194,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m1.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m1.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.185,
     "supervisor_wall_s": 1.6,
     "wall_s": 1.281
@@ -5697,7 +5697,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.194,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\tresca_strip_vm_thin_slab.m1.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\tresca_strip_vm_thin_slab.m1.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.169,
     "supervisor_wall_s": 1.6,
     "wall_s": 1.261
@@ -5826,7 +5826,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.336,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m1.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m1.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.341,
     "supervisor_wall_s": 36.32,
     "wall_s": 35.938
@@ -5955,7 +5955,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.339,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\tresca_strip_vm_thin_slab.m1.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\tresca_strip_vm_thin_slab.m1.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.344,
     "supervisor_wall_s": 35.38,
     "wall_s": 35.114
@@ -6084,7 +6084,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.246,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.141,
     "supervisor_wall_s": 1.35,
     "wall_s": 1.13
@@ -6213,7 +6213,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.246,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\tresca_strip_vm_thin_slab.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\tresca_strip_vm_thin_slab.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.19,
     "supervisor_wall_s": 1.34,
     "wall_s": 1.043
@@ -6342,7 +6342,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.094,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m2.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m2.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.085,
     "supervisor_wall_s": 0.69,
     "wall_s": 0.499
@@ -6471,7 +6471,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.554,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m2.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m2.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.559,
     "supervisor_wall_s": 6.07,
     "wall_s": 5.886
@@ -6600,7 +6600,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.104,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m2.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m2.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.082,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.452
@@ -6731,7 +6731,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.282,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\tresca_strip_vm_thin_slab.m3.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\tresca_strip_vm_thin_slab.m3.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.204,
     "supervisor_wall_s": 1.78,
     "wall_s": 1.471
@@ -6943,7 +6943,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.433,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m3.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m3.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.405,
     "supervisor_wall_s": 27.18,
     "wall_s": 26.909
@@ -7072,7 +7072,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.277,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m3.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_vm_thin_slab.m3.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.243,
     "supervisor_wall_s": 1.34,
     "wall_s": 1.172
@@ -7201,7 +7201,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.508,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.513,
     "supervisor_wall_s": 5.16,
     "wall_s": 4.921
@@ -7330,7 +7330,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.096,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.087,
     "supervisor_wall_s": 0.67,
     "wall_s": 0.416
@@ -7459,7 +7459,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.479,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.484,
     "supervisor_wall_s": 5.48,
     "wall_s": 5.221
@@ -7588,7 +7588,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.172,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m1.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m1.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.175,
     "supervisor_wall_s": 1.34,
     "wall_s": 0.985
@@ -7717,7 +7717,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.34,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m1.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m1.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.345,
     "supervisor_wall_s": 30.12,
     "wall_s": 29.831
@@ -7846,7 +7846,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.246,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.19,
     "supervisor_wall_s": 1.35,
     "wall_s": 1.038
@@ -7975,7 +7975,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.099,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m2.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m2.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.088,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.489
@@ -8104,7 +8104,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.555,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m2.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m2.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.559,
     "supervisor_wall_s": 6.42,
     "wall_s": 6.096
@@ -8233,7 +8233,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.104,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m2.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m2.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.086,
     "supervisor_wall_s": 0.92,
     "wall_s": 0.603
@@ -8447,7 +8447,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.433,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m3.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m3.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.37,
     "supervisor_wall_s": 30.34,
     "wall_s": 30.081
@@ -8576,7 +8576,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.276,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m3.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\tresca_strip_weighted_insensitive.m3.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.22,
     "supervisor_wall_s": 1.56,
     "wall_s": 1.209
@@ -8705,7 +8705,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.081,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi00.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi00.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.086,
     "supervisor_wall_s": 18.67,
     "wall_s": 18.34
@@ -8834,7 +8834,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.081,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi00.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi00.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.086,
     "supervisor_wall_s": 20.52,
     "wall_s": 20.193
@@ -8963,7 +8963,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.081,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\scs\\upper3d_fixed_phi00.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\scs\\upper3d_fixed_phi00.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.086,
     "supervisor_wall_s": 21.99,
     "wall_s": 21.671
@@ -9246,7 +9246,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.705,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi00.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi00.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.71,
     "supervisor_wall_s": 13.23,
     "wall_s": 12.816
@@ -9375,7 +9375,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.706,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi00.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi00.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.71,
     "supervisor_wall_s": 12.64,
     "wall_s": 12.403
@@ -9504,7 +9504,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.705,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\scs\\upper3d_fixed_phi00.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\scs\\upper3d_fixed_phi00.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.71,
     "supervisor_wall_s": 12.6,
     "wall_s": 12.358
@@ -9630,7 +9630,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.097,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi00.m1.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi00.m1.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.077,
     "supervisor_wall_s": 0.7,
     "wall_s": 0.507
@@ -10080,7 +10080,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.106,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi00.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi00.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.073,
     "supervisor_wall_s": 0.94,
     "wall_s": 0.563
@@ -10209,7 +10209,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.106,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi00.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi00.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.079,
     "supervisor_wall_s": 0.91,
     "wall_s": 0.598
@@ -10709,7 +10709,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.201,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi00.m2.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi00.m2.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.161,
     "supervisor_wall_s": 1.39,
     "wall_s": 1.066
@@ -10837,7 +10837,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.201,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi00.m2.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi00.m2.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.164,
     "supervisor_wall_s": 1.37,
     "wall_s": 1.023
@@ -11186,7 +11186,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.329,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi10.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi10.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.334,
     "supervisor_wall_s": 30.09,
     "wall_s": 29.586
@@ -11319,7 +11319,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.062,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi10.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi10.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.057,
     "supervisor_wall_s": 0.7,
     "wall_s": 0.432
@@ -11456,7 +11456,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.064,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi10.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi10.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.061,
     "supervisor_wall_s": 0.69,
     "wall_s": 0.422
@@ -11589,7 +11589,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.093,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi10.m1.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi10.m1.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.072,
     "supervisor_wall_s": 0.92,
     "wall_s": 0.588
@@ -11722,7 +11722,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.064,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi10.m1.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi10.m1.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.057,
     "supervisor_wall_s": 0.69,
     "wall_s": 0.414
@@ -11855,7 +11855,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.076,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi10.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi10.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.061,
     "supervisor_wall_s": 0.69,
     "wall_s": 0.476
@@ -11988,7 +11988,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.439,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi20.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi20.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.444,
     "supervisor_wall_s": 33.37,
     "wall_s": 33.009
@@ -12121,7 +12121,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.062,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi20.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi20.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.063,
     "supervisor_wall_s": 0.69,
     "wall_s": 0.389
@@ -12258,7 +12258,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.065,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi20.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi20.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.062,
     "supervisor_wall_s": 0.69,
     "wall_s": 0.393
@@ -12391,7 +12391,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.096,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi20.m1.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi20.m1.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.063,
     "supervisor_wall_s": 0.91,
     "wall_s": 0.551
@@ -12524,7 +12524,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.064,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi20.m1.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi20.m1.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.066,
     "supervisor_wall_s": 0.7,
     "wall_s": 0.332
@@ -12661,7 +12661,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.076,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi20.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi20.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.06,
     "supervisor_wall_s": 0.73,
     "wall_s": 0.505
@@ -12792,7 +12792,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.084,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.064,
     "supervisor_wall_s": 0.92,
     "wall_s": 0.544
@@ -12921,7 +12921,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.084,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi30.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi30.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.077,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.405
@@ -13050,7 +13050,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.084,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\scs\\upper3d_fixed_phi30.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\scs\\upper3d_fixed_phi30.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.087,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.405
@@ -13174,7 +13174,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.062,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.049,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.312
@@ -13309,7 +13309,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.066,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi30.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi30.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.065,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.329
@@ -13444,7 +13444,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.066,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.06,
     "supervisor_wall_s": 0.7,
     "wall_s": 0.461
@@ -13577,7 +13577,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.066,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi30.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi30.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.058,
     "supervisor_wall_s": 0.69,
     "wall_s": 0.427
@@ -13710,7 +13710,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.066,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\scs\\upper3d_fixed_phi30.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\scs\\upper3d_fixed_phi30.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.057,
     "supervisor_wall_s": 0.7,
     "wall_s": 0.414
@@ -13834,7 +13834,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.103,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m1.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m1.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.077,
     "supervisor_wall_s": 0.92,
     "wall_s": 0.599
@@ -13963,7 +13963,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.103,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi30.m1.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi30.m1.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.081,
     "supervisor_wall_s": 0.91,
     "wall_s": 0.6
@@ -14092,7 +14092,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.065,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m1.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m1.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.065,
     "supervisor_wall_s": 0.69,
     "wall_s": 0.382
@@ -14227,7 +14227,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.076,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi30.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi30.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.081,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.358
@@ -14362,7 +14362,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.072,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.05,
     "supervisor_wall_s": 0.67,
     "wall_s": 0.314
@@ -14495,7 +14495,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.072,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi30.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-qdldl\\upper3d_fixed_phi30.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.05,
     "supervisor_wall_s": 0.49,
     "wall_s": 0.313
@@ -14624,7 +14624,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.205,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m2.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m2.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.171,
     "supervisor_wall_s": 1.56,
     "wall_s": 1.393
@@ -14759,7 +14759,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.07,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi30.m2.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi30.m2.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.066,
     "supervisor_wall_s": 0.67,
     "wall_s": 0.332
@@ -14894,7 +14894,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.07,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m2.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_fixed_phi30.m2.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.059,
     "supervisor_wall_s": 0.67,
     "wall_s": 0.317
@@ -15029,7 +15029,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.095,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi30.m2.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi30.m2.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.09,
     "supervisor_wall_s": 0.67,
     "wall_s": 0.448
@@ -15239,7 +15239,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.838,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi30.m3.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_fixed_phi30.m3.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.73,
     "supervisor_wall_s": 20.21,
     "wall_s": 19.928
@@ -15453,7 +15453,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.014,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi00.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi00.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.019,
     "supervisor_wall_s": 17.47,
     "wall_s": 17.13
@@ -15665,7 +15665,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.124,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.103,
     "supervisor_wall_s": 0.9,
     "wall_s": 0.535
@@ -15794,7 +15794,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.995,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.999,
     "supervisor_wall_s": 10.67,
     "wall_s": 10.496
@@ -15923,7 +15923,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.104,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m1.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m1.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.088,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.508
@@ -16052,7 +16052,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.28,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m1.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m1.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.285,
     "supervisor_wall_s": 1.91,
     "wall_s": 1.734
@@ -16181,7 +16181,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.15,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.099,
     "supervisor_wall_s": 0.89,
     "wall_s": 0.597
@@ -16312,7 +16312,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.196,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi00.m2.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi00.m2.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.164,
     "supervisor_wall_s": 1.56,
     "wall_s": 1.267
@@ -16524,7 +16524,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.881,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m2.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m2.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.886,
     "supervisor_wall_s": 13.67,
     "wall_s": 13.482
@@ -16653,7 +16653,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.305,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m2.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi00.m2.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.201,
     "supervisor_wall_s": 1.56,
     "wall_s": 1.298
@@ -16784,7 +16784,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.264,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi10.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi10.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.269,
     "supervisor_wall_s": 25.14,
     "wall_s": 24.764
@@ -16917,7 +16917,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.063,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi10.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi10.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.048,
     "supervisor_wall_s": 0.48,
     "wall_s": 0.308
@@ -17050,7 +17050,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.064,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi10.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi10.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.05,
     "supervisor_wall_s": 0.48,
     "wall_s": 0.301
@@ -17183,7 +17183,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.1,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi10.m1.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi10.m1.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.094,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.515
@@ -17316,7 +17316,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.064,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi10.m1.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi10.m1.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.06,
     "supervisor_wall_s": 0.69,
     "wall_s": 0.325
@@ -17449,7 +17449,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.076,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi10.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi10.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.081,
     "supervisor_wall_s": 0.69,
     "wall_s": 0.396
@@ -17582,7 +17582,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.378,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi20.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi20.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.383,
     "supervisor_wall_s": 28.94,
     "wall_s": 28.702
@@ -17715,7 +17715,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.062,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi20.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi20.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.047,
     "supervisor_wall_s": 0.47,
     "wall_s": 0.307
@@ -17848,7 +17848,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.066,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi20.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi20.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.047,
     "supervisor_wall_s": 0.48,
     "wall_s": 0.314
@@ -17981,7 +17981,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.11,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi20.m1.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi20.m1.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.082,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.509
@@ -18114,7 +18114,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.065,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi20.m1.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi20.m1.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.047,
     "supervisor_wall_s": 0.47,
     "wall_s": 0.301
@@ -18251,7 +18251,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.076,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi20.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi20.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.081,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.362
@@ -18388,7 +18388,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.709,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi30.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi30.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.714,
     "supervisor_wall_s": 38.91,
     "wall_s": 38.711
@@ -18523,7 +18523,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 1.709,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m0.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m0.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 1.714,
     "supervisor_wall_s": 39.72,
     "wall_s": 39.528
@@ -18652,7 +18652,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.062,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m0.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m0.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.048,
     "supervisor_wall_s": 0.48,
     "wall_s": 0.307
@@ -18787,7 +18787,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.066,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi30.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi30.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.048,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.311
@@ -18922,7 +18922,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.066,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m0.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m0.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.05,
     "supervisor_wall_s": 0.47,
     "wall_s": 0.301
@@ -19051,7 +19051,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.108,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m1.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m1.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.099,
     "supervisor_wall_s": 0.9,
     "wall_s": 0.529
@@ -19180,7 +19180,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.065,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m1.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m1.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.049,
     "supervisor_wall_s": 0.48,
     "wall_s": 0.301
@@ -19315,7 +19315,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.077,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi30.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi30.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.068,
     "supervisor_wall_s": 0.69,
     "wall_s": 0.37
@@ -19450,7 +19450,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.077,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m1.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m1.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.07,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.355
@@ -19581,7 +19581,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.22,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi30.m2.q.lower.p1d-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi30.m2.q.lower.p1d-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.199,
     "supervisor_wall_s": 2.02,
     "wall_s": 1.763
@@ -19793,7 +19793,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.07,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m2.q.upper.p2c-vertex.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m2.q.upper.p2c-vertex.v0.result.json",
     "supervisor_peak_rss_gb": 0.059,
     "supervisor_wall_s": 0.67,
     "wall_s": 0.323
@@ -19928,7 +19928,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.095,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi30.m2.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer.nodyn\\upper3d_roller_phi30.m2.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.083,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.453
@@ -20063,7 +20063,7 @@
     "exit_code": 0,
     "outcome": "completed",
     "peak_gb": 0.095,
-    "result_file": "C:\\Users\\nmora\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m2.q.upper.p2d-jump-bernstein.v0.result.json",
+    "result_file": "..\\limit_study_237d\\certs\\clarabel-faer\\upper3d_roller_phi30.m2.q.upper.p2d-jump-bernstein.v0.result.json",
     "supervisor_peak_rss_gb": 0.083,
     "supervisor_wall_s": 0.68,
     "wall_s": 0.451

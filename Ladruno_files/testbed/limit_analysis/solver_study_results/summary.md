@@ -1,6 +1,6 @@
 # WP-237d solver study, rechecked under the amended checker
 
-Base: reference c7b047674 + checker 94593291e (branch head 0a1ed41a0). Driver: `Ladruno_files/testbed/limit_analysis/solver_study.py` (`table`). Data: `C:\Users\nmora\limit_study_237d_a1`. Date: 2026-11-19. Rows 141; failed jobs 5; failed rechecks 1; gate-admissible certificates 96; classification changes 1.
+Base: reference c7b047674 + checker 94593291e (branch head 0a1ed41a0). Driver: `Ladruno_files/testbed/limit_analysis/solver_study.py` (`table`). Data: `limit_study_237d_a1`. Date: 2026-11-19. Rows 141; failed jobs 5; failed rechecks 1; gate-admissible certificates 96; classification changes 1.
 
 Every value below is a certified bound read through `read_gate_certificate`, unless it is in the estimates column. Gap = (U - L) / ((U + L) / 2), computed only for a certified pair on one mesh.
 
