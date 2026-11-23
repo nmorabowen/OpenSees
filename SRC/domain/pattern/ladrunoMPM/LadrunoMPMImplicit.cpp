@@ -1593,8 +1593,7 @@ LadrunoMPMPattern::packState(Vector &out)
   // B-spline basis; a state it cannot hold is written in the current layout instead
   if (ver == 1 && (!eng.bodyForce.empty() || ladruno_mpm::isBSpline(eng.par.basis))) {
     opserr << "WARNING mpm restart pack -- version 1 was requested, but a particle body force or a"
-              " B-spline basis needs version 2: writing version " << MPM_PACK_VERSION << "
-";
+              " B-spline basis needs version 2: writing version " << MPM_PACK_VERSION << "\n";
     ver = MPM_PACK_VERSION;
   }
   k.put(ver);
