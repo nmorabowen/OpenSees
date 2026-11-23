@@ -829,7 +829,9 @@ int OPS_LadrunoMPM(void)
     return fail("<grid|body|particles|units|output|shift|particle|velocity|particleVelocity|particleBodyForce|"
                 "stress|fix|wall|gravity|timeSeries|damping|flip|"
                 "massCutoff|safety|criticalTimeStep|analyze|reset|info|particleData|debug|mode|gridvel|"
-                "condForce|pforce|emptyNodes|cut|tagBase|rayleigh|antiLocking|stage|particleResponse> ...");
+                "condForce|pforce|emptyNodes|cut|tagBase|rayleigh|antiLocking|stage|particleResponse|"
+                "particleAcceleration|kinematics|plate|traction|twoPhase|particlePressure|porePressure|"
+                "pfix|pressureBlend|pressureCutoff> ...");
   const std::string sub = OPS_GetString();
   if (sub == "grid") return cmdGrid(dom);
 
