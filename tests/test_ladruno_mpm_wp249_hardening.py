@@ -6,8 +6,9 @@
   `renormalize` empty-node treatment at cutoff 5e-2, one thread. Three attempts of a step are
   forced to fail AFTER the trial (`mpm debug failAttempt <k> 3 afterTrial`: the materials carry
   a trial state, as after a Newton failure), on two steps whose own preparation re-points the
-  particles (a connectivity change at the failed attempt; asserted on the reference run's first
-  sub-step), so each call cuts three times and then takes eight sub-steps of dt/8 from the
+  particles (a connectivity change at the failed attempt; the steps are found on the running
+  platform's own trajectory -- GCC re-points at other steps than Windows -- and asserted on the
+  reference run's first sub-step), so each call cuts three times and then takes eight sub-steps of dt/8 from the
   re-pointed state. The run must equal (rel 1e-12) the run that takes those sub-steps directly;
   it runs in a child process, so a crash is an exit code, and no size or host warning may
   appear. A guard: #1095 itself was not reproduced (WP-249).
@@ -90,37 +91,73 @@ def state():
 
 
 out = {}
-# the retried run: two forced cut sequences, each followed by eight dt/8 sub-steps. The armed
-# steps (2, then 1 + 8 + 1 + 1 = 11) are ones whose own prepareStep re-points the particles
-build()
-ops.mpm("analyze", 1, DT)
-conn, cut_retries = [], []
-for k in (2, 11):                         # epochSteps + 1 of the armed call
-    ops.mpm("debug", "failAttempt", k, 3, "afterTrial")
-    c0, r0 = info("connectivityChanges"), info("retries")
-    ops.mpm("analyze", 1, DT)
-    conn.append(info("connectivityChanges") - c0)
-    cut_retries.append(info("retries") - r0)
-    ops.mpm("analyze", 1, DT)
-out["retry"] = state()
-out["retries_in_cut_calls"] = cut_retries
-out["retries"] = info("retries")
-out["accepted"] = info("acceptedSteps")
-out["conn_in_cut_calls"] = conn
-# the reference: the same sub-steps, taken directly; the first sub-step's connectivity change
-# is the armed step's own (its prepareStep runs from the same committed particles)
-build()
-ops.mpm("analyze", 1, DT)
-first = []
-for _ in range(2):
+SUB = 8
+
+
+def full(n):
+    for _ in range(n):
+        ops.mpm("analyze", 1, DT)
+
+
+def substeps(n):
+    for _ in range(n):
+        ops.mpm("analyze", 1, DT / SUB)
+
+
+def first_substep_repoints(pre, gap):
+    """From a fresh build: `pre` full steps, then (with gap set) one window of SUB sub-steps and
+    `gap` full steps; does the next step's own prepareStep re-point the particles?"""
+    build()
+    full(pre)
+    if gap is not None:
+        substeps(SUB)
+        full(gap)
     c0 = info("connectivityChanges")
-    ops.mpm("analyze", 1, DT / 8.0)
-    first.append(info("connectivityChanges") - c0)
-    ops.mpm("analyze", 7, DT / 8.0)
-    ops.mpm("analyze", 1, DT)
-out["reference_first_substep_conn"] = first
-out["reference"] = state()
-out["reference_retries"] = info("retries")
+    substeps(1)
+    return info("connectivityChanges") - c0 >= 1
+
+
+# The armed steps are chosen on THIS platform's trajectory (on GCC the re-pointing steps differ
+# from Windows): the first step after >= 1 full step whose own preparation re-points, and the
+# first such step after the first window and >= 1 full step. Its first sub-step runs the same
+# prepareStep from the same committed particles as the armed full step, so the probe is exact.
+LIMIT = 8
+pre = next((n for n in range(1, LIMIT + 1) if first_substep_repoints(n, None)), None)
+gap = None if pre is None else next((g for g in range(1, LIMIT + 1)
+                                     if first_substep_repoints(pre, g)), None)
+out["schedule"] = [pre, gap]
+if pre is not None and gap is not None:
+    armed = (pre + 1, pre + SUB + gap + 1)        # epochSteps + 1 of each armed call
+    out["armed"] = list(armed)
+    # the retried run: two forced cut sequences, each cut three times to SUB sub-steps
+    build()
+    full(pre)
+    conn, cut_retries = [], []
+    for i, k in enumerate(armed):
+        ops.mpm("debug", "failAttempt", k, 3, "afterTrial")
+        c0, r0 = info("connectivityChanges"), info("retries")
+        ops.mpm("analyze", 1, DT)
+        conn.append(info("connectivityChanges") - c0)
+        cut_retries.append(info("retries") - r0)
+        full(gap if i == 0 else 1)
+    out["retry"] = state()
+    out["retries_in_cut_calls"] = cut_retries
+    out["retries"] = info("retries")
+    out["accepted"] = info("acceptedSteps")
+    out["conn_in_cut_calls"] = conn
+    # the reference: the same sub-steps, taken directly
+    build()
+    full(pre)
+    first = []
+    for i in range(2):
+        c0 = info("connectivityChanges")
+        substeps(1)
+        first.append(info("connectivityChanges") - c0)
+        substeps(SUB - 1)
+        full(gap if i == 0 else 1)
+    out["reference_first_substep_conn"] = first
+    out["reference"] = state()
+    out["reference_retries"] = info("retries")
 print("WP249-RESULT " + json.dumps(out))
 '''
 
@@ -138,10 +175,13 @@ def test_cut_retry_across_connectivity_changes_3d():
     line = [ln for ln in text.splitlines() if ln.startswith("WP249-RESULT ")]
     assert line, text[-3000:]
     out = json.loads(line[-1][len("WP249-RESULT "):])
+    # a re-pointing step for each window exists within LIMIT full steps on this platform
+    pre, gap = out["schedule"]
+    assert pre is not None and gap is not None, out["schedule"]
     assert out["retries"] == 6, out["retries"]                 # 3 forced failures x 2 calls
     assert out["retries_in_cut_calls"] == [3, 3], out["retries_in_cut_calls"]   # armed where meant
     assert out["reference_retries"] == 0
-    assert out["accepted"] == 1 + 2 * (8 + 1), out["accepted"]
+    assert out["accepted"] == pre + 8 + gap + 8 + 1, out["accepted"]
     # "across a connectivity change": each armed step's own preparation re-points the particles,
     # so its failed attempts and its retries all start from a changed connectivity
     assert all(c >= 1 for c in out["reference_first_substep_conn"]), out["reference_first_substep_conn"]

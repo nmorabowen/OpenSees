@@ -48,8 +48,10 @@ Ready for review (2026-11-23). #1095 stays open with a guard test and no fix (ow
   deterministic defect on the cut path. #1095 stays open (owner, 2026-11-23).
 - **Guard.** `tests/test_ladruno_mpm_wp249_hardening.py::test_cut_retry_across_connectivity_changes_3d`
   forces failed attempts (`mpm debug failAttempt … afterTrial`) on two steps whose own
-  preparation re-points the particles (a connectivity change at the failed attempt, asserted on
-  the reference run's first sub-step; the per-call retry count pins which step is armed) on a 3D
+  preparation re-points the particles (a connectivity change at the failed attempt; the steps
+  are found by a probe on the running platform's trajectory, since GCC re-points at other steps
+  than Windows, and asserted on the reference run's first sub-step; the per-call retry count
+  pins which step is armed) on a 3D
   DP block, and checks the retried run equals the direct sub-steps (rel 1e-12), with none of
   the #1095 messages. It passes on the base too: **no mutation evidence**; it guards the path,
   it fixes nothing.
@@ -89,7 +91,10 @@ Five targets built at `2236d1ca1` (stamps match on exe and pyd). WP-249 tests 4/
   sub-steps. Re-aimed at steps 2 and 11, whose preparation re-points (asserted on the
   reference's first sub-step), with a per-call retry count `[3, 3]` that pins the armed step (an
   off-by-one in the re-aim, step 12, made the runs take different step sequences and differ by
-  8.6e-5; the count now catches it). The re-aimed guard passes on `c45af1407` too. (2) Wording:
+  8.6e-5; the count now catches it). The re-aimed guard passes on `c45af1407` too. Zone-A
+  (run 45251637197, GCC) then found the second window's step did not re-point on Linux
+  (`[1, 0]`): the armed steps are now chosen in the child by a probe (fresh builds, the first
+  step after >= 1 full step whose first sub-step re-points); Windows still picks 2 and 11. (2) Wording:
   "regression" → guard, "bit for bit" → rel 1e-12. (3) The v1 fallback comment narrowed to what
   it covers. (4) Pack-test limits recorded above. (5) `mpm info failDump` reports the process
   switch, not the host's path (kept; documented). (6) The traction quirk's mode-F half corrected.
