@@ -906,7 +906,8 @@ LadrunoMPMPoint::addFbarTangent(Matrix &K, bool initial, double volm, const doub
   for (int i = 0; i < nd; i++) pbar += sg[3 * i + i];
   pbar /= nd;
   // ghat per node slot (0 off the corners): initial dF_c = I
-  static std::vector<double> gh, h, D, row;
+  // WP-249 (#1106 item 4): per-thread scratch, so a future threaded form (#1096) cannot share it
+  thread_local std::vector<double> gh, h, D, row;
   gh.assign(n, 0.0);
   h.assign(n, 0.0);
   D.assign(n, 0.0);

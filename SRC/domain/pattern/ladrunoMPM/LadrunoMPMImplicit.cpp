@@ -254,6 +254,7 @@ LadrunoMPMPattern::infoCounter(const std::string &w, bool &ok) const
   if (w == "connectivityChanges") return nConnChanges;
   if (w == "gridNodes") return (long)liveTag.size();
   if (w == "mode") return (long)theMode;
+  if (w == "failDump") return LadrunoMPMPoint::diagnose ? 1 : 0;   // WP-249: the process-wide switch
   ok = false;
   return 0;
 }
@@ -569,6 +570,10 @@ LadrunoMPMPattern::teardownModeA(void)
   for (long x : exts) retireNode(x);
   retirePlates();                         // WP-232l (P10)
   tractionLoads.clear();
+  // WP-249 (#1106 item 2): the process-wide failDump switch never outlives the host's mode-A
+  // state (`mpm reset`, `remove loadPattern`, `wipe` all come here); analyzeImplicit re-asserts
+  // it from this host's own setting
+  LadrunoMPMPoint::diagnose = false;
   if (nOld > 0) eleBase += nOld;          // a removed element's tag is not reused either
   if (dom != 0) dom->domainChange();
 }
@@ -1338,6 +1343,7 @@ LadrunoMPMPattern::analyzeImplicit(int nSteps, double dt, const LadrunoMPMAnalys
     return -1;
   }
   if ((int)pforce.size() != nd * N) pforce.resize(nd * N, 0.0);
+  LadrunoMPMPoint::diagnose = !failDumpPath.empty();   // WP-249 (#1106 item 2): this host's switch
   if (!stepped) {
     snapshot = eng.P;
     haveSnapshot = true;
@@ -1551,7 +1557,7 @@ const int MPM_PACK_VERSION = 5;
 int
 LadrunoMPMPattern::setPackVersion(int v)
 {
-  if (v != 2 && v != 3 && v != 4 && v != MPM_PACK_VERSION) return -1;
+  if (v != 1 && v != 2 && v != 3 && v != 4 && v != MPM_PACK_VERSION) return -1;   // WP-249: + 1
   if (v < 5 && anyTwoPhase()) {                     // WP-232l (P13)
     opserr << "WARNING mpm debug packVersion " << v << " -- refused with two-phase particles: the"
               " restart pack needs version 5 (the pore pressures)\n";
@@ -1583,6 +1589,14 @@ LadrunoMPMPattern::packState(Vector &out)
     ver = MPM_PACK_VERSION;
   }
   if (ver < 5 && anyTwoPhase()) ver = MPM_PACK_VERSION;   // WP-232l (P13)
+  // WP-249 (#1103 item 2): a version-1 pack (ladruno-v20261116) has no body force and knew no
+  // B-spline basis; either is written in the current layout instead. (Like 2 and 3, a v1 pack
+  // drops the anti-locking flag and the v4 gridvel fields: a debug hook for old layouts.)
+  if (ver == 1 && (!eng.bodyForce.empty() || ladruno_mpm::isBSpline(eng.par.basis))) {
+    opserr << "WARNING mpm restart pack -- version 1 was requested, but a particle body force or a"
+              " B-spline basis needs version 2: writing version " << MPM_PACK_VERSION << "\n";
+    ver = MPM_PACK_VERSION;
+  }
   k.put(ver);
   k.put(G.ndm);
   for (int d = 0; d < 3; d++) k.put(G.x0[d]);
@@ -1615,7 +1629,7 @@ LadrunoMPMPattern::packState(Vector &out)
   k.put((double)bodyNames.size());
   for (const auto &kv : bodyNames) { k.put(kv.first); k.puts(kv.second); }
   k.puts(unitL); k.puts(unitF); k.puts(unitT); k.puts(unitSystem); k.put(unitsFromFile);
-  k.putv(eng.bodyForce);
+  if (ver >= 2) k.putv(eng.bodyForce);             // WP-232i (B11); WP-249: none in version 1
   if (ver >= 3) k.put(eng.par.antiLocking);        // WP-232j (J13)
   if (ver >= 4) {                                   // WP-232k (D17, D10)
     for (const GridVel &g : gridVels) {
@@ -1666,7 +1680,9 @@ LadrunoMPMPattern::unpackState(const Vector &in)
 {
   Unpacker u(in);
   const int ver = (int)u.get();
-  if (ver != MPM_PACK_VERSION && ver != 4 && ver != 3 && ver != 2) return -1;   // WP-232j (J13): 2 restores as off
+  // WP-232j (J13): 2 restores as off. WP-249 (#1103 item 2): 1 (ladruno-v20261116) restores with
+  // no body force -- its layout is version 2's without it (elements: hdr(8) 0 reads as ndm)
+  if (ver != MPM_PACK_VERSION && ver != 4 && ver != 3 && ver != 2 && ver != 1) return -1;
   int ndm = (int)u.get();
   double x0[3], h;
   int n[3];
@@ -1722,7 +1738,8 @@ LadrunoMPMPattern::unpackState(const Vector &in)
   for (int i = 0; i < nb && !u.bad; i++) { const int id = (int)u.get(); bodyNames[id] = u.gets(); }
   unitL = u.gets(); unitF = u.gets(); unitT = u.gets(); unitSystem = u.gets();
   unitsFromFile = u.get() != 0.0;
-  u.getv(eng.bodyForce);
+  if (ver >= 2) u.getv(eng.bodyForce);
+  else eng.bodyForce.clear();
   eng.par.antiLocking = (ver >= 3) ? ((int)u.get() != 0 ? 1 : 0) : 0;
   sanisandStage = 0;
   hsWalked.clear();
