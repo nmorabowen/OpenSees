@@ -565,7 +565,8 @@ $$
   still refuses. Every state that Newton reaches is unchanged. The scan runs only on the steps where
   Newton fails, and its cost is capped:
   - It walks outward from the committed value and stops at the first bracket.
-  - The 2×2 inner solve takes at most 12 iterations and 4 halvings per sample.
+  - The 2×2 inner solve takes at most 12 iterations and 4 halvings per sample. Each sample starts it
+    from the previous sample's solution, and from the committed state only if that fails.
   - The whole scan has a budget of 3000 return maps. Past it, the trial refuses as before.
 
   The g++ gate `rc_rootscan_gpp.cpp` covers it on that fibre:
@@ -573,6 +574,22 @@ $$
   - R2: every step matches nested bisection to 2e-16.
   - R3: γxz with ties in z gives the same fibre.
   - R4: a long cracking ramp converges throughout.
+- **No lateral root, `-lateralNoRoot` (WP-247, opt-in).** After a shear failure, a cover fibre
+  (no ties) can lose its lateral root altogether. On a shear reversal at small `εxx`, `σyy` stays
+  negative up to the box's end, so no strain balances it. The default, `refuse`, refuses the trial,
+  as before. `-lateralNoRoot modelC` applies Model C's rule, which never refuses a strip:
+  - It bisects `r_y` over the nearest increasing y-bracket. With no bracket, it bisects over Model C's
+    full range `[−0.004, 0.15]`.
+  - It keeps the end point: the jump, or the end of the range when `σyy` has one sign throughout.
+  - `εzz` and `γyz` are still balanced. `r_y` is left unbalanced, a small stress on a nearly dead strip.
+
+  This is a modelling choice: the fibre carries a lateral stress the ties do not balance. Use it to
+  reproduce Model C. A force-based column of the lab set (Sezen–Moehle 3CLH18) stopped on its first
+  unloading after the shear failure without it. The response `lateralRoot` reports how the last trial
+  was found: 0 Newton, 1 root scan, 2 `modelC`. When the accepted state sits on a flat branch, the
+  condensed tangent adds `1e-6 E` to the lateral block. Gate R6 replays a shear reversal on a cover
+  fibre: `refuse` stops at step 129 of 180, and `modelC` converges on every step at Model C's rule
+  written out, leaving `|σyy| < 0.03 MPa`.
 - **Lateral box (WP-247).** The lateral unknowns stay in Model C's bracket: `εyy, εzz ∈ [−0.01, 0.15]`,
   `γyz ∈ ±0.15`. Newton's iterates and the scan's samples are projected into it. A cover fibre that is
   fully cracked in y has a nearly flat `σyy`. Without the box, a near-singular Jacobian sent Newton to
@@ -733,7 +750,7 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
     [-tensStiff {vc|cm} [-tensStiffC $c] [-tensStiffAlpha $a]] \
     [-betaC $C] [-crackedNu $nu_c] \
     [-addonPlane {membrane|spatial}] [-crackGate {strain|damage}] \
-    [-ties $rhoY $rhoZ $fyt $Es] [-tieHardening $b] [-crackCheck sum $smx $smt] \
+    [-ties $rhoY $rhoZ $fyt $Es] [-tieHardening $b] [-crackCheck sum $smx $smt] [-lateralNoRoot {refuse|modelC}] \
     [-autoRegularization $lch_ref]
 
 # identical grammar (minus the view choice); ThreeDimensional-only, for -geom finite:
@@ -765,6 +782,7 @@ nDMaterial LadrunoRCFiniteStrain $tag $E $nu  <same backbones + flags as above>
 | `-ties` | smeared ties of the **BeamFiber view** (§12.1): ratio per lateral direction (fibre y, z), yield stress, modulus. Inert in the other views; `LadrunoRCFiniteStrain` refuses it | none (free lateral) |
 | `-tieHardening` | bilinear kinematic hardening ratio of the ties, `Et = b Es` past yield, `0 ≤ b < 1` (§12.1) | 0 |
 | `-crackCheck` | Model C crack check of the **BeamFiber view** (§12.1): `sum $smx $smt` caps the principal tension at `v_ci,max tanθ + ρ(fyt − f_s)`; `smx`, `smt` crack-spacing parameters (mm, > 0). Inert in the other views; `LadrunoRCFiniteStrain` refuses it | none |
+| `-lateralNoRoot` | What the **BeamFiber view** does when the lateral balance has no root (§12.1, WP-247): `refuse` the trial, or `modelC`, keeping Model C's bisection end point with `r_y` unbalanced. Inert in the other views; `LadrunoRCFiniteStrain` refuses it | `refuse` |
 | `-autoRegularization` | enable Bažant–Oh crack-band at reference length `$lch_ref` (§6) | OFF |
 
 > [!important] Flag implication chain + defaults-off

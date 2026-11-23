@@ -19,6 +19,10 @@
 //  R5 lateral box:  a cover fibre (no ties, f'c envelope): flexural tension, crushing past the peak, unloading.
 //                   The pre-WP-247 kernel's last step ran to eps_yy ~ 3e4 (flat sigma_yy once fully cracked in y);
 //                   in the box [-0.01, 0.15] every step converges on the bisection reference's root.
+//  R6 no root:      a cover fibre: a large shear excursion, unloading, shear reversal at small eps_xx. Past the
+//                   reversal sigma_yy < 0 up to the range end, so there is no lateral root: the default refuses;
+//                   -lateralNoRoot modelC converges on every step at Model C's rule written out (nearest
+//                   increasing bracket, else bisection over [-0.004, 0.15]), leaving |sigma_yy| < 0.2 MPa.
 #include "LadrunoRCKernel.h"
 #include <cmath>
 #include <cstdio>
@@ -246,6 +250,62 @@ int main()
                "max rel stress diff %.2e, max |d eps_yy| %.2e\n", nok, nref, latMax, worst, dLat);
         CHECK(nok == 120 && nref == 120 && latMax < 0.01 && worst < 1e-6 && dLat < 1e-9,
               "R5 (%d, %d, %.2e, %.2e, %.2e)", nok, nref, latMax, worst, dLat);
+    }
+    // ---------------- R6: -lateralNoRoot modelC ----------------
+    {
+        // a cover fibre (no ties): a large shear excursion, unloading, then shear reversal at small eps_xx. Past the
+        // reversal sigma_yy stays negative up to the range end, so there is no lateral root: the default refuses,
+        // modelC keeps Model C's bisection end point. Reference: Model C's rule written out (nearest increasing
+        // bracket of the y residual, else bisection over [-0.004, 0.15]), eps_zz balanced by bracketing bisection.
+        const std::vector<Leg> legs = {{0.0, 8.0e-3, 60}, {-1.5e-5, 0.0, 40}, {-1.5e-5, -4.0e-3, 40}, {-1.5e-5, -8.0e-3, 40}};
+        std::vector<double> PX, PG; double x0 = 0.0, g0 = 0.0;
+        for (const Leg& l : legs) {
+            for (int j = 1; j <= l.n; ++j) { PX.push_back(x0 + (l.exx - x0) * j / l.n); PG.push_back(g0 + (l.g - g0) * j / l.n); }
+            x0 = l.exx; g0 = l.g;
+        }
+        const int N = (int)PX.size();
+        int failRefuse = 0, nok = 0, nNo = 0, nref = 0; double dLat = 0.0, dSig = 0.0, syyMax = 0.0;
+        for (int mode = 0; mode < 2; ++mode) {
+            Params P; fill(P, false, true); P.lateralNoRoot = mode; Fib f;
+            for (int k = 0; k < N; ++k) {
+                const Fib f0 = f;
+                double e[6] = {PX[k], 0, 0, PG[k], 0, 0}, s[6], D[6][6], tep[2], tsg[2]; RCHist o; int it = 0;
+                bool cc = false, rs = false, nr = false;
+                const int st = driveBeamFiber(P, e, f0.h, f0.ep, s, D, o, tep, tsg, &it, false, 1.0, &cc, &rs, &nr);
+                if (mode == 0) { if (st != STATUS_OK) { failRefuse = k + 1; break; } f.h = o; f.ep[0] = tep[0]; f.ep[1] = tep[1]; }
+                else {
+                    if (st != STATUS_OK) break;
+                    nok++;
+                    if (nr) {
+                        nNo++; syyMax = fmax(syyMax, fabs(s[1]));
+                        auto zAt = [&](double y, double ss[6]) {
+                            auto gz = [&](double z) { double ee[6] = {PX[k], y, z, PG[k], 0, 0}, rr[2], s2[6]; resid(P, f0, ee, rr, s2, 0); return rr[1]; };
+                            double z = 0.0; const bool ok = rootNear(gz, f0.h.strain[2], z);
+                            double ee[6] = {PX[k], y, z, PG[k], 0, 0}, rr[2]; resid(P, f0, ee, rr, ss, 0);
+                            return ok ? rr[0] : NAN;
+                        };
+                        auto clipY = [](double y) { return y < -0.01 ? -0.01 : (y > 0.15 ? 0.15 : y); };   // Model C's np.clip
+                        auto gy = [&](double y) { double ss[6]; return zAt(clipY(y), ss); };
+                        double yr = 0.0;
+                        if (!rootNear(gy, f0.h.strain[1], yr)) {
+                            double lo = -0.004, hi = 0.15;
+                            for (int b = 0; b < 60; ++b) { const double m = 0.5 * (lo + hi); if (gy(m) <= 0.0) lo = m; else hi = m; }
+                            yr = 0.5 * (lo + hi);
+                        }
+                        yr = clipY(yr);
+                        double ss[6]; zAt(yr, ss);
+                        nref++; dLat = fmax(dLat, fabs(e[1] - yr));
+                        dSig = fmax(dSig, fmax(fabs(s[0] - ss[0]), fabs(s[3] - ss[3])) / (fabs(ss[0]) + fabs(ss[3]) + 1e-6));
+                    }
+                    f.h = o; f.ep[0] = tep[0]; f.ep[1] = tep[1];
+                }
+            }
+        }
+        printf("R6 -lateralNoRoot (cover fibre, shear reversal): refuse stops at step %d of %d; modelC %d/%d converged, "
+               "%d no-root steps, max |d eps_yy| %.2e vs Model C's rule, max rel stress diff %.2e, max |sigma_yy| left %.3f MPa\n",
+               failRefuse, N, nok, N, nNo, dLat, dSig, syyMax);
+        CHECK(failRefuse > 100 && nok == N && nNo > 0 && nref == nNo && dLat < 1e-9 && dSig < 1e-6 && syyMax < 0.2,
+              "R6 (%d, %d, %d, %.2e, %.2e, %.3f)", failRefuse, nok, nNo, dLat, dSig, syyMax);
     }
     if (nfail == 0) printf("GPP ROOTSCAN GATE: PASS\n");
     else printf("GPP ROOTSCAN GATE: FAIL (%d)\n", nfail);

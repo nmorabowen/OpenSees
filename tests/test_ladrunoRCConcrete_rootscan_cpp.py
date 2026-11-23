@@ -6,7 +6,9 @@ lateral unknowns balanced at every sample. tests/_testbed/rc_rootscan_gpp.cpp ga
 (rho_t f_yt < f_cr): the crack-onset step that the pre-WP-247 kernel refused converges through the scan and only
 there (R1), every step matches nested bracketing bisection from the same committed state (R2), gamma_xz with ties
 in z is the same fibre (R3), a long cracking ramp converges throughout (R4), and the lateral box keeps a cover
-fibre that is fully cracked in y on its root instead of eps_yy ~ 3e4 (R5). Self-asserting with a non-zero
+fibre that is fully cracked in y on its root instead of eps_yy ~ 3e4 (R5). With -lateralNoRoot modelC, a cover
+fibre whose lateral balance has no root after a shear reversal keeps Model C's bisection end point, matching
+Model C's rule written out, where the default refuses (R6). Self-asserting with a non-zero
 exit. Skipped without a C++ compiler.
 """
 import os
@@ -37,5 +39,6 @@ def test_rootscan_gpp_gate():
     assert rr.returncode == 0, f"g++ root-scan gate FAILED:\n{rr.stdout}\n{rr.stderr}"
     out = rr.stdout
     assert "GPP ROOTSCAN GATE: PASS" in out, out
-    for head in ("R1 fold step", "R2 reference", "R3 invariance", "R4 long ramp", "R5 lateral box"):
+    for head in ("R1 fold step", "R2 reference", "R3 invariance", "R4 long ramp", "R5 lateral box",
+                 "R6 -lateralNoRoot"):
         assert head in out, out

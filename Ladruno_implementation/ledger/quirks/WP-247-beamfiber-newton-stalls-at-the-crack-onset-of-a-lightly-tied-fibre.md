@@ -14,4 +14,5 @@ date: 2026-11-22
 
   The result is accepted on the stalled-Newton balance test. Newton-reached states are unchanged.
 - **Second symptom, same root cause:** a cover fibre that is fully cracked in y has a nearly flat `σyy`. Its lateral Newton "converged" to `εyy ≈ 3e4` with a small residual (Sezen–Moehle 2CHD12, high axial load) and refused 250 steps later. WP-247 projects the lateral unknowns into Model C's box `[−0.01, 0.15]`.
-- **Gates:** `tests/_testbed/rc_rootscan_gpp.cpp` R1–R4 (the scan) and R5 (the box). See [[LadrunoRCConcrete_guide]] §12.1.
+- **Third symptom, no root at all:** after a shear failure, a cover fibre without ties on a shear reversal keeps `σyy < 0` up to the box end, so no lateral strain balances it and the trial refuses (Sezen–Moehle 3CLH18, first unloading after the shear failure). Model C never refuses a strip; WP-247 adds the opt-in `-lateralNoRoot modelC`, which keeps Model C's bisection end point with `r_y` unbalanced. The default stays `refuse`.
+- **Gates:** `tests/_testbed/rc_rootscan_gpp.cpp` R1–R4 (the scan), R5 (the box) and R6 (`-lateralNoRoot`). See [[LadrunoRCConcrete_guide]] §12.1.

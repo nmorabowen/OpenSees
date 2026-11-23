@@ -602,6 +602,9 @@ struct Params {
     // (SI: MPa, mm) and tie weights w_i = n1_i^2 / (n1_y^2 + n1_z^2).
     int    crackCheck = 0;                 // -crackCheck sum smx smt (absent = 0)
     double ccSmx = 0.0, ccSmt = 0.0;       // crack-spacing parameters along x and transverse
+    // Ladruno WP-247: what the BeamFiber view does when the lateral balance has no root (read by
+    // driveBeamFiber): 0 refuse the trial (default) | 1 modelC, keep Model C's bisection end point.
+    int    lateralNoRoot = 0;              // -lateralNoRoot {refuse|modelC}
 };
 
 // Strain abscissa of the tension backbone's maximum stress (the crack-onset threshold used by
@@ -1321,12 +1324,13 @@ inline bool applyCrackCheck(const Params& P, const double eps6[6], const double 
 // eps6: retained {0,3,5} set by the caller; lateral {1,2,4} overwritten with the converged values.
 // tieEpN: committed tie plastic strains (y, z). tieEp/tieSig: trial plastic strains and bar stresses.
 // iters (optional): Newton iterations used. rootScan (optional, WP-247): true when the Newton stalled and
-// the Model C root scan found the balanced state.
+// the Model C root scan found the balanced state. noRootAccepted (optional, WP-247): true when
+// -lateralNoRoot modelC accepted a state whose r_y is not balanced.
 inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, const double tieEpN[2],
                           double sig6[6], double Dtan6[6][6], RCHist& out,
                           double tieEp[2], double tieSig[2], int* iters = 0,
                           bool do_implex = false, double time_factor = 1.0, bool* crackCheckBinds = 0,
-                          bool* rootScan = 0)
+                          bool* rootScan = 0, bool* noRootAccepted = 0)
 {
     static const int L[3] = {1, 2, 4};
     const double rho[2] = {P.tieRhoY, P.tieRhoZ};
@@ -1396,72 +1400,113 @@ inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, con
     // 2x2 Newton at every sample. The point is accepted on the same balance test as the stalled-Newton
     // branch above, so a bracket around a jump (no root) still refuses. It runs only when Newton failed,
     // so every state Newton reaches is byte-identical.
-    bool scanned = false;
+    bool scanned = false, noRoot = false;
     // Cost: the walk goes outward from the committed value and stops at the first bracket, so a root next
     // to the committed strain costs a few samples; the inner solve is capped (12 iterations, 4 halvings)
-    // and the whole scan has a budget of kScanBudget return maps, past which the trial is refused as before.
-    // Without the caps, a force-based element whose global Newton was diverging scanned every refused
-    // fibre in full on every element iteration, and one analyze step ran for minutes.
+    // and warm-started from the previous sample, and the whole scan has a budget of kScanBudget return
+    // maps, past which the trial is refused as before. Without the caps, a force-based element whose
+    // global Newton was diverging scanned every refused fibre in full on every element iteration, and one
+    // analyze step ran for minutes.
     static const int kScanBudget = 3000;
     int nEval = 0;
+    bool innerOk = false, warmOk = false;
+    double warm[2] = {0.0, 0.0};
+    // balance the other two lateral unknowns (o1 and gamma_yz) with eps6[L[ax]] held, from the current eps6
+    auto innerSolve = [&](int o1) {
+        auto q2 = [&]() { return sqrt(r[o1] * r[o1] + r[2] * r[2]); };
+        double qn = q2();
+        for (int k = 0; k < 12 && qn > 1.0e-10 * stressScale(); ++k) {
+            const double a = J[o1][o1], b = J[o1][2], c = J[2][o1], d = J[2][2];
+            const double det = a * d - b * c;
+            if (!(fabs(det) > 1.0e-300)) break;
+            const double d1 = ( d * r[o1] - b * r[2]) / det;
+            const double d2 = (-c * r[o1] + a * r[2]) / det;
+            const double b1 = eps6[L[o1]], b2 = eps6[L[2]];
+            double lam = 1.0, qt = qn;
+            for (int ls = 0; ls < 4; ++ls) {
+                eps6[L[o1]] = box(o1, b1 - lam * d1); eps6[L[2]] = box(2, b2 - lam * d2);
+                evaluate(); ++nEval; qt = q2();
+                if (qt < qn) break;
+                lam *= 0.5;
+            }
+            qn = qt;
+        }
+        innerOk = (qn <= 1.0e-8 * stressScale());
+    };
+    // r[ax] at eps6[L[ax]] = x after balancing the other two: warm start from the previous balanced
+    // sample, then (if that fails) from the committed state
+    auto innerAt = [&](int ax, double x) -> double {
+        const int o1 = (ax == 0) ? 1 : 0;
+        for (int pass = (warmOk ? 0 : 1); pass < 2; ++pass) {
+            eps6[L[ax]] = box(ax, x);
+            eps6[L[o1]] = (pass == 0) ? warm[0] : box(o1, in.strain[L[o1]]);
+            eps6[L[2]]  = (pass == 0) ? warm[1] : box(2, in.strain[L[2]]);
+            evaluate(); ++nEval;
+            innerSolve(o1);
+            if (innerOk) break;
+        }
+        warmOk = innerOk;
+        if (innerOk) { warm[0] = eps6[L[o1]]; warm[1] = eps6[L[2]]; }
+        return r[ax];
+    };
+    bool foundY = false; double loY = 0.0, hiY = 0.0;
     if (!conv) {
         for (int ax = 0; ax < 2 && !conv && nEval < kScanBudget; ++ax) {
-            const int o1 = (ax == 0) ? 1 : 0;              // the other normal (index into L)
-            bool innerOk = false;
-            auto innerAt = [&](double x) -> double {       // r[ax] after balancing the other two
-                eps6[L[ax]] = box(ax, x);
-                eps6[L[o1]] = box(o1, in.strain[L[o1]]);
-                eps6[L[2]]  = box(2, in.strain[L[2]]);
-                evaluate(); ++nEval;
-                auto q2 = [&]() { return sqrt(r[o1] * r[o1] + r[2] * r[2]); };
-                double qn = q2();
-                for (int k = 0; k < 12 && qn > 1.0e-10 * stressScale(); ++k) {
-                    const double a = J[o1][o1], b = J[o1][2], c = J[2][o1], d = J[2][2];
-                    const double det = a * d - b * c;
-                    if (!(fabs(det) > 1.0e-300)) break;
-                    const double d1 = ( d * r[o1] - b * r[2]) / det;
-                    const double d2 = (-c * r[o1] + a * r[2]) / det;
-                    const double b1 = eps6[L[o1]], b2 = eps6[L[2]];
-                    double lam = 1.0, qt = qn;
-                    for (int ls = 0; ls < 4; ++ls) {
-                        eps6[L[o1]] = box(o1, b1 - lam * d1); eps6[L[2]] = box(2, b2 - lam * d2);
-                        evaluate(); ++nEval; qt = q2();
-                        if (qt < qn) break;
-                        lam *= 0.5;
-                    }
-                    qn = qt;
-                }
-                innerOk = (qn <= 1.0e-8 * stressScale());
-                return r[ax];
-            };
+            warmOk = false;
             // walk outward: interval k spans offsets (off[k-1], off[k]] on each side (off[-1] = 0, the committed
-            // value itself); the first interval holding an increasing sign change is the nearest one
+            // value itself); the first interval holding an increasing sign change is the nearest one. Each
+            // side warm-starts from its own previous sample.
             const double x0 = in.strain[L[ax]];
             double lo = 0.0, hi = 0.0; bool found = false;
-            const double g0 = innerAt(x0); const bool ok0 = innerOk;
+            const double g0 = innerAt(ax, x0); const bool ok0 = innerOk;
             double gR = g0, gL = g0; bool okR = ok0, okL = ok0; double xR = x0, xL = x0;
+            double wR[2] = {warm[0], warm[1]}, wL[2] = {warm[0], warm[1]};
+            bool wOkR = warmOk, wOkL = warmOk;
             for (int k = 0; k < 41 && !found && nEval < kScanBudget; ++k) {
                 const double off = 1.0e-8 * pow(10.0, 7.0 * k / 40.0);
-                const double xr = x0 + off, gr = innerAt(xr); const bool okr = innerOk;
+                warm[0] = wR[0]; warm[1] = wR[1]; warmOk = wOkR;
+                const double xr = x0 + off, gr = innerAt(ax, xr); const bool okr = innerOk;
+                wR[0] = warm[0]; wR[1] = warm[1]; wOkR = warmOk;
                 if (okR && okr && gR <= 0.0 && gr >= 0.0) { lo = xR; hi = xr; found = true; break; }
                 xR = xr; gR = gr; okR = okr;
-                const double xl = x0 - off, gl = innerAt(xl); const bool okl = innerOk;
+                warm[0] = wL[0]; warm[1] = wL[1]; warmOk = wOkL;
+                const double xl = x0 - off, gl = innerAt(ax, xl); const bool okl = innerOk;
+                wL[0] = warm[0]; wL[1] = warm[1]; wOkL = warmOk;
                 if (okl && okL && gl <= 0.0 && gL >= 0.0) { lo = xl; hi = xL; found = true; break; }
                 xL = xl; gL = gl; okL = okl;
             }
             if (!found) continue;
+            if (ax == 0) { foundY = true; loY = lo; hiY = hi; }
             for (int k = 0; k < 60; ++k) {
                 const double m = 0.5 * (lo + hi);
-                if (innerAt(m) <= 0.0) lo = m; else hi = m;
+                if (innerAt(ax, m) <= 0.0) lo = m; else hi = m;
             }
-            innerAt(0.5 * (lo + hi));                       // leaves eps6, sig6, Dtan6, J, out at the root
+            innerAt(ax, 0.5 * (lo + hi));                   // leaves eps6, sig6, Dtan6, J, out at the root
             rn = sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
             conv = innerOk && (rn <= 1.0e-6 * stressScale());
             scanned = conv;
         }
+        // Ladruno WP-247, -lateralNoRoot modelC (opt-in): Model C never refuses a strip. Without a balanced
+        // root it bisects r_y over the nearest increasing y-bracket, or over its full range [-0.004, 0.15]
+        // when there is none, and keeps the end point: the jump, or a range end where sigma_yy has one sign
+        // throughout (a spalled cover strip without ties, after a shear failure). eps_zz and gamma_yz are
+        // still balanced; r_y is left unbalanced.
+        if (!conv && P.lateralNoRoot == 1) {
+            warmOk = false;
+            double lo = foundY ? loY : -0.004, hi = foundY ? hiY : 0.15;
+            for (int k = 0; k < 60; ++k) {
+                const double m = 0.5 * (lo + hi);
+                if (innerAt(0, m) <= 0.0) lo = m; else hi = m;
+            }
+            innerAt(0, 0.5 * (lo + hi));
+            rn = sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+            conv = innerOk;
+            noRoot = conv;
+        }
     }
     if (iters) *iters = it;
     if (rootScan) *rootScan = scanned;
+    if (noRootAccepted) *noRootAccepted = noRoot;
     if (crackCheckBinds) *crackCheckBinds = ccActive;
     if (!conv) return STATUS_NO_CONVERGE;
 
@@ -1470,7 +1515,14 @@ inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, con
     for (int k = 0; k < 6; ++k) {
         const double rhs[3] = {Dtan6[L[0]][k], Dtan6[L[1]][k], Dtan6[L[2]][k]};
         double c[3];
-        if (!solve3x3(J, rhs, c)) return STATUS_NO_CONVERGE;
+        if (!solve3x3(J, rhs, c)) {
+            // a -lateralNoRoot modelC state can sit on a flat branch (J singular): a small elastic
+            // regularization of the lateral block keeps the condensed tangent finite
+            if (!noRoot) return STATUS_NO_CONVERGE;
+            double Jr[3][3];
+            for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) Jr[i][j] = J[i][j] + (i == j ? 1.0e-6 * P.E : 0.0);
+            if (!solve3x3(Jr, rhs, c)) return STATUS_NO_CONVERGE;
+        }
         for (int i = 0; i < 3; ++i) T[i][k] = c[i];
     }
     double Dc[6][6];
