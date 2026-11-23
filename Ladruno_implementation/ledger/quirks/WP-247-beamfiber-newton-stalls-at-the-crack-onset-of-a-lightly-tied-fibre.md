@@ -1,7 +1,7 @@
 ---
 wp: WP-247
 title: "LadrunoRCConcrete BeamFiber view: the lateral Newton stalls at the crack onset of a lightly tied fibre (rho fyt < f_cr), though a root sits next to the committed strain"
-pr: "TBD"
+pr: "#1139"
 date: 2026-11-22
 ---
 ### LadrunoRCConcrete BeamFiber view: the lateral Newton stalls at the crack onset of a lightly tied fibre (ρ fyt < f_cr), though a root sits next to the committed strain (WP-247 adds Model C's root scan)
