@@ -596,7 +596,10 @@ $$
   - It bisects `r_y` over the nearest increasing y-bracket. With no bracket, it bisects over Model C's
     full range `[−0.004, 0.15]`.
   - It keeps the end point: the jump, or the end of the range when `σyy` has one sign throughout.
-  - `εzz` and `γyz` are still balanced. `r_y` is left unbalanced, a small stress on a nearly dead strip.
+  - `εzz` and `γyz` are still balanced, to `1e-4` × the stress scale. Model C's strip is a membrane with
+    no zz or yz equation, and a cracked fibre's `σyz` can be flat, so a residual of a few `1e-6` MPa that
+    the inner solve cannot remove does not refuse the strip.
+  - `r_y` is left unbalanced, a small stress on a nearly dead strip.
 
   This is a modelling choice: the fibre carries a lateral stress the ties do not balance. Use it to
   reproduce Model C. A force-based column of the lab set (Sezen–Moehle 3CLH18) stopped on its first
@@ -604,7 +607,10 @@ $$
   was found: 0 Newton, 1 root scan, 2 `modelC`. When the accepted state sits on a flat branch, the
   condensed tangent adds `1e-6 E` to the lateral block. Gate R6 replays a shear reversal on a cover
   fibre: `refuse` stops at step 129 of 180, and `modelC` converges on every step at Model C's rule
-  written out, leaving `|σyy| < 0.03 MPa`.
+  written out, leaving `|σyy| < 0.03 MPa`. Gate R7 replays a cover fibre of the lab 2CLD12 column from
+  its real committed history, dumped where the column stopped at step 1257: cracked, closed in
+  compression, with a flat `σyz`. `refuse` refuses it; `modelC` accepts it with `3.5e-7` MPa left in
+  `(σzz, σyz)`. Without the `1e-4` tolerance, `modelC` refused it too.
 - **Lateral box (WP-247).** The lateral unknowns stay in Model C's bracket: `εyy, εzz ∈ [−0.01, 0.15]`,
   `γyz ∈ ±0.15`. Newton's iterates and the scan's samples are projected into it. A cover fibre that is
   fully cracked in y has a nearly flat `σyy`. Without the box, a near-singular Jacobian sent Newton to

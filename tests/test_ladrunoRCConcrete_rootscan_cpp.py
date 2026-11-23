@@ -8,7 +8,9 @@ there (R1), every step matches nested bracketing bisection from the same committ
 in z is the same fibre (R3), a long cracking ramp converges throughout (R4), and the lateral box keeps a cover
 fibre that is fully cracked in y on its root instead of eps_yy ~ 3e4 (R5). With -lateralNoRoot modelC, a cover
 fibre whose lateral balance has no root after a shear reversal keeps Model C's bisection end point, matching
-Model C's rule written out, where the default refuses (R6). Self-asserting with a non-zero
+Model C's rule written out, where the default refuses (R6); a cover fibre of the lab 2CLD12 column, replayed
+from its real committed history, whose flat sigma_yz stalls the eps_zz/gamma_yz balance at a few 1e-6 MPa: the
+default refuses, modelC accepts within 1e-4 x the stress scale (R7). Self-asserting with a non-zero
 exit. Skipped without a C++ compiler.
 """
 import os
@@ -40,5 +42,5 @@ def test_rootscan_gpp_gate():
     out = rr.stdout
     assert "GPP ROOTSCAN GATE: PASS" in out, out
     for head in ("R1 fold step", "R2 reference", "R3 invariance", "R4 long ramp", "R5 lateral box",
-                 "R6 -lateralNoRoot"):
+                 "R6 -lateralNoRoot", "R7 flat yz"):
         assert head in out, out

@@ -1533,7 +1533,11 @@ inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, con
         // root it bisects r_y over the nearest increasing y-bracket, or over its full range [-0.004, 0.15]
         // when there is none, and keeps the end point: the jump, or a range end where sigma_yy has one sign
         // throughout (a spalled cover strip without ties, after a shear failure). eps_zz and gamma_yz are
-        // still balanced; r_y is left unbalanced.
+        // still balanced, to kNoRootInner x the stress scale: Model C's strip is a membrane with no zz or yz
+        // equation, and a cracked fibre's sigma_yz can be flat (no yz shear stiffness left), so a residual of
+        // a few 1e-6 MPa there, which the inner solve cannot remove, does not refuse the strip. r_y is left
+        // unbalanced.
+        static const double kNoRootInner = 1.0e-4;
         if (!conv && P.lateralNoRoot == 1) {
             warmOk = false;
             double lo = foundY ? loY : -0.004, hi = foundY ? hiY : 0.15;
@@ -1543,7 +1547,8 @@ inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, con
             }
             innerAt(0, 0.5 * (lo + hi));
             rn = sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
-            conv = innerOk;
+            const double qInner = sqrt(r[1] * r[1] + r[2] * r[2]);
+            conv = innerOk || (qInner <= kNoRootInner * stressScale());
             noRoot = conv;
         }
     }

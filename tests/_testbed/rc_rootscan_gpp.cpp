@@ -23,10 +23,15 @@
 //                   reversal sigma_yy < 0 up to the range end, so there is no lateral root: the default refuses;
 //                   -lateralNoRoot modelC converges on every step at Model C's rule written out (nearest
 //                   increasing bracket, else bisection over [-0.004, 0.15]), leaving |sigma_yy| < 0.2 MPa.
+//  R7 flat yz:      a cover fibre of the lab 2CLD12 column replayed from its real committed history (dumped where
+//                   the column stopped): cracked, closed in compression, its sigma_yz flat, so the eps_zz/gamma_yz
+//                   balance stalls at a few 1e-6 MPa. The default refuses; modelC accepts within 1e-4 x the
+//                   stress scale (Model C's strip has no zz or yz equation).
 #include "LadrunoRCKernel.h"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 using namespace ladruno_rc_kernel;
 
@@ -87,6 +92,21 @@ static void fill(Params& P, bool tiesInZ, bool cover = false)
     buildBackbone(P.ht, EC, te.data(), ts.data(), td.data(), (int)te.size());
     setupParams(P);
 }
+
+// R7 data: a cover fibre of the lab 2CLD12 column (rcbf-4 route r1: Model C's cover backbone, the
+// Collins-Mitchell tension curve, IMPL-EX, the `sum` crack check, no ties), its committed history as
+// dumped at a refused trial (the column stopped there, step 1257 of 2385), and the trial strain.
+static const double R7_COVER_Ce[15] = {0.0, 0.00016666666666666666, 0.0003333333333333333, 0.0005, 0.0006666666666666666, 0.0008333333333333333, 0.001, 0.0011666666666666665, 0.0013333333333333333, 0.0015, 0.0016666666666666666, 0.0018333333333333333, 0.002, 0.015799680656094738, 0.05};
+static const double R7_COVER_Cs[15] = {0.0, 3.5690827606684747, 6.976495414383085, 10.092142320233195, 12.826230549507661, 15.132028343205961, 17.00132421165976, 18.45528104178909, 19.533972369028433, 20.287001526774688, 20.7663687338321, 21.021769281945982, 21.097956420000003, 4.219591284000001, 4.219591284000001};
+static const double R7_COVER_Cd[15] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.049816310977851774, 0.10392015985318193, 0.15738812267428992, 0.20901317212273507, 0.2580103294915381, 0.3039262923717647, 0.8762902229757342, 0.9609085005795983};
+static const int R7_COVER_N = 15;
+static const double R7_Te[16] = {0.0, 7.021276595744681e-05, 7.121276595744681e-05, 7.235490896810595e-05, 7.480154263556257e-05, 8.004258184594808e-05, 9.126963735906587e-05, 0.00011531959585677318, 0.00016683804635927885, 0.00027719793502320987, 0.0005136045991817693, 0.0010200214824822675, 0.002104838869524208, 0.004428672853017598, 0.009406657578690131, 0.020070212765957447};
+static const double R7_Ts[16] = {0.0, 1.5157728900260752, 1.4826204880646114, 1.4677378960738219, 1.446486513108059, 1.4164693190596909, 1.374715821051554, 1.3178594647529678, 1.2426391157678773, 1.1468335247065318, 1.0305449603966306, 0.8973673752636254, 0.7546342058829494, 0.6121313718524141, 0.4795828498936716, 0.3641690953324715};
+static const double R7_Td[16] = {0.0, 0.0, 0.03560691109148617, 0.06035793042639448, 0.1042521367410314, 0.18027528404117188, 0.30230027392503034, 0.470643884307654, 0.6549898506699112, 0.8083572757432236, 0.9070562937836674, 0.9592485651841378, 0.9833926790683905, 0.9935974499177403, 0.995, 0.995};
+static const int R7_T_N = 16;
+static const double R7_EC = 21588.280554916826;
+static const double R7_IN[3] = {-0.00021281724476626411, -6.9865444798824902e-07, 9.4840963494327548e-08};   // eps_xx, gamma_xy, gamma_xz
+static const double R7_HIST[32] = {-0.52637282607846758, 0.060161394366958151, 0, 0.060562664270763872, 0, 0, -0.00024449933549517685, 2.7195232648743659e-06, 0, -1.8407912600952989e-06, 0, 0, 0.00056644215026628098, 0.0010235784866706634, 0.91686235179305664, 0.0078923267855216528, 1, 2.7229498496364526e-06, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0.00056644215026628098, 0.0010235784866706634, 9.7043819164563541e-07, 0, -1};
 
 struct Fib {
     RCHist h; double ep[2];
@@ -306,6 +326,34 @@ int main()
                failRefuse, N, nok, N, nNo, dLat, dSig, syyMax);
         CHECK(failRefuse > 100 && nok == N && nNo > 0 && nref == nNo && dLat < 1e-9 && dSig < 1e-6 && syyMax < 0.2,
               "R6 (%d, %d, %d, %.2e, %.2e, %.3f)", failRefuse, nok, nNo, dLat, dSig, syyMax);
+    }
+    // ---------------- R7: a flat gamma_yz direction under -lateralNoRoot modelC ----------------
+    {
+        static_assert(sizeof(RCHist) == 32 * sizeof(double), "R7 replays a 32-double RCHist");
+        RCHist h; std::memcpy(&h, R7_HIST, sizeof(RCHist));
+        const double ep0[2] = {0.0, 0.0};
+        int st[2]; double q[2] = {0, 0}, sc = 0.0, lat[3] = {0, 0, 0}; bool nr1 = false;
+        for (int mode = 0; mode < 2; ++mode) {
+            Params P; fill(P, false, true);
+            buildBackbone(P.hc, R7_EC, R7_COVER_Ce, R7_COVER_Cs, R7_COVER_Cd, R7_COVER_N);
+            buildBackbone(P.ht, R7_EC, R7_Te, R7_Ts, R7_Td, R7_T_N);
+            P.E = R7_EC; P.implex = true; P.lateralNoRoot = mode;
+            setupParams(P);
+            double e[6] = {R7_IN[0], 0, 0, R7_IN[1], 0, R7_IN[2]}, s6[6], D[6][6], tep[2], tsg[2]; RCHist o; int it = 0;
+            bool cc = false, rs = false, nr = false;
+            st[mode] = driveBeamFiber(P, e, h, ep0, s6, D, o, tep, tsg, &it, true, 1.0, &cc, &rs, &nr);
+            q[mode] = sqrt(s6[2] * s6[2] + s6[4] * s6[4]);
+            if (mode == 1) {
+                nr1 = nr; lat[0] = e[1]; lat[1] = e[2]; lat[2] = e[4];
+                double ss = 0.0; for (int a = 0; a < 6; ++a) ss += s6[a] * s6[a];
+                sc = fmax(sqrt(ss), P.ftPeak);
+            }
+        }
+        printf("R7 flat yz (lab 2CLD12 cover fibre, real history): refuse status %d; modelC status %d, no-root %d, "
+               "|(sigma_zz, sigma_yz)| left %.2e MPa (scale %.3f), lateral (%.3e, %.3e, %.3e)\n",
+               st[0], st[1], (int)nr1, q[1], sc, lat[0], lat[1], lat[2]);
+        CHECK(st[0] != STATUS_OK && st[1] == STATUS_OK && nr1 && q[1] <= 1e-4 * sc,
+              "R7 (%d, %d, %d, %.2e)", st[0], st[1], (int)nr1, q[1]);
     }
     if (nfail == 0) printf("GPP ROOTSCAN GATE: PASS\n");
     else printf("GPP ROOTSCAN GATE: FAIL (%d)\n", nfail);
