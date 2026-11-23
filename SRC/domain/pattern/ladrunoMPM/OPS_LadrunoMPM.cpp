@@ -657,7 +657,7 @@ int cmdDebug(LadrunoMPMPattern *h)
   }
   if (what == "packVersion") {                                         // WP-232j (L8)
     int v;
-    if (!readInt(v) || h->setPackVersion(v) < 0) return fail("debug packVersion 2|3|4");
+    if (!readInt(v) || h->setPackVersion(v) < 0) return fail("debug packVersion 1|2|3|4|5");
     return 0;
   }
   if (what == "affineCheck") {                                         // WP-232j (L1)
@@ -1170,7 +1170,7 @@ int OPS_LadrunoMPM(void)
     if (ok) return outInt((int)c);
     return fail("info -- numParticles, epoch, basis, antiLocking, antiLockingCounts, time, summary, materials,"
                 " g2p, acceptedSteps, retries, dtHistory, domainChanges, connectivityChanges,"
-                " gridNodes, gridNodeTags or mode");
+                " gridNodes, gridNodeTags, mode or failDump");
   }
   if (sub == "debug") return cmdDebug(h);
   return fail("-- unknown sub-command '" + sub + "'");
