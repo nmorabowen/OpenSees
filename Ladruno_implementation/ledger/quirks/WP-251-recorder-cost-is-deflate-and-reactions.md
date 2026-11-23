@@ -1,6 +1,7 @@
 ---
 wp: WP-251
 title: "recorder ladruno per-step cost is deflate + reactions, not the collect walk; worker threads are dead at .pyd atexit"
+pr: "#1146"
 date: 2026-11-23
 ---
 ### recorder ladruno slows every step: it is deflate and reactionForce, not getResponse
