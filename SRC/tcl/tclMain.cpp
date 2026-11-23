@@ -213,6 +213,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoSANISAND — -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance\n"
 "        • LadrunoLoadControl — -tangentPredictor for prescribed-disp paths\n"
 "        • LadrunoShellModifier — ETABS-style shell stiffness modifiers\n"
+"        • LadrunoNDFiber — shear-profile NDFiber section (Model C parabola) + LadrunoUniaxialFiber bars\n"
 "        • ASDPlasticMaterial3D — fail-loud, parser, Voigt+apex (ADR-94)\n"
 "        • ASDPlasticMaterial3D — Closest_Point return map (opt-in, ADR-97)\n"
 "        • IMPL-EX commit-time refusal latch — no silent partial commits\n"
@@ -235,6 +236,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • mpm — anti-locking: cell-centre F-bar on the step increment, modes F and A (WP-232j)\n"
 "        • mpm — soil particles: LadrunoSANISAND and LadrunoHS, one stage walk in both modes (WP-232k)\n"
 "        • mpm — two-phase saturated u-p particles: route E (mode A) and route S (mode F) (WP-232l)\n"
+"        • testNDMaterial — nD material tester: views, mixed strain/stress control, explicit commit (WP-248)\n"
 "\n";
     // FEATURES-END
 
