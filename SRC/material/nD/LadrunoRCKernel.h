@@ -1374,17 +1374,49 @@ inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, con
     double rn = evaluate();
     bool conv = false;
     int it = 0;
+    // Ladruno WP-247: a Newton that cycles (on the falling branch of a lightly tied or cracked fibre) is left
+    // as soon as its best residual has not halved in kStall iterations, instead of running all 50: past the
+    // peak of a force-based column these failing Newtons were a third of the fibre cost. The balance tests
+    // are unchanged, and a stalled Newton goes to the root scan as before.
+    static const int kStall = 8;
+    double best = rn; int sinceBest = 0;
+    // Ladruno WP-247: Broyden-corrected Jacobian. The material's default tangent is the damaged secant
+    // W_B C0, stiffer than the true slope on a softening branch, so plain Newton on the lateral balance
+    // contracted by a constant factor (~0.6 per iteration, ~30 iterations to the 1e-10 test). Each accepted
+    // step corrects Jb with the residual change it produced (Broyden's rank-one update); a step that
+    // fails the line search resets Jb to the fresh tangent. The balance tests, and the tangent returned
+    // to the caller (condensed from the material's own Dtan6 and J), are unchanged.
+    double Jb[3][3];
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) Jb[i][j] = J[i][j];
     for (; it < 50; ++it) {
         if (rn <= 1.0e-10 * stressScale()) { conv = true; break; }
+        if (rn < 0.5 * best) { best = rn; sinceBest = 0; }
+        else if (++sinceBest >= kStall) break;
         double dx[3];
-        if (!solve3x3(J, r, dx)) break;
+        if (!solve3x3(Jb, r, dx)) break;
         const double base[3] = {eps6[1], eps6[2], eps6[4]};
+        const double r0[3] = {r[0], r[1], r[2]};
         double lam = 1.0, rnew = rn;
         for (int ls = 0; ls < 8; ++ls) {               // backtracking on |r|; the last try is kept
             for (int a = 0; a < 3; ++a) eps6[L[a]] = box(a, base[a] - lam * dx[a]);
             rnew = evaluate();
             if (rnew < rn) break;
             lam *= 0.5;
+        }
+        if (rnew < rn) {
+            double s[3], ss = 0.0;
+            for (int a = 0; a < 3; ++a) { s[a] = eps6[L[a]] - base[a]; ss += s[a] * s[a]; }
+            if (ss > 0.0) {
+                for (int i = 0; i < 3; ++i) {
+                    double Js = 0.0;
+                    for (int j = 0; j < 3; ++j) Js += Jb[i][j] * s[j];
+                    const double c = (r[i] - r0[i] - Js) / ss;
+                    for (int j = 0; j < 3; ++j) Jb[i][j] += c * s[j];
+                }
+            }
+        }
+        else {
+            for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) Jb[i][j] = J[i][j];
         }
         rn = rnew;
     }
@@ -1399,7 +1431,7 @@ inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, con
     // continuous with the committed state), and bisect it; the other two lateral unknowns are solved by a
     // 2x2 Newton at every sample. The point is accepted on the same balance test as the stalled-Newton
     // branch above, so a bracket around a jump (no root) still refuses. It runs only when Newton failed,
-    // so every state Newton reaches is byte-identical.
+    // so every state Newton reaches is kept (to the balance tolerance).
     bool scanned = false, noRoot = false;
     // Cost: the walk goes outward from the committed value and stops at the first bracket, so a root next
     // to the committed strain costs a few samples; the inner solve is capped (12 iterations, 4 halvings)
@@ -1428,6 +1460,17 @@ inline int driveBeamFiber(const Params& P, double eps6[6], const RCHist& in, con
                 evaluate(); ++nEval; qt = q2();
                 if (qt < qn) break;
                 lam *= 0.5;
+            }
+            if (!(qt < qn)) {
+                // no descent: a flat direction (a cover fibre cracked in z has sigma_zz ~ 0). Further
+                // iterations cannot help, so stop here; if the last point was already balanced, go back to it.
+                if (qn <= 1.0e-8 * stressScale()) {
+                    eps6[L[o1]] = b1; eps6[L[2]] = b2;
+                    evaluate(); ++nEval;
+                    qn = q2();
+                }
+                else qn = qt;
+                break;
             }
             qn = qt;
         }

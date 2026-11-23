@@ -562,12 +562,27 @@ $$
   - At every sample, the other two lateral unknowns are balanced by a 2×2 Newton.
 
   The result is accepted on the same balance test as a stalled Newton, so a bracket around a jump
-  still refuses. Every state that Newton reaches is unchanged. The scan runs only on the steps where
+  still refuses. Every state that Newton reaches is kept. The scan runs only on the steps where
   Newton fails, and its cost is capped:
   - It walks outward from the committed value and stops at the first bracket.
   - The 2×2 inner solve takes at most 12 iterations and 4 halvings per sample. Each sample starts it
     from the previous sample's solution, and from the committed state only if that fails.
   - The whole scan has a budget of 3000 return maps. Past it, the trial refuses as before.
+  - The 2×2 inner solve stops as soon as its line search finds no descent (a flat direction, such as
+    `σzz` of a cover fibre cracked in z). Before, it ran to its cap at every such sample.
+- **Lateral Newton cost (WP-247).** The material's default tangent is the damaged secant `W_B C0`,
+  stiffer than the true slope on a softening branch, so plain Newton on the lateral balance contracted
+  by a constant factor of about 0.6 and needed about 30 iterations. Two changes:
+  - A **Broyden update** corrects the lateral Jacobian after each accepted step with the residual
+    change it produced; a step that fails the line search resets it to the fresh tangent. A
+    converging fibre now takes about 4 iterations.
+  - A Newton whose best residual has not halved in 8 iterations is left for the root scan, instead
+    of running all 50.
+
+  The balance tests and the tangent returned to the section (condensed from the material's own
+  `Dtan6` and `J`) are unchanged, so converged states agree with plain Newton to the balance
+  tolerance, not bit for bit. On the gate paths, a fibre call costs about 5 return maps instead of 30,
+  and a stalling cover fibre about 200 instead of about 1060.
 
   The g++ gate `rc_rootscan_gpp.cpp` covers it on that fibre:
   - R1: the scan runs on the crack-onset step only.
