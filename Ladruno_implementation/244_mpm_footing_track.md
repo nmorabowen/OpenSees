@@ -91,7 +91,7 @@ pre-join 120.26. It passes either way.
 | `soil/s3_mpm_hs_r3_fbar.json` (S3 HS r3, reported) | q(s/B 0.05) 155.3 kPa = 0.16 × FE | 928.6 kPa = 0.969 × FE n16 (958.7) | reported row; would now sit inside the r1 / r2 ±10 % band |
 | `antilocking/footing_j2_r3.json` (L3 r3) | window 500.77 (pass); q_max 525.76, collapse at s/h 0.78 | window 500.77 (pass, unchanged: before the join); q_max 562.84 (reported) | unchanged |
 | `antilocking/footing_mildcone_r2_al.json` (L4 r2, esmeralda) | q_max 120.52 (0.922 × FE 130.66), reaches 0.2 m | q_max 127.77 (0.978 × FE), reaches 0.2 m, 402 failed | pass → pass, inside [117.60, 143.73] |
-| `antilocking/footing_mildcone_r3_al.json` (L4 r3) | see "#1107" below | | |
+| `antilocking/footing_mildcone_r3_al.json` (L4 r3, apt MKL) | stop t = 57 (s = 0.094 m), 502 failed, q_max 115.64 | stop t = 74 (s = 0.128 m), 725 failed, q_max 115.64; see "#1107" below | miss → miss; `L4_R3_MISS` updated |
 
 ## #1107's MPM half
 
@@ -120,8 +120,9 @@ tracks and which the FE shares. L4 r3 stays a miss: it does not reach s = 0.2 m,
 unchanged. #1107 stands for both halves; only the stop location of its MPM half was set by the
 artifact.
 
-**The L4 r3 record.** The committed `antilocking/footing_mildcone_r3_al.json` and the
-`L4_R3_MISS` text (stop t = 57) describe the old box. With the fix, on the record's own
-configuration, the stop moves to t = 74 (s = 0.128 m). Updating the record and the miss text is a
-gate-record change: it is the owner's call. The fixed-box warrant record is prepared on the apt
-build and is not committed.
+**The L4 r3 record.** Re-recorded with the fixed box and accepted by the owner on 2026-11-22.
+`antilocking/footing_mildcone_r3_al.json` now holds the warrant run (`mpm_antilocking_warrant.py`)
+on build `0a8613c01` with the apt-MKL configuration: stop t = 74, 725 failed attempts, 11 relaxed
+steps, 159 halvings. Every q equals the probe run `wp244/apt_l4_r3_lead0.5.json`. `L4_R3_MISS`
+now describes this stop and keeps the old one (t = 57) as history. The gate verdicts are the
+same: q_max passes the band, reach fails, so the case is still a strict xfail.

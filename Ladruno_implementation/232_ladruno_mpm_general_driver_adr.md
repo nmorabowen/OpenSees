@@ -1237,11 +1237,11 @@ ADR-88).
   `track`. The fix starts the footing box's lower bound at −h/2, still `track y`. There is no C++
   change and no command changes meaning. Runs that end before s = h/2 are bit-identical.
   - HS S3 now runs to s = 2h at r2 and r3 with no step drop above 4 % (55 % and 92 % before).
-  - Records changed: S3 HS r3, L3 r3 and L4 r2, accepted by the owner on 2026-11-22. Every band is
-    unchanged.
+  - Records changed: S3 HS r3, L3 r3, L4 r2 and L4 r3, accepted by the owner on 2026-11-22. Every
+    band is unchanged.
   - #1107's MPM half: on 232j's own build configuration (apt MKL, which reproduces its record bit for
     bit), the L4 r3 stop moves from s/h 0.75 to 1.02, then the DP stagnation stops it. L4 r3 stays
-    a miss.
+    a miss; its record and `L4_R3_MISS` now describe the stop at t = 74.
   - Review of record: the Fable critic (AMEND, applied). Results: `244_mpm_footing_track.md`.
 
 ---
