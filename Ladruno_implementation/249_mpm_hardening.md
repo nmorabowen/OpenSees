@@ -40,13 +40,17 @@ Ready for review (2026-11-23). #1095 stays open with a guard test and no fix (ow
   renormalize, 8 threads): `c45af1407` 2/2 clean; `9db5803f6` (the build that crashed) 2/2
   clean; `2236d1ca1` built with debug symbols (`/Z7`, `/DEBUG:FULL`) under a Win32 catcher
   with breakpoints on both `incompatible sizes` prints in `Matrix.cpp` and a minidump on an
-  access violation, along r2's cut path, 2/2 clean. Also clean at N = 1e4, 1 thread. Every run
-  ends with a normal `OpenSeesError` when step 7 exhausts `mpm cut 2 4`.
+  access violation, along r2's cut path: no breakpoint, access violation or dump in either
+  repeat; one completed, the other hit the 2 h timeout during step 8's last cut. Also clean at
+  N = 1e4, 1 thread. On `9db5803f6` and the symbols build, step 7 exhausts `mpm cut 2 4` and
+  raises a normal `OpenSeesError`.
 - **Reading.** The 1-in-3 crash looks like a corruption that depends on the run, not a
   deterministic defect on the cut path. #1095 stays open (owner, 2026-11-23).
 - **Guard.** `tests/test_ladruno_mpm_wp249_hardening.py::test_cut_retry_across_connectivity_changes_3d`
-  forces failed attempts (`mpm debug failAttempt … afterTrial`) across connectivity changes on
-  a 3D DP block and checks the retried run is bit for bit the direct sub-steps, with none of
+  forces failed attempts (`mpm debug failAttempt … afterTrial`) on two steps whose own
+  preparation re-points the particles (a connectivity change at the failed attempt, asserted on
+  the reference run's first sub-step; the per-call retry count pins which step is armed) on a 3D
+  DP block, and checks the retried run equals the direct sub-steps (rel 1e-12), with none of
   the #1095 messages. It passes on the base too: **no mutation evidence**; it guards the path,
   it fixes nothing.
 
@@ -64,7 +68,7 @@ changes. #1110 stays open for B-spline, a non-grid surface and the top-cell resi
 
 | Item | Disposition |
 |---|---|
-| #1103-2 restart pack v1 | Done: the reader accepts version 1 (no body force); `mpm debug packVersion 1` writes it and falls back to the current layout for a body force or a B-spline basis. Two tests; both fail on the base. |
+| #1103-2 restart pack v1 | Done: the reader accepts version 1 (no body force); `mpm debug packVersion 1` writes it and falls back to the current layout for a body force or a B-spline basis. Two tests; both fail on the base, which refuses `packVersion 1` (neither reads back which version was written; the B-spline fallback has no test; no pack from the v20261116 binary is used -- the layout was checked against its source). The fallback covers only the body force and B-spline: an anti-locking flag or a v4 gridvel field is dropped by a v1 pack, as by 2 and 3. |
 | #1103-1, -4 | Left: they touch gated B-spline paths. |
 | #1103-3 | Left: unreachable today. |
 | #1106-2 `failDump` switch | Done: cleared at mode-A teardown, re-asserted from the live host; `mpm info failDump`. Test; mutation (reset removed) fails it. |
@@ -77,3 +81,18 @@ changes. #1110 stays open for B-spline, a non-grid surface and the top-cell resi
 
 Five targets built at `2236d1ca1` (stamps match on exe and pyd). WP-249 tests 4/4; MPM suite
 (`tests/test_ladruno_mpm_*.py -m "not zone_b"`) 514 passed, 15 xfailed, 61 skipped.
+
+## Review of record
+
+- **Fable critic (other family): AMEND, applied.** (1) The cut-retry test armed steps whose
+  own preparation did not re-point: the "across a connectivity change" assertion passed on later
+  sub-steps. Re-aimed at steps 2 and 11, whose preparation re-points (asserted on the
+  reference's first sub-step), with a per-call retry count `[3, 3]` that pins the armed step (an
+  off-by-one in the re-aim, step 12, made the runs take different step sequences and differ by
+  8.6e-5; the count now catches it). The re-aimed guard passes on `c45af1407` too. (2) Wording:
+  "regression" → guard, "bit for bit" → rel 1e-12. (3) The v1 fallback comment narrowed to what
+  it covers. (4) Pack-test limits recorded above. (5) `mpm info failDump` reports the process
+  switch, not the host's path (kept; documented). (6) The traction quirk's mode-F half corrected.
+- **`/code-review high`:** 4 findings. The timed-out symbols run counted as clean: fixed. The
+  `failDump` report, the v1 readback and the v20261116 fixture: kept as notes (C++ + rebuild, or
+  the old binary).

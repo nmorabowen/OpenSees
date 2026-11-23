@@ -13,8 +13,10 @@ the soil sees no surcharge.
 **Why.** 232l's traction (interface P10b; `LadrunoMPMTwoPhase.cpp` `prepareStepUP`,
 `routeSLoads`) puts consistent nodal forces λ t ∫hat_a on the nodes of a **grid boundary** row,
 `row = 0` or `G.n[d]` of the named face. It does not follow a material surface. When the soil top
-lies below the grid's top face, that row carries no mass, so in mode A it is not an active node
-and receives no force. The traction is also refused on `bspline2` / `bspline3` ("GIMP / linear
+lies below the grid's top face, that row carries no mass, so in mode A (which loads only active
+nodes, `prepareStepUP`) it is not an active node and receives no force. Mode F's `routeSLoads`
+loads every node of the face row with no activity test; what a massless row does there was not
+checked. The traction is also refused on `bspline2` / `bspline3` ("GIMP / linear
 only in phase 6").
 
 **Use.** Put the grid face at the loaded surface (S2: `-cells 2 20`, the grid top at y = l0). The

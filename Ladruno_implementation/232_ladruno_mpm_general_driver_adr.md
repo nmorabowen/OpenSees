@@ -1245,7 +1245,7 @@ ADR-88).
   - Review of record: the Fable critic (AMEND, applied). Results: `244_mpm_footing_track.md`.
 - **2026-11-23** — WP-249 (#1143, MPM hardening before phase 7; not a §9 phase). #1095 not
   reproduced (6 runs at N = 1e5, 8 threads, on `c45af1407`, the crashing `9db5803f6`, and a
-  debug-symbols build under a crash catcher on r2's cut path); no defect found on the cut path.
+  debug-symbols build under a crash catcher on r2's cut path; one of these hit its 2 h timeout); no defect found on the cut path.
   #1095 stays open with a deterministic guard test that has no mutation evidence (owner,
   2026-11-23). #1110 narrowed: `mpm traction` is a grid-face, GIMP-only load; on S2 it gives
   0.108 (HS) and 0.033 (SANISAND) against 0.03, with no gated number changed. Done: #1103 item 2

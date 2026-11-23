@@ -1590,7 +1590,8 @@ LadrunoMPMPattern::packState(Vector &out)
   }
   if (ver < 5 && anyTwoPhase()) ver = MPM_PACK_VERSION;   // WP-232l (P13)
   // WP-249 (#1103 item 2): a version-1 pack (ladruno-v20261116) has no body force and knew no
-  // B-spline basis; a state it cannot hold is written in the current layout instead
+  // B-spline basis; either is written in the current layout instead. (Like 2 and 3, a v1 pack
+  // drops the anti-locking flag and the v4 gridvel fields: a debug hook for old layouts.)
   if (ver == 1 && (!eng.bodyForce.empty() || ladruno_mpm::isBSpline(eng.par.basis))) {
     opserr << "WARNING mpm restart pack -- version 1 was requested, but a particle body force or a"
               " B-spline basis needs version 2: writing version " << MPM_PACK_VERSION << "\n";

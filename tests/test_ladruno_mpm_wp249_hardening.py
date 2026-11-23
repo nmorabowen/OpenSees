@@ -5,10 +5,12 @@
   is #1095's: 3D, quasi-static LoadControl, DruckerPrager (non-associated), gravity, the default
   `renormalize` empty-node treatment at cutoff 5e-2, one thread. Three attempts of a step are
   forced to fail AFTER the trial (`mpm debug failAttempt <k> 3 afterTrial`: the materials carry
-  a trial state, as after a Newton failure), on two steps, so each call cuts three times and then
-  takes eight sub-steps of dt/8 that move particles across cells. The run must equal, bit for bit
-  (1e-12), the run that takes those sub-steps directly; it runs in a child process, so a crash is
-  an exit code, and no size or host warning may appear.
+  a trial state, as after a Newton failure), on two steps whose own preparation re-points the
+  particles (a connectivity change at the failed attempt; asserted on the reference run's first
+  sub-step), so each call cuts three times and then takes eight sub-steps of dt/8 from the
+  re-pointed state. The run must equal (rel 1e-12) the run that takes those sub-steps directly;
+  it runs in a child process, so a crash is an exit code, and no size or host warning may
+  appear. A guard: #1095 itself was not reproduced (WP-249).
 * #1106 item 2 -- `mpm debug failDump` is a process-wide switch; it must not outlive its host
   (`wipe`, `mpm reset`) and is re-asserted from the live host's own setting.
 * #1103 item 2 -- a version-1 restart pack (the ladruno-v20261116 layout: version 2 without the
@@ -88,26 +90,35 @@ def state():
 
 
 out = {}
-# the retried run: two forced cut sequences, each followed by eight dt/8 sub-steps
+# the retried run: two forced cut sequences, each followed by eight dt/8 sub-steps. The armed
+# steps (2, then 1 + 8 + 1 + 1 = 11) are ones whose own prepareStep re-points the particles
 build()
-ops.mpm("analyze", 2, DT)
-conn = []
-for k in (3, 12):                         # epochSteps + 1 of the armed call (2, then 2 + 8 + 1)
+ops.mpm("analyze", 1, DT)
+conn, cut_retries = [], []
+for k in (2, 11):                         # epochSteps + 1 of the armed call
     ops.mpm("debug", "failAttempt", k, 3, "afterTrial")
-    c0 = info("connectivityChanges")
+    c0, r0 = info("connectivityChanges"), info("retries")
     ops.mpm("analyze", 1, DT)
     conn.append(info("connectivityChanges") - c0)
+    cut_retries.append(info("retries") - r0)
     ops.mpm("analyze", 1, DT)
 out["retry"] = state()
+out["retries_in_cut_calls"] = cut_retries
 out["retries"] = info("retries")
 out["accepted"] = info("acceptedSteps")
 out["conn_in_cut_calls"] = conn
-# the reference: the same sub-steps, taken directly
+# the reference: the same sub-steps, taken directly; the first sub-step's connectivity change
+# is the armed step's own (its prepareStep runs from the same committed particles)
 build()
-ops.mpm("analyze", 2, DT)
+ops.mpm("analyze", 1, DT)
+first = []
 for _ in range(2):
-    ops.mpm("analyze", 8, DT / 8.0)
+    c0 = info("connectivityChanges")
+    ops.mpm("analyze", 1, DT / 8.0)
+    first.append(info("connectivityChanges") - c0)
+    ops.mpm("analyze", 7, DT / 8.0)
     ops.mpm("analyze", 1, DT)
+out["reference_first_substep_conn"] = first
 out["reference"] = state()
 out["reference_retries"] = info("retries")
 print("WP249-RESULT " + json.dumps(out))
@@ -128,10 +139,13 @@ def test_cut_retry_across_connectivity_changes_3d():
     assert line, text[-3000:]
     out = json.loads(line[-1][len("WP249-RESULT "):])
     assert out["retries"] == 6, out["retries"]                 # 3 forced failures x 2 calls
+    assert out["retries_in_cut_calls"] == [3, 3], out["retries_in_cut_calls"]   # armed where meant
     assert out["reference_retries"] == 0
-    assert out["accepted"] == 2 + 2 * (8 + 1), out["accepted"]
-    # "across a connectivity change": the cut calls' sub-steps moved particles across cells
-    assert all(c >= 2 for c in out["conn_in_cut_calls"]), out["conn_in_cut_calls"]
+    assert out["accepted"] == 1 + 2 * (8 + 1), out["accepted"]
+    # "across a connectivity change": each armed step's own preparation re-points the particles,
+    # so its failed attempts and its retries all start from a changed connectivity
+    assert all(c >= 1 for c in out["reference_first_substep_conn"]), out["reference_first_substep_conn"]
+    assert all(c >= 1 for c in out["conn_in_cut_calls"]), out["conn_in_cut_calls"]
     for f in ("x", "sig", "F"):
         a, b = out["retry"][f], out["reference"][f]
         assert len(a) == len(b)
