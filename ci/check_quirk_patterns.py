@@ -999,6 +999,33 @@ def _class_headers(root):
     return out
 
 
+REACTION_OVERRIDE = re.compile(r"\baddResistingForceToNodalReaction\s*\(")
+REACTION_OPT_OUT = re.compile(r"\bladrunoThreadSafeReaction\s*\(")
+
+
+def check_reaction_scatter(root, rel):
+    """A class that overrides Element::addResistingForceToNodalReaction must also override
+    ladrunoThreadSafeReaction() (to false): the threaded reaction loop computes the forces of
+    form-safe elements in parallel and scatters them with the BASE rule, so an override that
+    does not opt out is silently skipped whenever ladrunoThreads > 1."""
+    findings = []
+    for h in sorted((root / "SRC").rglob("*.h")):
+        if h.name in ("Element.h", "Subdomain.h"):
+            continue                       # the base itself; Subdomain never takes the threaded path
+        try:
+            text = "\n".join(clean(h.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            continue
+        m = REACTION_OVERRIDE.search(text)
+        if m and not REACTION_OPT_OUT.search(text):
+            line = text.count("\n", 0, m.start()) + 1
+            findings.append(
+                f"reaction-scatter {rel(h)}:{line}: overrides addResistingForceToNodalReaction but not "
+                "ladrunoThreadSafeReaction() -- the threaded reaction loop would scatter this element "
+                "with the base rule; add `bool ladrunoThreadSafeReaction(void) const { return false; }`")
+    return findings
+
+
 def _clean_text(path):
     return "\n".join(clean(path.read_text(encoding="utf-8", errors="replace")))
 
@@ -1499,6 +1526,9 @@ _RULE_LIST = [
     Rule("gxx-static", None, check_gxx_static, None, "tests",
          "a test that builds a g++ harness without `cxx_runtime_flags()` / `-static`: on Windows the "
          "exe loads Git for Windows' older libstdc++-6.dll and segfaults (WP-199, #1101)"),
+    Rule("reaction-scatter", None, check_reaction_scatter, None, "element headers",
+         "an element that overrides `addResistingForceToNodalReaction` without "
+         "`ladrunoThreadSafeReaction() == false`: the threaded reaction loop would skip its override"),
 ]
 RULES = {r.slug: r for r in _RULE_LIST}
 ALIASES = {r.alias: r.slug for r in _RULE_LIST if r.alias}

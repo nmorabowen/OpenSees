@@ -229,6 +229,13 @@ class Domain
     // when the caller must run the serial loop.
     bool ladrunoThreadedCommit(void);
 
+    // Ladruno (threaded reactions). The element loop of calculateNodalReactions
+    // for flag 0/1: forces of Element::ladrunoThreadSafeReaction() elements are
+    // computed in parallel, then every element is scattered in serial order, so
+    // the nodal sums are bit-identical to the serial loop. Returns false when the
+    // caller must run the serial loop (1 thread, MPI, deep profiler, Rayleigh).
+    bool ladrunoThreadedReactions(int flag);
+
     // Ladruno WP-107 red-team S3. The audit outcome that was last ANNOUNCED for
     // this domain. Every Domain::update() re-runs the audit itself (that part
     // was always correct), but the message used to be latched behind three

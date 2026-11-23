@@ -41,7 +41,10 @@
 
 #include "Ladruno_ResultIO.h"
 #include "Ladruno_Types.h"
+#include "Ladruno_ChunkCompress.h"
 
+#include <deque>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -85,7 +88,8 @@ namespace ladruno {
 			  m_warned_short(false), m_data(HID_INVALID), m_time(HID_INVALID),
 			  m_step(HID_INVALID), m_mspace(HID_INVALID), m_mspace1(HID_INVALID),
 			  m_t(0), m_n_ids(0), m_n_comp(0), m_disk_type(HID_INVALID), m_deflate(0),
-			  m_has_pending(false), m_pending_time(0.0), m_pending_step(0) {}
+			  m_has_pending(false), m_pending_time(0.0), m_pending_step(0),
+			  m_async(false), m_chunk_ids(0), m_level(1), m_f32(false) {}
 		// WP-164: closes the DATA/TIME/STEP handles held open for the stage
 		// (the recorder deletes sinks on a stage change and before H5Fclose).
 		~StreamingSink() override;
@@ -102,6 +106,11 @@ namespace ladruno {
 		void releaseHandles() override;
 		bool reacquireHandles(detail::ProcessInfo& info) override;
 		void commitPending(detail::ProcessInfo& info) override;
+		// Off-thread compression: write every row still in flight (blocking).
+		void drain() override;
+		// Process exit: compress what is still in flight on this thread (the
+		// workers may already be gone) and write it. Called by the at-exit hook.
+		void drainAtExit();
 
 		// New MODEL_STAGE / re-begin: forget that the group was created.
 		void reset() { m_initialized = false; m_dead = false; m_warned_short = false; }
@@ -109,6 +118,22 @@ namespace ladruno {
 	private:
 		void writeRow(const double* row, double t_val, int s_val);
 		void failNamed(const char* why);
+
+		// Off-thread compression. A step's slab is cut into its id-tile chunks,
+		// compressed on the pool, and written in step order by H5Dwrite_chunk on
+		// this (the solver) thread; TIME/STEP are appended with it, so the three
+		// axes reach the file together. Only for the compressed one-step-per-chunk
+		// layout; everything else takes writeRow's H5Dwrite path.
+		struct InFlight {
+			hsize_t t;
+			double time;
+			int step;
+			std::vector<std::shared_ptr<chunkz::ChunkJob> > tiles;
+		};
+		void submitRow(const double* row, double t_val, int s_val);
+		bool writeInFlight(InFlight& f, bool inline_compress);
+		void drainReady();
+		void drainFront(bool inline_compress);
 
 		// WP-163 R5: report a write failure ONCE and stop this channel, instead
 		// of silently returning on every later step (the result used to vanish
@@ -139,6 +164,11 @@ namespace ladruno {
 		std::vector<double> m_pending;
 		double m_pending_time;
 		int m_pending_step;
+		bool m_async;              // off-thread compression for this DATA
+		hsize_t m_chunk_ids;       // ids per chunk (the id tile)
+		int m_level;               // deflate level
+		bool m_f32;                // on-disk float32
+		std::deque<InFlight> m_inflight;
 	};
 
 	/*

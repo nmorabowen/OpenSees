@@ -650,6 +650,7 @@ namespace detail {
 			, eigen_last_values()
 			, store_data_f32(false)
 			, deflate_level(1)
+			, compress_threads(-1)
 			, layout_open(true)
 		{}
 	public:
@@ -682,6 +683,10 @@ namespace detail {
 		// decision 2026-10-03 — was a hard-coded 4). Compression runs on the
 		// solver thread, once per chunk.
 		int deflate_level;
+		// `-compressThreads <n>`: worker threads that run that compression off the
+		// solver thread (shuffle + zlib, then H5Dwrite_chunk on the solver thread).
+		// -1 = automatic (default), 0 = compress on the solver thread as before.
+		int compress_threads;
 		// WP-233 (#1082): true while the file is NOT in SWMR-write mode (from
 		// H5Fcreate, or a layout step's read-write reopen, to H5Fstart_swmr_write).
 		// Objects and attributes may be created only then; while it is false the

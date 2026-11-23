@@ -4599,11 +4599,141 @@ Domain::calculateNodalReactions(int flag)
     theNode->resetReactionForce(flag);
   }
 
+  // Ladruno (threaded reactions): same element forces, same serial scatter order.
+  if (this->ladrunoThreadedReactions(flag))
+    return 0;
+
   ElementIter &theElements = this->getElements();
   while ((theElement = theElements()) != 0)
     if (theElement->isSubdomain() == false)
       theElement->addResistingForceToNodalReaction(flag);
   return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Ladruno (threaded reactions) -- the element loop of calculateNodalReactions.
+//
+// A recorder asking for reactionForce re-runs this every recorded step: one
+// resisting-force evaluation per element, about the cost of a residual
+// assembly (measured 41 ms of a 103 ms step on 8192 stdBricks). The shape is
+// the WP-192 residual loop's (LadrunoThreadedAssembly.cpp): forces of the
+// audited elements are computed in parallel into per-element slots, then
+// EVERY element is scattered in serial order with Element's base rule, so each
+// node receives the same additions in the same order as the serial loop
+// (bit-identical). An element that is not audited, or that scatters its own
+// way (ladrunoThreadSafeReaction false), runs its serial call in its place.
+// Rayleigh forces (flag 2) stay serial: their per-element pool slot is
+// allocated by the FE-level audit, which this loop does not run.
+// ---------------------------------------------------------------------------
+namespace {
+struct LadrunoReacCtx {
+  Element **e;
+  int flag;
+  Element *active;
+  std::vector<std::vector<double> > *slots;
+};
+int ladrunoReacBody(int k, void *c)
+{
+  LadrunoReacCtx *ctx = (LadrunoReacCtx *)c;
+  ops_TheActiveElement = ctx->active;   // thread_local (WP-107)
+  Element *e = ctx->e[k];
+  const Vector &R = (ctx->flag == 0) ? e->getResistingForce()
+                                     : e->getResistingForceIncInertia();
+  std::vector<double> &slot = (*ctx->slots)[k];
+  slot.resize((size_t)R.Size());
+  for (int i = 0; i < R.Size(); i++)
+    slot[i] = R(i);
+  return 0;
+}
+} // namespace
+
+bool
+Domain::ladrunoThreadedReactions(int flag)
+{
+#ifndef _LADRUNO_OPENMP
+  (void)flag;
+  return false;
+#else
+  if (flag != 0 && flag != 1)
+    return false;
+  const char *why = 0;
+  const int nThreads = ladruno_loopThreads(&why);
+  if (nThreads <= 1)
+    return false;
+  if (!ladruno_loopEnabled(LADRUNO_LOOP_RESIDUAL))
+    return false;
+  if (this->ladrunoThreadedUpdateAllowed() == false)
+    return false;
+  if (ops_profiler::theProfiler().deep())
+    return false;   // H6
+
+  std::vector<Element *> eles;   // H3: snapshot the cursor
+  eles.reserve(theElements->getNumComponents());
+  {
+    ElementIter &theEles = this->getElements();
+    Element *e;
+    while ((e = theEles()) != 0)
+      eles.push_back(e);
+  }
+  const int nEle = (int)eles.size();
+  std::vector<char> safe(nEle, 0);
+  int nSafe = 0;
+  for (int i = 0; i < nEle; i++)
+    if (!eles[i]->isSubdomain() && eles[i]->ladrunoThreadSafeReaction()) {
+      safe[i] = 1;
+      nSafe++;
+    }
+  if (nSafe < 2)
+    return false;
+
+  {   // H4: the lazy Node trial-state allocation, on one thread
+    NodeIter &theNodeIter = this->getNodes();
+    Node *nodePtr;
+    while ((nodePtr = theNodeIter()) != 0) {
+      nodePtr->getTrialDisp();
+      nodePtr->getTrialVel();
+      nodePtr->getTrialAccel();
+    }
+  }
+
+  const int C = (nThreads * 64 < 512) ? 512 : nThreads * 64;
+  std::vector<std::vector<double> > slots(C);
+  Element *active = ops_TheActiveElement;
+  Vector piece(48);
+  int i = 0;
+  while (i < nEle) {
+    if (!safe[i]) {
+      if (eles[i]->isSubdomain() == false)
+        eles[i]->addResistingForceToNodalReaction(flag);
+      i++;
+      continue;
+    }
+    int j = i;
+    while (j < nEle && safe[j] && j - i < C)
+      j++;
+    LadrunoReacCtx ctx = { &eles[i], flag, active, &slots };
+    ladruno_parallelFor(j - i, nThreads, 4, &ladrunoReacBody, &ctx, 0);
+    // the ordered scatter: Element::addResistingForceToNodalReaction's rule
+    for (int k = i; k < j; k++) {
+      Element *e = eles[k];
+      const std::vector<double> &R = slots[k - i];
+      const int numNodes = e->getNumExternalNodes();
+      Node **theNodes = e->getNodePtrs();
+      size_t count = 0;
+      for (int n = 0; n < numNodes; n++) {
+        Node *theNode = theNodes[n];
+        const int ndof = theNode->getNumberDOF();
+        piece.resize(ndof);
+        for (int d = 0; d < ndof; d++)
+          piece(d) = (count < R.size()) ? R[count++] : 0.0;
+        theNode->addReactionForce(piece, 1.0);
+      }
+    }
+    i = j;
+  }
+  ops_TheActiveElement = active;
+  return true;
+#endif
 }
 
 //added by SAJalali

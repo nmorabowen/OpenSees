@@ -66,6 +66,7 @@ if(HDF5_FOUND)
           Ladruno_DomainResults.cpp
           Ladruno_OverlayResults.cpp
           Ladruno_Sinks.cpp
+          Ladruno_ChunkCompress.cpp
           VTKHDF_Recorder.cpp
         PUBLIC
          MPCORecorder.h
@@ -81,9 +82,12 @@ if(HDF5_FOUND)
          Ladruno_DomainResults.h
          Ladruno_OverlayResults.h
          Ladruno_Sinks.h
+         Ladruno_ChunkCompress.h
          EnergyBalanceKernel.h
          VTKHDF_Recorder.h
       )
+      # Ladruno: off-thread chunk compression calls zlib directly (compress2).
+      target_link_libraries(OPS_Recorder PRIVATE ZLIB::ZLIB)
    endif()
 endif()
 

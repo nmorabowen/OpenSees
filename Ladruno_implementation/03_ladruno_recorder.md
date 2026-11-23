@@ -386,6 +386,13 @@ entry is the extreme over some prefix of the stage's steps, up to the last rewri
 reached the disk. The old "loses at most the last `-flush` seconds" did not hold before
 WP-233: a kill could leave the whole file unreadable.
 
+**Off-thread compression (WP-251):** a compressed streaming `DATA` (one step per chunk)
+is shuffled and deflated on worker threads (`-compressThreads <n>`, default `-1` = auto,
+`0` = HDF5's in-line filter as before) and written with `H5Dwrite_chunk` on the solver
+thread, in step order, with its `TIME`/`STEP` rows. Same bytes on disk. Up to 8 rows per
+result can be in flight; every flush, layout step, close and process exit writes them
+first. See `251_ladruno_recorder_off_thread_compression.md`.
+
 ### Testing — layered, frozen-MPCO-as-oracle
 
 Divergent schema ⇒ no byte diff. The frozen `recorder mpco` is the **value oracle**:

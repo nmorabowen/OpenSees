@@ -159,6 +159,14 @@ class Element : public DomainComponent
     // accumulator (an energy channel, a global counter) overrides it to false.
     virtual bool ladrunoThreadSafeCommit(void) const { return this->ladrunoThreadSafeForm(); }
 
+    // Ladruno (threaded reactions). May Domain::calculateNodalReactions compute
+    // this element's getResistingForce / getResistingForceIncInertia on a worker
+    // thread and scatter it with the BASE addResistingForceToNodalReaction rule?
+    // Defaults to the form answer. An element that OVERRIDES
+    // addResistingForceToNodalReaction must override this to false (gated by
+    // ci/check_quirk_patterns.py), or its override would be skipped.
+    virtual bool ladrunoThreadSafeReaction(void) const { return this->ladrunoThreadSafeForm(); }
+
     // Ladruno WP-192. Called SERIALLY before a threaded tangent/residual loop:
     // allocates this element's slot in Element's class-wide Rayleigh pool (the
     // lazy `index == -1` path mutates the shared pool array, so it must not

@@ -954,11 +954,27 @@ unsigned long long LadrunoRecorder::topologyFingerprint() const
 	return h;
 }
 
+#define LADRUNO_FOR_EACH_SINK(BODY) \
+	do { \
+		for (size_t i_ = 0; i_ < m_data->node_channels.size(); ++i_) \
+			{ ladrunons::ResultSink* s_ = m_data->node_channels[i_].sink; if (s_) { BODY; } } \
+		for (size_t i_ = 0; i_ < m_data->elem_channels.size(); ++i_) \
+			{ ladrunons::ResultSink* s_ = m_data->elem_channels[i_].sink; if (s_) { BODY; } } \
+		for (size_t i_ = 0; i_ < m_data->domain_channels.size(); ++i_) \
+			{ ladrunons::ResultSink* s_ = m_data->domain_channels[i_].sink; if (s_) { BODY; } } \
+		for (size_t i_ = 0; i_ < m_data->overlay_channels.size(); ++i_) \
+			{ ladrunons::ResultSink* s_ = m_data->overlay_channels[i_].sink; if (s_) { BODY; } } \
+	} while (0)
+
 void LadrunoRecorder::flushFile()
 {
 	// WP-164: the one place the recorder flushes (cadence, stage end, close).
-	if (m_data->initialized && m_data->info.h_file_id != ladrunons::HID_INVALID)
+	if (m_data->initialized && m_data->info.h_file_id != ladrunons::HID_INVALID) {
+		// Off-thread compression: rows still in flight reach HDF5 first, so a
+		// flush covers every step recorded so far (the -flush crash bound holds).
+		LADRUNO_FOR_EACH_SINK(s_->drain());
 		ladrunons::h5::file::flush(m_data->info.h_file_id);
+	}
 	m_data->last_flush = std::chrono::steady_clock::now();
 }
 
@@ -976,18 +992,6 @@ void LadrunoRecorder::flushFile()
 /* inside that window leaves superblock flags 0x01 (reader rule step 3,   */
 /* schema §7b.2).                                                          */
 /* ===================================================================== */
-
-#define LADRUNO_FOR_EACH_SINK(BODY) \
-	do { \
-		for (size_t i_ = 0; i_ < m_data->node_channels.size(); ++i_) \
-			{ ladrunons::ResultSink* s_ = m_data->node_channels[i_].sink; if (s_) { BODY; } } \
-		for (size_t i_ = 0; i_ < m_data->elem_channels.size(); ++i_) \
-			{ ladrunons::ResultSink* s_ = m_data->elem_channels[i_].sink; if (s_) { BODY; } } \
-		for (size_t i_ = 0; i_ < m_data->domain_channels.size(); ++i_) \
-			{ ladrunons::ResultSink* s_ = m_data->domain_channels[i_].sink; if (s_) { BODY; } } \
-		for (size_t i_ = 0; i_ < m_data->overlay_channels.size(); ++i_) \
-			{ ladrunons::ResultSink* s_ = m_data->overlay_channels[i_].sink; if (s_) { BODY; } } \
-	} while (0)
 
 bool LadrunoRecorder::anySinkNeedsLayout() const
 {
@@ -1035,6 +1039,7 @@ bool LadrunoRecorder::openLayout()
 	// Close (which clears the SWMR flags) and reopen read-write. Every sink
 	// releases its datasets first; a handle left open would keep the file open
 	// in SWMR mode across the "close", so refuse instead of laying out into it.
+	LADRUNO_FOR_EACH_SINK(s_->drain());   // off-thread rows land while still in SWMR
 	ladrunons::h5::file::flush(info.h_file_id);
 	releaseAllHandles();
 	if (ladrunons::h5::file::openObjects(info.h_file_id) != 0) {
@@ -2884,6 +2889,7 @@ int LadrunoRecorder::recordResultsOnNodes()
 		// reactionMoment` swept every element's resisting force twice per step.
 		int curr_reac_type = ch.reaction_flag;
 		if (curr_reac_type > -1 && curr_reac_type < 3 && curr_reac_type != previous_reac_type) {
+			OPS_PROFILE_SCOPE("lr.reactions");   // Ladruno: collect/write split
 			info.domain->calculateNodalReactions(curr_reac_type);
 			previous_reac_type = curr_reac_type;
 		}
@@ -2896,8 +2902,10 @@ int LadrunoRecorder::recordResultsOnNodes()
 			recordModeChannel((int)i);
 		}
 		else {
-			ch.source->evaluate(info, buffer);
-			ch.sink->accept(info, *ch.source, buffer);
+			{ OPS_PROFILE_SCOPE("lr.collect");   // Ladruno: collect/write split
+			ch.source->evaluate(info, buffer); }
+			{ OPS_PROFILE_SCOPE("lr.write");
+			ch.sink->accept(info, *ch.source, buffer); }
 		}
 	}
 
@@ -3022,8 +3030,10 @@ int LadrunoRecorder::recordResultsOnElements()
 	std::vector<double> buffer;
 	for (size_t i = 0; i < m_data->elem_channels.size(); ++i) {
 		private_data::ElemChannel& ech = m_data->elem_channels[i];
-		ech.source->evaluate(info, buffer);
-		ech.sink->accept(info, *ech.source, buffer);
+		{ OPS_PROFILE_SCOPE("lr.collect");   // Ladruno: collect/write split
+		ech.source->evaluate(info, buffer); }
+		{ OPS_PROFILE_SCOPE("lr.write");
+		ech.sink->accept(info, *ech.source, buffer); }
 		// Time-series mode: write the COLUMN_MAP metadata once, after the
 		// StreamingSink created the ON_ELEMENTS result group on first accept().
 		// In envelope mode the EnvelopeSink defers all output to finalize() and
@@ -3318,6 +3328,7 @@ int LadrunoRecorder::sendSelf(int commitTag, Channel& theChannel)
 	ser.put_d(m_data->flush_seconds);            // WP-164
 	ser.put_s(m_data->run_id);                   // WP-165 (MP-9)
 	ser.put_s(m_data->run_id_scope);
+	ser.put_i(m_data->info.compress_threads);    // -compressThreads (lockstep with recvSelf)
 	int msg_data_size = (int)ser.b.size();
 	ID idata(1);
 	idata(0) = msg_data_size;
@@ -3407,6 +3418,7 @@ int LadrunoRecorder::recvSelf(int commitTag, Channel& theChannel,
 	m_data->flush_seconds = de.get_d();          // WP-164
 	m_data->run_id = de.get_s();                 // WP-165 (MP-9)
 	m_data->run_id_scope = de.get_s();
+	m_data->info.compress_threads = de.get_i();  // -compressThreads (lockstep with sendSelf)
 	if (!de.ok) {
 		opserr << "LadrunoRecorder::recvSelf() - failed to de-serialize config\n";
 		return -1;
@@ -3426,7 +3438,8 @@ void* OPS_LadrunoRecorder()
 		opserr << "LadrunoRecorder error: insufficient args; expected a filename\n"
 		       << "  usage: recorder ladruno <file> [-N <res...>] [-NS <res...> <grad>] "
 		          "[-E <res...>] [-R <regionTag> [-RN <nodeRegionTag>]] [-G energy <regionTag...>] "
-		          "[-overlay <tag...>] [-T dt|nsteps <v>]\n";
+		          "[-overlay <tag...>] [-T dt|nsteps <v>] [-compress <0..9>] "
+		          "[-compressThreads <n>] [-flush <s>]\n";
 		return 0;
 	}
 
@@ -3462,6 +3475,7 @@ void* OPS_LadrunoRecorder()
 	bool envelope_opt = false;             // -envelope flag
 	int compress_opt = 1;                  // WP-164: -compress <0..9> (default 1)
 	double flush_opt = 10.0;               // WP-164: -flush <seconds>
+	int compress_threads_opt = -1;         // -compressThreads <n> (-1 auto, 0 off)
 	bool store_data_f32 = false;           // -precision f32 (lossy) | f64 (default)
 	int one_item = 1;
 
@@ -3721,6 +3735,21 @@ void* OPS_LadrunoRecorder()
 				return 0;
 			}
 		}
+		else if (strcmp(data, "-compressThreads") == 0) {
+			// -compressThreads <n> : worker threads that deflate the time-series
+			// chunks off the solver thread (the solver thread only hands the
+			// finished bytes to H5Dwrite_chunk). -1 = automatic (default), 0 = the
+			// old in-line HDF5 filter path. Same file bytes either way.
+			int nthr = -1;
+			if (numdata > 0 && OPS_GetInt(&one_item, &nthr) == 0) {
+				numdata--;
+				compress_threads_opt = (nthr < -1) ? -1 : nthr;
+			}
+			else {
+				opserr << "LadrunoRecorder error: -compressThreads requires an int (-1 = auto, 0 = off)\n";
+				return 0;
+			}
+		}
 		else if (strcmp(data, "-flush") == 0) {
 			// WP-164 (P2): -flush <seconds> : wall-clock interval between file
 			// flushes (and envelope rewrites). 0 = every recorded step (the old
@@ -3977,6 +4006,7 @@ void* OPS_LadrunoRecorder()
 	recorder->m_data->stage_kind = stage_kind_opt;
 	recorder->m_data->envelope_mode = envelope_opt;
 	recorder->m_data->info.deflate_level = compress_opt;   // WP-164
+	recorder->m_data->info.compress_threads = compress_threads_opt;
 	recorder->m_data->flush_seconds = flush_opt;           // WP-164
 	// -precision: carried on ProcessInfo (read by StreamingSink::begin and stamped
 	// into INFO/STORED_PRECISION at initialize()). setDomain() does not overwrite it.

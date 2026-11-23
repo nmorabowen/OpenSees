@@ -106,6 +106,7 @@ public:
 
     // computation of reactions
     int addResistingForceToNodalReaction(int flag);
+    bool ladrunoThreadSafeReaction(void) const { return false; }   // Ladruno: own scatter
 
     // public methods for element output
     int sendSelf(int commitTag, Channel& theChannel);
