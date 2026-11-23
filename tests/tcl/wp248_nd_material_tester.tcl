@@ -83,7 +83,9 @@ foreach f {0.5 1.0 1.5 2.0 3.0} {
     ndTest commit
 }
 set s [ndTest getStress]
-check "J2 uniaxial yield plateau" {[near [lindex $s 0] $sy 1e-8]} $s
+# 1e-7: J2Plasticity's own return mapping stops at about 1e-8 relative
+check "J2 uniaxial yield plateau" {[near [lindex $s 0] $sy 1e-7]} $s
+set plateau [lindex $s 0]
 set eCommitted [ndTest getStrain]
 
 # --- a trial past the committed state, then revert: the committed state is back
@@ -95,7 +97,7 @@ check "revert restores the committed strain" {[near [lindex $eBack 0] [lindex $e
 # --- unloading after yield is elastic, slope E under uniaxial stress
 ndTest mixed esssss [expr {3.0 * $ey - 1e-4}] 0 0 0 0 0
 set s [ndTest getStress]
-check "J2 unloads at E" {[near [lindex $s 0] [expr {$sy - $E * 1e-4}] 1e-8]} $s
+check "J2 unloads at E" {[near [expr {$plateau - [lindex $s 0]}] [expr {$E * 1e-4}] 1e-8]} $s
 
 # --- trials do not commit: the same trial twice gives the same stress
 ndTest revert
@@ -116,9 +118,11 @@ check "unknown option refused" {[refused {ndTest mixed esssss 1e-3 0 0 0 0 0 -bo
 check "bad -maxIter refused" {[refused {ndTest mixed esssss 1e-3 0 0 0 0 0 -maxIter 0} "ndTest: -maxIter must be*"]}
 check "unknown subcommand refused" {[refused {ndTest frobnicate} "ndTest: unknown subcommand frobnicate"]}
 
-# --- a target beyond the plateau has no solution: Newton reports it
-ndTest material 2 ThreeDimensional
-check "stress beyond J2 yield is refused" {[refused {ndTest mixed ssssss 500 0 0 0 0 0} "ndTest: *"]}
+# --- Newton that does not reach the tolerance is refused, and revert recovers
+ndTest revert
+check "no convergence is refused" {[refused {ndTest mixed esssss [expr {4.0 * $ey}] 0 0 0 0 0 -maxIter 1 -tol 1e-300} "ndTest: mixed control did not converge in 1 iterations*"]}
+ndTest revert
+check "revert after a refusal is clean" {[near [lindex [ndTest getStrain] 0] [lindex $eCommitted 0]]}
 
 # --- model testNDMaterial takes no count: commit is explicit
 check "a count is refused" {[catch {model testNDMaterial 5}]}

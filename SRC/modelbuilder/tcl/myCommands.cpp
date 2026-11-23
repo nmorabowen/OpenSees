@@ -202,8 +202,7 @@ specifyModelBuilder(ClientData clientData, Tcl_Interp *interp, int argc, TCL_Cha
   // Ladruno WP-248: nD material tester with explicit commit (ndTest)
   else if (strcmp(argv[1],"testNDMaterial") == 0) {
     if (argc != 2) {
-      opserr << "WARNING want: model testNDMaterial (it commits only on ndTest commit)
-";
+      opserr << "WARNING want: model testNDMaterial (it commits only on ndTest commit)\n";
       return TCL_ERROR;
     }
     theBuilder = new TclNDMaterialTester(theDomain, interp);

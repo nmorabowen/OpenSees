@@ -38,6 +38,6 @@ def test_classic_tcl_nd_material_tester():
     out = proc.stdout + proc.stderr
     assert "SELF-TEST:" in out, f"deck did not reach its verdict:\n{out}"
     # every check in the deck runs; none is platform-dependent
-    assert out.count("PASS ") >= 31, f"too few checks ran:\n{out}"
+    assert out.count("PASS ") >= 32, f"too few checks ran:\n{out}"
     assert "SELF-TEST: PASS" in out and proc.returncode == 0, (
         f"classic-Tcl nD tester deck failed (rc={proc.returncode}):\n{out}")
