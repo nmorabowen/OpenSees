@@ -1758,19 +1758,19 @@
    "completeness": {
     "count_below": 3493,
     "route": "inertia",
-    "shift": 0.002456701117387069
+    "shift": 0.0024567009249062666
    },
    "elements": 2840,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 792.4852580825614,
-   "kappa_estimate": 747.4476154637072,
+   "kappa_eq": 792.4852891935975,
+   "kappa_estimate": 747.4476154636745,
    "literal_zeros": 2712,
    "mesh": 3,
    "method": "eigen_normal_rows",
    "n_rows": 49910,
    "n_unknowns": 82494,
    "nnz": 598335,
-   "perturbation_bound": 1.9270819974417487e-08,
+   "perturbation_bound": 1.9271225821966833e-08,
    "problem_sha256": "4dd865d986f0426b5e864bc3e75d44e33e00c9bebd0262a2025007f5772443a3",
    "proofs": [
     {
@@ -1780,19 +1780,19 @@
     },
     {
      "count": 555,
-     "residual_bound": 4.4228659379097246e-10,
+     "residual_bound": 4.422803086510599e-10,
      "route": "null_space_basis"
     }
    ],
    "rank": 46417,
    "refusal": null,
-   "residual": 1.9270819974417487e-08,
+   "residual": 1.9271225821966833e-08,
    "route": "inertia of the factorised A_hat A_hat^T at shift 2.457e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 1 row blocks",
    "rows_skipped": 3493,
    "rows_with_entries": 46972,
-   "seconds": 81.3,
+   "seconds": 74.1,
    "sigma_max_upper": 39.279472830645105,
-   "sigma_min_lower": 0.049564925568057645,
+   "sigma_min_lower": 0.04956492362225977,
    "unknowns": 85206
   },
   {
@@ -3468,19 +3468,19 @@
    "completeness": {
     "count_below": 1515,
     "route": "inertia",
-    "shift": 0.0027649293051236513
+    "shift": 0.0027649292881404227
    },
    "elements": 2840,
    "formulation": "upper.p2d-jump-bernstein.v0",
-   "kappa_eq": 747.0101989997274,
-   "kappa_estimate": 704.5550277981588,
+   "kappa_eq": 747.0097988576988,
+   "kappa_estimate": 704.555027798163,
    "literal_zeros": 960,
    "mesh": 3,
    "method": "eigen_normal_rows",
    "n_rows": 48206,
    "n_unknowns": 84246,
    "nnz": 608447,
-   "perturbation_bound": 3.688214301058734e-08,
+   "perturbation_bound": 3.390308361949534e-08,
    "problem_sha256": "c58569ed7527c64c729338549ce96e9a9fbba8161e9ec942c746c9c73a7ced23",
    "proofs": [
     {
@@ -3490,19 +3490,19 @@
     },
     {
      "count": 555,
-     "residual_bound": 4.4228659379097246e-10,
+     "residual_bound": 4.422803086510599e-10,
      "route": "null_space_basis"
     }
    ],
    "rank": 46691,
    "refusal": null,
-   "residual": 3.688214301058734e-08,
+   "residual": 3.390308361949534e-08,
    "route": "inertia of the factorised A_hat A_hat^T at shift 2.765e-03; sigma_max from a norm bound; null-space basis from left singular vectors of 1 row blocks",
    "rows_skipped": 1515,
    "rows_with_entries": 47246,
-   "seconds": 73.3,
+   "seconds": 66.7,
    "sigma_max_upper": 39.279472830645105,
-   "sigma_min_lower": 0.05258224436994526,
+   "sigma_min_lower": 0.05258227253606298,
    "unknowns": 85206
   },
   {
