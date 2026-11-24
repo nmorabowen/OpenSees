@@ -28,6 +28,10 @@
 //                        binds with q = cap at the converged state, the shear ends lower; the FD
 //                        gradient of the cap does not depend on its step.
 //  B10 invariance:       gamma_xy vs gamma_xz with the crack check on.
+//  B11 idempotence:      (WP-246) re-solving a committed strain from its committed state returns the
+//                        committed stress at every step of a cracking shear path; holds do not relax.
+//  B12 3D return:        (WP-246) a softened 3D strain held fixed keeps its stress; a ramp in 4 and in
+//                        256 steps agrees (the plastic-damage return no longer re-advances xt).
 #include "LadrunoRCKernel.h"
 #include <cstdio>
 #include <cmath>
@@ -402,6 +406,94 @@ int main()
         }
         printf("B10 crack-check invariance (xy vs xz): max rel diff %.2e\n", worst);
         CHECK(worst < 1e-6, "B10");
+    }
+
+    // ---------------- B11 re-solve idempotence (WP-246) ----------------
+    // A fibre with damage softening in both backbones (plastic share -Cd/-Td), ties in y, TS on,
+    // driven along a cracking shear path under axial compression, one unload step, then holds.
+    // At every step, re-solving the committed retained strain from the committed state must
+    // return the committed stress, lateral strains and thresholds. Before WP-246 the plastic-
+    // damage return re-advanced xt from a mixed-sign committed effective stress (the stress
+    // relaxed by ~0.4 % per hold step on this path). The path is strip 35 of a 40-strip,
+    // 457.2 mm Model C section (the WP-245 reproduction).
+    {
+        Params P; fill(P); P.Kc = 0.6667; P.tieRhoY = 0.002; P.tensStiffMode = 1;
+        double Ce[4] = {0.0, 0.0007, 0.0020, 0.0100}, Cs[4] = {0.0, 24.0, 30.0, 5.0}, Cd[4] = {0.0, 0.0, 0.25, 0.8889};
+        double Te[3] = {0.0, 0.0001, 0.0010}, Ts[3] = {0.0, 3.0, 0.5}, Td[3] = {0.0, 0.0, 0.9};
+        buildBackbone(P.hc, P.E, Ce, Cs, Cd, 4);
+        buildBackbone(P.ht, P.E, Te, Ts, Td, 3);
+        setupParams(P);
+        const double H = 457.2, y = -0.5 * H + (H / 40.0) * 35.5, sh = 1.5 * (1.0 - (2.0 * y / H) * (2.0 * y / H));
+        double path[14][2]; int n = 0;
+        for (int k = 1; k <= 10; ++k) { path[n][0] = -2e-4 - y * 2e-6; path[n][1] = sh * 1e-3 * k / 10.0; ++n; }
+        path[n][0] = -1.9e-4 - y * 1.9e-6; path[n][1] = sh * 0.95e-3; ++n;            // unload
+        for (int r = 0; r < 3; ++r) { path[n][0] = path[n - 1][0]; path[n][1] = path[n - 1][1]; ++n; }   // holds
+        const double xtPeak = backbonePeakAbscissa(P.ht);
+        Fib f; double worst = 0.0, worstHold = 0.0, sHold[6] = {0, 0, 0, 0, 0, 0};
+        int nconv = 0, ncracked = 0;
+        for (int s = 0; s < n; ++s) {
+            double sig[6], D[6][6], eps[6], ts[2];
+            int st = trial(P, f, path[s][0], path[s][1], 0.0, sig, D, eps, ts, true);
+            if (st != STATUS_OK) continue;
+            nconv++;
+            if (f.h.xt > xtPeak) ncracked++;
+            double sig2[6], eps2[6], ts2[2];
+            Fib g = f; RCHist o2; double ep2[2];
+            for (int a = 0; a < 6; ++a) eps2[a] = 0.0;
+            eps2[0] = path[s][0]; eps2[3] = path[s][1];
+            int st2 = driveBeamFiber(P, eps2, g.h, g.ep, sig2, D, o2, ep2, ts2);
+            CHECK(st2 == STATUS_OK, "B11 re-solve refused at step %d", s);
+            double smax = 0.0; for (int a = 0; a < 6; ++a) smax = fmax(smax, fabs(sig[a]));
+            double d = 0.0;
+            for (int a = 0; a < 6; ++a) d = fmax(d, fabs(sig2[a] - sig[a]) / smax);
+            for (int a = 0; a < 6; ++a) d = fmax(d, fabs(eps2[a] - eps[a]) / 1e-3);
+            d = fmax(d, fabs(o2.xt - f.h.xt) / 1e-3);
+            d = fmax(d, fabs(o2.xc - f.h.xc) / 1e-3);
+            d = fmax(d, fabs(o2.tsScale - f.h.tsScale));
+            worst = fmax(worst, d);
+            if (s == 10) for (int a = 0; a < 6; ++a) sHold[a] = sig[a];
+            if (s > 10) for (int a = 0; a < 6; ++a) worstHold = fmax(worstHold, fabs(sig[a] - sHold[a]) / smax);
+        }
+        printf("B11 re-solve idempotence: converged %d/%d, tension-damaged %d, max re-solve diff %.2e, hold drift %.2e\n",
+               nconv, n, ncracked, worst, worstHold);
+        CHECK(nconv == n, "B11 a step was refused (%d/%d)", nconv, n);
+        CHECK(ncracked >= 4, "B11 the path does not reach tensile damage (%d steps)", ncracked);
+        CHECK(worst < 1e-9, "B11 re-solving a committed strain changes the state (%.3e)", worst);
+        CHECK(worstHold < 1e-9, "B11 holding the strain relaxes the stress (%.3e)", worstHold);
+    }
+
+    // ---------------- B12 3D return: holds and step-count convergence (WP-246) ----------------
+    // The non-idempotence sat in returnMap3D itself (no view, no TS): a mixed-sign effective
+    // stress rescaled by (1 - dt_plastic, 1 - dc_plastic) left the committed state outside its
+    // tensile surface. Gate: (a) holding a softened 3D strain leaves the stress unchanged; (b) a
+    // monotone ramp to the same strain in 4 and in 256 steps agrees (before WP-246 xt differed by
+    // 31 % and tau_xy by 2.7 %: each step re-advanced the threshold).
+    {
+        Params P; fill(P); P.betaOn = false; P.addonPlane = 0; P.crackGate = 0; P.Kc = 0.6667;
+        double Ce[4] = {0.0, 0.0007, 0.0020, 0.0100}, Cs[4] = {0.0, 24.0, 30.0, 5.0}, Cd[4] = {0.0, 0.0, 0.25, 0.8889};
+        double Te[3] = {0.0, 0.0001, 0.0010}, Ts[3] = {0.0, 3.0, 0.5}, Td[3] = {0.0, 0.0, 0.9};
+        buildBackbone(P.hc, P.E, Ce, Cs, Cd, 4);
+        buildBackbone(P.ht, P.E, Te, Ts, Td, 3);
+        setupParams(P);
+        const double eEnd[6] = {-5.5e-4, 1.2e-4, 1.2e-4, 1.2e-3, 0.0, 0.0};
+        double sN[2][6], xtN[2]; const int Ns[2] = {4, 256}; double worstHold = 0.0;
+        for (int c = 0; c < 2; ++c) {
+            RCHist h; histZero(h); double s[6], D[6][6];
+            for (int k = 1; k <= Ns[c] + 3; ++k) {
+                const double fr = (k <= Ns[c]) ? (double)k / Ns[c] : 1.0;
+                double ek[6]; for (int a = 0; a < 6; ++a) ek[a] = eEnd[a] * fr;
+                RCHist o; returnMap3D(P, ek, h, s, D, o); h = o;
+                if (k == Ns[c]) { for (int a = 0; a < 6; ++a) sN[c][a] = s[a]; xtN[c] = h.xt; }
+                if (k > Ns[c]) for (int a = 0; a < 6; ++a) worstHold = fmax(worstHold, fabs(s[a] - sN[c][a]) / 16.0);
+            }
+        }
+        double dStep = 0.0; for (int a = 0; a < 6; ++a) dStep = fmax(dStep, fabs(sN[0][a] - sN[1][a]) / 16.0);
+        const double dXt = rel(xtN[0], xtN[1]);
+        printf("B12 3D return: hold drift %.2e, 4 vs 256 steps: stress %.2e (of 16 MPa), xt %.2e (xt/xtPeak %.1f)\n",
+               worstHold, dStep, dXt, xtN[1] / backbonePeakAbscissa(P.ht));
+        CHECK(xtN[1] > 2.0 * backbonePeakAbscissa(P.ht), "B12 the ramp does not soften in tension");
+        CHECK(worstHold < 1e-12, "B12 holding a 3D strain relaxes the stress (%.3e)", worstHold);
+        CHECK(dStep < 1e-3 && dXt < 1e-3, "B12 the ramp depends on the step count (stress %.3e, xt %.3e)", dStep, dXt);
     }
 
     if (nfail == 0) printf("GPP BEAMFIBER GATE: PASS\n");

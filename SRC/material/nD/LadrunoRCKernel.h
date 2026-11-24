@@ -818,6 +818,24 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     double xc_meas = equivCompressive(D.Si, P.fcft_ratio, P.Kc, k1c) / E;
     double xt_trial = xt_meas + xt_pl;
     double xc_trial = xc_meas + xc_pl;
+    // Ladruno WP-246: committed-surface consistency shift. The return rescales the tensile and the
+    // compressive parts of the effective stress by different factors (1 - dt_plastic, 1 - dc_plastic,
+    // below), and the Lubliner measure of a MIXED-sign stress is not homogeneous in either part. So
+    // the committed effective stress can sit OUTSIDE its committed surface: measure + plastic strain
+    // > committed threshold. Re-entering at the committed strain then advances the threshold again
+    // and the stress relaxes on every hold step (inherited from ASDConcrete3D::compute). Measure the
+    // committed overshoot and take it off the trial measure, so the threshold advances by the
+    // INCREMENT of the measure from the committed state: a zero increment returns the committed
+    // stress exactly. Only an overshoot is removed (a committed state inside its surface is untouched),
+    // and the shift is a constant of the step (no tangent term).
+    if (!implexExplicit && (in.xt > 0.0 || in.xc > 0.0)) {
+        Decomp Dn;
+        decompose(in.stress_eff, P.cdf, Dn);
+        const double ot = (in.xt - xt_pl) - equivTensile(Dn.Si, P.fcft_ratio, P.Kc) / E;
+        const double oc = (in.xc - xc_pl) - equivCompressive(Dn.Si, P.fcft_ratio, P.Kc, k1c) / E;
+        if (ot < 0.0) xt_trial += ot;
+        if (oc < 0.0) xc_trial += oc;
+    }
 
     double new_xt = in.xt, new_xc = in.xc;
     if (implexExplicit) {
