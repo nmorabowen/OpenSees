@@ -52,5 +52,14 @@ the serial phase. **Timing trap:** libiomp copies the master's ICVs to the team 
 worker takes its post-region wait from them at the JOIN barrier, so the drop must come before the
 fork of the region that PRECEDES the serial phase. Set after that join, it governs only the next
 region's tail. `get` returns the value in `KMP_BLOCKTIME`'s own units, so `set(get())` restores
-exactly (checked: 200 ms, 500 us). With `KMP_BLOCKTIME=infinite`, `get` reports INT_MAX whatever
-is set, and `set(INT_MAX)` prints an `OMP: Info #109` line per call: the span then changes nothing.
+the VALUE exactly (checked: 200 ms, 500 us). It does not restore the "user-set" flag: libiomp's
+`kmp_set_blocktime` sets `bt_set = TRUE` in the master's ICVs, and from the first span on that
+switches off the runtime's oversubscription auto-zero (`KMP_ADJUST_BLOCKTIME`: blocktime 0 while
+more threads than processors exist and `bt_set` is false). If a later phase oversubscribes (more
+OpenMP and MKL threads than cores), the workers spin out the full blocktime there instead of
+sleeping at once. This affects timing only, never a result. With `KMP_BLOCKTIME=infinite`, `get`
+reports INT_MAX whatever is set, and `set(INT_MAX)` prints an `OMP: Info #109` line per call, so
+the span changes nothing. The entry points come from the module that owns `omp_get_max_threads`
+(an MSVC import thunk is followed to the IAT slot; checked against oneAPI 2026.1's
+`libiomp5md.dll`), never from the first DLL found by name. `mpm debug quietSpan` says whether they
+resolved.

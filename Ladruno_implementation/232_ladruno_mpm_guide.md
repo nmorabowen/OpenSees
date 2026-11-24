@@ -570,7 +570,11 @@ thread the step runs the serial code unchanged.
   message (A7, kinematic or material refusal), the materials touched are reverted, and a commit
   refusal still aborts the run (W17).
 - **Not threaded.** Route S (two-phase `advanceUP`) and mode A are unchanged by WP-253; mode A's
-  own threading is the solver's and WP-192's.
+  own threading is the solver's and WP-192's. A threaded request that runs serial (route S, or an MPI
+  binary without `-hybrid`) is announced once.
+- **Test hooks.** `mpm debug failTrial <id ..> | off` and `mpm debug failCommit <id ..> | off`
+  fail those particles' material trial, or make their commit declare a refusal, at every step on
+  either material path. `mpm debug quietSpan` returns 1 when the worker-sleep span can act.
 - **Profiler.** The coarse profile splits `mpm.advance` into `mpm.f.support`, `mpm.f.transpose`
   (threaded runs only: the node-to-entry transpose the gather needs, part of P2G's cost),
   `mpm.f.p2g`, `mpm.f.grid`, `mpm.f.g2p`, `mpm.f.project2`, `mpm.f.update` and `mpm.f.commit`.
