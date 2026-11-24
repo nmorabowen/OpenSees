@@ -58,6 +58,8 @@
 //   mpm debug activeNodes                 -> sorted active node ids at the committed state
 //   mpm debug injectRefusal | staleRefusal | aborted   W17 test hooks (a refusal at the next
 //                                         particle commit; a stale WP-99 count; the abort latch)
+//   mpm debug threads                     -> [transfer-loop threads, material-loop threads] of the
+//                                         last mode-F step (WP-253; 1 1 when serial)
 //
 // Mode A (WP-232f, tests/mpm_implicit_interface.md §5):
 //   mpm mode explicit|implicit|quasiStatic
@@ -611,6 +613,12 @@ int cmdDebug(LadrunoMPMPattern *h)
       for (int d = 0; d < nd; d++) out.push_back(dS[nd * k + d]);
     }
     return outDoubles(out);
+  }
+  if (what == "threads") {                                            // WP-253 loop-structure guard
+    // the last mode-F advance: the transfer loops' and the material loop's thread counts
+    int v[2] = {h->engine().lastXferThreads, h->engine().lastMatThreads};
+    int two = 2;
+    return OPS_SetIntOutput(&two, v, false);
   }
   if (what == "injectRefusal") { h->injectCommitRefusal(); return 0; }   // W17 test hook
   if (what == "staleRefusal") { h->injectStaleRefusal(); return 0; }     // W17 test hook

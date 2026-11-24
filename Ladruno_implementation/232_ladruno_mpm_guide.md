@@ -543,6 +543,39 @@ mpm twoPhase <body> -Kf <Kf> -poro <n> -rhoF <rhoF> -perm <k1> <k2> [<k3>] \
   are accurate; the particle's own p can differ by a small residual (6e-6 γ_wH on the 0.044 m
   settlement patch column). Read the field at the particles when that matters.
 
+## Threads in mode F (WP-253)
+
+`ladrunoThreads <n>` (Python `ops.ladrunoThreads(n)`, or `LADRUNO_THREADS`) now applies to mode F's
+explicit step. It is the same knob as the element loops (WP-107 / WP-192); the default is 1, and at 1
+thread the step runs the serial code unchanged.
+
+- **What threads.** The transfer loops always thread: the support search, P2G, the grid update, G2P,
+  the second projection and the particle kinematics (dF, the polar kernel, the stress push), plus the
+  admissibility check. The material calls (`setTrialStrain`, `commitState`) and the critical-Δt
+  scan (`getInitialTangent`) thread only when every particle material is on the allowlist for
+  both `ladrunoThreadSafeUpdate()` and `ladrunoThreadSafeForm()`. Today, among the materials MPM
+  admits, that is the 3D `ElasticIsotropic` alone. The 2D plane-strain elastic material is not
+  Form-safe (class-wide `sigma` / `D` statics), and DruckerPrager, LadrunoJ2, SANISAND and HS are not
+  on the list. For those, the material calls run serially in particle order (the exact serial
+  call sequence) between a parallel kinematics pass and a parallel stress push.
+  `mpm debug threads` returns the last step's [transfer-loop, material-loop] thread counts.
+- **Same answer at every thread count, bit for bit.** P2G and the second projection are computed
+  per node as a gather over the node's contributions in ascending (particle, entry) order, which
+  is the serial loop's summation order. The slaved ghosts fold in the serial order. Reductions are
+  max or lowest-id. Every particle array after any number of steps equals the 1-thread run exactly
+  (`tests/test_ladruno_mpm_wp253_threads.py`).
+- **Failures.** They are the serial ones: the lowest failing particle is named with the serial
+  message (A7, kinematic or material refusal), the materials touched are reverted, and a commit
+  refusal still aborts the run (W17).
+- **Not threaded.** Route S (two-phase `advanceUP`) and mode A are unchanged by WP-253; mode A's
+  own threading is the solver's and WP-192's.
+- **Profiler.** The coarse profile splits `mpm.advance` into `mpm.f.support`, `mpm.f.transpose`
+  (threaded runs only: the node-to-entry transpose the gather needs, part of P2G's cost),
+  `mpm.f.p2g`, `mpm.f.grid`, `mpm.f.g2p`, `mpm.f.project2`, `mpm.f.update` and `mpm.f.commit`.
+  The step itself has `mpm.f.admissible` and `mpm.f.dtcrit`. The phase walls are wall time on the
+  calling thread. With `-deep` and threaded material calls, the `mpm.f.material` elem_by_type rows
+  sum each call's time on its own thread, so they show summed thread time, not wall time.
+
 ## Verification
 
 - `tests/test_mpm_engine_core_cpp.py` — the pure core (`LadrunoMPMCore.h`) and the kernel entry,
@@ -557,8 +590,8 @@ mpm twoPhase <body> -Kf <Kf> -poro <n> -rhoF <rhoF> -perm <k1> <k2> [<k3>] \
   after `remove loadPattern`, initial conditions after the first step, a kernel refusal changing
   nothing), the stage path, the critical Δt from the initial tangent, and a two-leg check: every
   plastic particle's stress (LadrunoJ2, DruckerPrager) against perfect J2 plasticity driven through
-  that particle's own strain path. The v1 particle loop is serial, so thread-count determinism holds
-  by construction; its test arrives with the threaded loop.
+  that particle's own strain path. Thread-count determinism of mode F is
+  `tests/test_ladruno_mpm_wp253_threads.py` (WP-253).
 - The ADR W17 paths (a kernel refusal fails the step; a commit refusal aborts with particles unmoved;
   a stale refusal count does not abort) are tested on the core with a mock material
   (`mpm_engine_check.cpp`): no admitted v1 material declares a refusal.

@@ -51,8 +51,10 @@
 #include <Ladruno_mutation.h>
 #include <LadrunoMaterialStatus.h>
 #include <profiler/ProfilerMacros.h>
+#include <LadrunoThreads.h>         // WP-253: mode F threads (ladruno_loopThreads, ladruno_parallelFor)
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
 #include <optional>             // WP-253: the phase timer
@@ -83,6 +85,7 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
 
   int setTrialStrain(int p, const double *e, double *s) override
   {
+    if (ladruno_inThreadedRegion()) return setTrialStrainThreaded(p, e, s);   // WP-253
     NDMaterial *mat = mats[p];
     OPS_PROFILE_ELEMPTR_SCOPE((*matTmr), mat);   // WP-232g
     const int nv = mat->getOrder();
@@ -96,6 +99,7 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
   }
   int commitState(int p) override
   {
+    if (ladruno_inThreadedRegion()) return commitStateThreaded(p);            // WP-253
     OPS_PROFILE_ELEMPTR_SCOPE((*matTmr), mats[p]);   // WP-232g
     // WP-232k (D13): the commit loop is serial, so the first particle whose commit
     // raised the WP-99 count is the first refusing one -- named in the abort message.
@@ -122,6 +126,7 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
   // 1e-3 mCe) would overestimate the stable Δt by up to 31x.
   double normalModulus(int p) override
   {
+    if (ladruno_inThreadedRegion()) ops_TheActiveElement = 0;   // WP-253: W9 on a worker
     const Matrix &D = mats[p]->getInitialTangent();
     const int nNormal = (D.noRows() == 6) ? 3 : 2;
     double M = 0.0;
@@ -129,11 +134,86 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
     return M;
   }
 
+  // ---- WP-253: the calls the threaded mode-F step makes on worker threads -----------------
+  // Reached only when every particle material answers ladrunoThreadSafeUpdate() AND
+  // ladrunoThreadSafeForm() (the host's matThreaded check): setTrialStrain is the Update
+  // contract; getStress, commitState and getInitialTangent are the Form contract (Material.h,
+  // WP-107 / WP-192). Nothing shared is written here: the strain goes through a stack buffer
+  // (eps3 / eps6 are one pair for the whole host), the D14 / D13 names and the profiler walls
+  // are kept per particle and folded by afterParallel() on the calling thread, and
+  // ops_TheActiveElement (thread_local) is set to 0 on the worker (W9).
+  void prepareParallel(int N)
+  {
+    pw.assign((size_t)N, 0);
+    refused.assign((size_t)N, 0);
+  }
+  void afterParallel() override
+  {
+#ifndef OPS_PROFILE_DISABLE
+    if (matTmr->engaged() && anyWall.load(std::memory_order_relaxed)) {
+      // the deep scope's elem_by_type rows: one count per call, as the serial ElemScope; the
+      // walls are summed THREAD time (each call timed on its own thread), not wall time
+      for (size_t p = 0; p < pw.size(); p++)
+        if (pw[p] != 0) {
+          const int tag = mats[p]->getClassTag();
+          matTmr->addElem(tag, pw[p], ops_profiler::isForceBasedClassTag(tag));
+          pw[p] = 0;
+        }
+    }
+#endif
+    anyWall.store(false, std::memory_order_relaxed);
+    if (ladrunoPendingCommitRefusals() > 0)            // D13 under threads: the lowest refuser
+      for (size_t p = 0; p < refused.size(); p++)
+        if (refused[p]) {
+          if (firstRefuser < 0 || (int)p < firstRefuser) firstRefuser = (int)p;
+          refused[p] = 0;
+        }
+  }
+
  private:
+  int setTrialStrainThreaded(int p, const double *e, double *s)
+  {
+    ops_TheActiveElement = 0;
+    NDMaterial *mat = mats[p];
+    const bool timed = matTmr->engaged() && p < (int)pw.size();
+    const int64_t t0 = timed ? ::PerfClock::wall_ns() : 0;
+    const int nv = mat->getOrder();
+    double buf[6];
+    for (int k = 0; k < nv; k++) buf[k] = e[k];
+    Vector eps(buf, nv);
+    const int res = mat->setTrialStrain(eps);
+    const Vector &sig = mat->getStress();
+    for (int k = 0; k < nv; k++) s[k] = sig(k);
+    if (timed) addWall(p, t0);
+    return (res < 0) ? -1 : 0;
+  }
+  int commitStateThreaded(int p)
+  {
+    ops_TheActiveElement = 0;
+    const bool timed = matTmr->engaged() && p < (int)pw.size();
+    const int64_t t0 = timed ? ::PerfClock::wall_ns() : 0;
+    // this thread's own tally (LadrunoMaterialStatus.h, WP-253): the process-wide count is
+    // shared by every thread, so only the per-thread one says THIS commit refused
+    const int before = ladrunoThreadCommitRefusals();
+    const int r = mats[p]->commitState();
+    if (ladrunoThreadCommitRefusals() > before && p < (int)refused.size()) refused[p] = 1;
+    if (timed) addWall(p, t0);
+    return r;
+  }
+  void addWall(int p, int64_t t0)
+  {
+    const int64_t t1 = ::PerfClock::wall_ns();
+    pw[p] += (t1 >= t0) ? (uint64_t)(t1 - t0) : 0;
+    anyWall.store(true, std::memory_order_relaxed);
+  }
+
   std::vector<NDMaterial *> &mats;
   Vector eps3, eps6;
   ops_profiler::ScopedTimerOpt idleTmr;      // WP-232g: never engaged (a null name)
   ops_profiler::ScopedTimerOpt *matTmr;      // WP-232g: idleTmr, or the host's deep scope
+  std::vector<uint64_t> pw;                  // WP-253: per particle, this loop's material wall
+  std::vector<char>     refused;             // WP-253: per particle, refused at this commit
+  std::atomic<bool>     anyWall{false};      // WP-253: some pw[] is nonzero
 };
 
 #ifndef OPS_PROFILE_DISABLE
@@ -889,6 +969,29 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
     haveSnapshot = true;
   }
 
+  // WP-253 (253_mpm_performance.md §5): mode F's threads come from the one knob
+  // (`ladrunoThreads`, ladruno_loopThreads); route S and mode A stay serial. The material calls
+  // run threaded only when EVERY particle material allows setTrialStrain (Update) and
+  // getStress / commitState / getInitialTangent (Form) on different instances at once;
+  // otherwise only the transfer loops thread. The engine is put back to serial on every exit.
+  struct EngineThreads {
+    ladruno_mpm::Engine &e;
+    ~EngineThreads() { e.nThreads = 1; e.parFor = nullptr; e.matThreaded = false; }
+  } engineThreads{eng};
+  if (!routeS) {
+    const char *why = 0;
+    const int nThr = ladruno_loopThreads(&why);
+    if (nThr > 1) {
+      bool safe = true;
+      for (size_t p = 0; p < mats.size() && safe; p++)
+        safe = mats[p] != 0 && mats[p]->ladrunoThreadSafeUpdate() && mats[p]->ladrunoThreadSafeForm();
+      eng.nThreads = nThr;
+      eng.parFor = &ladruno_parallelFor;
+      eng.matThreaded = safe;
+      adapter->prepareParallel(eng.P.size());
+    }
+  }
+
   // ONE exit path (c2 review 7): whatever stops the loop, the accepted steps
   // not yet written are written and the file is flushed.
   int rc = 0;
@@ -1047,6 +1150,9 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
           eng.phaseHook = {&MPMPhaseTimer::enter, &MPMPhaseTimer::leave, &phTimer};
 #endif
         res = eng.advance(dt, lambda, *adapter, err);
+        // WP-253: a threaded material loop names its lowest failing particle through the
+        // engine (the adapter's own D14 name is set only by a serial call)
+        if (adapter->trialFail < 0 && eng.lastMatFail >= 0) adapter->trialFail = eng.lastMatFail;
       }
 #ifndef OPS_PROFILE_DISABLE
       adapter->setTimer(0);
