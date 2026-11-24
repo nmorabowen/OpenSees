@@ -5,7 +5,9 @@ are gated without OpenSees by tests/_testbed/rc_beamfiber_gpp.cpp: closed forms 
 ties (B1, B2), a two-leg check against nested bracketing bisection from the same committed state
 (B3), the condensed tangent vs central FD (B4), gamma_xy/gamma_xz invariance (B5), the crack gate
 in unconfined compression with the strain gate's refusal as break-once evidence (B6), the tie
-law (B7) and the Model C `sum` crack check (B8-B10). Self-asserting with a non-zero exit. Same pattern as test_ladrunoRCConcrete_spatial_cpp.py.
+law (B7), the Model C `sum` crack check (B8-B10), and (WP-246) re-solve idempotence of a committed
+strain along a cracking shear path with holds (B11) and the 3D return's holds and step-count
+convergence (B12). Self-asserting with a non-zero exit. Same pattern as test_ladrunoRCConcrete_spatial_cpp.py.
 Skipped without a C++ compiler.
 """
 import os
@@ -39,5 +41,6 @@ def test_beamfiber_gpp_gate():
     for head in ("B1 elastic, no ties", "B2 elastic, ties", "B3 two-leg", "B4 condensed FD (elastic)",
                  "B4 condensed FD (cracked)", "B4 condensed FD (tie-yielded)", "B5 invariance",
                  "B6 damage gate", "B6 strain gate", "B7 tie law", "B7 cracked fibre",
-                 "B8 crack-check cap", "B9 crack check on a shear ramp", "B10 crack-check invariance"):
+                 "B8 crack-check cap", "B9 crack check on a shear ramp", "B10 crack-check invariance",
+                 "B11 re-solve idempotence", "B12 3D return"):
         assert head in out, out
