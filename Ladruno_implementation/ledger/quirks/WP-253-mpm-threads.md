@@ -64,7 +64,7 @@ the span changes nothing. The entry points come from the module that owns `omp_g
 `libiomp5md.dll`), never from the first DLL found by name. `mpm debug quietSpan` says whether they
 resolved.
 
-### `profiler stop` leaves `-deep` armed; Domain's threaded element loop then stays serial
+#### Also learned (WP-253): `profiler stop` leaves `-deep` armed; Domain's threaded element loop then stays serial
 
 `profiler start -deep` sets the profiler's deep flag. Neither `profiler stop` nor `profiler reset`
 clears it, and Domain's WP-192 gate tests `deep()` alone. After one deep-profiled run, every later
