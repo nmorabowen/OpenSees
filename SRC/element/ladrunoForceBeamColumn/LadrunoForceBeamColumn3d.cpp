@@ -531,7 +531,7 @@ OPS_LadrunoForceBeamColumn3d()
   double monoTolIn = 1.0e-5;
   double monoScaleIn[3] = {1.0e5, 1.0e8, 1.0e-5};
   double monoAcceptIn[3] = {0.0, 0.0, 1.0e-2};
-  int monoRestartIn = 1, monoStallIn = 6;
+  int monoRestartIn = 1, monoStallIn = 0;
   double monoStallRatioIn = 0.99;
 
   numData = 1;
@@ -1350,7 +1350,7 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d()
     vSolvedCommit(NEBD), solvedCommitValid(false),
     maxSubdivisions(4), subdivideFactor(10.0),
     monoOn(false), monoMaxIter(40), monoTol(1.0e-5), monoMaxHalve(12),
-    monoRestart(1), monoStallIter(6), monoStallRatio(0.99),
+    monoRestart(1), monoStallIter(0), monoStallRatio(0.99),
     monoLastIter(0), monoNumAccept(0), monoMaxAccRes(0.0), monoLastRes(0.0),
     parameterID(0)
 {
@@ -1433,7 +1433,7 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d(
     vSolvedCommit(NEBD), solvedCommitValid(false),
     maxSubdivisions(maxNumSub), subdivideFactor(subFac),
     monoOn(false), monoMaxIter(40), monoTol(1.0e-5), monoMaxHalve(12),
-    monoRestart(1), monoStallIter(6), monoStallRatio(0.99),
+    monoRestart(1), monoStallIter(0), monoStallRatio(0.99),
     monoLastIter(0), monoNumAccept(0), monoMaxAccRes(0.0), monoLastRes(0.0),
     parameterID(0)
 {

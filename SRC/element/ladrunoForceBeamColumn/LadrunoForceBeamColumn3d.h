@@ -146,7 +146,7 @@ class LadrunoForceBeamColumn3d : public Element
   // moment, scaled compatibility}, accept[0] <= 0 disables it.
   int setMonolithic(int maxIter, double tol, int maxHalve,
                     const double scale[3], const double accept[3],
-                    int restart = 1, int stallIter = 6, double stallRatio = 0.99);
+                    int restart = 1, int stallIter = 0, double stallRatio = 0.99);
   int activateParameter(int parameterID);
   const Vector &getResistingForceSensitivity(int gradNumber);
   const Matrix &getKiSensitivity(int gradNumber);
@@ -324,7 +324,7 @@ class LadrunoForceBeamColumn3d : public Element
   double monoScale[3];
   double monoAccept[3];
   int monoRestart;         // 1: retry from the committed state when the trial start fails
-  int monoStallIter;       // stop when ||R|| fell by less than (1 - monoStallRatio)
+  int monoStallIter;       // stop when ||R|| fell by less than (1 - monoStallRatio); default 0 = off
   double monoStallRatio;   //   over the last monoStallIter iterations (0 = never)
   int monoLastIter;        // Newton iterations of the last solve
   int monoNumAccept;       // solves accepted by the acceptance test (all calls)

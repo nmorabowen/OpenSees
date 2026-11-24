@@ -17,8 +17,8 @@ Lynn et al. 1996 (3CLH18, 3CMH18, 3CMD12).
 
 ## Status
 
-Prototype, 2026-11-24. Not committed. 14 new unit tests and the 130 existing LadrunoForceBeamColumn tests pass on
-Linux (esmeralda build). Lab results in §5.
+Prototype, 2026-11-24 (draft PR). 14 new unit tests and the 130 existing LadrunoForceBeamColumn tests pass on
+Linux (esmeralda build). Lab gate met with the defaults: 8/8 complete, J 0.149 (§5).
 
 ## 1. Problem
 
@@ -68,15 +68,15 @@ J   = [ K_s,i / sc_i        -b_i / sc_i         ]
   Model C's calibrated runs use 10 kN / 10 kN m.
 - **Start points.** Newton starts from the last trial solution. With `-monoRestart 1` (default) a failed solve
   is retried from the committed state (Model C restarts every solve from its last converged, committed
-  state; a trial state left by a poor global iterate can be far off). The retry costs a second solve exactly
-  where solves fail, and on 2CLD12 it leads onto a branch that grinds (§5), so the lab driver keeps it off
-  and switches it on only as a last resort, through `parameter ... element <tag> monoRestart` /
-  `updateParameter` (0/1).
-- `-monoStall nIter [ratio]` (default 6, 0.99): stop a Newton whose `||R||` fell by less than 1 % over the last
-  6 iterations. Meant to make failing solves cheap (the global Newton calls the element once per global
+  state; a trial state left by a poor global iterate can be far off). Near a fold it decides which branch the
+  solve lands on: on 2CLD12M only the restart drops onto the failed branch at the shear failure, as Model C
+  does (§5). It is the lab gate setting. Also a parameter (`parameter ... element <tag> monoRestart`,
+  `updateParameter` 0/1) so a driver can switch it per attempt.
+- `-monoStall nIter [ratio]` (default 0 = off; ratio 0.99): stop a Newton whose `||R||` fell by less than 1 %
+  over the last `nIter` iterations. Meant to make failing solves cheap (the global Newton calls the element once per global
   iteration, up to ~200 times per failed attempt with fallback algorithms; Model C once per step). It also
-  cuts off slow solves that would have converged and changed the path on 3CLH18 and 2CLD12M (§5): the lab
-  runs use `-monoStall 0`. Also a parameter (`monoStall`).
+  cuts off slow solves that would have converged and changed the path on 3CLH18 and 2CLD12M (§5), hence off
+  by default. Also a parameter (`monoStall`).
 - **Element tangent** `kv = dq/dv` from the same matrix with six right-hand sides,
   `J X = B`, `B(c,k) = 1/sc_c,k` on the compatibility rows; `kv = X(q rows, :)`. This is the condensation
   `(sum w b^T K_s^-1 b)^-1` without forming any `K_s^-1`. Only the whole block matrix must be non-singular:
@@ -123,20 +123,30 @@ J   = [ K_s,i / sc_i        -b_i / sc_i         ]
 
 ## 5. Lab gate (program #1131)
 
-Model C's driver (2e-4 rad sub-steps, halving to 1/64, fallback algorithms, 10 kN acceptance, ladder with the
-overshoot predictor), element `-monolithic -monoAccept 10e3 10e6 1e-2 -monoStall 0`, restart switched on only to
-retry a record point about to be given up:
+Model C's driver (2e-4 rad sub-steps, halving to 1/64, fallback algorithms, 10 kN global acceptance, ladder
+with the overshoot predictor) and the element defaults plus Model C's acceptance:
+`-monolithic -monoAccept 10e3 10e6 1e-2` (restart from committed on, stall exit off). Scored against the
+Model C reference and the tests:
 
-- **7 of 8 complete**, including 3CLH18 and the four WP-254 stoppers (2CLD12, 2CLH18, 3CMD12, 3CMH18). No run
-  stops on a singular flexibility. 2CLD12M stops at 771/791 in its final collapse; with the restart always on
-  it completes (e 0.155, Model C 0.154), but that setting sends 2CLD12 onto a branch that grinds.
-- Lab score e equals Model C's on 2CLD12, 2CHD12, 2CMH18, 3CMD12 and within 0.005 on 3CMH18, 2CLH18; 3CLH18
-  0.140 (Model C 0.171). J 0.190 over 8 with 2CLD12M incomplete, ~0.150 with its restart run (Model C 0.155).
-- 57–910 s per specimen (Model C's own code: 1,000–5,400 s).
+| Specimen | steps | wall s | e fork | e Model C | d80 fork / Model C / test |
+|---|---|---|---|---|---|
+| 2CLD12 | 2385/2385 | 341 | 0.083 | 0.083 | 1.42 / 1.42 / 0.93 |
+| 2CHD12 | 1639/1639 | 81 | 0.168 | 0.168 | 0.92 / 0.92 / 0.59 |
+| 2CLD12M | 791/791 | 157 | 0.155 | 0.154 | 2.83 / 2.83 / 2.83 |
+| 3CLH18 | 374/374 | 167 | 0.134 | 0.171 | 0.52 / 0.52 / 0.52 |
+| 2CLH18 | 737/737 | 243 | 0.303 | 0.307 | 0.78 / 0.78 / 1.42 |
+| 2CMH18 | 461/461 | 54 | 0.052 | 0.059 | — |
+| 3CMH18 | 987/987 | 94 | 0.166 | 0.165 | 0.52 / 0.52 / 0.52 |
+| 3CMD12 | 1147/1147 | 106 | 0.131 | 0.131 | 1.10 / 1.10 / 0.82 |
 
-What remains is the strip law's folds (its branch rule makes `s(e)` jump), crossed with acceptance and the
-ladder, and the two-level cost (the element is solved per global iteration). Details and every configuration
-tried: juanito-frames `research/11_wp255_report.md`.
+**8/8 complete, J 0.149 (Model C 0.155; gate 0.17), d80 within one level 6/7, every specimen < 6 min**
+(Model C's own code: 1,000–5,400 s). No run stops on a singular flexibility.
+
+Branch selection at the shear failure: on 2CLD12M at 56 mm Model C snaps from 254 to 66 kN. Without the
+restart, the fork crosses that point on a 10 kN-accepted step, stays on the unfailed branch, which folds near
+60 mm, and stops at 771/791. With it, the fork drops at the same record point and follows Model C within
+5–7 kN. An earlier "grind" of 2CLD12 with the restart on was a lab-driver bug (a half-successful overshoot
+predictor left the node past its target and the step direction kept the old sign), not the element.
 
 ## 6. Not done before a PR
 
