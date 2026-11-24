@@ -82,6 +82,7 @@ LadrunoSANISAND — -implex, p_r/p_min, -maxSubsteps, psi/yieldDistance
 LadrunoLoadControl — -tangentPredictor for prescribed-disp paths
 LadrunoShellModifier — ETABS-style shell stiffness modifiers
 LadrunoNDFiber — shear-profile NDFiber section (Model C parabola) + LadrunoUniaxialFiber bars
+LadrunoMCFTStrip — Model C MCFT strip fibre (one transverse unknown, smeared ties) + LadrunoMCFTSteel bars
 ASDPlasticMaterial3D — fail-loud, parser, Voigt+apex (ADR-94)
 ASDPlasticMaterial3D — Closest_Point return map (opt-in, ADR-97)
 IMPL-EX commit-time refusal latch — no silent partial commits

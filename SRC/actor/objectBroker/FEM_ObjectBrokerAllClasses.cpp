@@ -260,6 +260,8 @@
 #include "StagedStrainNDMaterial.h" // Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
 #include "LadrunoRCConcrete.h"     // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
 #include "LadrunoUniaxialFiber.h"  // Ladruno — WP-245 uniaxial bar as an NDFiber beam fibre
+#include "LadrunoMCFTStrip.h"  // Ladruno — WP-254 Model C MCFT strip fibre
+#include "LadrunoMCFTSteel.h"  // Ladruno — WP-254 Model C bar law
 #include "LadrunoRCFiniteStrain.h" // Ladruno — finite-strain (Hencky) view of the RC plastic-damage material (ADR 19 Phase 4b)
 #include "LadrunoConcrete3D.h"     // Ladruno — CDPM2-grade solid-concrete plastic-damage (ADR 31)
 #include "LadrunoHS.h"             // Ladruno — Hardening Soil + HSsmall with mc/mn Lode cross-section (WP-210)
@@ -2014,6 +2016,8 @@ FEM_ObjectBrokerAllClasses::getNewUniaxialMaterial(int classTag)
 
 	case MAT_TAG_LadrunoBondSlip:                 // Ladruno
 		return new LadrunoBondSlip();
+	case MAT_TAG_LadrunoMCFTSteel:                // Ladruno — WP-254
+		return new LadrunoMCFTSteel();
 
 	case MAT_TAG_LadrunoCohesiveHinge:            // Ladruno
 		return new LadrunoCohesiveHinge();
@@ -2463,6 +2467,8 @@ FEM_ObjectBrokerAllClasses::getNewNDMaterial(int classTag)
 
   case ND_TAG_LadrunoUniaxialFiber:               // Ladruno — WP-245 uniaxial bar as an NDFiber beam fibre
     return new LadrunoUniaxialFiber();
+  case ND_TAG_LadrunoMCFTStrip:                   // Ladruno — WP-254 Model C MCFT strip fibre
+    return new LadrunoMCFTStrip();
 
   case ND_TAG_LadrunoRCConcrete:                  // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
     return new LadrunoRCConcrete();

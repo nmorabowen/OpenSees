@@ -214,6 +214,7 @@ static void OPS_PrintLadrunoFeatures(FILE *out)
 "        • LadrunoLoadControl — -tangentPredictor for prescribed-disp paths\n"
 "        • LadrunoShellModifier — ETABS-style shell stiffness modifiers\n"
 "        • LadrunoNDFiber — shear-profile NDFiber section (Model C parabola) + LadrunoUniaxialFiber bars\n"
+"        • LadrunoMCFTStrip — Model C MCFT strip fibre (one transverse unknown, smeared ties) + LadrunoMCFTSteel bars\n"
 "        • ASDPlasticMaterial3D — fail-loud, parser, Voigt+apex (ADR-94)\n"
 "        • ASDPlasticMaterial3D — Closest_Point return map (opt-in, ADR-97)\n"
 "        • IMPL-EX commit-time refusal latch — no silent partial commits\n"

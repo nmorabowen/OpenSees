@@ -2452,3 +2452,55 @@ features:
       drives the uniaxial law, zero shear stress and stiffness (no dowel, as Model
       C), so reinforcing bars sit in the same NDFiber / LadrunoNDFiber section as
       the concrete. `nDMaterial LadrunoUniaxialFiber $tag $uniTag [-rho rho]`.
+
+  - feature: LadrunoMCFTStrip
+    classtag: 33031          # ND_TAG family
+    tag_symbol: ND_TAG_LadrunoMCFTStrip
+    pr: TBD
+    feature_class: material
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoMCFTStrip.py
+    tests:
+      - tests/test_ladrunoMCFTStrip.py
+      - tests/test_ladrunoMCFTStrip_cpp.py
+    tcl: WAIVED(classic-Tcl runs through OpenSees.exe inside tests/test_ladrunoMCFTStrip.py::test_classic_tcl_engine_gives_the_same_section)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/nD/CMakeLists.txt
+      - SRC/interpreter/OpenSeesNDMaterialCommands.cpp
+      - SRC/material/nD/TclModelBuilderNDMaterialCommand.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      WP-254 (program #1131). The Model C MCFT strip as an NDFiber beam fibre
+      (BeamFiber order 3, BeamFiber2d order 2; other views refused): rotating 2D
+      MCFT membrane with ONE condensed transverse strain eps_y balanced against
+      smeared ties, Model C's root rule (81-point scan nearest the committed root,
+      60 halvings), elastic uncoupled gamma_xz, forward-difference condensed
+      tangent. Law header-only in LadrunoMCFTKernel.h, gated in g++
+      (mcft_strip_gpp.cpp) bit-identical to the numpy reference.
+
+  - feature: LadrunoMCFTSteel
+    classtag: 33004          # MAT_TAG family (uniaxial); 33004 is independently ND_TAG_LadrunoCohesiveHingeBiaxial — per-registry
+    tag_symbol: MAT_TAG_LadrunoMCFTSteel
+    pr: TBD
+    feature_class: material
+    required_tiers: [T0, T1]
+    pytest: tests/test_ladrunoMCFTStrip.py
+    tcl: WAIVED(classic-Tcl runs through OpenSees.exe inside tests/test_ladrunoMCFTStrip.py::test_classic_tcl_engine_gives_the_same_section)
+    zone_b: []
+    core_files:
+      - SRC/classTags.h
+      - SRC/material/uniaxial/CMakeLists.txt
+      - SRC/interpreter/OpenSeesUniaxialMaterialCommands.cpp
+      - SRC/material/uniaxial/TclModelBuilderUniaxialMaterialCommand.cpp
+      - SRC/actor/objectBroker/FEM_ObjectBrokerAllClasses.cpp
+    dispatch: {tcl: true, functionMap: true}
+    status: active
+    notes: >
+      WP-254 (program #1131). Model C's bar law: elastic, plateau, quadratic
+      hardening, fracture at total strain esu; elastic unloading from a committed
+      plastic strain clipped to the backbone of each sign, no Bauschinger. For the
+      bars of a LadrunoMCFTStrip section through LadrunoUniaxialFiber.

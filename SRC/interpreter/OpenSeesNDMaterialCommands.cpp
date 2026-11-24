@@ -28,6 +28,7 @@ void* OPS_InitDefGradNDMaterial();// Ladruno — multiplicative staged-activatio
 void* OPS_StagedStrainNDMaterial();// Ladruno — small-strain (2D+3D) auto-capturing staged-activation wrapper
 void* OPS_LadrunoRCConcrete();    // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
 void* OPS_LadrunoUniaxialFiber(); // Ladruno — WP-245 uniaxial bar as an NDFiber beam fibre
+void* OPS_LadrunoMCFTStrip(); // Ladruno — WP-254 Model C MCFT strip fibre
 void* OPS_LadrunoRCFiniteStrain();// Ladruno — finite-strain (Hencky) view of the RC plastic-damage material (ADR 19 Phase 4b)
 void* OPS_LadrunoConcrete3D();    // Ladruno — CDPM2-grade solid-concrete plastic-damage (ADR 31)
 void* OPS_LadrunoHS();            // Ladruno — Hardening Soil + HSsmall with mc/mn Lode cross-section (WP-210)
@@ -152,6 +153,7 @@ namespace {
 	nDMaterialsMap.insert(std::make_pair("StagedStrainNDMaterial", &OPS_StagedStrainNDMaterial));
 	nDMaterialsMap.insert(std::make_pair("LadrunoRCConcrete", &OPS_LadrunoRCConcrete));     // Ladruno — RC plastic-damage + MCFT compression softening (ADR 19)
 	nDMaterialsMap.insert(std::make_pair("LadrunoUniaxialFiber", &OPS_LadrunoUniaxialFiber)); // Ladruno — WP-245
+	nDMaterialsMap.insert(std::make_pair("LadrunoMCFTStrip", &OPS_LadrunoMCFTStrip)); // Ladruno — WP-254
 	nDMaterialsMap.insert(std::make_pair("LadrunoRCFiniteStrain", &OPS_LadrunoRCFiniteStrain)); // Ladruno — finite-strain (Hencky) RC view (ADR 19 Phase 4b)
 	nDMaterialsMap.insert(std::make_pair("LadrunoConcrete3D", &OPS_LadrunoConcrete3D));      // Ladruno — CDPM2-grade solid-concrete plastic-damage (ADR 31)
 	nDMaterialsMap.insert(std::make_pair("LadrunoHS", &OPS_LadrunoHS));                      // Ladruno — Hardening Soil + HSsmall (WP-210)
