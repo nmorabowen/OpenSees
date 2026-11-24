@@ -54,12 +54,14 @@ void* OPS_LadrunoNDFiberSection3d()
   }
   Spec spec;
   bool compCentroid = true;
-  if (LadrunoNDFiberSection3d::parseOptions(tag, spec, compCentroid) < 0) return 0;
-  return new LadrunoNDFiberSection3d(tag, 30, spec, compCentroid);
+  int tanMode = 0; double tanStep = 1.0e-7;
+  if (LadrunoNDFiberSection3d::parseOptions(tag, spec, compCentroid, tanMode, tanStep) < 0) return 0;
+  return new LadrunoNDFiberSection3d(tag, 30, spec, compCentroid, tanMode, tanStep);
 }
 
 int
-LadrunoNDFiberSection3d::parseOptions(int tag, Spec& S, bool& compCentroid)
+LadrunoNDFiberSection3d::parseOptions(int tag, Spec& S, bool& compCentroid, int& tanMode,
+                                      double& tanStep)
 {
   static const char* OWNER = "LadrunoNDFiber";
   bool haveProfile = false, haveDepth = false, haveResultant = false, haveAlpha = false;
@@ -111,6 +113,25 @@ LadrunoNDFiberSection3d::parseOptions(int tag, Spec& S, bool& compCentroid)
     else if (strcmp(opt, "-noCentroid") == 0) {
       compCentroid = false;
     }
+    // Ladruno WP-252: -tangent analytic|numerical, -tangentStep $d
+    else if (strcmp(opt, "-tangent") == 0) {
+      const char* v = OPS_GetString();
+      if      (strcmp(v, "analytic") == 0)  tanMode = 0;
+      else if (strcmp(v, "numerical") == 0) tanMode = 1;
+      else {
+        opserr << "ERROR section LadrunoNDFiber " << tag << ": -tangent '" << v
+               << "' -- want analytic or numerical\n";
+        return -1;
+      }
+    }
+    else if (strcmp(opt, "-tangentStep") == 0) {
+      int n1 = 1;
+      if (OPS_GetDoubleInput(&n1, &tanStep) < 0 || !(tanStep > 0.0) || !(tanStep < 1.0e-2)) {
+        opserr << "ERROR section LadrunoNDFiber " << tag << ": -tangentStep wants a fibre-strain "
+                  "step in (0, 1e-2)\n";
+        return -1;
+      }
+    }
     else { ladruno_opt::reportUnhandled(OWNER, tag, opt); return -1; }
   }
 
@@ -141,14 +162,16 @@ LadrunoNDFiberSection3d::parseOptions(int tag, Spec& S, bool& compCentroid)
 }
 
 LadrunoNDFiberSection3d::LadrunoNDFiberSection3d()
-  : NDFiberSection3d(0, SEC_TAG_LadrunoNDFiberSection3d, 0, 1.0, true), spec(), geomState(0)
+  : NDFiberSection3d(0, SEC_TAG_LadrunoNDFiberSection3d, 0, 1.0, true), spec(), geomState(0),
+    tanMode(0), tanStep(1.0e-7)
 {
 }
 
-LadrunoNDFiberSection3d::LadrunoNDFiberSection3d(int tag, int sizeHint, const Spec& S, bool compCentroid)
+LadrunoNDFiberSection3d::LadrunoNDFiberSection3d(int tag, int sizeHint, const Spec& S, bool compCentroid,
+                                                 int tm, double ts)
   : NDFiberSection3d(tag, SEC_TAG_LadrunoNDFiberSection3d, sizeHint > 0 ? sizeHint : 30,
                      S.profile == ladruno_shear::UNIFORM ? S.alpha : 1.0, compCentroid),
-    spec(S), geomState(0)
+    spec(S), geomState(0), tanMode(tm), tanStep(ts)
 {
 }
 
@@ -205,7 +228,59 @@ LadrunoNDFiberSection3d::setTrialSectionDeformation(const Vector &deforms)
     sData[i] = S6[i];
     for (int j = 0; j < 6; j++) kData[j*6 + i] = K[i][j];
   }
+  if (tanMode == 1 && res == 0) numericalTangent(ev, S6);   // WP-252
   return res;
+}
+
+int
+LadrunoNDFiberSection3d::sweep(const double ev[6], double S6[6])
+{
+  double a[3][6], b[3][6], epsv[3], sig[3];
+  static Vector eps(3);
+  int res = 0;
+  for (int i = 0; i < 6; i++) S6[i] = 0.0;
+  for (int f = 0; f < numFibers; f++) {
+    const double y = matData[3*f] - yBar, z = matData[3*f+1] - zBar, A = matData[3*f+2];
+    ladruno_shear::maps(spec, y, z, a, b);
+    ladruno_shear::strain(a, ev, epsv);
+    eps(0) = epsv[0]; eps(1) = epsv[1]; eps(2) = epsv[2];
+    res += theMaterials[f]->setTrialStrain(eps);
+    const Vector& st = theMaterials[f]->getStress();
+    for (int r = 0; r < 3; r++) sig[r] = st(r);
+    ladruno_shear::accumulate(A, a, b, sig, 0, S6, 0);
+  }
+  return res;
+}
+
+// Ladruno WP-252: forward-difference section tangent. Column j perturbs e_j by d / c_j, where
+// c_j = max over fibres of |d eps_fibre / d e_j| (1 for eps0, the fibre's |y| or |z| for the
+// curvatures, the profile factor for the shears), so the largest fibre strain moves by d. A column
+// whose perturbed sweep is refused by a fibre keeps its analytic values. The fibres are then set
+// back at ev, so their trial state is the base state again (exact when setTrialStrain is idempotent
+// from the committed state), and the resultants are re-read from that restore sweep.
+int
+LadrunoNDFiberSection3d::numericalTangent(const double ev[6], const double S0[6])
+{
+  double c[6] = {0, 0, 0, 0, 0, 0}, a[3][6], b[3][6];
+  for (int f = 0; f < numFibers; f++) {
+    ladruno_shear::maps(spec, matData[3*f] - yBar, matData[3*f+1] - zBar, a, b);
+    for (int j = 0; j < 6; j++)
+      for (int r = 0; r < 3; r++) if (fabs(a[r][j]) > c[j]) c[j] = fabs(a[r][j]);
+  }
+  int kept = 0;
+  double evp[6], Sp[6];
+  for (int j = 0; j < 6; j++) {
+    if (!(c[j] > 0.0)) { kept++; continue; }       // a component no fibre feels (e.g. no torsion)
+    const double h = tanStep / c[j];
+    for (int i = 0; i < 6; i++) evp[i] = ev[i];
+    evp[j] += h;
+    if (sweep(evp, Sp) != 0) { kept++; continue; }
+    for (int i = 0; i < 6; i++) kData[j*6 + i] = (Sp[i] - S0[i]) / h;
+  }
+  double Sr[6];
+  sweep(ev, Sr);
+  for (int i = 0; i < 6; i++) sData[i] = Sr[i];
+  return kept;
 }
 
 void
@@ -276,6 +351,7 @@ LadrunoNDFiberSection3d::getCopy(void)
   c->setTag(this->getTag());
   c->spec = spec;
   c->geomState = geomState;
+  c->tanMode = tanMode; c->tanStep = tanStep;   // WP-252
   c->numFibers = numFibers;
   c->sizeFibers = numFibers;
   if (numFibers != 0) {
@@ -306,21 +382,25 @@ LadrunoNDFiberSection3d::getCopy(void)
   return c;
 }
 
-// Wire: the stock payload, then one Vector(7) with the profile. 7 so it never
-// shares a size with the stock 3*numFibers fibre vector on a database channel.
+// Wire: the stock payload, then one Vector(10) with the profile and the tangent mode
+// (schema 2, WP-252; schema 1 was Vector(7)). 10 so it never shares a size with the
+// stock 3*numFibers fibre vector on a database channel.
 int
 LadrunoNDFiberSection3d::sendSelf(int commitTag, Channel &theChannel)
 {
   int res = NDFiberSection3d::sendSelf(commitTag, theChannel);
   if (res < 0) return res;
-  static Vector v(7);
-  v(0) = 1.0;                 // schema
+  static Vector v(10);
+  v.Zero();
+  v(0) = 2.0;                 // schema
   v(1) = spec.profile;
   v(2) = spec.resultant;
   v(3) = spec.hy;
   v(4) = spec.hz;
   v(5) = spec.alpha;
   v(6) = computeCentroid ? 1.0 : 0.0;
+  v(7) = tanMode;             // WP-252
+  v(8) = tanStep;
   res = theChannel.sendVector(this->getDbTag(), commitTag, v);
   if (res < 0) opserr << "LadrunoNDFiberSection3d::sendSelf - failed to send the shear profile\n";
   return res;
@@ -331,13 +411,13 @@ LadrunoNDFiberSection3d::recvSelf(int commitTag, Channel &theChannel, FEM_Object
 {
   int res = NDFiberSection3d::recvSelf(commitTag, theChannel, theBroker);
   if (res < 0) return res;
-  static Vector v(7);
+  static Vector v(10);
   res = theChannel.recvVector(this->getDbTag(), commitTag, v);
   if (res < 0) {
     opserr << "LadrunoNDFiberSection3d::recvSelf - failed to recv the shear profile\n";
     return res;
   }
-  if ((int)v(0) != 1) {
+  if ((int)v(0) != 2) {
     opserr << "LadrunoNDFiberSection3d::recvSelf - unknown wire schema " << v(0) << "\n";
     return -1;
   }
@@ -346,6 +426,7 @@ LadrunoNDFiberSection3d::recvSelf(int commitTag, Channel &theChannel, FEM_Object
   spec.hy = v(3); spec.hz = v(4); spec.alpha = v(5);
   alpha = (spec.profile == ladruno_shear::UNIFORM) ? spec.alpha : 1.0;
   geomState = 0;
+  tanMode = (int)v(7); tanStep = v(8);   // WP-252
   return 0;
 }
 
@@ -363,6 +444,8 @@ LadrunoNDFiberSection3d::Print(OPS_Stream &s, int flag)
       << endln;
   else
     s << "\tShear profile: uniform, alpha = " << spec.alpha << endln;
+  if (tanMode == 1)                                     // WP-252
+    s << "\tTangent: numerical (forward difference), fibre-strain step " << tanStep << endln;
   if (flag == 1) {
     for (int i = 0; i < numFibers; i++) {
       s << "\nLocation (y,z) = " << matData[3*i] << ' ' << matData[3*i+1];
