@@ -1,7 +1,7 @@
 ---
 wp: WP-252
 title: "Force-based RC fibre column past a shear failure: the secant section tangent cannot follow a negative axial stiffness, and the global Newton diverges at any step size"
-pr: "TBD"
+pr: "#1148"
 date: 2026-11-23
 ---
 ### Force-based RC fibre column past a shear failure: the secant section tangent cannot follow a negative axial stiffness, and the global Newton diverges at any step size (WP-252 adds `-tangent numerical`)
