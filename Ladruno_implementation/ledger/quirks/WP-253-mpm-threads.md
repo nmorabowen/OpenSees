@@ -22,3 +22,20 @@ first refusing particle from a before/after read of that counter (WP-232k D13); 
 another worker can bump it between the two reads. WP-253 adds a `thread_local` tally next to it
 (`ladrunoThreadCommitRefusals()`, bumped in the same place, never reset), whose before/after
 difference on the committing thread is exact. The global counter's meaning is unchanged.
+
+#### Also learned (WP-253): running `ci_run_pytest.py` on nmb
+
+`python3.12 -S Ladruno_scripts/ci_run_pytest.py` imports pytest from the interpreter's `purelib`
+only; on nmb pytest lives in the **user** site (`%APPDATA%\Python\Python312\site-packages`), so set
+`PYTHONPATH` to it or the runner dies on `import pytest`. The runner `chdir`s into `tests/`: pass
+test paths relative to `tests/` (`test_x.py::case`). From Git Bash a `file.py::id` argument with a
+leading path gets mangled into a `/c/...` path that pytest cannot find; run it from PowerShell.
+`LADRUNO_TCL_EXE` points the Tcl-parity tests at an `OpenSees.exe` when the worktree has no `dist`.
+
+#### Also learned (WP-253): an exception inside `ladruno_parallelFor` is undefined behaviour
+
+A `std::bad_alloc` (or any C++ exception) escaping a body run under MSVC's OpenMP terminates the
+process; there is no propagation to the caller. The threaded MPM step sizes most buffers before
+its parallel regions, but the transpose's per-block discovery lists still `push_back` inside a body
+(`LadrunoMPMThreads.h`, `transposeThreaded`), so an out-of-memory there ends the run without the
+serial path's error. WP-192's loops carry the same exposure. Accepted for WP-253 (desktop memory).

@@ -97,6 +97,19 @@ print the worker's head on both `dist\bin\OpenSees.exe` and `dist\bin\opensees.p
 - [ ] for a family PR (232c and later): the out-of-family verdict and its handoff pack, committed
       per ADR-87 D4 (`reviews/handoff_<adr>.md`, `reviews/<adr>_verdict.md`);
 - [ ] the manifest row, the ledger fragments and the banner line;
+- [ ] **the MPM timing regression check (WP-253), for every MPM WP from 232m on**: with the
+      WP's final build in `dist\bin` and nothing else loading the machine,
+      `python3.12 Ladruno_scripts/mpm_bench/regress.py --baseline
+      Ladruno_scripts/mpm_bench/baseline_nmb.json` (≈ 15 min; 3 repeats of a fixed row set:
+      3D gimp elastic 10⁵ mode F at 1 and 8 threads, 3D gimp DP 10⁵ at 1, 2D bspline2 elastic
+      10⁵ at 8, 3D block elastic 10⁴ mode A at 1). Exit 1 = a row's median throughput fell by
+      more than max(10 %, 2 × the baseline spread): paste its table in the PR and explain the
+      loss or fix it; the owner decides an accepted loss. Wall clock only, never in Zone-A
+      (runners are noisy). If the WP legitimately changes the cost (a new feature on the
+      step), re-record with `--record` in the same PR and say why. The thread-count guards
+      that ARE deterministic live in Zone-A (`tests/test_ladruno_mpm_wp253_threads.py`:
+      bit-identity at 2 and 4 threads and `mpm debug threads`); keep them green, and add a
+      case there for any new transfer-loop term.
 - [ ] Zone-A green on a dispatched run (`gh workflow run ladruno.yml --ref <branch>`; a ready-flip
       starts none).
 
