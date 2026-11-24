@@ -101,13 +101,13 @@ def _l(x):
 # --------------------------------------------------------------------------- #
 #  Models (command lists, so the Tcl test runs the same deck)                  #
 # --------------------------------------------------------------------------- #
-DP = ("DruckerPrager", 1, 1.6666666666666666e5, 7.6923076923076922e4, 50.0, 0.21, 0.0, 0.0,
+DP = ("DruckerPrager", 1, 1.6666666666666666e7, 7.6923076923076922e6, 50.0, 0.21, 0.0, 0.0,
       0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 
 def col3d(basis="gimp", mat="elastic", flip=None, damping=None):
     """The #1097 column (small): 3D, quarter symmetry, a frictional floor."""
-    m = ("ElasticIsotropic", 1, 2.0e5, 0.3) if mat == "elastic" else DP
+    m = ("ElasticIsotropic", 1, 2.0e7, 0.3) if mat == "elastic" else DP
     cmds = [("wipe", []), ("model", ["basic", "-ndm", 3, "-ndf", 3]), ("nDMaterial", list(m)),
             ("mpm", ["grid", 232, "-origin", 0.0, 0.0, 0.0, "-h", 0.25, "-cells", 6, 4, 10,
                      "-basis", basis]),
@@ -118,7 +118,7 @@ def col3d(basis="gimp", mat="elastic", flip=None, damping=None):
         cmds.append(("mpm", ["wall", "zmin", 0.3]))
     else:
         cmds.append(("mpm", ["fix", "zmin", "xyz"]))         # images on three faces
-    cmds.append(("mpm", ["gravity", 0.0, 0.0, -1000.0]))
+    cmds.append(("mpm", ["gravity", 0.0, 0.0, -10.0]))
     if flip is not None:
         cmds.append(("mpm", ["flip", flip]))
     if damping is not None:
@@ -127,13 +127,13 @@ def col3d(basis="gimp", mat="elastic", flip=None, damping=None):
 
 
 def col2d(basis="gimp", antilocking="fbar", gridvel=False, mat="elastic"):
-    m = ("ElasticIsotropic", 1, 2.0e5, 0.45) if mat == "elastic" else DP
+    m = ("ElasticIsotropic", 1, 2.0e7, 0.45) if mat == "elastic" else DP
     cmds = [("wipe", []), ("model", ["basic", "-ndm", 2, "-ndf", 2]), ("nDMaterial", list(m)),
             ("mpm", ["grid", 232, "-origin", 0.0, 0.0, "-h", 0.25, "-cells", 10, 12,
                      "-basis", basis]),
             ("mpm", ["body", 1, "box", 0.0, 0.0, 1.0, 2.0, "-ppc", 2, "-mat", 1, "-rho", 2000.0]),
             ("mpm", ["fix", "xmin", "x"]), ("mpm", ["wall", "ymin", 0.3]),
-            ("mpm", ["gravity", 0.0, -1000.0])]
+            ("mpm", ["gravity", 0.0, -10.0])]
     if antilocking:
         cmds.append(("mpm", ["antiLocking", antilocking]))
     if gridvel:
@@ -150,6 +150,14 @@ def _body_force(ops):
     ops.mpm("particleBodyForce", *bf)
 
 
+def steps_at_quarter_dtcrit(ops, k):
+    """k single steps, each at 0.25 x the dt_crit of its own start (the particles accelerate,
+    so a dt fixed at step 0 can exceed s x dt_crit later). The same dt sequence at every thread
+    count, because dt_crit is itself bit-identical."""
+    for _ in range(k):
+        ops.mpm("analyze", 1, 0.25 * float(ops.mpm("criticalTimeStep")))
+
+
 def run(cmds, nthreads, post=None, steps=None):
     """Build, set the thread count, run K steps at 0.25 dt_crit; the particle arrays, the
     loop-structure guard, and the step count."""
@@ -161,9 +169,8 @@ def run(cmds, nthreads, post=None, steps=None):
     ops.ladrunoThreads(nthreads)
     n = int(ops.mpm("info", "numParticles"))
     k = steps if steps is not None else max(12, min(40, 20000 // max(n, 1)))
-    dt = 0.25 * float(ops.mpm("criticalTimeStep"))
     x0 = _l(ops.mpm("particleData", "x"))
-    ops.mpm("analyze", k, dt)
+    steps_at_quarter_dtcrit(ops, k)
     data = {f: _l(ops.mpm("particleData", f)) for f in FIELDS}
     data["moved"] = max(abs(a - b) for a, b in zip(data["x"], x0))
     thr = [int(v) for v in _l(ops.mpm("debug", "threads"))]
@@ -222,21 +229,22 @@ cmds, nt, kind = json.loads(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
 for name, args in cmds:
     getattr(ops, name)(*H._py_args(args))
 ops.ladrunoThreads(nt)
-dt = 0.25 * float(ops.mpm("criticalTimeStep"))
+def step():
+    ops.mpm("analyze", 1, 0.25 * float(ops.mpm("criticalTimeStep")))
 if kind == "a7":
     ops.mpm("velocity", 1, "uniform", 40.0, 0.0, 0.0)
-    dt = 0.25 * float(ops.mpm("criticalTimeStep"))
-    ops.mpm("analyze", 2, dt)
+    step(); step()
     try:
-        ops.mpm("analyze", 400, dt)
+        for _ in range(400):
+            step()
         print("NO-FAILURE")
     except Exception:
         pass
 else:
-    ops.mpm("analyze", 2, dt)
+    step(); step()
     ops.mpm("debug", "injectRefusal")
     try:
-        ops.mpm("analyze", 1, dt)
+        step()
         print("NO-FAILURE")
     except Exception:
         pass
@@ -261,6 +269,7 @@ def test_failure_text_is_the_serial_one(kind):
     cmds = col3d("gimp")
     err1, st1 = _child(cmds, 1, kind)
     assert err1, kind
+    assert ("out of the grid" if kind == "a7" else "REFUSED this commit") in err1[-1], err1
     for nt in _threads():
         errn, stn = _child(cmds, nt, kind)
         assert errn == err1, (kind, nt, errn, err1)
@@ -278,12 +287,13 @@ def _tcl_exe():
     return str(cand) if cand.exists() else None
 
 
-def _tcl(cmds, nt, k, dt):
+def _tcl(cmds, nt, k):
     exe = _tcl_exe()
     if exe is None:
         pytest.skip("classic OpenSees exe not found (build it, or set LADRUNO_TCL_EXE)")
     lines = [name + " " + " ".join(H._tcl_arg(a) for a in args) for name, args in cmds]
-    lines += [f"ladrunoThreads {nt}", f"mpm analyze {k} {dt!r}"]
+    lines += [f"ladrunoThreads {nt}",
+              f"for {{set i 0}} {{$i < {k}}} {{incr i}} {{ mpm analyze 1 [expr {{0.25 * [mpm criticalTimeStep]}}] }}"]
     lines += [f'puts "P_{f} [mpm particleData {f}]"' for f in FIELDS]
     lines += ['puts "THREADS [mpm debug threads]"', 'puts "DECK-DONE"']
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
@@ -304,11 +314,10 @@ def test_tcl_threads_parity():
     ops = _ops()
     for name, args in cmds:
         getattr(ops, name)(*H._py_args(args))
-    dt = 0.25 * float(ops.mpm("criticalTimeStep"))
     k = 15
-    ops.mpm("analyze", k, dt)
+    steps_at_quarter_dtcrit(ops, k)
     py = {f: _l(ops.mpm("particleData", f)) for f in FIELDS}
-    t1, tn = _tcl(cmds, 1, k, dt), _tcl(cmds, nt, k, dt)
+    t1, tn = _tcl(cmds, 1, k), _tcl(cmds, nt, k)
     assert tn["THREADS"] == [nt, nt], tn["THREADS"]
     for f in FIELDS:
         assert tn["P_" + f] == t1["P_" + f], f
