@@ -120,6 +120,11 @@ Exclusions fixed now, with their reason:
   particle order — the serial scatter's exact summation order — so no reduction order changes.
   Grid-node loops are independent per node. The serial-order bookkeeping (the touched list, the
   image folds) is kept in serial order.
+  > **Amendment (2026-11-24, the critic of record, finding 5; wording only, no target moves).**
+  > The threaded touched list is in *discovery* order, which depends on thread timing; only the
+  > image folds are kept in the serial first-touch order (re-sorted by each node's lowest entry).
+  > Bit-identity holds because every walker of the touched list is per node; a guard comment at
+  > the list's construction says so.
 - **Materials:** the material calls (`setTrialStrain`, `commitState`) run threaded only when
   every particle's material is on the WP-107 allowlist (`ladrunoThreadSafeUpdate()`), with
   `ops_TheActiveElement = 0` on every worker thread (W9); otherwise they run serially in particle
