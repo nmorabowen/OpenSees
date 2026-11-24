@@ -5,7 +5,7 @@
 # Submit (the --exclude is REQUIRED on every sbatch/srun, owner's rule 2026-11-20; the #SBATCH line
 # below repeats it so a bare `sbatch` cannot forget it):
 #
-#   sbatch --exclude=node1,node2,node12,node13 --mem-per-cpu=4G --exclusive \
+#   sbatch --exclude=node1,node2,node12,node13 --mem-per-cpu=2G --exclusive \
 #          Ladruno_scripts/mpm_bench/esmeralda/wp253_bench.sbatch <CLONE> <PYD> <EXE> <OUT> [SET]
 #
 #   CLONE  a FRESH clone of the WP-253 branch (never ~/ladruno_build_test/OpenSees), built there
@@ -26,7 +26,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24
 #SBATCH --exclusive
-#SBATCH --mem-per-cpu=4G
+#SBATCH --mem-per-cpu=2G   # 24 x 2G = 48G < the 58 GB nodes
 #SBATCH --exclude=node1,node2,node12,node13
 #SBATCH --time=12:00:00
 #SBATCH --output=wp253-%j.out
@@ -71,7 +71,7 @@ COMMON=(--site esmeralda --pyd "$PYD" --exe "$EXE" --affinity none)
 
 run() {   # label, extra args...
   local label=$1; shift
-  srun --exclude=node1,node2,node12,node13 --mem-per-cpu=4G --exclusive --cpus-per-task=24 \
+  srun --exclude=node1,node2,node12,node13 --mem-per-cpu=${SLURM_MEM_PER_CPU:-2048}M --exclusive --cpus-per-task=24 \
        --cpu-bind=none python3.12 "$BENCH" "${COMMON[@]}" --out "$OUT/$label" "$@"
 }
 
