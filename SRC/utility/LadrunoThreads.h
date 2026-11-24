@@ -153,6 +153,20 @@ void ladruno_setHybridAllowed(bool on);
 int ladruno_loopThreads(const char **why);
 
 
+// Ladruno WP-253 -- let the OpenMP workers SLEEP through a serial phase that sits between two
+// parallel regions (the MPM split path's serial material calls). With Intel / LLVM libiomp the
+// workers spin for KMP_BLOCKTIME (200 ms default) after every region, and on a hyperthreaded
+// box they steal the serial thread's core. ladruno_ompQuietBegin() sets the calling thread's
+// blocktime to 0 and returns the previous value as a token; ladruno_ompQuietEnd(token) restores
+// it. Call Begin BEFORE the parallel region that precedes the serial phase: libiomp copies the
+// master's ICVs (blocktime among them) to the team at the fork, and a worker takes the wait it
+// uses after the region from those ICVs at the join barrier, so a change made after the join
+// only governs the NEXT region's tail. kmp_set_blocktime / kmp_get_blocktime are resolved at
+// run time from the loaded runtime (GetProcAddress / dlsym): no link dependency. Without them
+// (libgomp, vcomp, OpenMP off) both calls are no-ops and the token is -1.
+int  ladruno_ompQuietBegin(void);
+void ladruno_ompQuietEnd(int token);
+
 // Serialises a diagnostic written to opserr from inside a threaded loop
 // (opserr is ONE shared stream; WP-107 rule 4). A no-op outside a region, so
 // every serial path prints exactly as before. Use as a scoped guard:

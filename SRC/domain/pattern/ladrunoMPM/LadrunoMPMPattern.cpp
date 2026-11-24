@@ -976,7 +976,11 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
   // otherwise only the transfer loops thread. The engine is put back to serial on every exit.
   struct EngineThreads {
     ladruno_mpm::Engine &e;
-    ~EngineThreads() { e.nThreads = 1; e.parFor = nullptr; e.matThreaded = false; }
+    ~EngineThreads()
+    {
+      e.nThreads = 1; e.parFor = nullptr; e.matThreaded = false;
+      e.quietBegin = nullptr; e.quietEnd = nullptr;
+    }
   } engineThreads{eng};
   if (!routeS) {
     const char *why = 0;
@@ -987,6 +991,10 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
         safe = mats[p] != 0 && mats[p]->ladrunoThreadSafeUpdate() && mats[p]->ladrunoThreadSafeForm();
       eng.nThreads = nThr;
       eng.parFor = &ladruno_parallelFor;
+      // the split path (serial materials) lets the pool's workers sleep through its serial
+      // material and commit loops (libiomp's KMP_BLOCKTIME spin otherwise takes their core)
+      eng.quietBegin = &ladruno_ompQuietBegin;
+      eng.quietEnd = &ladruno_ompQuietEnd;
       eng.matThreaded = safe;
       adapter->prepareParallel(eng.P.size());
     }

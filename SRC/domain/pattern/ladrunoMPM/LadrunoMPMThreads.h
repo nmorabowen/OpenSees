@@ -96,6 +96,32 @@ inline void particleSupportAt(const Grid &g, Basis b, const double *x, const dou
       }
 }
 
+// The split path's quiet span (Engine::quietBegin / quietEnd, the host's): begin() BEFORE the
+// fork of the region that precedes a serial phase, so that region's workers sleep at its join
+// instead of spinning through the serial phase; end() before the next region's fork. Timing
+// only: nothing it does reaches a result. The destructor ends an open span on every return.
+struct QuietSpan {
+  const Engine &e;
+  int tok;
+  bool on;
+  explicit QuietSpan(const Engine &eng) : e(eng), tok(-1), on(false) {}
+  ~QuietSpan() { end(); }
+  void begin()
+  {
+    if (on || e.quietBegin == nullptr) return;
+    tok = e.quietBegin();
+    on = true;
+  }
+  void end()
+  {
+    if (!on) return;
+    if (e.quietEnd != nullptr) e.quietEnd(tok);
+    on = false;
+  }
+  QuietSpan(const QuietSpan &) = delete;
+  QuietSpan &operator=(const QuietSpan &) = delete;
+};
+
 // f(lo, hi, b) over nb contiguous blocks of [0, n), block b = [n b / nb, n (b+1) / nb)
 template <class F> void Engine::forBlocks(long n, int nb, const F &f) const
 {
@@ -336,6 +362,7 @@ inline int Engine::advanceThreaded(double dt, double lambda, MaterialPoints &mat
   lastMatThreads = matThreaded ? nThreads : 1;
   const int nbP = blocksFor(N);
   PhaseRun ph(phaseHook);             // WP-253: profiler phases (timing only), calling thread
+  QuietSpan quiet(*this);             // the split path's sleeping workers (timing only)
   ph.go(PH_SUPPORT);
   buildSupportsThreaded();
   if (supStart[N] >= (long)INT_MAX) {  // the transpose indexes entries with int
@@ -692,7 +719,9 @@ inline int Engine::advanceThreaded(double dt, double lambda, MaterialPoints &mat
     }
   } else {
     // parallel kinematics, the material calls serially in particle order (the serial call
-    // sequence, stopping at the first failing particle), then a parallel push
+    // sequence, stopping at the first failing particle), then a parallel push. The kinematics
+    // region forks inside a quiet span, so its workers sleep through the serial calls.
+    quiet.begin();
     forBlocks(N, nbP, [&](long lo, long hi, int) {
       for (int p = (int)lo; p < (int)hi; p++) upStatus[p] = kinematics(p);
     });
@@ -714,11 +743,13 @@ inline int Engine::advanceThreaded(double dt, double lambda, MaterialPoints &mat
       }
       for (int k = 0; k < nvv; k++) tsh[nvv * p + k] = P.sig0[nvv * p + k] + sm[k];
     }
+    quiet.end();                      // the push and later regions keep the previous wait
     forBlocks(N, nbP, [&](long lo, long hi, int) {
       for (int p = (int)lo; p < (int)hi; p++) push(p);
     });
   }
   ph.stop();                          // the grid reset is the advance's own time
+  if (!matThreaded) quiet.begin();    // the reset's workers sleep through the serial commit
   clearGridThreaded();
 
   // ---- step 6: commit the particle materials; a refusal aborts (W17) -----
@@ -732,6 +763,7 @@ inline int Engine::advanceThreaded(double dt, double lambda, MaterialPoints &mat
   } else {
     for (int p = 0; p < N; p++) mats.commitState(p);
   }
+  quiet.end();
   const int nRef = mats.pendingRefusals();
   ph.stop();
   if (nRef > 0) {

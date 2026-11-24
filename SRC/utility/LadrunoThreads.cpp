@@ -32,6 +32,7 @@
 #include <OPS_Globals.h>    // Ladruno WP-107 red-team S7: opserr for the refusals
 
 #include <stdlib.h>
+#include <climits>          // Ladruno WP-253: INT_MAX (KMP_MAX_BLOCKTIME)
 #include <stdio.h>
 #include <ctype.h>
 #include <thread>
@@ -39,6 +40,20 @@
 
 #ifdef _LADRUNO_OPENMP
 #include <omp.h>
+#  ifdef _WIN32                 // Ladruno WP-253: run-time lookup of kmp_set_blocktime
+#    ifndef WIN32_LEAN_AND_MEAN
+#      define WIN32_LEAN_AND_MEAN
+#    endif
+#    ifndef NOMINMAX
+#      define NOMINMAX
+#    endif
+#    ifndef NOGDI
+#      define NOGDI
+#    endif
+#    include <windows.h>
+#  else
+#    include <dlfcn.h>
+#  endif
 #endif
 
 // -1 = "not seeded yet". Seeded once, lazily, from LADRUNO_THREADS so that a
@@ -282,6 +297,85 @@ ladruno_parallelFor(int n, int nThreads, int chunk,
     if (firstFail != 0)
         *firstFail = first;
     return sum;
+}
+
+// ---------------------------------------------------------------------------
+// Ladruno WP-253 -- the OpenMP quiet span (see LadrunoThreads.h). Relies on the LLVM / Intel
+// OpenMP runtime (libiomp5 / libomp): kmp_set_blocktime(v) converts v from KMP_BLOCKTIME's units
+// and stores it in the CALLING thread's ICVs (td_icvs.blocktime, bt_set = TRUE); the fork
+// copies the master's ICVs to the team's implicit tasks; each worker sets its wait interval
+// (th_team_bt_intervals) from them in the join barrier, and waits with it for the next fork.
+// kmp_get_blocktime() returns the effective value in the same units, so set(get()) restores
+// the previous behaviour for every later region, WP-192's and MKL's included.
+// ---------------------------------------------------------------------------
+namespace {
+typedef void (*LadrunoKmpSetBt)(int);
+typedef int (*LadrunoKmpGetBt)(void);
+struct LadrunoKmpBt {
+    LadrunoKmpSetBt set = 0;
+    LadrunoKmpGetBt get = 0;
+};
+
+const LadrunoKmpBt &ladruno_kmpBlocktime(void)
+{
+    static const LadrunoKmpBt bt = [] {
+        LadrunoKmpBt b;
+#ifdef _LADRUNO_OPENMP
+#  ifdef _WIN32
+        // only an ALREADY loaded runtime is asked (GetModuleHandle never loads one)
+        static const char *const dlls[] = {"libiomp5md.dll", "libiomp5.dll", "libomp.dll",
+                                           "libomp140.x86_64.dll"};
+        for (const char *d : dlls) {
+            HMODULE h = GetModuleHandleA(d);
+            if (h == 0)
+                continue;
+            b.set = reinterpret_cast<LadrunoKmpSetBt>(
+                reinterpret_cast<void *>(GetProcAddress(h, "kmp_set_blocktime")));
+            b.get = reinterpret_cast<LadrunoKmpGetBt>(
+                reinterpret_cast<void *>(GetProcAddress(h, "kmp_get_blocktime")));
+            if (b.set != 0 && b.get != 0)
+                break;
+            b.set = 0;
+            b.get = 0;
+        }
+#  else
+        b.set = reinterpret_cast<LadrunoKmpSetBt>(dlsym(RTLD_DEFAULT, "kmp_set_blocktime"));
+        b.get = reinterpret_cast<LadrunoKmpGetBt>(dlsym(RTLD_DEFAULT, "kmp_get_blocktime"));
+        if (b.set == 0 || b.get == 0) {
+            b.set = 0;
+            b.get = 0;
+        }
+#  endif
+#endif
+        return b;
+    }();
+    return bt;
+}
+}
+
+int
+ladruno_ompQuietBegin(void)
+{
+    const LadrunoKmpBt &bt = ladruno_kmpBlocktime();
+    if (bt.set == 0)
+        return -1;
+    const int previous = bt.get();
+    // KMP_BLOCKTIME=infinite: get() reports INT_MAX whatever is set, and set(INT_MAX) prints an
+    // "OMP: Info #109" clamp line on every call (measured, oneAPI 2026.1). A user who asked for
+    // an infinite spin keeps it: nothing is changed.
+    if (previous < 0 || previous == INT_MAX)
+        return -1;
+    bt.set(0);
+    return previous;
+}
+
+void
+ladruno_ompQuietEnd(int token)
+{
+    const LadrunoKmpBt &bt = ladruno_kmpBlocktime();
+    if (bt.set == 0 || token < 0)
+        return;
+    bt.set(token);
 }
 
 static std::mutex &ladruno_outputMutex(void) { static std::mutex m; return m; }

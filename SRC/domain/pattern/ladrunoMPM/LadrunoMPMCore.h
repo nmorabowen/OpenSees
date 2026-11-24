@@ -922,6 +922,10 @@ class Engine {
   typedef int (*ParallelFor)(int n, int nThreads, int chunk, int (*body)(int, void *), void *ctx,
                              int *firstFail);
   ParallelFor    parFor = nullptr;
+  // the split path's serial material phases: the host's "let the pool's workers sleep" span
+  // (ladruno_ompQuietBegin / End); begin returns a token for end. Null = nothing done.
+  int          (*quietBegin)(void) = nullptr;
+  void         (*quietEnd)(int) = nullptr;
   int            nThreads = 1;
   bool           matThreaded = false;
   // `mpm debug threads`: the last advance's transfer-loop and material-loop thread counts

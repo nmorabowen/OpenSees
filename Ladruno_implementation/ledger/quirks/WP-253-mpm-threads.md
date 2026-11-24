@@ -39,3 +39,18 @@ process; there is no propagation to the caller. The threaded MPM step sizes most
 its parallel regions, but the transpose's per-block discovery lists still `push_back` inside a body
 (`LadrunoMPMThreads.h`, `transposeThreaded`), so an out-of-memory there ends the run without the
 serial path's error. WP-192's loops carry the same exposure. Accepted for WP-253 (desktop memory).
+
+#### Also learned (WP-253): libiomp's KMP_BLOCKTIME spin starves a serial phase between regions
+
+The build links Intel `libiomp5md` (default `KMP_BLOCKTIME` 200 ms). After each parallel region the
+workers spin for that long, so a serial loop that follows (MPM's serial material calls when the
+materials are not thread-safe) shares its core with a spinning hyperthread: measured 2D SANISAND
+S(8) = 0.89 and 2D DP 1.18 / 1.23, and 1.13 / 1.30 / 1.33 with `KMP_BLOCKTIME=0`. The fix sits in
+the code, not the environment: `ladruno_ompQuietBegin/End` (`LadrunoThreads.{h,cpp}`) resolve
+`kmp_set_blocktime` / `kmp_get_blocktime` at run time and set the master's blocktime to 0 around
+the serial phase. **Timing trap:** libiomp copies the master's ICVs to the team at the FORK, and each
+worker takes its post-region wait from them at the JOIN barrier, so the drop must come before the
+fork of the region that PRECEDES the serial phase. Set after that join, it governs only the next
+region's tail. `get` returns the value in `KMP_BLOCKTIME`'s own units, so `set(get())` restores
+exactly (checked: 200 ms, 500 us). With `KMP_BLOCKTIME=infinite`, `get` reports INT_MAX whatever
+is set, and `set(INT_MAX)` prints an `OMP: Info #109` line per call: the span then changes nothing.

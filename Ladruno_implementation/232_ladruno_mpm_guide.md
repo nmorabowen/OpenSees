@@ -557,7 +557,9 @@ thread the step runs the serial code unchanged.
   admits, that is the 3D `ElasticIsotropic` alone. The 2D plane-strain elastic material is not
   Form-safe (class-wide `sigma` / `D` statics), and DruckerPrager, LadrunoJ2, SANISAND and HS are not
   on the list. For those, the material calls run serially in particle order (the exact serial
-  call sequence) between a parallel kinematics pass and a parallel stress push.
+  call sequence) between a parallel kinematics pass and a parallel stress push. On that path the
+  OpenMP workers sleep through the serial material and commit loops (Intel / LLVM libiomp:
+  `kmp_set_blocktime` 0 for that span, restored after; nothing changes with other runtimes).
   `mpm debug threads` returns the last step's [transfer-loop, material-loop] thread counts.
 - **Same answer at every thread count, bit for bit.** P2G and the second projection are computed
   per node as a gather over the node's contributions in ascending (particle, entry) order, which
