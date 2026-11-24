@@ -55,6 +55,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <optional>             // WP-253: the phase timer
 #include <set>
 #include <utility>
 
@@ -134,6 +135,26 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
   ops_profiler::ScopedTimerOpt idleTmr;      // WP-232g: never engaged (a null name)
   ops_profiler::ScopedTimerOpt *matTmr;      // WP-232g: idleTmr, or the host's deep scope
 };
+
+#ifndef OPS_PROFILE_DISABLE
+// ---------------------------------------------------------------------------
+// WP-253 (253_mpm_performance.md §2): the core's phase hook (ladruno_mpm::PhaseHook)
+// implemented with the profiler. Installed only while the coarse profiler is on, around
+// eng.advance, so each phase is a coarse scope opened under the cursor the host left at
+// `mpm.advance` (with -deep on, under the deep `mpm.f.material`, which spans the advance).
+// One phase is open at a time (PhaseRun), opened and closed on the calling thread.
+// ---------------------------------------------------------------------------
+namespace {
+struct MPMPhaseTimer {
+  std::optional<ops_profiler::ScopedTimer> open;
+  static void enter(int ph, void *ctx)
+  {
+    static_cast<MPMPhaseTimer *>(ctx)->open.emplace(ladruno_mpm::phaseName(ph));
+  }
+  static void leave(int, void *ctx) { static_cast<MPMPhaseTimer *>(ctx)->open.reset(); }
+};
+}
+#endif
 
 // ---------------------------------------------------------------------------
 LadrunoMPMPattern::LadrunoMPMPattern(int tag)
@@ -874,7 +895,9 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
   for (int s = 0; s < nSteps && rc == 0; s++) {
     OPS_PROFILE_SCOPE("step");
     // ---- 1. admissibility and the critical time step ----------------------
-    const int bad = eng.firstInadmissible();
+    int bad;
+    { OPS_PROFILE_SCOPE("mpm.f.admissible");          // WP-253 §2
+      bad = eng.firstInadmissible(); }
     if (bad >= 0) {
       opserr << "ERROR mpm analyze -- particle " << std::to_string((long long)eng.P.id[bad]).c_str()
              << " is not admissible (its centre left the grid, or lp is out of (0, h/2]);"
@@ -951,7 +974,11 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
         break;
       }
     }
-    const double dtc = routeS ? std::numeric_limits<double>::infinity() : eng.criticalTimeStep(*adapter);
+    double dtc = std::numeric_limits<double>::infinity();
+    if (!routeS) {
+      OPS_PROFILE_SCOPE("mpm.f.dtcrit");              // WP-253 §2
+      dtc = eng.criticalTimeStep(*adapter);
+    }
     if (dt > eng.par.safety * dtc) {
       opserr << "ERROR mpm analyze -- dt = " << dt << " exceeds s * dt_crit = "
              << eng.par.safety << " * " << dtc << " = " << eng.par.safety * dtc
@@ -1009,6 +1036,16 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
           }
         }
       } else {
+#ifndef OPS_PROFILE_DISABLE
+        // WP-253 §2: mode F's sub-loop scopes, only while the coarse profiler runs
+        MPMPhaseTimer phTimer;
+        struct Unhook {             // the hook never outlives phTimer, whatever ends advance
+          ladruno_mpm::Engine &e;
+          ~Unhook() { e.phaseHook = ladruno_mpm::PhaseHook(); }
+        } unhook{eng};
+        if (ops_profiler::theProfiler().enabled())
+          eng.phaseHook = {&MPMPhaseTimer::enter, &MPMPhaseTimer::leave, &phTimer};
+#endif
         res = eng.advance(dt, lambda, *adapter, err);
       }
 #ifndef OPS_PROFILE_DISABLE

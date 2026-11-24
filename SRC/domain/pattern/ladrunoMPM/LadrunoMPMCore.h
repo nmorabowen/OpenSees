@@ -842,12 +842,67 @@ struct UPStep {
   int pcgIter = 0;
 };
 
+// WP-253 (Ladruno_implementation/253_mpm_performance.md §2): the named phases of one mode-F
+// Engine::advance, reported by the host's profiler as children of `mpm.advance`. The core
+// stays OpenSees-free: it only calls an optional enter/leave pair the host sets (null by
+// default -> one predicted branch per phase change, nothing else). The hook times; it never
+// reads or writes engine state, so no result depends on it.
+enum Phase {
+  PH_SUPPORT = 0,   // mpm.f.support:  support search and shape functions
+  PH_P2G,           // mpm.f.p2g:      mass, momentum and forces, image folds
+  PH_GRID,          // mpm.f.grid:     damping, grid momentum update, grid conditions
+  PH_G2P,           // mpm.f.g2p:      particle velocity and position, trial admissibility
+  PH_PROJECT2,      // mpm.f.project2: the second projection and its grid conditions
+  PH_UPDATE,        // mpm.f.update:   dF, the kernel, the constitutive call, the stress push
+  PH_COMMIT,        // mpm.f.commit:   material commit
+  PH_COUNT
+};
+inline const char *phaseName(int ph)
+{
+  static const char *const names[PH_COUNT] = {"mpm.f.support", "mpm.f.p2g", "mpm.f.grid",
+                                              "mpm.f.g2p", "mpm.f.project2", "mpm.f.update",
+                                              "mpm.f.commit"};
+  return (ph >= 0 && ph < PH_COUNT) ? names[ph] : "mpm.f.?";
+}
+struct PhaseHook {
+  void (*enter)(int phase, void *ctx) = nullptr;   // both set, or both null
+  void (*leave)(int phase, void *ctx) = nullptr;
+  void *ctx = nullptr;
+};
+// At most one phase open at a time: go() closes the open one and opens the next; stop() and
+// the destructor close it, so every early return of advance() closes its phase.
+class PhaseRun {
+ public:
+  explicit PhaseRun(const PhaseHook &h) : hk(h), cur(-1) {}
+  ~PhaseRun() { stop(); }
+  void go(int ph)
+  {
+    if (hk.enter == nullptr) return;
+    stop();
+    hk.enter(ph, hk.ctx);
+    cur = ph;
+  }
+  void stop()
+  {
+    if (cur < 0) return;
+    hk.leave(cur, hk.ctx);
+    cur = -1;
+  }
+  PhaseRun(const PhaseRun &) = delete;
+  PhaseRun &operator=(const PhaseRun &) = delete;
+ private:
+  const PhaseHook &hk;
+  int cur;
+};
+
 class Engine {
  public:
   Grid           grid;
   Params         par;
   FaceConditions fc;
   Particles      P;
+  // WP-253: the host's phase timer (see PhaseHook); empty = untimed
+  PhaseHook      phaseHook;
   // WP-232i (B11): per-particle body force per unit MASS (acceleration units),
   // ndm per particle in storage order, NOT scaled by the load factor; empty = none.
   std::vector<double> bodyForce;
@@ -1089,9 +1144,12 @@ class Engine {
             " step refused, nothing changed";
       return -1;
     }
+    PhaseRun ph(phaseHook);             // WP-253: profiler phases (timing only)
+    ph.go(PH_SUPPORT);
     buildSupports();
 
     // ---- step 3: P2G -------------------------------------------------------
+    ph.go(PH_P2G);
     p2gMass();
     // WP-232j (J5, interface §11): each particle's anti-locking path, decided ONCE per step
     // from the P2G mass (a corner below the cutoff -> the fallback) and used by both the
@@ -1168,6 +1226,7 @@ class Engine {
     zeroFaceOdd(gfe);
 
     // ---- step 4: damping, grid momentum update, grid conditions ------------
+    ph.go(PH_GRID);
     const double mcut = par.masscut * massRef();
     for (long i : touched) {
       if (gslave[i]) continue;          // K4: set from the image below
@@ -1198,6 +1257,7 @@ class Engine {
     }
 
     // ---- step 5: MUSL particle update (trial) ------------------------------
+    ph.go(PH_G2P);
     tx.assign(P.x.begin(), P.x.end());
     tv.assign(P.v.begin(), P.v.end());
     for (int p = 0; p < N; p++) {
@@ -1237,6 +1297,7 @@ class Engine {
       }
     }
     // second projection of the updated particle momentum
+    ph.go(PH_PROJECT2);
     for (long i : touched)
       for (int a = 0; a < nd; a++) gvs[nd * i + a] = 0.0;
     for (int p = 0; p < N; p++)
@@ -1257,6 +1318,7 @@ class Engine {
     }
     for (size_t s = 0; s < slave.size(); s++) reflectVec(gvs, s);
     // velocity gradient, F, the kernel, the constitutive update
+    ph.go(PH_UPDATE);
     const int nn = nd * nd;
     tF.resize(P.F.size()); tR.resize(P.R.size()); tV.resize(N);
     teps.resize(P.eps.size()); tsh.resize(P.sigHat.size()); tsig.resize(P.sig.size());
@@ -1314,12 +1376,15 @@ class Engine {
       for (int k = 0; k < nn; k++) { tF[nn * p + k] = F1[k]; tR[nn * p + k] = R1[k]; }
       tV[p] = J1 * P.V0[p];
     }
+    ph.stop();                          // the grid reset is the advance's own time
     clearGrid();
 
     // ---- step 6: commit the particle materials; a refusal aborts (W17) -----
+    ph.go(PH_COMMIT);
     mats.clearRefusals();
     for (int p = 0; p < N; p++) mats.commitState(p);
     const int nRef = mats.pendingRefusals();
+    ph.stop();
     if (nRef > 0) {
       err = std::to_string(nRef) + " particle material point(s) REFUSED this commit; sibling "
             "points have already committed, so the run is aborted (ADR 232 W17)";
