@@ -63,3 +63,12 @@ the span changes nothing. The entry points come from the module that owns `omp_g
 (an MSVC import thunk is followed to the IAT slot; checked against oneAPI 2026.1's
 `libiomp5md.dll`), never from the first DLL found by name. `mpm debug quietSpan` says whether they
 resolved.
+
+### `profiler stop` leaves `-deep` armed; Domain's threaded element loop then stays serial
+
+`profiler start -deep` sets the profiler's deep flag. Neither `profiler stop` nor `profiler reset`
+clears it, and Domain's WP-192 gate tests `deep()` alone. After one deep-profiled run, every later
+threaded element loop in the same process runs SERIAL ("the DEEP profiler gate is armed"). A test
+that deep-profiles must end with `profiler start` (no `-deep`), then `stop` and `reset`, or the
+WP-192 tests that run after it in the same pytest process (Zone-A runs them all in one) fail.
+WP-253's deep case did exactly this and broke four WP-192 tests. The gate fix is #1150.

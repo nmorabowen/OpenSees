@@ -187,6 +187,10 @@ def run(cmds, nthreads, post=None, steps=None, deep=False):
         steps_at_quarter_dtcrit(ops, k)
     finally:
         if deep:
+            # `profiler stop` leaves the -deep flag set, and Domain's WP-192 gate reads deep()
+            # alone: a later test's element loops would run serial. A plain start clears it.
+            ops.profiler("stop")
+            ops.profiler("start")
             ops.profiler("stop")
             ops.profiler("reset")
     data = {f: _l(ops.mpm("particleData", f)) for f in FIELDS}
