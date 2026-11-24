@@ -270,6 +270,12 @@ inline void Engine::transposeThreaded()
       }
     }
   });
+  // GUARD (WP-253): `touched` is in DISCOVERY order, which depends on thread timing (which block
+  // claims a node first) and is NOT the serial first-touch order. Every loop that walks it must
+  // therefore be per-node (no cross-node accumulation, no order-dependent bookkeeping). The one
+  // order-dependent consumer, K4's slaved-ghost list, re-sorts by each node's first entry
+  // (tEntry[tPtr[t]], = the serial first touch) before folding. A new walker that needs order
+  // must do the same.
   touched.clear();
   for (int b = 0; b < nbT; b++) touched.insert(touched.end(), tDisc[b].begin(), tDisc[b].end());
   const long nT = (long)touched.size();

@@ -179,6 +179,12 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   // the WP-99 counter before it (which must NOT abort).
   void injectCommitRefusal(void);
   void injectStaleRefusal(void);
+  // WP-253 test hooks (`mpm debug failTrial | failCommit <id ..> | off`): the listed particles'
+  // material trial fails (after the real call) or their commit declares a WP-99 refusal, at
+  // every step until `off`; both material paths, serial and threaded. Returns -1 on an unknown id.
+  int setDebugFailIds(bool commit, const std::vector<long long> &ids, std::string &err);
+  // WP-253: 1 when the OpenMP quiet span can act (libiomp's kmp_set_blocktime resolved)
+  int quietSpanAvailable(void) const;
   bool isAborted(void) const { return aborted; }
 
   double criticalTimeStep(void);
@@ -423,6 +429,7 @@ class LadrunoMPMPattern : public LoadPattern, public LadrunoMPMPointHost
   // WP-232l route S (mode F, interface §1 "Route S", §5 P11, §7a Q4)
   std::vector<double>     lastGridP;               // the last route-S step: [id, p, p^] per p-active node
   bool                    routeSWarned = false;    // 7c (3): the run-time limit's warning, once per epoch
+  bool                    threadsSerialWarned = false;   // WP-253: a threaded request ran serial (once)
   bool                    routeSCapWarned = false; // 7c amendment: s in (0.5, 0.7], warned once per epoch
   double                  pencilDt = -1.0;         // 7c amendment: the epoch's drained pencil (< 0: none)
   int                     pencilAge = 0;           // steps since the pencil was computed (refresh at 100)

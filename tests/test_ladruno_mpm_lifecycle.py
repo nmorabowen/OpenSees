@@ -12,8 +12,8 @@ the shipped binaries (ADR 232 §5.2, §6, §8 S1 rows "lifecycle", "refusals",
 * admitted materials: DruckerPrager and LadrunoJ2 in their elastic range give
   ElasticIsotropic's answer; DruckerPrager's `materialState` reaches the
   particles through `parameter <t> loadPattern <tag> materialState` (W12);
-* threads: the particle loop is serial in v1, so any `ladrunoThreads` gives the
-  same output.
+* threads: mode F threads under `ladrunoThreads` since WP-253, bit-identical to 1
+  thread; that is tests/test_ladruno_mpm_wp253_threads.py, not this file.
 """
 from __future__ import annotations
 
@@ -255,8 +255,8 @@ def test_druckerprager_stage_path_through_loadpattern():
     assert max(abs(a - b) for a, b in zip(plastic["sig"], ref["sig"])) > 1.0
 
 
-# (The v1 particle loop is serial, so thread-count determinism holds by
-# construction; the test arrives with the threaded loop. Review F8.)
+# (Thread-count determinism -- review F8 -- is tests/test_ladruno_mpm_wp253_threads.py,
+# which arrived with the threaded mode-F step, WP-253.)
 
 
 def _j2_oracle(eps_path, K, G, sy):

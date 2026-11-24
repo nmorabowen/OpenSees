@@ -158,12 +158,14 @@ int ladruno_loopThreads(const char **why);
 // workers spin for KMP_BLOCKTIME (200 ms default) after every region, and on a hyperthreaded
 // box they steal the serial thread's core. ladruno_ompQuietBegin() sets the calling thread's
 // blocktime to 0 and returns the previous value as a token; ladruno_ompQuietEnd(token) restores
-// it. Call Begin BEFORE the parallel region that precedes the serial phase: libiomp copies the
+// that value (libiomp then counts it as user-set: its oversubscription auto-zero stays off --
+// timing only). Call Begin BEFORE the parallel region that precedes the serial phase: libiomp copies the
 // master's ICVs (blocktime among them) to the team at the fork, and a worker takes the wait it
 // uses after the region from those ICVs at the join barrier, so a change made after the join
 // only governs the NEXT region's tail. kmp_set_blocktime / kmp_get_blocktime are resolved at
-// run time from the loaded runtime (GetProcAddress / dlsym): no link dependency. Without them
-// (libgomp, vcomp, OpenMP off) both calls are no-ops and the token is -1.
+// run time from the module that owns the running runtime (the one defining omp_get_max_threads;
+// GetModuleHandleEx / dladdr): no link dependency. Without them (libgomp, vcomp, OpenMP off) or
+// with KMP_BLOCKTIME=infinite, both calls are no-ops and the token is -1.
 int  ladruno_ompQuietBegin(void);
 void ladruno_ompQuietEnd(int token);
 

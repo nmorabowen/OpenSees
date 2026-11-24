@@ -88,10 +88,16 @@ def _threads():
     ops = _ops()
     hw = int(ops.ladrunoThreads(1024))
     ops.ladrunoThreads(1)
-    ns = [n for n in (2, 4) if n <= hw]
+    ns = sorted({n for n in (2, 4, min(8, hw)) if 2 <= n <= hw})
     if not ns:
         pytest.skip("this machine has one hardware thread")
     return ns
+
+
+def _threads_ends():
+    """The failure children: the smallest and the largest thread count (each is a process)."""
+    ns = _threads()
+    return sorted({ns[0], ns[-1]})
 
 
 def _l(x):
@@ -105,7 +111,7 @@ DP = ("DruckerPrager", 1, 1.6666666666666666e7, 7.6923076923076922e6, 50.0, 0.21
       0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 
-def col3d(basis="gimp", mat="elastic", flip=None, damping=None):
+def col3d(basis="gimp", mat="elastic", flip=None, damping=None, antilocking=None, small=False):
     """The #1097 column (small): 3D, quarter symmetry, a frictional floor."""
     m = ("ElasticIsotropic", 1, 2.0e7, 0.3) if mat == "elastic" else DP
     cmds = [("wipe", []), ("model", ["basic", "-ndm", 3, "-ndf", 3]), ("nDMaterial", list(m)),
@@ -123,6 +129,10 @@ def col3d(basis="gimp", mat="elastic", flip=None, damping=None):
         cmds.append(("mpm", ["flip", flip]))
     if damping is not None:
         cmds.append(("mpm", ["damping", "local", damping]))
+    if antilocking:
+        cmds.append(("mpm", ["antiLocking", antilocking]))
+    if small:
+        cmds.append(("mpm", ["kinematics", "small"]))
     return cmds
 
 
@@ -158,9 +168,9 @@ def steps_at_quarter_dtcrit(ops, k):
         ops.mpm("analyze", 1, 0.25 * float(ops.mpm("criticalTimeStep")))
 
 
-def run(cmds, nthreads, post=None, steps=None):
-    """Build, set the thread count, run K steps at 0.25 dt_crit; the particle arrays, the
-    loop-structure guard, and the step count."""
+def run(cmds, nthreads, post=None, steps=None, deep=False):
+    """Build, set the thread count, run K steps at 0.25 dt_crit (under the -deep profiler when
+    asked); the particle arrays, the loop-structure guard, and the step count."""
     ops = _ops()
     for name, args in cmds:
         getattr(ops, name)(*H._py_args(args))
@@ -170,7 +180,15 @@ def run(cmds, nthreads, post=None, steps=None):
     n = int(ops.mpm("info", "numParticles"))
     k = steps if steps is not None else max(12, min(40, 20000 // max(n, 1)))
     x0 = _l(ops.mpm("particleData", "x"))
-    steps_at_quarter_dtcrit(ops, k)
+    if deep:
+        ops.profiler("reset")
+        ops.profiler("start", "-deep")
+    try:
+        steps_at_quarter_dtcrit(ops, k)
+    finally:
+        if deep:
+            ops.profiler("stop")
+            ops.profiler("reset")
     data = {f: _l(ops.mpm("particleData", f)) for f in FIELDS}
     data["moved"] = max(abs(a - b) for a, b in zip(data["x"], x0))
     thr = [int(v) for v in _l(ops.mpm("debug", "threads"))]
@@ -187,6 +205,10 @@ CASES = {
     "3d_flip_damping": dict(cmds=lambda: col3d("gimp", flip=0.7, damping=0.1), both=True),
     "2d_gridvel": dict(cmds=lambda: col2d("gimp", None, gridvel=True), both=False),
     "3d_body_force": dict(cmds=lambda: col3d("bspline2"), both=True, post=_body_force),
+    "3d_gimp_elastic_fbar": dict(cmds=lambda: col3d("gimp", antilocking="fbar"), both=True),
+    "3d_small_kinematics": dict(cmds=lambda: col3d("gimp", small=True), both=True),
+    # the -deep profiler: threaded material calls fold their walls per particle (afterParallel)
+    "3d_elastic_deep_profiled": dict(cmds=lambda: col3d("gimp"), both=True, deep=True),
 }
 
 
@@ -194,12 +216,12 @@ CASES = {
 def test_threads_bit_identical(name):
     """Every particle array after K steps: float64 == at 2 and 4 threads vs 1 thread."""
     c = CASES[name]
-    ref, thr1, n = run(c["cmds"](), 1, c.get("post"))
+    ref, thr1, n = run(c["cmds"](), 1, c.get("post"))      # the reference is never profiled
     assert thr1 == [1, 1], thr1
     assert n > 50, n
     assert ref["moved"] > 0.0, "the model must move for the comparison to mean anything"
     for nt in _threads():
-        got, thr, _ = run(c["cmds"](), nt, c.get("post"))
+        got, thr, _ = run(c["cmds"](), nt, c.get("post"), deep=c.get("deep", False))
         assert thr == [nt, nt if c["both"] else 1], (name, nt, thr)
         for f in FIELDS:
             assert len(got[f]) == len(ref[f]), (name, nt, f)
@@ -231,24 +253,47 @@ for name, args in cmds:
 ops.ladrunoThreads(nt)
 def step():
     ops.mpm("analyze", 1, 0.25 * float(ops.mpm("criticalTimeStep")))
+def state(tag):
+    print(tag, json.dumps({f: [float(v) for v in ops.mpm("particleData", f)]
+                           for f in ("x", "v", "F", "sig", "sigHat", "epsHat")}))
+def failing(f):
+    try:
+        f()
+        print("NO-FAILURE")
+    except Exception:
+        pass
+ids = [int(v) for v in ops.mpm("particleData", "id")]
+n = len(ids)
+# two particles far apart in storage order: in different blocks at every thread count
+chosen = [ids[(2 * n) // 3], ids[n // 3]]
+print("LOWEST", min(chosen))
 if kind == "a7":
     ops.mpm("velocity", 1, "uniform", 40.0, 0.0, 0.0)
     step(); step()
-    try:
-        for _ in range(400):
-            step()
-        print("NO-FAILURE")
-    except Exception:
-        pass
-else:
+    failing(lambda: [step() for _ in range(400)])
+    state("STATE")
+elif kind == "inject":
     step(); step()
     ops.mpm("debug", "injectRefusal")
-    try:
-        step()
-        print("NO-FAILURE")
-    except Exception:
-        pass
-print("STATE", json.dumps({f: [float(v) for v in ops.mpm("particleData", f)] for f in ("x", "sig")}))
+    failing(step)
+    state("STATE")
+elif kind == "failTrial":
+    step(); step()
+    ops.mpm("debug", "failTrial", *chosen)
+    failing(step)
+    state("STATE")                       # the committed state, untouched
+    ops.mpm("debug", "failTrial", "off")
+    step(); step()                       # the retried steps
+    state("RETRY")
+elif kind == "failCommit":
+    step(); step()
+    ops.mpm("debug", "failCommit", *chosen)
+    failing(step)
+    state("STATE")                       # W17: particles not moved
+    ops.mpm("debug", "failCommit", "off")
+    ops.mpm("reset")
+    step(); step()
+    state("RETRY")
 print("THREADS", [int(v) for v in ops.mpm("debug", "threads")])
 '''
 
@@ -257,23 +302,46 @@ def _child(cmds, nt, kind):
     code, out = run_python_script(_CHILD, argv=(str(TESTS), json.dumps(cmds), str(nt), kind))
     assert code == 0, out[-3000:]
     assert "NO-FAILURE" not in out, out[-3000:]
-    errors = [ln.strip() for ln in out.splitlines() if "ERROR mpm analyze" in ln]
-    state = next(ln for ln in out.splitlines() if ln.startswith("STATE "))
-    return errors, state
+    lines = out.splitlines()
+    errors = [ln.strip() for ln in lines if "ERROR mpm analyze" in ln]
+    tagged = {ln.split(" ", 1)[0]: ln.split(" ", 1)[1] for ln in lines
+              if ln.split(" ", 1)[0] in ("STATE", "RETRY", "LOWEST", "THREADS")}
+    return errors, tagged
 
 
-@pytest.mark.parametrize("kind", ["a7", "refusal"])
-def test_failure_text_is_the_serial_one(kind):
-    """A7 (the lowest offending id) and a W17 commit refusal: the same error line and the same
-    particle state at n threads as at 1."""
-    cmds = col3d("gimp")
-    err1, st1 = _child(cmds, 1, kind)
-    assert err1, kind
-    assert ("out of the grid" if kind == "a7" else "REFUSED this commit") in err1[-1], err1
-    for nt in _threads():
-        errn, stn = _child(cmds, nt, kind)
-        assert errn == err1, (kind, nt, errn, err1)
-        assert stn == st1, (kind, nt)
+_EXPECT = {
+    "a7": "out of the grid",
+    "inject": "REFUSED this commit",
+    "failTrial": "failed to integrate the trial strain",
+    "failCommit": "2 particle material point(s) REFUSED this commit",
+}
+
+
+@pytest.mark.parametrize("mat", ["elastic", "dp"])     # threaded material calls / the split path
+@pytest.mark.parametrize("kind", sorted(_EXPECT))
+def test_failure_text_is_the_serial_one(kind, mat):
+    '''A7, a W17 refusal (injected; and declared by two chosen particles' commits) and two
+    chosen particles' trial failures: at n threads the same error line naming the LOWEST id, the
+    same particle state after the failed step, and the same state after a retry, as at 1 thread
+    -- on both material paths (3D elastic threads its material calls, DruckerPrager does not).'''
+    cmds = col3d("gimp", mat=mat)
+    err1, t1 = _child(cmds, 1, kind)
+    assert err1 and _EXPECT[kind] in err1[-1], (kind, mat, err1)
+    lowest = t1["LOWEST"]
+    if kind == "failTrial":
+        assert f"the material of particle {lowest} failed" in err1[-1], err1
+        assert f"(particle id {lowest}," in err1[-1], err1
+    if kind == "failCommit":
+        assert f"first refusing: particle id {lowest}," in err1[-1], err1
+    for nt in _threads_ends():
+        errn, tn = _child(cmds, nt, kind)
+        assert errn == err1, (kind, mat, nt, errn, err1)
+        for tag in ("STATE", "RETRY"):
+            assert tn.get(tag) == t1.get(tag), (kind, mat, nt, tag)
+        if kind != "a7":
+            # the failed / retried steps ran threaded (a7's last step is the refused one too)
+            want = [nt, nt if mat == "elastic" else 1]
+            assert json.loads(tn["THREADS"]) == want, (kind, mat, nt, tn["THREADS"])
 
 
 # --------------------------------------------------------------------------- #
