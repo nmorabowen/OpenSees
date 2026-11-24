@@ -32,6 +32,13 @@ Two models, both after M0b (`Ladruno_scripts/mpm_m0b/models.py`), so the numbers
 
 | Axis | Values |
 |---|---|
+> **Amendment (2026-11-23, before any timed number).** The two rules above conflict in 3D: M2's
+> a × a × 2a quarter column at ppc 2 gives N = 8,192 or 11,664 near 10⁴, neither within 10 %.
+> The harness keeps height = 2 × width (x) and lets the y extent differ, giving N = 9,800,
+> 10,368, 98,496 and 998,400 (`Ladruno_scripts/mpm_bench/models.py`). The only numbers taken
+> before this note are the harness's smoke runs (1 repeat, N ≤ 10⁴, a loaded machine), which are
+> not results and set nothing.
+
 | mode | F (explicit), A (implicit, quasi-static) |
 | basis | `gimp`, `bspline2` |
 | material | `ElasticIsotropic`; `DruckerPrager` (UW, as M2's column / M1's block); `LadrunoSANISAND` (IntScheme 2, the fork's test deck parameters, kPa deck) |
