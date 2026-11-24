@@ -81,6 +81,10 @@ def main():
         print(f"no baseline at {base_path}; run with --record on the idle reference machine")
         return 2
     args.repeats = args.repeats or REPEATS
+    if not args.out:  # the M0b helper would default to mpm_m0b/results
+        import time
+        args.out = str(Path(__file__).resolve().parent / "results"
+                       / f"regress_{time.strftime('%Y%m%d-%H%M%S')}")
     od = C.out_dir(args, "regress")
     try:
         doc = Bn.new_doc(args, "nmb", od)

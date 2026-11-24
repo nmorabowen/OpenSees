@@ -478,6 +478,11 @@ def main():
         return 0
     if args.list:
         return C.list_runs(cfgs, args, "bench", tag_of, default_reps)
+    if not args.out:
+        # the M0b helper's own default is mpm_m0b/results; WP-253 results live beside this script
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        args.out = str(Path(__file__).resolve().parent / "results"
+                       / f"bench_{'smoke' if smoke else args.site}_{stamp}")
     od = C.out_dir(args, "bench" + ("_smoke" if smoke else f"_{args.site}"))
     doc = new_doc(args, args.site, od)
     print(f"[bench] exe == pyd == {doc['builds']['exe']}; machine {doc['machine']['cpu_model']}; "
