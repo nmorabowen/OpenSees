@@ -526,6 +526,13 @@ OPS_LadrunoForceBeamColumn3d()
   bool eleAxialRelease = false;
   int spanLoadMode = 1;
   double gavy = 0.0, gavz = 0.0;
+  bool monoOpt = false;
+  int monoIter = 40, monoHalve = 12;
+  double monoTolIn = 1.0e-5;
+  double monoScaleIn[3] = {1.0e5, 1.0e8, 1.0e-5};
+  double monoAcceptIn[3] = {0.0, 0.0, 1.0e-2};
+  int monoRestartIn = 1, monoStallIn = 6;
+  double monoStallRatioIn = 0.99;
 
   numData = 1;
   while (OPS_GetNumRemainingInputArgs() > 0) {
@@ -1081,6 +1088,91 @@ OPS_LadrunoForceBeamColumn3d()
         return 0;
       }
     }
+    else if (strcmp(type, "-monolithic") == 0 || strcmp(type, "-solveMonolithic") == 0) {
+      // -monolithic [maxIter [tol]]  (WP-255, Model C's element solve)
+      monoOpt = true;
+      double d = 0.0;
+      if (lfbc3dTryOptionalDouble(d)) {
+        if (!(d >= 1.0)) {
+          opserr << "WARNING LadrunoForceBeamColumn3d: -monolithic maxIter must be >= 1\n";
+          delete legacyBi;
+          return 0;
+        }
+        monoIter = (int)d;
+        if (lfbc3dTryOptionalDouble(d)) {
+          if (!std::isfinite(d) || d <= 0.0) {
+            opserr << "WARNING LadrunoForceBeamColumn3d: -monolithic tol must be > 0\n";
+            delete legacyBi;
+            return 0;
+          }
+          monoTolIn = d;
+        }
+      }
+    }
+    else if (strcmp(type, "-monoScale") == 0 || strcmp(type, "-monoAccept") == 0) {
+      // -monoScale sForce sMoment sCompat ; -monoAccept aForce aMoment [aCompat]
+      bool isScale = (strcmp(type, "-monoScale") == 0);
+      double *dst = isScale ? monoScaleIn : monoAcceptIn;
+      int nReq = isScale ? 3 : 2;
+      numData = nReq;
+      if (OPS_GetNumRemainingInputArgs() < nReq || OPS_GetDoubleInput(&numData, dst) < 0) {
+        opserr << "WARNING LadrunoForceBeamColumn3d: " << type << (isScale ? " needs sForce sMoment sCompat\n" : " needs aForce aMoment [aCompat]\n");
+        delete legacyBi;
+        return 0;
+      }
+      numData = 1;
+      if (!isScale) {
+        double d = 0.0;
+        if (lfbc3dTryOptionalDouble(d))
+          dst[2] = d;
+      }
+      for (int k = 0; k < 3; k++) {
+        if (!std::isfinite(dst[k]) || (isScale && dst[k] <= 0.0) || (!isScale && dst[k] < 0.0)) {
+          opserr << "WARNING LadrunoForceBeamColumn3d: invalid " << type << " value\n";
+          delete legacyBi;
+          return 0;
+        }
+      }
+      monoOpt = true;
+    }
+    else if (strcmp(type, "-monoRestart") == 0) {
+      numData = 1;
+      if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetIntInput(&numData, &monoRestartIn) < 0 ||
+          (monoRestartIn != 0 && monoRestartIn != 1)) {
+        opserr << "WARNING LadrunoForceBeamColumn3d: -monoRestart needs 0 or 1\n";
+        delete legacyBi;
+        return 0;
+      }
+      monoOpt = true;
+    }
+    else if (strcmp(type, "-monoStall") == 0) {
+      // -monoStall nIter [ratio]  (nIter 0 disables)
+      numData = 1;
+      if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetIntInput(&numData, &monoStallIn) < 0 || monoStallIn < 0) {
+        opserr << "WARNING LadrunoForceBeamColumn3d: -monoStall needs nIter >= 0 [0 < ratio <= 1]\n";
+        delete legacyBi;
+        return 0;
+      }
+      double d = 0.0;
+      if (lfbc3dTryOptionalDouble(d)) {
+        if (!(d > 0.0 && d <= 1.0)) {
+          opserr << "WARNING LadrunoForceBeamColumn3d: -monoStall ratio must be in (0, 1]\n";
+          delete legacyBi;
+          return 0;
+        }
+        monoStallRatioIn = d;
+      }
+      monoOpt = true;
+    }
+    else if (strcmp(type, "-monoHalve") == 0) {
+      numData = 1;
+      if (OPS_GetNumRemainingInputArgs() < 1 || OPS_GetIntInput(&numData, &monoHalve) < 0 || monoHalve < 0) {
+        opserr << "WARNING LadrunoForceBeamColumn3d: -monoHalve needs n >= 0\n";
+        delete legacyBi;
+        return 0;
+      }
+      monoOpt = true;
+    }
     else {
       opserr << "WARNING LadrunoForceBeamColumn3d: unknown option '" << type << "'\n";
       delete legacyBi;
@@ -1205,6 +1297,15 @@ OPS_LadrunoForceBeamColumn3d()
       gavy, gavz,
       elePmP0t, elePmPbal, elePmMuBal, eleAxialRelease, spanLoadMode);
 
+  if (monoOpt && theEle != 0) {
+    if (((LadrunoForceBeamColumn3d *)theEle)->setMonolithic(monoIter, monoTolIn, monoHalve,
+                                                            monoScaleIn, monoAcceptIn, monoRestartIn,
+                                                            monoStallIn, monoStallRatioIn) != 0) {
+      delete theEle;
+      theEle = 0;
+    }
+  }
+
   delete hZ_tmp;
   delete hY_tmp;
   delete hZJ_tmp;
@@ -1248,8 +1349,13 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d()
     vSolved(NEBD), solvedValid(false), trialFailed(false),
     vSolvedCommit(NEBD), solvedCommitValid(false),
     maxSubdivisions(4), subdivideFactor(10.0),
+    monoOn(false), monoMaxIter(40), monoTol(1.0e-5), monoMaxHalve(12),
+    monoRestart(1), monoStallIter(6), monoStallRatio(0.99),
+    monoLastIter(0), monoNumAccept(0), monoMaxAccRes(0.0), monoLastRes(0.0),
     parameterID(0)
 {
+  monoScale[0] = 1.0e5; monoScale[1] = 1.0e8; monoScale[2] = 1.0e-5;
+  monoAccept[0] = 0.0; monoAccept[1] = 0.0; monoAccept[2] = 1.0e-2;
   load.Zero();
   vCommitBulk.Zero();
   theNodes[0] = 0;
@@ -1326,8 +1432,13 @@ LadrunoForceBeamColumn3d::LadrunoForceBeamColumn3d(
     vSolved(NEBD), solvedValid(false), trialFailed(false),
     vSolvedCommit(NEBD), solvedCommitValid(false),
     maxSubdivisions(maxNumSub), subdivideFactor(subFac),
+    monoOn(false), monoMaxIter(40), monoTol(1.0e-5), monoMaxHalve(12),
+    monoRestart(1), monoStallIter(6), monoStallRatio(0.99),
+    monoLastIter(0), monoNumAccept(0), monoMaxAccRes(0.0), monoLastRes(0.0),
     parameterID(0)
 {
+  monoScale[0] = 1.0e5; monoScale[1] = 1.0e8; monoScale[2] = 1.0e-5;
+  monoAccept[0] = 0.0; monoAccept[1] = 0.0; monoAccept[2] = 1.0e-2;
   if (maxSubdivisions < 1)
     maxSubdivisions = 1;
   if (subdivideFactor < 1.0)
@@ -1664,7 +1775,8 @@ LadrunoForceBeamColumn3d::revertToLastCommit()
 
     sections[i]->setTrialSectionDeformation(vs[i]);
     Ssr[i] = sections[i]->getStressResultant();
-    fs[i] = sections[i]->getSectionFlexibility();
+    if (!monoOn)   // WP-255: the monolithic solve never inverts a section
+      fs[i] = sections[i]->getSectionFlexibility();
     Ssrcommit[i] = Ssr[i];
     fscommit[i] = fs[i];
 
@@ -2586,6 +2698,410 @@ LadrunoForceBeamColumn3d::evalBulkState(const Vector &v_tilde,
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// WP-255: monolithic element state determination ("Model C" element solve).
+//
+// The nested force-based iteration (evalBulkState) corrects each section with its
+// flexibility f_s = K_s^-1 and the element with F^-1. After a shear failure every
+// strip and bar can sit on a flat branch: K_s is singular, f_s does not exist and
+// the inner iterate runs away. Here sections and end forces are solved together,
+//
+//   x = (e_1 .. e_n, q)                       (sum of section orders + 6 unknowns)
+//   R_i = (s_i(e_i) - b_i q - s_p,i) / sc     section equilibrium, per IP
+//   R_c = (sum_i w_i L b_i^T e_i + v_sh(q) - v) / sc_c   compatibility
+//
+// by Newton on the block matrix [K_s,i/sc, -b_i/sc; w_i L b_i^T/sc_c, dv_sh/dq/sc_c]
+// with a backtracking line search, exactly as Model C's `Element.solve`. A section
+// is never inverted; only the whole block matrix must be non-singular. The element
+// tangent dq/dv follows from the same matrix with six right-hand sides.
+// ---------------------------------------------------------------------------
+
+static inline bool
+lfbc3dMonoIsMoment(int code)
+{
+  return code == SECTION_RESPONSE_MZ || code == SECTION_RESPONSE_MY || code == SECTION_RESPONSE_T;
+}
+
+int
+LadrunoForceBeamColumn3d::setMonolithic(int maxIter, double tol, int maxHalve,
+                                        const double scale[3], const double accept[3],
+                                        int restart, int stallIter, double stallRatio)
+{
+  if (hingeOn) {
+    opserr << "WARNING LadrunoForceBeamColumn3d " << this->getTag()
+           << ": -monolithic is not available with embedded hinges\n";
+    return -1;
+  }
+  if (axialRelease) {
+    opserr << "WARNING LadrunoForceBeamColumn3d " << this->getTag()
+           << ": -monolithic is not available with -axialRelease\n";
+    return -1;
+  }
+  int ne = 0;
+  for (int i = 0; i < numSections; i++)
+    ne += sections[i]->getOrder();
+  if (ne + NEBD > 400) {
+    opserr << "WARNING LadrunoForceBeamColumn3d " << this->getTag()
+           << ": -monolithic system too large (" << ne + NEBD << " unknowns)\n";
+    return -1;
+  }
+  monoOn = true;
+  monoMaxIter = maxIter;
+  monoTol = tol;
+  monoMaxHalve = maxHalve;
+  monoRestart = restart;
+  monoStallIter = stallIter;
+  monoStallRatio = stallRatio;
+  for (int k = 0; k < 3; k++) {
+    monoScale[k] = scale[k];
+    monoAccept[k] = accept[k];
+  }
+  return 0;
+}
+
+int
+LadrunoForceBeamColumn3d::monoResidual(const Vector &x, const Vector &v_tilde, bool wantJ,
+                                       Vector &R, Matrix &J, const int *off, const double *xi,
+                                       const double *wt, double L)
+{
+  const double oneOverL = 1.0 / L;
+  const int ne = off[numSections];
+  const double sF = monoScale[0], sM = monoScale[1], sC = monoScale[2];
+  // compatibility scale per basic deformation: du is a length, scaled as a mean strain
+  double scc[NEBD];
+  scc[0] = sC * L;
+  for (int k = 1; k < NEBD; k++)
+    scc[k] = sC;
+
+  R.Zero();
+  if (wantJ)
+    J.Zero();
+
+  double vr[NEBD];
+  for (int k = 0; k < NEBD; k++)
+    vr[k] = 0.0;
+
+  static thread_local Vector Ss;
+  static thread_local Vector ei;
+
+  for (int i = 0; i < numSections; i++) {
+    const int order = sections[i]->getOrder();
+    const ID &code = sections[i]->getType();
+    const int o = off[i];
+    const double xL = xi[i];
+    const double xL1 = xL - 1.0;
+    const double wtL = wt[i] * L;
+
+    if (lchMode == 1)
+      current_section_lch = L;
+    else if (lchMode == 2)
+      current_section_lch = userLch;
+    else
+      current_section_lch = wtL;
+
+    if (ei.Size() != order) ei.resize(order);
+    if (Ss.Size() != order) Ss.resize(order);
+    for (int ii = 0; ii < order; ii++)
+      ei(ii) = x(o + ii);
+
+    if (sections[i]->setTrialSectionDeformation(ei) < 0)
+      return -1;
+    const Vector &s = sections[i]->getStressResultant();
+
+    // section force in equilibrium with q (plus member loads)
+    for (int ii = 0; ii < order; ii++) {
+      switch (code(ii)) {
+      case SECTION_RESPONSE_P:  Ss(ii) = x(ne + 0); break;
+      case SECTION_RESPONSE_MZ: Ss(ii) = xL1 * x(ne + 1) + xL * x(ne + 2); break;
+      case SECTION_RESPONSE_VY: Ss(ii) = oneOverL * (x(ne + 1) + x(ne + 2)); break;
+      case SECTION_RESPONSE_MY: Ss(ii) = xL1 * x(ne + 3) + xL * x(ne + 4); break;
+      case SECTION_RESPONSE_VZ: Ss(ii) = oneOverL * (x(ne + 3) + x(ne + 4)); break;
+      case SECTION_RESPONSE_T:  Ss(ii) = x(ne + 5); break;
+      default:                  Ss(ii) = 0.0; break;
+      }
+    }
+    if (numEleLoads > 0)
+      this->computeSectionForces(Ss, i);
+
+    for (int ii = 0; ii < order; ii++) {
+      const double sc = lfbc3dMonoIsMoment(code(ii)) ? sM : sF;
+      const double r = s(ii) - Ss(ii);
+      if (!std::isfinite(r))
+        return -1;
+      R(o + ii) = r / sc;
+    }
+
+    if (wantJ) {
+      const Matrix &ks = sections[i]->getSectionTangent();
+      for (int ii = 0; ii < order; ii++) {
+        const double sc = lfbc3dMonoIsMoment(code(ii)) ? sM : sF;
+        for (int jj = 0; jj < order; jj++)
+          J(o + ii, o + jj) = ks(ii, jj) / sc;
+        switch (code(ii)) {
+        case SECTION_RESPONSE_P:
+          J(o + ii, ne + 0) = -1.0 / sc; break;
+        case SECTION_RESPONSE_MZ:
+          J(o + ii, ne + 1) = -xL1 / sc; J(o + ii, ne + 2) = -xL / sc; break;
+        case SECTION_RESPONSE_VY:
+          J(o + ii, ne + 1) = -oneOverL / sc; J(o + ii, ne + 2) = -oneOverL / sc; break;
+        case SECTION_RESPONSE_MY:
+          J(o + ii, ne + 3) = -xL1 / sc; J(o + ii, ne + 4) = -xL / sc; break;
+        case SECTION_RESPONSE_VZ:
+          J(o + ii, ne + 3) = -oneOverL / sc; J(o + ii, ne + 4) = -oneOverL / sc; break;
+        case SECTION_RESPONSE_T:
+          J(o + ii, ne + 5) = -1.0 / sc; break;
+        default:
+          break;
+        }
+      }
+    }
+
+    // compatibility: v = sum_i w_i L b_i^T e_i
+    for (int ii = 0; ii < order; ii++) {
+      const double e = x(o + ii);
+      switch (code(ii)) {
+      case SECTION_RESPONSE_P:
+        vr[0] += wtL * e;
+        if (wantJ) J(ne + 0, o + ii) = wtL / scc[0];
+        break;
+      case SECTION_RESPONSE_MZ:
+        vr[1] += xL1 * wtL * e; vr[2] += xL * wtL * e;
+        if (wantJ) { J(ne + 1, o + ii) = xL1 * wtL / scc[1]; J(ne + 2, o + ii) = xL * wtL / scc[2]; }
+        break;
+      case SECTION_RESPONSE_VY:
+        vr[1] += oneOverL * wtL * e; vr[2] += oneOverL * wtL * e;
+        if (wantJ) { J(ne + 1, o + ii) = oneOverL * wtL / scc[1]; J(ne + 2, o + ii) = oneOverL * wtL / scc[2]; }
+        break;
+      case SECTION_RESPONSE_MY:
+        vr[3] += xL1 * wtL * e; vr[4] += xL * wtL * e;
+        if (wantJ) { J(ne + 3, o + ii) = xL1 * wtL / scc[3]; J(ne + 4, o + ii) = xL * wtL / scc[4]; }
+        break;
+      case SECTION_RESPONSE_VZ:
+        vr[3] += oneOverL * wtL * e; vr[4] += oneOverL * wtL * e;
+        if (wantJ) { J(ne + 3, o + ii) = oneOverL * wtL / scc[3]; J(ne + 4, o + ii) = oneOverL * wtL / scc[4]; }
+        break;
+      case SECTION_RESPONSE_T:
+        vr[5] += wtL * e;
+        if (wantJ) J(ne + 5, o + ii) = wtL / scc[5];
+        break;
+      default:
+        break;
+      }
+    }
+  }
+  current_section_lch = (lchMode == 2) ? userLch : L;
+
+  // element-level shear flexibility (-shear) and the default torsion of evalBulkState
+  if (GAvy > 0.0) {
+    const double fsY = oneOverL / GAvy;
+    const double d = fsY * (x(ne + 1) + x(ne + 2));
+    vr[1] += d; vr[2] += d;
+    if (wantJ) {
+      J(ne + 1, ne + 1) += fsY / scc[1]; J(ne + 1, ne + 2) += fsY / scc[1];
+      J(ne + 2, ne + 1) += fsY / scc[2]; J(ne + 2, ne + 2) += fsY / scc[2];
+    }
+  }
+  if (GAvz > 0.0) {
+    const double fsZ = oneOverL / GAvz;
+    const double d = fsZ * (x(ne + 3) + x(ne + 4));
+    vr[3] += d; vr[4] += d;
+    if (wantJ) {
+      J(ne + 3, ne + 3) += fsZ / scc[3]; J(ne + 3, ne + 4) += fsZ / scc[3];
+      J(ne + 4, ne + 3) += fsZ / scc[4]; J(ne + 4, ne + 4) += fsZ / scc[4];
+    }
+  }
+  if (!isTorsion) {
+    vr[5] = x(ne + 5) * DefaultLoverGJ;
+    if (wantJ) J(ne + 5, ne + 5) = DefaultLoverGJ / scc[5];
+  }
+
+  for (int k = 0; k < NEBD; k++)
+    R(ne + k) = (vr[k] - v_tilde(k)) / scc[k];
+  return 0;
+}
+
+int
+LadrunoForceBeamColumn3d::evalBulkStateMono(const Vector &v_tilde,
+                                            Vector &Se_out, Matrix &Kbulk_out, bool commitSubdivide)
+{
+  const double L = crdTransf->getInitialLength();
+  double xi[maxNumSections], wt[maxNumSections];
+  beamIntegr->getSectionLocations(numSections, L, xi);
+  beamIntegr->getSectionWeights(numSections, L, wt);
+
+  int off[maxNumSections + 1];
+  off[0] = 0;
+  for (int i = 0; i < numSections; i++)
+    off[i + 1] = off[i] + sections[i]->getOrder();
+  const int ne = off[numSections];
+  const int N = ne + NEBD;
+
+  static thread_local Matrix J, Jt, B, X;
+  static thread_local Vector R, Rt, x, xt, dx, mR;
+  if (J.noRows() != N) {
+    J.resize(N, N); Jt.resize(N, N);
+    B.resize(N, NEBD); X.resize(N, NEBD);
+    R.resize(N); Rt.resize(N); x.resize(N); xt.resize(N); dx.resize(N); mR.resize(N);
+  }
+
+  // Start points: the last trial solution, then (if that fails) the committed one.
+  // Model C restarts every solve from its last converged, committed state; here the
+  // trial state left by a poor global iterate can be far from the solution, so the
+  // committed state is the fallback start (skipped when it is the same point).
+  static thread_local Vector xBest;
+  if (xBest.Size() != N) xBest.resize(N);
+  double nrBest = DBL_MAX;
+  bool converged = false, atX = true;
+  double nr = DBL_MAX;
+  int it = 0, itTot = 0;
+  const int nPass = monoRestart ? 2 : 1;
+  static thread_local std::vector<double> hist;
+  for (int pass = 0; pass < nPass && !converged; pass++) {
+    if (pass == 1) {
+      bool same = true;
+      for (int k = 0; k < NEBD && same; k++)
+        if (Se(k) != Secommit(k)) same = false;
+      for (int i = 0; i < numSections && same; i++)
+        for (int ii = 0; ii < off[i + 1] - off[i]; ii++)
+          if (vs[i](ii) != vscommit[i](ii)) { same = false; break; }
+      if (same)
+        break;
+    }
+    const Vector *vStart = (pass == 0) ? vs : vscommit;
+    const Vector &qStart = (pass == 0) ? Se : Secommit;
+    for (int i = 0; i < numSections; i++)
+      for (int ii = 0; ii < off[i + 1] - off[i]; ii++)
+        x(off[i] + ii) = vStart[i](ii);
+    for (int k = 0; k < NEBD; k++)
+      x(ne + k) = qStart(k);
+
+    if (this->monoResidual(x, v_tilde, true, R, J, off, xi, wt, L) != 0)
+      continue;
+    atX = true;
+    nr = R.Norm();
+    hist.clear();
+    for (it = 0; it < monoMaxIter; it++) {
+      if (nr < monoTol) { converged = true; break; }
+      // stagnation: a failing solve should fail fast; the global Newton calls this
+      // once per global iteration, Model C once per step
+      hist.push_back(nr);
+      if (monoStallIter > 0 && (int)hist.size() > monoStallIter &&
+          nr > monoStallRatio * hist[hist.size() - 1 - monoStallIter])
+        break;
+      mR = R; mR *= -1.0;
+      if (J.Solve(mR, dx) < 0)
+        break;
+      double lam = 1.0;
+      bool moved = false;
+      for (int h = 0; h <= monoMaxHalve; h++) {
+        xt = x; xt.addVector(1.0, dx, lam);
+        atX = false;
+        double nt = DBL_MAX;
+        if (this->monoResidual(xt, v_tilde, false, Rt, Jt, off, xi, wt, L) == 0) {
+          nt = Rt.Norm();
+          if (!std::isfinite(nt)) nt = DBL_MAX;
+        }
+        if (nt < (1.0 - 1.0e-4 * lam) * nr) {
+          x = xt; moved = true;
+          break;
+        }
+        lam *= 0.5;
+      }
+      if (!moved)
+        break;
+      if (this->monoResidual(x, v_tilde, true, R, J, off, xi, wt, L) != 0) {
+        nr = DBL_MAX;
+        break;
+      }
+      atX = true;
+      nr = R.Norm();
+    }
+    itTot += it;
+    if (!converged && nr < monoTol)
+      converged = true;
+    if (nr < nrBest) {
+      nrBest = nr;
+      xBest = x;
+    }
+  }
+  monoLastIter = itTot;
+
+  if (nrBest == DBL_MAX) {
+    opserr << "LadrunoForceBeamColumn3d::evalBulkStateMono() - section failed at every start point, element "
+           << this->getTag() << endln;
+    return -1;
+  }
+  if (!converged || !atX || nr != nrBest) {
+    // put the sections (and R, J) back on the best point
+    x = xBest;
+    if (this->monoResidual(x, v_tilde, true, R, J, off, xi, wt, L) != 0)
+      return -1;
+    atX = true;
+    nr = R.Norm();
+  }
+  it = itTot;
+  monoLastRes = nr;
+
+  if (!converged && monoAccept[0] > 0.0) {
+    // Model C's acceptance of a stagnated solve: every section force residual below
+    // aForce (aMoment for moments) and the scaled compatibility below aCompat
+    bool ok = true;
+    double maxF = 0.0;
+    for (int i = 0; i < numSections && ok; i++) {
+      const ID &code = sections[i]->getType();
+      for (int ii = 0; ii < off[i + 1] - off[i]; ii++) {
+        const bool mom = lfbc3dMonoIsMoment(code(ii));
+        const double r = fabs(R(off[i] + ii)) * (mom ? monoScale[1] : monoScale[0]);
+        if (r >= (mom ? monoAccept[1] : monoAccept[0])) { ok = false; break; }
+        if (!mom && r > maxF) maxF = r;
+      }
+    }
+    for (int k = 0; k < NEBD && ok; k++)
+      if (fabs(R(ne + k)) >= monoAccept[2])
+        ok = false;
+    if (ok) {
+      converged = true;
+      monoNumAccept++;
+      if (maxF > monoMaxAccRes) monoMaxAccRes = maxF;
+    }
+  }
+
+  if (!converged) {
+    { LadrunoOutputGuard ladrunoOut;
+      opserr << "WARNING - LadrunoForceBeamColumn3d::update - monolithic solve failed for element "
+             << this->getTag() << " (scaled residual " << nr << " after " << it << " iterations, tol "
+             << monoTol << ")\n"; }
+    return -1;
+  }
+
+  // element tangent dq/dv: J [de; dq] = -dR/dv dv, dR_c/dv_k = -1/scc_k
+  B.Zero();
+  B(ne + 0, 0) = 1.0 / (monoScale[2] * L);
+  for (int k = 1; k < NEBD; k++)
+    B(ne + k, k) = 1.0 / monoScale[2];
+  if (J.Solve(B, X) < 0) {
+    opserr << "LadrunoForceBeamColumn3d::evalBulkStateMono() - singular element matrix at the solution, element "
+           << this->getTag() << endln;
+    return -1;
+  }
+  for (int r = 0; r < NEBD; r++) {
+    Se_out(r) = x(ne + r);
+    for (int c = 0; c < NEBD; c++)
+      Kbulk_out(r, c) = X(ne + r, c);
+  }
+
+  if (commitSubdivide) {
+    for (int i = 0; i < numSections; i++) {
+      const int order = off[i + 1] - off[i];
+      for (int ii = 0; ii < order; ii++)
+        vs[i](ii) = x(off[i] + ii);
+      Ssr[i] = sections[i]->getStressResultant();
+    }
+    vTrialBulk = v_tilde;
+  }
+  return 0;
+}
+
 int
 LadrunoForceBeamColumn3d::solveHingeState(const Vector &v)
 {
@@ -3108,6 +3624,9 @@ LadrunoForceBeamColumn3d::update()
   int err = 0;
   if (hingeOn) {
     err = this->solveHingeState(v);
+  } else if (monoOn && initialFlag != 2) {
+    err = this->evalBulkStateMono(v, Se, kvbulk, true);
+    kv = kvbulk;
   } else {
     err = this->evalBulkState(v, Se, kvbulk, true);
     kv = kvbulk;
@@ -4809,6 +5328,11 @@ LadrunoForceBeamColumn3d::setResponse(const char **argv, int argc, OPS_Stream &o
   else if (strcmp(argv[0], "integrationWeights") == 0) {
     theResponse = new ElementResponse(this, 11, Vector(numSections));
   }
+  else if (strcmp(argv[0], "monoStats") == 0) {
+    // WP-255: [monolithic on, last Newton iterations, last scaled residual,
+    //          accepted solves, largest accepted force residual]
+    theResponse = new ElementResponse(this, 2551, Vector(5));
+  }
   else if (strcmp(argv[0], "sectionTags") == 0) {
     theResponse = new ElementResponse(this, 110, ID(numSections));
   }
@@ -5205,6 +5729,16 @@ LadrunoForceBeamColumn3d::getResponse(int responseID, Information &eleInfo)
     return eleInfo.setVector(locs);
   }
 
+  else if (responseID == 2551) {
+    Vector st(5);
+    st(0) = monoOn ? 1.0 : 0.0;
+    st(1) = monoLastIter;
+    st(2) = monoLastRes;
+    st(3) = monoNumAccept;
+    st(4) = monoMaxAccRes;
+    return eleInfo.setVector(st);
+  }
+
   else if (responseID == 11) {
     double L = crdTransf->getInitialLength();
     double wts[maxNumSections];
@@ -5477,6 +6011,15 @@ LadrunoForceBeamColumn3d::setParameter(const char **argv, int argc, Parameter &p
     param.setValue(GAvz);
     return param.addObject(4, this);
   }
+  // WP-255: monolithic-solve switches a driver can flip between attempts
+  if (monoOn && strcmp(argv[0], "monoRestart") == 0) {
+    param.setValue(monoRestart);
+    return param.addObject(2551, this);
+  }
+  if (monoOn && strcmp(argv[0], "monoStall") == 0) {
+    param.setValue(monoStallIter);
+    return param.addObject(2552, this);
+  }
 
   if (hingeOn && argc >= 2) {
     if (strcmp(argv[0], "hingeI") == 0 || strcmp(argv[0], "hingeZI") == 0 || strcmp(argv[0], "hinge1") == 0) {
@@ -5668,6 +6211,14 @@ LadrunoForceBeamColumn3d::updateParameter(int parameterID, Information &info)
 {
   if (parameterID == 1) {
     rho = info.theDouble;
+    return 0;
+  }
+  if (parameterID == 2551) {
+    monoRestart = (info.theDouble != 0.0) ? 1 : 0;
+    return 0;
+  }
+  if (parameterID == 2552) {
+    monoStallIter = (info.theDouble > 0.0) ? (int)info.theDouble : 0;
     return 0;
   }
   if (parameterID == 2 || parameterID == 3 || parameterID == 4 || parameterID == 5) {

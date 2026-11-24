@@ -138,6 +138,15 @@ class LadrunoForceBeamColumn3d : public Element
 
   int setParameter(const char **argv, int argc, Parameter &param);
   int updateParameter(int parameterID, Information &info);
+
+  // WP-255: opt-in monolithic element state determination (Model C's element solve).
+  // Newton on x = (e_1..e_n, q) with the section tangents K_s (a section is never
+  // inverted), backtracking line search, scaled residual, optional acceptance of a
+  // stagnated solve. scale = {force, moment, compatibility}; accept = {force,
+  // moment, scaled compatibility}, accept[0] <= 0 disables it.
+  int setMonolithic(int maxIter, double tol, int maxHalve,
+                    const double scale[3], const double accept[3],
+                    int restart = 1, int stallIter = 6, double stallRatio = 0.99);
   int activateParameter(int parameterID);
   const Vector &getResistingForceSensitivity(int gradNumber);
   const Matrix &getKiSensitivity(int gradNumber);
@@ -163,6 +172,11 @@ class LadrunoForceBeamColumn3d : public Element
   int evalBulkState(const Vector &v_tilde,
                     Vector &Se_out, Matrix &Kbulk_out, bool commitSubdivide = false);
   int solveHingeState(const Vector &v);
+  int evalBulkStateMono(const Vector &v_tilde,
+                        Vector &Se_out, Matrix &Kbulk_out, bool commitSubdivide);
+  int monoResidual(const Vector &x, const Vector &v_tilde, bool wantJ,
+                   Vector &R, Matrix &J, const int *off, const double *xi,
+                   const double *wt, double L);
 
   ID connectedExternalNodes;
 
@@ -301,6 +315,21 @@ class LadrunoForceBeamColumn3d : public Element
 
   int maxSubdivisions;
   double subdivideFactor;
+
+  // WP-255 monolithic mode (setMonolithic). Not serialized by sendSelf/recvSelf yet.
+  bool monoOn;
+  int monoMaxIter;
+  double monoTol;
+  int monoMaxHalve;
+  double monoScale[3];
+  double monoAccept[3];
+  int monoRestart;         // 1: retry from the committed state when the trial start fails
+  int monoStallIter;       // stop when ||R|| fell by less than (1 - monoStallRatio)
+  double monoStallRatio;   //   over the last monoStallIter iterations (0 = never)
+  int monoLastIter;        // Newton iterations of the last solve
+  int monoNumAccept;       // solves accepted by the acceptance test (all calls)
+  double monoMaxAccRes;    // largest unscaled force residual accepted
+  double monoLastRes;      // scaled residual norm at the end of the last solve
 
   static thread_local Vector vsSubdivide[maxNumSections];
   static thread_local Vector SsrSubdivide[maxNumSections];
