@@ -441,7 +441,7 @@ def build_parser():
     ap.add_argument("--dry-run", action="store_true", help="print the selected rows with their "
                     "model sizes and exit")
     ap.add_argument("--rerun-from", default=None, help="a results JSON: re-run only its rows whose "
-                    "spread exceeds 10 % with 5 repeats (pre-registration section 4)")
+                    "spread exceeds 10 %% with 5 repeats (pre-registration section 4)")
     ap.add_argument("--warmup", type=int, default=None)
     ap.add_argument("--timed", type=int, default=None)
     return ap

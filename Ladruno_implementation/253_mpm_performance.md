@@ -133,7 +133,41 @@ Exclusions fixed now, with their reason:
 
 ## The #1097 target
 
-*Committed after the baseline profile, before any code change.*
+*Committed after the baseline profile, before any code change (2026-11-23).* Baseline: build
+`0efa8ca17` (origin `a3820d5ac` + scopes, bit-identical to origin with the profiler off, coarse
+and deep), nmb, 1 thread, 3 repeats, `Ladruno_scripts/mpm_bench/results/baseline_F_t1/`.
+
+**What the profile says (3D `gimp` elastic, N = 98,496, 725 ns per particle-step, spread 6 %;
+M2 measured 722):** `mpm.f.update` 41.1 % (of which the material ≈ 9.4 % of the step — the rest is
+ΔF, the polar decomposition and the stress push), `mpm.f.p2g` 21.1 %, `mpm.f.support` 15.8 %,
+`mpm.f.g2p` 10.5 %, `mpm.f.project2` 5.7 %, `mpm.f.commit` 2.2 %, `mpm.f.dtcrit` 2.0 %,
+`mpm.f.grid` 0.6 %, `mpm.f.admissible` 0.5 %, other 0.4 %. The dominant loop is the particle
+update's kinematics (≈ 32 % of the step), then P2G and the support search. **No sub-loop is
+inherently serial**: all are per particle or per node. What stays serial under §5 is the touched
+list in first-touch order, the image folds and the gather's transpose, estimated at ≤ 5 % of
+the step. DP: the material is 49.6 % of the step (3D gimp 10⁵); 2D elastic: 14.1 %
+(`ElasticIsotropicPlaneStrain2D` is not `ladrunoThreadSafeForm`, so its calls stay serial).
+
+**Amdahl bounds at 8 threads** (serial fraction s): 3D elastic s ≈ 0.05 → 5.9×; 2D elastic
+s ≈ 0.19 (material + residue) → 3.4×; DP s ≈ 0.55 → 1.6×; SANISAND s ≈ 0.9 → 1.1×. The
+transfer loops are memory-bound and the i7's 8 P-cores share one memory controller, so the
+targets sit below the bounds:
+
+| # | Row (mode F, nmb unless stated) | Target |
+|---|---|---|
+| T1 (#1097 headline) | 3D `gimp` elastic, 10⁵, 8 threads | **S(8) ≥ 4.0** (T ≥ 5.5 M particle-steps/s; non-material ns per particle-step from ~657 to ≤ 165) |
+| T2 | 3D `gimp` and `bspline2` elastic, 10⁵, 4 threads | S(4) ≥ 2.5 |
+| T3 | 3D `bspline2` elastic, 10⁵, 8 threads | S(8) ≥ 4.0 |
+| T4 | 2D `gimp` and `bspline2` elastic, 10⁵, 8 threads | S(8) ≥ 2.5 |
+| T5 | DP, 2D and 3D, both bases, 10⁵, 8 threads | S(8) ≥ 1.4 |
+| T6 | SANISAND rows | reported only; S(n) ≥ 0.95 (threads never slow a run down) |
+| T7 | every row at 1 thread, after vs baseline | G(1) within noise (§4) of 1.0, and bit-identical results |
+| T8 | every row, every n | bit-identical to 1 thread (§2) |
+| T9 | esmeralda, 3D `gimp` elastic, 10⁶, 24 threads | S(24) ≥ 8.0 |
+
+T1–T5 and T9 are read on the medians, with §4's noise rule: a median under its target by less
+than its spread is reported as "within noise of the target", not as a pass. A miss goes to the
+owner.
 
 ## Results
 
