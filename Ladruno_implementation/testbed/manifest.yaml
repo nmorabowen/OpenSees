@@ -2471,6 +2471,8 @@ features:
     tests:
       - tests/test_ladrunoMCFTStrip.py
       - tests/test_ladrunoMCFTStrip_cpp.py
+      - tests/test_ladrunoMCFTStrip_cyclic.py
+      - tests/test_ladrunoMCFTStrip_cyclic_cpp.py
     tcl: WAIVED(classic-Tcl runs through OpenSees.exe inside tests/test_ladrunoMCFTStrip.py::test_classic_tcl_engine_gives_the_same_section)
     zone_b: []
     core_files:
