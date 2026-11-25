@@ -203,6 +203,9 @@ static const OptSpec kLadrunoNDFiberOptions[] = {
   {"-shearResultant", 1, "WP-245"},
   {"-alpha",          1, "WP-245"},
   {"-noCentroid",     0, "WP-245"},
+  // Ladruno WP-252: the section tangent by forward differences of the resultants
+  {"-tangent",        1, "WP-252"},
+  {"-tangentStep",    1, "WP-252"},
 };
 
 // LadrunoUniaxialFiber (WP-245, nD 33030): a uniaxial material as a beam fibre.
