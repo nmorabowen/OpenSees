@@ -49,6 +49,19 @@
 //     strain esu, elastic unloading from a committed plastic strain clipped to
 //     the backbone of each sign, no Bauschinger effect.
 //
+// Cyclic strut degradation (WP-256, opt-in, Strip::ccyc > 0; off = Model C bit for bit):
+// Model C's strut remembers only the maximum principal strains, so repeated cycles to
+// one drift retrace the same envelope. With the option on, the committed memory adds the
+// cumulative crack RE-opening P (the increases of (e1 - ecr)+ that stay below its
+// previous maximum, each weighted by the opening reached to the power mcyc, default 0;
+// driver 1 also counts the strut's re-compression below its previous maximum the same way;
+// a monotonic path adds exactly zero), and the strut stress carries
+//     beta_cyc = 1 / (1 + ccyc P),   P = P_committed + the trial's own re-opening increment
+// (implicit: the damage of the converged trial is the damage commit stores, so a committed
+// state re-solves to itself),
+// on top of beta(e1): a damage indicator on the compression response driven by crack
+// cycling, in the spirit of the cyclic compression damage of Palermo & Vecchio (2003).
+//
 // Root rule (the branch rule that matters at the cracking fold, where light
 // ties, rho_t fyt < fcr, make the uncracked root vanish):
 //   - before the first commit: bisection over [-0.004, 0.15];
@@ -168,7 +181,10 @@ struct Strip {
   Concrete conc;
   Steel tie;
   double rho;           // smeared tie ratio across the strip (0: no ties)
-  Strip() : rho(0.0) {}
+  double ccyc;          // WP-256 cyclic strut degradation, beta_cyc = 1/(1 + ccyc P); 0 = off (Model C)
+  double mcyc;          // WP-256 weight exponent: dP = (re-opening) * (opening)^mcyc; 0 = unweighted
+  int    cdrv;          // WP-256 driver: 0 = crack re-opening only, 1 = also strut re-compression
+  Strip() : rho(0.0), ccyc(0.0), mcyc(0.0), cdrv(0) {}
 };
 
 // committed memory of one strip (06 §2.8)
@@ -177,8 +193,41 @@ struct Hist {
   double em1, em2;      // max principal tension, max principal compression magnitude
   double ept;           // tie plastic strain
   bool   used;          // false until the first commit
-  Hist() : ey(0.0), em1(0.0), em2(0.0), ept(0.0), used(false) {}
+  // cyclic degradation memory (WP-256; carried but unused when Strip::ccyc == 0)
+  double e1c;           // committed crack opening (e1 - ecr)+ at the last commit
+  double reopen;        // cumulative re-opening (and, driver 1, re-compression) below the previous maxima
+  double e2c;           // committed strut compression (-e2 - 0.5 ep)+ at the last commit (driver 1)
+  Hist() : ey(0.0), em1(0.0), em2(0.0), ept(0.0), used(false), e1c(0.0), reopen(0.0), e2c(0.0) {}
 };
+
+// WP-256 cumulative crack re-opening at a trial principal tension e1: the committed P plus
+// the part of this step's opening increment that stays below the previous maximum opening.
+// A monotonic path adds exactly zero (min(e, emax) - e1c = emax - emax).
+inline double reopenTrial(const Strip& S, const Hist& H, double e1, double e2)
+{
+  double P = H.reopen;
+  const double emaxOld = std::max(H.em1 - S.conc.ecr, 0.0);
+  const double e1p = std::max(e1 - S.conc.ecr, 0.0);
+  const double up = std::min(e1p, emaxOld) - H.e1c;
+  // weighted by the opening reached (mcyc > 0): wide cracks grind the strut more than narrow ones
+  if (up > 0.0) P = (S.mcyc != 0.0) ? P + up * pow(std::min(e1p, emaxOld), S.mcyc) : P + up;
+  if (S.cdrv == 1) {
+    // driver 1: also the strut's re-compression below its previous maximum compression
+    // measured above 0.5 ep (micro-cracking onset), as the opening is measured above ecr
+    const double c0 = 0.5 * S.conc.ep;
+    const double cmaxOld = std::max(H.em2 - c0, 0.0);
+    const double ccp = std::max(-e2 - c0, 0.0);
+    const double uc = std::min(ccp, cmaxOld) - H.e2c;
+    if (uc > 0.0) P = (S.mcyc != 0.0) ? P + uc * pow(std::min(ccp, cmaxOld), S.mcyc) : P + uc;
+  }
+  return P;
+}
+
+// WP-256 cyclic strut degradation factor for a given P (1 when the option is off)
+inline double betaCyclic(const Strip& S, double P)
+{
+  return (S.ccyc > 0.0) ? 1.0 / (1.0 + S.ccyc * P) : 1.0;
+}
 
 // membrane response at a given eps_y
 struct Out {
@@ -217,6 +266,7 @@ inline void membrane(const Strip& S, const Hist& H, double ex, double ey, double
     }
     else fcomp = fEnv(C, cc);
     f2 = -beta * fcomp;
+    if (S.ccyc > 0.0) f2 *= betaCyclic(S, reopenTrial(S, H, e1, e2));   // WP-256, opt-in; off = Model C bit for bit
   }
   // tension, then the crack check 'sum' (06 §2.6); biaxial compression: f1 = -f(-e1)
   const double phi = 0.5 * atan2(sin2, cos2);
@@ -320,6 +370,7 @@ inline int evaluate(const Strip& S, const Hist& H, double ex, double g, double& 
 // Commit (06 §2.8): o is the converged trial state at eps_y = ey.
 inline void commit(const Strip& S, Hist& H, double ey, const Out& o)
 {
+  const double emPrev = H.em1, em2Prev = H.em2;   // maxima before this commit (WP-256)
   if (H.used) {
     H.em1 = std::max(H.em1, o.e1);
     H.em2 = std::max(H.em2, std::max(-o.e2, 0.0));
@@ -328,6 +379,14 @@ inline void commit(const Strip& S, Hist& H, double ey, const Out& o)
     H.em2 = std::max(0.0, -o.e2);
   }
   if (S.rho != 0.0) H.ept = ey - steelStress(S.tie, ey, H.ept) / S.tie.Es;
+  // WP-256: store the re-opening the converged trial used (reopenTrial with the memory
+  // before this commit), and the opening it reached.
+  {
+    Hist Hprev = H; Hprev.em1 = emPrev; Hprev.em2 = em2Prev;
+    H.reopen = reopenTrial(S, Hprev, o.e1, o.e2);
+    H.e1c = std::max(o.e1 - S.conc.ecr, 0.0);
+    H.e2c = std::max(-o.e2 - 0.5 * S.conc.ep, 0.0);
+  }
   H.ey = ey;
   H.used = true;
 }

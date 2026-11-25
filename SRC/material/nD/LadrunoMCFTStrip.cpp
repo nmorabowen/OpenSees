@@ -36,6 +36,7 @@
 #include <string.h>
 #include <math.h>
 #include <cmath>
+#include <cstdlib>
 
 using namespace ladruno_mcft;
 
@@ -45,7 +46,7 @@ void* OPS_LadrunoMCFTStrip()
   if (OPS_GetNumRemainingInputArgs() < 5) {
     opserr << "ERROR nDMaterial LadrunoMCFTStrip: want  nDMaterial LadrunoMCFTStrip $tag $fc $fp $ep "
               "$e20 -crackSpacing $smx $smy [-ties $rho $fyt $fut] [-tieSteel $Es $esh $esu] "
-              "[-agg $a] [-betaC $C] [-cvci $c] [-Gxz $G] [-tangentStep $h]\n";
+              "[-agg $a] [-betaC $C] [-cvci $c] [-Gxz $G] [-tangentStep $h] [-cyclicDegradation $Ccyc [$m]] [-cyclicDriver tension|both]\n";
     return 0;
   }
   int tag, one = 1;
@@ -67,6 +68,16 @@ void* OPS_LadrunoMCFTStrip()
     const ladruno_opt::OptSpec* o = ladruno_opt::find(ladruno_opt::kLadrunoMCFTStripOptions, opt);
     if (o == 0) { ladruno_opt::reportUnknown("LadrunoMCFTStrip", tag, opt, ladruno_opt::kLadrunoMCFTStripOptions); return 0; }
     if (!ladruno_opt::haveValues(OWNER, tag, *o)) return 0;
+    if (strcmp(opt, "-cyclicDriver") == 0) {             // WP-256: a word, not a number
+      const char* w = OPS_GetString();
+      if (w != 0 && strcmp(w, "tension") == 0) S.cdrv = 0;
+      else if (w != 0 && strcmp(w, "both") == 0) S.cdrv = 1;
+      else {
+        opserr << "ERROR nDMaterial LadrunoMCFTStrip " << tag << ": -cyclicDriver wants tension or both\n";
+        return 0;
+      }
+      continue;
+    }
     double v[3];
     int n = o->nargs;
     if (n > 0 && OPS_GetDoubleInput(&n, v) < 0) {
@@ -88,6 +99,22 @@ void* OPS_LadrunoMCFTStrip()
     else if (strcmp(opt, "-cvci") == 0)        S.conc.cvci = v[0];
     else if (strcmp(opt, "-Gxz") == 0)         { Gxz = v[0]; haveGxz = true; }
     else if (strcmp(opt, "-tangentStep") == 0) hTan = v[0];
+    else if (strcmp(opt, "-cyclicDegradation") == 0) {   // WP-256: $Ccyc [$m]
+      S.ccyc = v[0];
+      if (OPS_GetNumRemainingInputArgs() > 0) {          // an optional number: the weight exponent
+        char buf[64];
+        const char* peek = OPS_GetStringFromAll(buf, sizeof(buf));
+        OPS_ResetCurrentInputArg(-1);
+        char* end = 0;
+        if (peek != 0 && peek[0] != '\0') {
+          (void)strtod(peek, &end);
+          if (end != peek && *end == '\0') {
+            int one = 1;
+            if (OPS_GetDoubleInput(&one, &S.mcyc) < 0) S.mcyc = -1.0;
+          }
+        }
+      }
+    }
     else { ladruno_opt::reportUnhandled(OWNER, tag, opt); return 0; }
   }
 
@@ -109,6 +136,8 @@ void* OPS_LadrunoMCFTStrip()
                                                 bad = "-tieSteel: want $Es > 0 and fyt/Es < $esh < $esu";
   else if (haveGxz && !(Gxz >= 0.0))           bad = "-Gxz must be >= 0";
   else if (!(hTan > 0.0))                       bad = "-tangentStep must be > 0";
+  else if (!(S.ccyc >= 0.0) || !std::isfinite(S.ccyc)) bad = "-cyclicDegradation wants a finite $Ccyc >= 0";
+  else if (!(S.mcyc >= 0.0) || !(S.mcyc <= 4.0))  bad = "-cyclicDegradation: the exponent $m must lie in [0, 4]";
   if (bad != 0) {
     opserr << "ERROR nDMaterial LadrunoMCFTStrip " << tag << ": " << bad << "\n";
     return 0;
@@ -275,7 +304,8 @@ LadrunoMCFTStrip::getType(void) const
 int LadrunoMCFTStrip::getOrder(void) const { return order; }
 
 // responses: stress, strain, tangent; "mcft" = (eps_y, e1, e2, w, f_st, f1, f2, beta,
-// theta, bracketed); "eps_y" / "transverseStrain"; "crackWidth"; "tieStress"
+// theta, bracketed); "eps_y" / "transverseStrain"; "crackWidth"; "tieStress";
+// "cyclicDamage" = (committed cumulative crack re-opening P, beta_cyc) (WP-256)
 Response*
 LadrunoMCFTStrip::setResponse(const char** argv, int argc, OPS_Stream& s)
 {
@@ -295,6 +325,8 @@ LadrunoMCFTStrip::setResponse(const char** argv, int argc, OPS_Stream& s)
     return new MaterialResponse(this, 6, Vector(1));
   if (strcmp(a, "tieStress") == 0)
     return new MaterialResponse(this, 7, Vector(1));
+  if (strcmp(a, "cyclicDamage") == 0)
+    return new MaterialResponse(this, 8, Vector(2));
   return NDMaterial::setResponse(argv, argc, s);
 }
 
@@ -314,12 +346,17 @@ LadrunoMCFTStrip::getResponse(int responseID, Information& info)
     case 5: if (info.theVector) (*(info.theVector))(0) = eyT;    return 0;
     case 6: if (info.theVector) (*(info.theVector))(0) = oT.w;   return 0;
     case 7: if (info.theVector) (*(info.theVector))(0) = oT.fst; return 0;
+    case 8: if (info.theVector) {
+              (*(info.theVector))(0) = hC.reopen;
+              (*(info.theVector))(1) = betaCyclic(strip, hC.reopen);
+            }
+            return 0;
     default: return NDMaterial::getResponse(responseID, info);
   }
 }
 
 // wire: ID(2) = (tag, order); Vector(kNData) = parameters, committed memory, strains
-static const int kNData = 28;
+static const int kNData = 34;   // WP-256: + ccyc, e1c, reopen, mcyc, cdrv, e2c
 
 int
 LadrunoMCFTStrip::sendSelf(int commitTag, Channel& theChannel)
@@ -339,6 +376,7 @@ LadrunoMCFTStrip::sendSelf(int commitTag, Channel& theChannel)
   d(15) = Gxz; d(16) = hTan;
   d(17) = hC.ey; d(18) = hC.em1; d(19) = hC.em2; d(20) = hC.ept; d(21) = hC.used ? 1.0 : 0.0;
   for (int i = 0; i < order; i++) { d(22 + i) = epsC(i); d(25 + i) = eps(i); }
+  d(28) = strip.ccyc; d(29) = hC.e1c; d(30) = hC.reopen; d(31) = strip.mcyc; d(32) = strip.cdrv; d(33) = hC.e2c;
   res = theChannel.sendVector(this->getDbTag(), commitTag, d);
   if (res < 0) { opserr << "LadrunoMCFTStrip::sendSelf - failed to send data\n"; return res; }
   return 0;
@@ -372,6 +410,7 @@ LadrunoMCFTStrip::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&
   Gxz = d(15); hTan = d(16);
   hC.ey = d(17); hC.em1 = d(18); hC.em2 = d(19); hC.ept = d(20); hC.used = d(21) != 0.0;
   for (int i = 0; i < order; i++) { epsC(i) = d(22 + i); eps(i) = d(25 + i); }
+  strip.ccyc = d(28); hC.e1c = d(29); hC.reopen = d(30); strip.mcyc = d(31); strip.cdrv = (int)d(32); hC.e2c = d(33);
   evaluateTrial();
   return 0;
 }
@@ -387,7 +426,7 @@ LadrunoMCFTStrip::Print(OPS_Stream& s, int flag)
     << "  cvci " << C.cvci << endln;
   s << "  ties rho " << strip.rho << "  fyt " << strip.tie.fy << "  fut " << strip.tie.fu
     << "  Es " << strip.tie.Es << "  esh " << strip.tie.esh << "  esu " << strip.tie.esu
-    << "  Gxz " << Gxz << "  tangentStep " << hTan << endln;
+    << "  Gxz " << Gxz << "  tangentStep " << hTan << "  cyclicDegradation " << strip.ccyc << " " << strip.mcyc << (strip.cdrv ? " both" : " tension") << endln;
   s << "  committed: eps_y " << hC.ey << "  em1 " << hC.em1 << "  em2 " << hC.em2
-    << "  ept " << hC.ept << "  used " << (hC.used ? 1 : 0) << endln;
+    << "  ept " << hC.ept << "  used " << (hC.used ? 1 : 0) << "  reopen " << hC.reopen << endln;
 }

@@ -11,6 +11,10 @@ It evaluates every strip of a section at once, scans all 81 root candidates and 
 arrays: a different code path from the C++ kernel (which scans lazily, strip by strip), with the same
 floating-point operations, so the two agree to round-off.
 
+WP-256 adds the opt-in cyclic strut degradation (c_cyc > 0): the strut stress carries
+1/(1 + c_cyc P), P the committed cumulative crack re-opening (the increases of (e1 - ecr)+ below
+its previous maximum; zero on a monotonic path). c_cyc = 0 (the default) is Model C's law.
+
 Used by tests/test_ladrunoMCFTStrip_cpp.py (strip and section paths against the g++ gate) and
 tests/test_ladrunoMCFTStrip.py (the OpenSees classes).
 """
@@ -77,7 +81,7 @@ class Concrete:
     def ft(self, x):
         return np.where(x <= self.ecr, self.Ec * x, self.fcr / (1.0 + np.sqrt(500.0 * np.maximum(x - self.ecr, 0.0))))
 
-    def membrane(self, ex, ey, g, rho, fyt, fst, hist):
+    def membrane(self, ex, ey, g, rho, fyt, fst, hist, bcyc=None):
         c0 = 0.5 * (ex + ey)
         R = np.sqrt((0.5 * (ex - ey)) ** 2 + (0.5 * g) ** 2) + 1e-30
         e1, e2 = c0 + R, c0 - R
@@ -103,6 +107,8 @@ class Concrete:
         cap = vci * np.tan(thc) + rho * np.maximum(fyt - fst, 0.0)
         f1 = np.where(e1 > 0, np.minimum(f1, cap), f1)
         f2 = -beta * fcomp
+        if bcyc is not None:                         # WP-256 cyclic strut degradation
+            f2 = f2 * bcyc
         f2 = np.where(e2 > 0, 0.0, f2)
         f1 = np.where(e1 < 0, -self.f_env(np.maximum(-e1, 0.0)), f1)
         sx = 0.5 * (f1 + f2) + 0.5 * (f1 - f2) * cos2
@@ -119,6 +125,9 @@ class State:
     ept: np.ndarray           # tie plastic strain per strip
     epb: np.ndarray           # bar plastic strain per bar
     use_hist: bool = False
+    e1c: np.ndarray = None    # WP-256: committed crack opening (e1 - ecr)+
+    reopen: np.ndarray = None  # WP-256: cumulative crack re-opening
+    e2c: np.ndarray = None    # WP-256: committed strut compression (-e2 - 0.5 ep)+
 
 
 @dataclass
@@ -127,15 +136,43 @@ class Strips:
     conc: Concrete
     rho: np.ndarray
     tie_steel: Steel
+    c_cyc: float = 0.0        # WP-256 cyclic strut degradation (0 = off)
+    m_cyc: float = 0.0        # WP-256 weight exponent on the opening reached (0 = unweighted)
+    d_cyc: int = 0            # WP-256 driver: 0 crack re-opening, 1 also strut re-compression
 
     def new_state(self, nbar=0) -> State:
         n = len(self.rho)
-        return State(np.zeros(n), np.zeros(n), np.zeros(n), np.zeros(n), np.zeros(nbar))
+        return State(np.zeros(n), np.zeros(n), np.zeros(n), np.zeros(n), np.zeros(nbar),
+                     e1c=np.zeros(n), reopen=np.zeros(n), e2c=np.zeros(n))
+
+    def reopen_trial(self, e1, st, e2=None):
+        """WP-256: committed re-opening plus the trial's increment below the previous maximum opening."""
+        ecr = self.conc.ecr
+        emax_old = np.maximum(st.em1 - ecr, 0.0)
+        e1p = np.maximum(e1 - ecr, 0.0)
+        up = np.minimum(e1p, emax_old) - st.e1c
+        if self.m_cyc != 0.0:
+            up = up * np.power(np.minimum(e1p, emax_old), self.m_cyc)
+        P = np.where(up > 0.0, st.reopen + up, st.reopen)
+        if self.d_cyc == 1:
+            c0 = 0.5 * self.conc.ep
+            cmax_old = np.maximum(st.em2 - c0, 0.0)
+            ccp = np.maximum(-e2 - c0, 0.0)
+            uc = np.minimum(ccp, cmax_old) - st.e2c
+            if self.m_cyc != 0.0:
+                uc = uc * np.power(np.minimum(ccp, cmax_old), self.m_cyc)
+            P = np.where(uc > 0.0, P + uc, P)
+        return P
 
     def resid(self, ex, ey, g, st):
         fst = self.tie_steel.stress(ey, st.ept)
         hist = (st.em1, st.em2) if st.use_hist else None
-        sx, sy, txy, e1, e2, w = self.conc.membrane(ex, ey, g, self.rho, self.tie_steel.fy, fst, hist)
+        bc = None
+        if self.c_cyc > 0 and st.use_hist:                # implicit: the trial's own re-opening counts
+            c0 = 0.5 * (ex + ey)
+            R = np.sqrt((0.5 * (ex - ey)) ** 2 + (0.5 * g) ** 2) + 1e-30
+            bc = 1.0 / (1.0 + self.c_cyc * self.reopen_trial(c0 + R, st, c0 - R))
+        sx, sy, txy, e1, e2, w = self.conc.membrane(ex, ey, g, self.rho, self.tie_steel.fy, fst, hist, bc)
         return sy + self.rho * fst, (sx, txy, e1, e2, w, fst)
 
     def solve_ey(self, ex, g, st):
@@ -168,9 +205,17 @@ class Strips:
 
     def commit(self, ex, g, st):
         o = self.stresses(ex, g, st)
+        em_prev = st.em1.copy()
+        em2_prev = st.em2.copy()
         st.em1 = np.maximum(st.em1, o["e1"]) if st.use_hist else np.maximum(0.0, o["e1"])
         st.em2 = np.maximum(st.em2, np.maximum(-o["e2"], 0.0)) if st.use_hist else np.maximum(0.0, -o["e2"])
         st.ept = o["ey"] - self.tie_steel.stress(o["ey"], st.ept) / self.tie_steel.Es
+        em_new, st.em1 = st.em1, em_prev                 # WP-256: the re-opening the converged trial used
+        em2_new, st.em2 = st.em2, em2_prev
+        st.reopen = self.reopen_trial(o["e1"], st, o["e2"])
+        st.em1, st.em2 = em_new, em2_new
+        st.e1c = np.maximum(o["e1"] - self.conc.ecr, 0.0)
+        st.e2c = np.maximum(-o["e2"] - 0.5 * self.conc.ep, 0.0)
         st.ey = o["ey"]
         st.use_hist = True
         return o
@@ -189,6 +234,7 @@ class Section:
     bar_steel: Steel
     tie_steel: Steel
     nstrip: int = 40
+    c_cyc: float = 0.0        # WP-256
     y: np.ndarray = field(init=False)
     Ac: np.ndarray = field(init=False)
     gy: np.ndarray = field(init=False)
@@ -201,7 +247,7 @@ class Section:
             Ac[int(np.argmin(np.abs(self.y - yb)))] -= A
         self.Ac = Ac
         self.gy = 1.5 * (1 - (2 * self.y / self.h) ** 2)
-        self.strips = Strips(self.conc, self.rho, self.tie_steel)
+        self.strips = Strips(self.conc, self.rho, self.tie_steel, self.c_cyc)
 
     def new_state(self) -> State:
         return self.strips.new_state(len(self.bars_y))
@@ -241,7 +287,7 @@ def mander_rect(fc, bc, dc, wi, s, dbt, Asy, Asz, fyh, rho_cc):
 
 
 def column_section(fc=25.6, fyl=331.0, ful=496.0, fyt=400.0, fut=600.0, rho_t=0.001, s=457.2, d=381.0,
-                   dbl=32.3, Ab=819.0, b=457.2, h=457.2, lp_h=0.25, gf_mult=0.5, dbt=9.5, nstrip=40):
+                   dbl=32.3, Ab=819.0, b=457.2, h=457.2, lp_h=0.25, gf_mult=0.5, dbt=9.5, nstrip=40, c_cyc=0.0):
     """A Lynn-type 18 in column section (3CLH18-like): 8 bars 3-2-3, ties in the core strips only, e20 from
     the crushing energy with Lip = lp_h h. Returns the Section plus the per-strip data (y, core, fp, ep, e20)
     a fibre model needs."""
@@ -258,6 +304,6 @@ def column_section(fc=25.6, fyl=331.0, ful=496.0, fyt=400.0, fut=600.0, rho_t=0.
     e20 = Gf / (0.6 * fp * lp_h * h) - 0.8 * fp / Ec + ep
     conc = Concrete(fc, fp, ep, e20, smx=yb, smy=s)
     sec = Section(b, h, conc, np.array([-yb, 0.0, yb]), np.array([3, 2, 3]) * Ab, np.where(core, rho_t, 0.0),
-                  Steel(fyl, ful), Steel(fyt, fut), nstrip=nstrip)
+                  Steel(fyl, ful), Steel(fyt, fut), nstrip=nstrip, c_cyc=c_cyc)
     return sec, dict(y=y, core=core, fp=fp, ep=ep, e20=e20, yb=yb, s=s, fyt=fyt, fut=fut, rho_t=rho_t,
                      fyl=fyl, ful=ful, Ab=Ab, b=b, h=h, fc=fc)

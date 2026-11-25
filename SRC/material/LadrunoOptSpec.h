@@ -220,6 +220,8 @@ static const OptSpec kLadrunoMCFTStripOptions[] = {
   {"-cvci",           1, "WP-254"},
   {"-Gxz",            1, "WP-254"},
   {"-tangentStep",    1, "WP-254"},
+  {"-cyclicDegradation", 1, "WP-256"},
+  {"-cyclicDriver",   1, "WP-256"},
 };
 
 // LadrunoMCFTSteel (WP-254, uniaxial 33004): Model C's bar law.

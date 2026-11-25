@@ -24,6 +24,7 @@
 //   nDMaterial LadrunoMCFTStrip $tag $fc $fp $ep $e20 -crackSpacing $smx $smy
 //       [-ties $rho $fyt $fut] [-tieSteel $Es $esh $esu]
 //       [-agg $a] [-betaC $C] [-cvci $c] [-Gxz $G] [-tangentStep $h]
+//       [-cyclicDegradation $Ccyc [$m]]
 //
 // A concrete strip of a shear-critical fibre beam (Sezen & Moehle 2002; Lynn et
 // al. 1996 calibration set): a 2D rotating MCFT membrane in the plane of
@@ -46,6 +47,11 @@
 // (Model C's own section tangent, done per fibre). Step -tangentStep (default
 // 1e-7) on both strains. getInitialTangent is the uncracked one: diag(Ec, Ec/2,
 // Gxz).
+//
+// Cyclic degradation (WP-256, opt-in): -cyclicDegradation $Ccyc multiplies the strut
+// stress by 1/(1 + Ccyc P), P the cumulative crack re-opening, each re-opening weighted
+// by the opening reached to the power m (default 0; zero on a monotonic path); off (the
+// default) is Model C's law bit for bit.
 //
 // State. Committed only: eps_y (the root reference), max principal tension and
 // compression, tie plastic strain, and a first-commit flag. A trial state is a
