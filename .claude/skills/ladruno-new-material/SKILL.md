@@ -47,7 +47,7 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       `recvSelf` reallocation, plus a test that creates >20 materials after the one under test.
       Quirks: "hard-coded its critical-state line".
 
-## Threads (WP-107 / WP-192 / WP-258)
+## Threads (WP-107 / WP-192 / WP-258 / WP-259)
 
 - [ ] **[lint]** A material that answers `ladrunoThreadSafeUpdate` / `ladrunoThreadSafeForm` true
       has no plain function-scope static (`thread-static`) and no class-scope static return
@@ -57,6 +57,10 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       `Py*` API from a loop body: under openseespy a worker has no Python thread state. This was
       the WP-107 ManzariDafalias "segfault on a worker". Quirks: "`opserr` from an OpenMP worker
       under openseespy" (WP-258).
+- [ ] A process-wide warn budget ("print the first N"): claim it with ONE `fetch_add` and print
+      by the claimed index (`k < N` prints, `k + 1 == N` prints the suppression line). That is
+      the serial sequence exactly and cannot overshoot; a check-then-increment can. Quirk:
+      "a warn-once budget under threads" (WP-259, `LadrunoConcrete3D`).
 - [ ] A process-wide diagnostic accumulator written at commit (IMPL-EX error, refusal counts):
       atomic integers, and per-thread partials folded before any read for FP sums
       (`LadrunoSANISAND` `LadrunoImplexGlobals`, ASDConcrete WP-192). Opt in per option, and

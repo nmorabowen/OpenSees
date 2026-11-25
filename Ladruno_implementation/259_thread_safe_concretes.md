@@ -5,8 +5,8 @@ Board #937 · stacked on WP-258 (#1153, itself stacked on WP-253 #1147) · follo
 
 **Why.** Neither Ladruno concrete answers `Material::ladrunoThreadSafeUpdate()` /
 `ladrunoThreadSafeForm()` (the WP-107 / WP-192 contract, `Material.h`, `Element.h` items 1–5), so
-every host that holds one (`stdBrick`, `LadrunoQuad`, `ASDShellQ4` + `LayeredShell`, MPM mode F)
-falls back to its serial loop. `ASDConcrete3D` already threads (WP-192). This WP makes both
+every host that holds one (`stdBrick`, `LadrunoQuad`, `ASDShellQ4` + `LayeredShell`) falls back
+to its serial loop. `ASDConcrete3D` already threads (WP-192). This WP makes both
 Ladruno concretes answer true wherever the audit below proves it, without changing a single
 constitutive result: with 1 thread every record stays bit-identical, and the threaded result is
 bit-identical to 1 thread.
@@ -103,19 +103,28 @@ Options: `-implex` (+ `-implexAlpha`, `-implexControl`), `-autoRegularization` /
 | `stdBrick` (`Brick.cpp:2295`) | ThreeDimensional | update, tangent, residual, commit |
 | `LadrunoQuad` (`LadrunoQuad.cpp:826`, not EAS, not `-geom finite`) | PlaneStrain, PlaneStress | update |
 | `ASDShellQ4` + `LayeredShell` (`ASDShellQ4.cpp:2448`, `LayeredShellFiberSection.cpp:850`) | PlateFiber | update, tangent, residual, commit |
-| MPM mode F (WP-253) | ThreeDimensional, PlaneStrain | the particle material calls |
+| MPM mode F (WP-253) | — | none: `mpm body` refuses both concretes at admission (ADR 232 §6 admits ElasticIsotropic, LadrunoJ2, DruckerPrager, LadrunoSANISAND, LadrunoHS; found while writing the gate) |
 
 No threaded host requests AxiSymmetric or BeamFiber (`LadrunoNDFiberSection3d` does not opt in).
+The opt-in therefore reaches the FE element loops only; if MPM ever admits a concrete, the §2
+audit already covers the four methods mode F calls on workers, but a mode-F gate must come with
+the admission.
 
 ## 3. Determinism gate
 
 `tests/test_wp259_concrete_threads.py` (zone_a): every threaded result bit-identical to 1 thread
 at 2, 4 and 8 threads (`float.hex` of every nodal displacement after every step, plus the load
 factor and every step's return code), shuffled element tags, and the deck must really crack /
-crush (asserted from the material's own damage response). Meshes: `stdBrick` 3D, `LadrunoQuad`
-PlaneStrain and PlaneStress, `ASDShellQ4` + `LayeredShell` (PlateFiber), and MPM mode F 3D / 2D.
-Options: default, `-implex`, `-eta`, `-autoRegularization` (LadrunoConcrete3D); default,
-`-implex`, `-autoRegularization`, `-interlock -cyclic` (LadrunoRCConcrete). Neither material keeps
+crush (asserted from the material's own damage response). Meshes: a `stdBrick` cantilever in
+bending (`3d`), the same prism crushed axially (`3dc`, compressive damage asserted) and, for
+LadrunoConcrete3D, pushed past the crush (`3dcr`: return maps fail in volume, steps are refused
+and the process-wide warning budget saturates — the one shared counter, gated by its printed
+lines); `LadrunoQuad` PlaneStrain (`pe`) and PlaneStress (`ps`, the condensation Newton);
+`ASDShellQ4` + `LayeredShell` (`shell`, PlateFiber). Options: default, `-implex`, `-eta`,
+`-autoRegularization` (LadrunoConcrete3D); default, `-implex`, `-autoRegularization`,
+`-interlock -cyclic` (LadrunoRCConcrete). Twenty cases; the digest is every nodal displacement
+and the load factor after every step, every step's return code, every Gauss point's damage
+(plus `substeps` / `returnFailures`, or RC `implexError`), and the warning-line counts. Neither material keeps
 a process-wide FP accumulator, so no tolerance exception is needed: everything is gated exactly.
 Mutation evidence: re-introduce a shared static on a gated path, build, show red; never committed.
 
