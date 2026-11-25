@@ -110,7 +110,9 @@ class ElasticIsotropicPlaneStrain2D : public ElasticIsotropicMaterial
   protected:
 
   private:
+    // ladruno-lint: thread-class-ok Update-only opt-in (WP-107): written by getStress/getTangent, which no loop threads for this class (its Form answer is false)
     static Vector sigma;        // Stress vector ... class-wide for returns
+    // ladruno-lint: thread-class-ok Update-only opt-in (WP-107): written by getTangent/getInitialTangent, which no loop threads for this class (its Form answer is false)
     static Matrix D;	        // Elastic constants
     Vector epsilon;	        // Trial strains
     Vector Cepsilon;	        // Committed strains

@@ -188,9 +188,24 @@ bodies are seen whole).
                 functions that never run on a worker (OPS_* parsers,
                 send/recvSelf, set/getResponse, Print, set/updateParameter,
                 getCopy, *Sensitivity*, constructors, destructors, instance).
-                Class-scope static members are not scanned. Waive (the
-                statement's lines or the line above):
+                Class-scope static members are `thread-class-static`'s. Waive
+                (the statement's lines or the line above):
                     // ladruno-lint: thread-ok <reason>
+
+  thread-class-static  (no alias; WP-258) A CLASS-scope static data member
+                (`static Vector stress;` in a class body) in a material
+                header whose class opts into the threaded loops, the same
+                opt-in test as thread-static. The OpenSees idiom of returning a
+                reference to a class-static buffer from getStress/getTangent
+                makes two instances on two threads fill one buffer:
+                DruckerPragerPlaneStrain's strain/stress/tangent and the
+                ManzariDafalias 3D/PlaneStrain wrappers' mSigma_M/mTangent.
+                Make it `static thread_local` (bit-identical serially) or a
+                member. Exempt: const/constexpr/inline, thread_local,
+                std::atomic/mutex/once_flag. A class-wide flag written only on
+                the main thread (ManzariDafalias::mElastFlag) or a buffer that is
+                constant after construction is waived with a reason:
+                    // ladruno-lint: thread-class-ok <reason>
 
 A waiver needs a reason of at least 12 characters, and a waiver that no longer
 suppresses anything is itself a finding (stale).
@@ -213,7 +228,7 @@ STAMP = "LADRUNO-HEADER-START"
 MIN_REASON = 12
 SUFFIXES = (".cpp", ".h", ".hpp", ".cc", ".cxx")
 
-WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok|sequence-ok|decl-ok|revert-ok|unknown-ok|thread-ok)\b(.*)$")
+WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok|sequence-ok|decl-ok|revert-ok|unknown-ok|thread-ok|thread-class-ok)\b(.*)$")
 RAYLEIGH = re.compile(r"(?:\bthis\s*->\s*)?\bgetRayleighDampingForces\s*\(\s*\)")
 SINGLETON = re.compile(r"\bstatic\s+([A-Za-z_]\w*)\s*&\s*instance\s*\(")
 RESET_CALL = re.compile(r"\b([A-Za-z_]\w*)::instance\s*\(\s*\)\s*(?:\.|->)\s*reset\w*\s*\(")
@@ -1527,6 +1542,54 @@ def check_thread_static(root, rel, used_waivers=None):
 
 
 # --------------------------------------------------------------------------
+# thread-class-static (WP-258)
+# --------------------------------------------------------------------------
+THREAD_CLASS_STATIC = re.compile(
+    r"^\s*static\s+(?!(?:const|constexpr|thread_local|inline)\b)(?!std::(?:atomic|mutex|once_flag)\b)"
+    r"[A-Za-z_][^;(){}=]*?[\s*&](?P<name>[A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*;")
+
+
+def check_thread_class_static(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    mat = root / "SRC" / "material"
+    stems = set()
+    for path, _raw, cl in _sources(root, stamped_only=False, needles=("ladrunoThreadSafe",)):
+        if mat in path.parents and _opts_into_threads(cl):
+            stems.add(path.with_suffix(""))
+    for stem in sorted(stems):
+        for path in (stem.with_suffix(sfx) for sfx in (".h", ".hpp")):
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            raw, cl = text.splitlines(), clean(text)
+            in_func = set()
+            for f in functions(cl):
+                in_func.update(range(f.open, f.end + 1))
+            for li, line in enumerate(cl):
+                if li in in_func:
+                    continue
+                m = THREAD_CLASS_STATIC.match(line)
+                if not m or re.search(r"\bthread_local\b", line):
+                    continue
+                wl, reason = waiver_at(raw, li, "thread-class-ok", above=1)
+                if wl is not None:
+                    used.add((str(path), wl))
+                    if len(reason) >= MIN_REASON:
+                        continue
+                    findings.append(f"thread-class-static {rel(path)}:{li + 1}: thread-class-ok waiver "
+                                    "reason too short")
+                    continue
+                findings.append(
+                    f"thread-class-static {rel(path)}:{li + 1}: class-scope static '{m.group('name')}' "
+                    "in a material that opts into the threaded loops -- one buffer for every instance "
+                    "on every thread (DruckerPragerPlaneStrain::stress, WP-258). Make it "
+                    "'static thread_local' or a member, or waive with "
+                    "'// ladruno-lint: thread-class-ok <reason>'")
+    return findings
+
+
+# --------------------------------------------------------------------------
 # the rule registry (WP-162). One entry per rule, named by slug. `alias` is the
 # pre-WP-162 L-number, accepted by --only for one release.
 # --------------------------------------------------------------------------
@@ -1579,6 +1642,9 @@ _RULE_LIST = [
     Rule("thread-static", None, check_thread_static, "thread-ok", "threaded materials",
          "a plain function-scope `static` in a material that opts into the WP-107/WP-192 threaded "
          "element loops: one object shared by every instance on every thread (WP-239)"),
+    Rule("thread-class-static", None, check_thread_class_static, "thread-class-ok", "threaded materials",
+         "a class-scope static data member in a material that opts into the threaded loops: the "
+         "getStress/getTangent class-static return buffer, shared by every thread (WP-258)"),
 ]
 RULES = {r.slug: r for r in _RULE_LIST}
 ALIASES = {r.alias: r.slug for r in _RULE_LIST if r.alias}

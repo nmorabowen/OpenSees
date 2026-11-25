@@ -116,6 +116,7 @@ class FiberSection3d : public SectionForceDeformation
     
     SectionIntegration *sectionIntegr;
 
+    // ladruno-lint: thread-class-ok written only in the constructors (main thread); read-only in getType
     static ID code;
 
     Vector e;          // trial section deformations 

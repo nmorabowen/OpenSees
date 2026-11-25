@@ -67,4 +67,5 @@ Named by slug (WP-162): a new rule takes a new slug in `RULES` (`ci/check_quirk_
 | `floating-runner` | — | — | fork workflows | a `ladruno*.yml` workflow that names a floating runner image (`ubuntu-latest`): it moved to 26.04 / GCC 15 and broke bit-exact baselines (WP-225) |
 | `gxx-static` | — | — | tests | a test that builds a g++ harness without `cxx_runtime_flags()` / `-static`: on Windows the exe loads Git for Windows' older libstdc++-6.dll and segfaults (WP-199, #1101) |
 | `thread-static` | — | `// ladruno-lint: thread-ok <reason>` | threaded materials | a plain function-scope `static` in a material that opts into the WP-107/WP-192 threaded element loops: one object shared by every instance on every thread (WP-239) |
+| `thread-class-static` | — | `// ladruno-lint: thread-class-ok <reason>` | threaded materials | a class-scope static data member in a material that opts into the threaded loops: the getStress/getTangent class-static return buffer, shared by every thread (WP-258) |
 <!-- quirk-rules:end -->

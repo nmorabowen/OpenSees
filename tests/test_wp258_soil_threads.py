@@ -85,7 +85,8 @@ HS = [35000.0, 35000.0, 105000.0, 0.5, 10.0, 38.0, 8.0, "-nu", 0.2, "-pref", 100
 # name -> (nDMaterial args after the tag, stage-1 id or None). The SANISAND tail is
 # `IntScheme TanType JacoType TolF TolR`.
 MATERIALS = {
-    "dp": (["DruckerPrager", 20000.0, 9000.0, 5.0, 0.25, 0.20, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    # weak enough to yield under the footing (secant ratio ~0.7 over the push)
+    "dp": (["DruckerPrager", 20000.0, 9000.0, 1.0, 0.05, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
             2.0], None),
     "sanisand_is1": (["LadrunoSANISAND", *SANISAND, 1, 2, 1, 1e-7, 1e-7,
                       "-Presidual", 0.0, "-Pmin", 1.0e-4 * 101.0], 1),
@@ -94,7 +95,8 @@ MATERIALS = {
     "sanisand_is129": (["LadrunoSANISAND", *SANISAND, 129, 2, 1, 1e-7, 1e-7,
                         "-Presidual", 0.0, "-Pmin", 1.0e-4 * 101.0], 1),
     "sanisand_implex": (["LadrunoSANISAND", *SANISAND, 2, 2, 1, 1e-7, 1e-7,
-                         "-Presidual", 0.0, "-Pmin", 1.0e-4 * 101.0, "-implex"], 1),
+                         "-Presidual", 0.0, "-Pmin", 1.0e-4 * 101.0, "-implex",
+                         "-maxSubsteps", 1000], 1),
     "hs": (["LadrunoHS", *HS, "-stage", 0], 1),
     "hs_small": (["LadrunoHS", *HS, "-stage", 0, "-smallStrain", 1.0e5, 1.0e-4], 1),
     "hs_implex": (["LadrunoHS", *HS, "-stage", 0, "-implex"], 1),
@@ -268,3 +270,31 @@ def test_threaded_equal_serial(mat, dim):
         for w in _threaded_text(dim, n, nele):
             assert w in text, (mat, dim, n, w, text[-4000:])
         assert "PARTLY threaded" not in text, text[-4000:]
+
+
+# A purely cohesive DP (rho = 0) on the 2D deck reaches the apex, where the
+# consistent tangent vanishes and DruckerPrager prints its throttled "NormCep"
+# floor message from inside the threaded update loop -- i.e. from OpenMP
+# WORKERS. Under openseespy `opserr` is a PythonStream, and before WP-258 its
+# err_out() called PySys_FormatStderr from a thread with no Python thread
+# state: a segfault (the WP-107 "ManzariDafalias IntScheme 1 crashes on a
+# worker" was the same defect, behind ModifiedEuler's substep-cap warning).
+# The deck's numbers are not meaningful (FixedNumIter on a softened apex); the
+# gate is that the child survives, prints, and still matches 1 thread bit for bit.
+APEX = ["DruckerPrager", 20000.0, 9000.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0]
+
+
+def test_worker_prints_under_openseespy():
+    if len(_THREADS) < 2:
+        pytest.skip("single hardware thread")
+    MATERIALS["_apex"] = (APEX, None)
+    try:
+        base, text1 = _run("_apex", 2, 1)
+        assert "NormCep" in text1, text1[-3000:]
+        for n in _THREADS[1:]:
+            got, text = _run("_apex", 2, n)
+            assert "NormCep" in text, (n, text[-3000:])
+            assert "element update loop THREADED on %d threads" % n in text, text[-3000:]
+            assert got["steps"] == base["steps"], n
+    finally:
+        del MATERIALS["_apex"]
