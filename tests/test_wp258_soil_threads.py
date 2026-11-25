@@ -229,9 +229,14 @@ for s in range(n_push):
     r = ops.analyze(1)
     q = ops.getLoadFactor(2)
     steps.append([r, q.hex(), [x.hex() for n in nodes for x in ops.nodeDisp(n)]])
+ledger = None
+if "-implex" in mat:   # the process-wide IMPL-EX ledger, read after the threaded commits
+    rd = lambda what: [float(x) for x in ops.eleResponse(1, "material", 1, what)]
+    ledger = {"max": [x.hex() for x in rd("implexError")], "avg": rd("avgImplexError"),
+              "refusals": rd("implexRefusals")}
 ops.ladrunoThreads(1)
 print("RESULT " + json.dumps({"build": ops.ladrunoBuild(), "gravity_rc": rcs, "steps": steps,
-                              "q": [float.fromhex(s[1]) for s in steps]}))
+                              "q": [float.fromhex(s[1]) for s in steps], "ledger": ledger}))
 '''
 
 _THREADS = [n for n in (1, 2, 4, 8) if _HW == 0 or n <= max(_HW, 1)]
@@ -265,6 +270,12 @@ def test_threaded_equal_serial(mat, dim):
     base, _ = _run(mat, dim, 1)
     assert all(r == 0 for r in base["gravity_rc"]), (mat, dim, base["gravity_rc"])
     assert len(base["steps"]) > 0
+    # the gate means something only if the push ran and was plastic (critic of record): every
+    # push step returned 0, and the footing's secant stiffness fell by 5 % or more over the push
+    assert all(st[0] == 0 for st in base["steps"]), (mat, dim, [st[0] for st in base["steps"]])
+    q = base["q"]
+    ratio = (q[-1] - q[-2]) / (q[1] - q[0])
+    assert 0.0 < ratio < 0.95, (mat, dim, "not plastic enough to gate anything", q)
     for n in _THREADS[1:]:
         got, text = _run(mat, dim, n)
         assert got["build"] == base["build"]
@@ -275,6 +286,13 @@ def test_threaded_equal_serial(mat, dim):
         for w in _threaded_text(dim, n, nele):
             assert w in text, (mat, dim, n, w, text[-4000:])
         assert "PARTLY threaded" not in text, text[-4000:]
+        if base["ledger"] is not None:
+            # max and every counter exact; the average is an FP sum folded per thread, so under
+            # a threaded commit loop it may differ in its last bits (258 doc section 2.2)
+            assert got["ledger"]["max"] == base["ledger"]["max"], (mat, dim, n)
+            assert got["ledger"]["refusals"] == base["ledger"]["refusals"], (mat, dim, n)
+            for a, b in zip(base["ledger"]["avg"], got["ledger"]["avg"]):
+                assert abs(a - b) <= 1.0e-12 * max(abs(a), 1.0e-300), (mat, dim, n, a, b)
 
 
 # A purely cohesive DP (rho = 0) on the 2D deck reaches the apex, where the

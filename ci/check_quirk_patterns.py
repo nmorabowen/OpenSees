@@ -1502,14 +1502,78 @@ def _opts_into_threads(cl):
     return False
 
 
+# Framework bases: a material that opts in does not make NDMaterial & co. threaded code.
+THREAD_FRAMEWORK = {"NDMaterial", "UniaxialMaterial", "SectionForceDeformation", "Material",
+                    "TaggedObject", "MovableObject", "PlaneStressMaterial", "PlateFiberMaterial"}
+CLASS_DECL = re.compile(r"\bclass\s+([A-Za-z_]\w*)\s*(?:final\s*)?:\s*(?:public|protected|private)\s+([A-Za-z_]\w*)")
+
+
+_THREAD_FILES_CACHE = {}
+
+
+def _thread_material_files(root):
+    """Files whose code runs on a worker for a material that opts into the threaded loops (WP-258).
+
+    The opt-in is inherited, so the files that SPELL `ladrunoThreadSafe*` are not enough: the
+    ManzariDafalias 3D / PlaneStrain wrappers inherit the base's answer, and DruckerPrager's
+    plastic_integrator lives in a base whose leaves opt in. Taken: the opting classes (an opt-in
+    DEFINITION whose body is not `return false`), their descendants (unless a descendant defines a
+    `return false` opt-in), their bases up to the framework classes, and every file under
+    SRC/material that defines a method of one of those classes."""
+    key = str(root)
+    if key in _THREAD_FILES_CACHE:
+        return _THREAD_FILES_CACHE[key]
+    mat = root / "SRC" / "material"
+    decl, parent, optin, refuse, raws = {}, {}, set(), set(), {}
+    for path in sorted(mat.rglob("*")):
+        if path.suffix not in SUFFIXES or not path.is_file():
+            continue
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        raws[path] = raw
+        if path.suffix in (".h", ".hpp") and "class" in raw:
+            for m in CLASS_DECL.finditer(" ".join(raw.split())):
+                decl.setdefault(m.group(1), path)
+                parent.setdefault(m.group(1), m.group(2))
+        if "ladrunoThreadSafe" in raw:
+            cl = clean(raw)
+            for f in functions(cl):
+                if THREAD_OPTIN.search(f.name) and "::" in f.name:
+                    body = [strip_prefix(t) for t, *_ in statements(cl, f)]
+                    (refuse if body == ["return false"] else optin).add(f.name.split("::")[-2])
+    optin -= refuse
+    cls = set(optin)
+    changed = True
+    while changed:                                # descendants
+        changed = False
+        for c, b in parent.items():
+            if b in cls and c not in cls and c not in refuse:
+                cls.add(c)
+                changed = True
+    for c in list(optin):                         # bases, up to the framework
+        b = parent.get(c)
+        while b and b not in THREAD_FRAMEWORK and b not in cls:
+            cls.add(b)
+            b = parent.get(b)
+    files = {decl[c] for c in cls if c in decl}
+    if cls:
+        # a DEFINITION: at column 0, after optional return-type tokens (a qualified call or a
+        # mention inside a body is indented, so another class's file is not pulled in)
+        meth = re.compile(r"^(?:[A-Za-z_][\w:<>,*&]*[ \t]+)*(?:" + "|".join(sorted(map(re.escape, cls)))
+                          + r")[ \t]*::[ \t]*~?[A-Za-z_]\w*[ \t]*\(", re.M)
+        for path, raw in raws.items():
+            if path.suffix not in (".h", ".hpp") and meth.search(raw):
+                files.add(path)
+    _THREAD_FILES_CACHE[key] = files
+    return files
+
+
 def check_thread_static(root, rel, used_waivers=None):
     findings = []
     used = set() if used_waivers is None else used_waivers
-    mat = root / "SRC" / "material"
-    stems = set()
-    for path, _raw, cl in _sources(root, stamped_only=False, needles=("ladrunoThreadSafe",)):
-        if mat in path.parents and _opts_into_threads(cl):
-            stems.add(path.with_suffix(""))
+    stems = {p.with_suffix("") for p in _thread_material_files(root)}
     for stem in sorted(stems):
         for path in (stem.with_suffix(sfx) for sfx in sorted(SUFFIXES)):
             if not path.is_file():
@@ -1552,11 +1616,7 @@ THREAD_CLASS_STATIC = re.compile(
 def check_thread_class_static(root, rel, used_waivers=None):
     findings = []
     used = set() if used_waivers is None else used_waivers
-    mat = root / "SRC" / "material"
-    stems = set()
-    for path, _raw, cl in _sources(root, stamped_only=False, needles=("ladrunoThreadSafe",)):
-        if mat in path.parents and _opts_into_threads(cl):
-            stems.add(path.with_suffix(""))
+    stems = {p.with_suffix("") for p in _thread_material_files(root)}
     for stem in sorted(stems):
         for path in (stem.with_suffix(sfx) for sfx in (".h", ".hpp")):
             if not path.is_file():

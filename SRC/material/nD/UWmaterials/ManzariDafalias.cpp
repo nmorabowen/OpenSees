@@ -1235,11 +1235,13 @@ void ManzariDafalias::elastic_integrator(const Vector& CurStress, const Vector& 
 bool
 ManzariDafalias::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
 {
-    // Ladruno WP-258: ADMITTED for IntScheme 1 (ModifiedEuler), 2
-    // (BackwardEuler_CPPM, whose live path inverts on the stack in
-    // ladrunoInvertLocal) and, for LadrunoSANISAND, 129 (SAS-ME). Every other
-    // scheme stays serial: 45 (RungeKutta45) keeps function-static scratch and
-    // a plain warn budget, and 0 / 3-9 were not in WP-258's determinism gate.
+    // Ladruno WP-258: ADMITTED for IntScheme 1 (ModifiedEuler). LadrunoSANISAND
+    // widens it to 2 (BackwardEuler_CPPM, whose live path inverts on the stack in
+    // ladrunoInvertLocal) and 129 (SAS-ME), the schemes its determinism gate
+    // runs; vanilla IntScheme 2 has no substep cap, so the gate cannot run it in
+    // bounded time and it stays serial here. Every other scheme stays serial:
+    // 45 (RungeKutta45) keeps function-static scratch and a plain warn budget,
+    // and 0 / 3-9 were not in WP-258's determinism gate.
     //
     // WP-107 refused the whole family unconditionally because IntScheme 1
     // SEGFAULTED on an OpenMP worker once the plastic branch was exercised --
@@ -1260,9 +1262,7 @@ ManzariDafalias::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
     // mI1 ... mIIdevCo are constant after static initialisation; the warn
     // budgets are std::atomic. ManzariDafaliasRO and its wrappers are not
     // audited and refuse (ManzariDafaliasRO.h).
-    if (mScheme == INT_ModifiedEuler || mScheme == INT_BackwardEuler)
-        return true;
-    return mScheme == LADRUNO_INT_SAS_ME && mLadrunoSas.allowed;
+    return mScheme == INT_ModifiedEuler;
 }
 
 // Ladruno WP-258: the same audit covers getStress / getTangent /

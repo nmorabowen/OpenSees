@@ -78,3 +78,57 @@ def test_stale_waiver_is_reported(tmp_path):
                   "  static thread_local Vector s;")
     out = _run(tmp_path, kit.STAMP + hdr)
     assert len(out) == 1 and "stale thread-class-ok waiver" in out[0], out
+
+
+# --- the opt-in is inherited (critic of record, WP-258): wrappers and bases are scanned too ------
+BASE_H = ("class SoilBase : public NDMaterial {\npublic:\n"
+          "  bool ladrunoThreadSafeUpdate(void) const { return true; }\n};\n")
+
+
+def _tree(tmp_path, files):
+    root = kit.tree(tmp_path, files)
+    used = set()
+    out = cq.check_thread_class_static(root, kit.rel(root), used) + \
+        cq.check_thread_static(root, kit.rel(root), used)
+    return out + cq.check_stale_waivers(root, kit.rel(root), used)
+
+
+def test_flags_an_inheriting_wrapper(tmp_path):
+    """The ManzariDafalias3D shape: the wrapper never spells the opt-in, it inherits it."""
+    out = _tree(tmp_path, {
+        "SRC/material/nD/SoilBase.h": BASE_H,
+        "SRC/material/nD/Soil3D.h": "class Soil3D : public SoilBase {\nprivate:\n  static Vector mSigma_M;\n};\n",
+    })
+    assert len(out) == 1 and out[0].startswith("thread-class-static SRC/material/nD/Soil3D.h:3:"), out
+
+
+def test_a_refusing_descendant_is_not_scanned(tmp_path):
+    """The ManzariDafaliasRO shape: a descendant that answers false keeps its statics."""
+    out = _tree(tmp_path, {
+        "SRC/material/nD/SoilBase.h": BASE_H,
+        "SRC/material/nD/SoilRO.h": ("class SoilRO : public SoilBase {\npublic:\n"
+                                     "  bool ladrunoThreadSafeUpdate(void) const { return false; }\n"
+                                     "private:\n  static Vector s;\n};\n"),
+    })
+    assert out == [], out
+
+
+def test_a_base_whose_leaves_opt_in_is_scanned(tmp_path):
+    """The DruckerPrager shape: the leaves opt in; the base's .cpp holds the integrator."""
+    out = _tree(tmp_path, {
+        "SRC/material/nD/DPBase.h": "class DPBase : public NDMaterial {\n};\n",
+        "SRC/material/nD/DPBase.cpp": ("void\nDPBase::plastic_integrator(void)\n{\n"
+                                       "  static int count = 0;\n  count++;\n}\n"),
+        "SRC/material/nD/DPLeaf.h": ("class DPLeaf : public DPBase {\npublic:\n"
+                                     "  bool ladrunoThreadSafeUpdate(void) const { return true; }\n};\n"),
+    })
+    assert len(out) == 1 and out[0].startswith("thread-static SRC/material/nD/DPBase.cpp:4:"), out
+
+
+def test_a_qualified_call_does_not_pull_in_another_class_file(tmp_path):
+    out = _tree(tmp_path, {
+        "SRC/material/nD/SoilBase.h": BASE_H,
+        "SRC/material/nD/Other.cpp": ("int\nOther::f(void)\n{\n  static int k = 0;\n"
+                                      "  opserr << \"SoilBase::f\";\n  SoilBase::g();\n  return k;\n}\n"),
+    })
+    assert out == [], out

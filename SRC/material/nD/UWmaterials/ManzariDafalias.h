@@ -196,17 +196,15 @@ class ManzariDafalias : public NDMaterial
 	virtual const Vector& getEStrain();
 	virtual const Vector& getPStrain();
 
-	// Ladruno WP-107 (ADR-75b L3-1): may two instances integrate concurrently?
-	// MEASURED ANSWER: NO, for every integration scheme -- this always returns
-	// false. IntScheme 1 (ModifiedEuler) was allowlisted on the strength of a
-	// complete function-scope-static audit that finds nothing on its call graph,
-	// and a threaded run SEGFAULTED anyway once the plastic branch was exercised
-	// in volume. The full experiment log and what it rules out are in the
-	// definition in ManzariDafalias.cpp; the lesson -- a static grep is not a
-	// re-entrancy proof -- is in LEDGER_quirks.md.
+	// Ladruno WP-107 (ADR-75b L3-1), revised by WP-258: may two instances
+	// integrate concurrently? IntScheme 1 (ModifiedEuler): YES since WP-258.
+	// WP-107 refused it because a threaded run SEGFAULTED once the plastic branch
+	// was exercised; WP-258 found the cause -- opserr -> PythonStream -> CPython
+	// from a worker thread with no Python thread state (the plastic branch
+	// prints) -- and fixed it in PythonStream.h. LadrunoSANISAND widens the
+	// answer to IntScheme 2 and 129. Every other scheme answers NO.
 	//
-	// The audited-and-rejected schemes are recorded separately, because they stay
-	// rejected even if the IntScheme-1 defect is ever found and fixed:
+	// The WP-107 record of the other schemes, kept for its reasons:
 	//   IntScheme 2 (BackwardEuler_CPPM) -> NewtonIter()'s work arrays
 	//       `sol/R/R2/dX/norms/jaco/jInv` are function-scope statics shared by
 	//       every instance, and NewtonSol*/NewtonIter* call Matrix::Invert and

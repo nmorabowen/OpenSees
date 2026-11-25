@@ -2753,8 +2753,13 @@ LadrunoSANISAND::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
     // (2) the base's segfault was opserr -> PythonStream on a worker thread
     //     (see ManzariDafalias::ladrunoThreadSafeUpdate()).
     //
-    // What is admitted is the base's answer: IntScheme 1, 2 and 129, with or
-    // without -implex, 3D and PlaneStrain.
+    // Admitted: IntScheme 1 (the base's answer), 2 (BackwardEuler_CPPM: its
+    // live path inverts on the stack, ladrunoInvertLocal, and this class caps
+    // its substeps) and 129 (SAS-ME), with or without -implex, 3D and
+    // PlaneStrain -- the schemes tests/test_wp258_soil_threads.py and
+    // tests/test_ladruno_mpm_wp258_soil_threads.py gate.
+    if (mScheme == 2 || (mScheme == LADRUNO_INT_SAS_ME && mLadrunoSas.allowed))
+        return true;
     return this->ManzariDafalias::ladrunoThreadSafeUpdate();
 }
 
@@ -2789,10 +2794,9 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
                 }
                 q.loop = loop;
             }
-            if (q.count == 0) {
-                q.maxe = e;
+            if (q.count == 0)
                 ladrunoAnyPartial.store(true);   // once per thread per loop
-            } else if (e > q.maxe)
+            if (e > q.maxe)                      // as the serial `e > maxError`
                 q.maxe = e;
             q.sum += e;
             q.count++;
@@ -3053,7 +3057,7 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
                     count    = 0;
                     ladrunoRoundLoop = marker;
                 }
-                if (count == 0 || q.maxe > maxError)
+                if (q.maxe > maxError)
                     maxError = q.maxe;
                 sumError += q.sum;
                 count    += q.count;
