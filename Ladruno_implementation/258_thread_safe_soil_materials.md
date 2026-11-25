@@ -283,9 +283,22 @@ graphs, SAS-ME and the `thread_local` conversions. Findings and what was done:
 | 5 | Stale comments (`ManzariDafalias.h`, `LadrunoSANISAND.h`, `Material.h`) | Fixed. |
 | 6 | Nits: check-then-increment warn budgets can print up to 10 + T − 1 lines under threads; the partial max was seeded from the first error, not 0 | The budgets are cosmetic and recorded here. The partial max is now seeded at 0 with `e > max`, as in the serial code. |
 
-### 6.2 `/code-review high`
+### 6.2 `/code-review high` (#1153, on `a6dd610f4`)
 
-*(below)*
+Ten findings: two fixed, eight recorded.
+
+- **Fixed in `3d8ffc432`:**
+  - the vanilla waiver comments lacked a `// Ladruno` marker, so `grep -rn Ladruno` did not find them;
+  - the MPM gate re-spawned its thread-count probe for every case.
+- **Recorded, not fixed:**
+  - **The threaded first-round marker is a CAS winner.** If the thread count drops to 1 mid-run, serial rounds reset at a mid-loop point. Diagnostic only.
+  - **`avgImplexError`:** decision 7.1.
+  - **Worker prints go to fd 2:** quirk limitation; a per-thread queue is the follow-up.
+  - **The worker-print test is probabilistic.** Mutant M1 did crash it.
+  - **A fourth copy of the per-thread partials pattern.** A shared helper in `LadrunoThreads` is the follow-up.
+  - **Warn budgets can overshoot under threads** (cosmetic).
+  - **`tlLoopId` is zeroed, not restored.** Unreachable: no nested `parallelFor`.
+  - **The lint cache never invalidates.** No long-lived caller.
 
 ## 7. Decisions for the owner
 
