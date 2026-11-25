@@ -21,7 +21,6 @@ sequence is itself bit-identical; nothing is frozen.
 from __future__ import annotations
 
 import math
-import random
 import sys
 from pathlib import Path
 
@@ -91,8 +90,24 @@ def steps(k):
         ops.mpm("analyze", 1, 0.25 * float(ops.mpm("criticalTimeStep")))
 
 
+def particles(dim, hs, seed):
+    # the shuffled column, generated here (288 commands would overflow a Windows command line)
+    import random
+    if dim == 3:
+        pts = [((i + 0.5) * hs, (j + 0.5) * hs, (k + 0.5) * hs)
+               for k in range(12) for j in range(4) for i in range(6)]
+    else:
+        pts = [((i + 0.5) * hs, (k + 0.5) * hs) for k in range(16) for i in range(10)]
+    random.Random(seed).shuffle(pts)
+    for p, x in enumerate(pts):
+        ops.mpm("particle", p, 1, 3, 2.0, hs ** dim, "-x", *x, "-lp", *([hs / 2] * dim))
+
+
 for name, args in cfg["cmds"]:
-    getattr(ops, name)(*args)
+    if name == "_particles":
+        particles(*args)
+    else:
+        getattr(ops, name)(*args)
 ops.ladrunoThreads(cfg["threads"])
 n = int(ops.mpm("info", "numParticles"))
 x0 = l(ops.mpm("particleData", "x"))
@@ -116,31 +131,22 @@ def _soil_column(dim, mat, shuffled=False):
     cmds = [("wipe", []), ("model", ["basic", "-ndm", dim, "-ndf", dim]),
             ("nDMaterial", list(SOILS[mat]))]
     if dim == 3:
-        cmds.append(("mpm", ["grid", 232, "-origin", 0.0, 0.0, 0.0, "-h", h, "-cells", 4, 3, 8,
+        cmds.append(("mpm", ["grid", 232, "-origin", 0.0, 0.0, 0.0, "-h", h, "-cells", 3, 2, 8,
                              "-basis", "bspline2"]))
         box = [0.0, 0.0, 0.0, 0.75, 0.5, 1.5]
         faces = [("xmin", "x"), ("xmax", "x"), ("ymin", "y"), ("ymax", "y"), ("zmin", "xyz")]
         grav = [0.0, 0.0, -9.81]
-        plate = ["box", -1.0, -1.0, 1.4, 2.0, 2.0, 3.0, "v", -0.05, "free"]
+        # inside the fix faces (a moving box must not reach their image ghosts, WP-232i B10)
+        plate = ["box", 0.001, 0.001, 1.4, 0.749, 0.499, 3.0, "v", "free", "free", -0.05]
     else:
-        cmds.append(("mpm", ["grid", 232, "-origin", 0.0, 0.0, "-h", h, "-cells", 6, 9,
+        cmds.append(("mpm", ["grid", 232, "-origin", 0.0, 0.0, "-h", h, "-cells", 5, 9,
                              "-basis", "bspline2"]))
         box = [0.0, 0.0, 1.25, 2.0]
         faces = [("xmin", "x"), ("xmax", "x"), ("ymin", "xy")]
         grav = [0.0, -9.81]
-        plate = ["box", -1.0, 1.9, 3.0, 3.0, "v", -0.05, "free"]
+        plate = ["box", 0.001, 1.9, 1.249, 3.0, "v", "free", -0.05]
     if shuffled:
-        hs = h / 2.0
-        if dim == 3:
-            pts = [((i + 0.5) * hs, (j + 0.5) * hs, (k + 0.5) * hs)
-                   for k in range(12) for j in range(4) for i in range(6)]
-        else:
-            pts = [((i + 0.5) * hs, (k + 0.5) * hs) for k in range(16) for i in range(10)]
-        random.Random(258).shuffle(pts)
-        vol = hs ** dim
-        for p, x in enumerate(pts):
-            cmds.append(("mpm", ["particle", p, 1, 3, 2.0, vol, "-x", *x,
-                                 "-lp", *([hs / 2] * dim)]))
+        cmds.append(("_particles", [dim, h / 2.0, 258]))   # built in the child, shuffled
     else:
         cmds.append(("mpm", ["body", 1, "box", *box, "-ppc", 2, "-mat", 3, "-rho", 2.0]))
     for face, dofs in faces:
@@ -172,9 +178,8 @@ def _case(name):
     if name.startswith("dp_"):
         dim = int(name[3])
         return dict(cmds=_dp_column(dim), after_stage=[], stage=None, k0=0, k1=24)
-    mat, dim, shuffled = name.rsplit("_", 1)[0], int(name[-2]), name.endswith("s")
-    if name.endswith("s"):
-        mat, dim = name[:-4], int(name[-3])
+    mat, tail = name.rsplit("_", 1)          # "<mat>_<dim>d" or "<mat>_<dim>ds" (shuffled)
+    dim, shuffled = int(tail[0]), tail.endswith("s")
     cmds, after = _soil_column(dim, mat, shuffled)
     return dict(cmds=cmds, after_stage=after, stage=1, k0=8, k1=16)
 
