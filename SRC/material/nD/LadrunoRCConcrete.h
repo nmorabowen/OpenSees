@@ -82,6 +82,14 @@ class LadrunoRCConcrete : public NDMaterial {
   const char* getType(void) const;
   int getOrder(void) const;
 
+  // Ladruno WP-259 (Ladruno_implementation/259_thread_safe_concretes.md §2.2, §4): every worker-path
+  // method touches only this instance (its Params backbones are fixed arrays, regularized in place
+  // once), the pure kernel, thread_local ops_TheActiveElement and read-only ops_Dt; no process-wide
+  // accumulator; every worker print is guarded. Admitted for every option on ThreeDimensional,
+  // PlaneStress and PlateFiber; BeamFiber stays serial (no threaded host requests it; not gated).
+  bool ladrunoThreadSafeUpdate(void) const { return dim != DIM_BEAMFIBER; }
+  bool ladrunoThreadSafeForm(void) const { return this->ladrunoThreadSafeUpdate(); }
+
   double getRho(void) { return rho; }
 
   int sendSelf(int commitTag, Channel& theChannel);

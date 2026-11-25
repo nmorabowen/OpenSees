@@ -38,6 +38,8 @@
 #include <string.h>
 #include <math.h>
 #include <vector>
+#include <atomic>             // Ladruno WP-259: the BeamFiber interlock warn-once
+#include <LadrunoThreads.h>   // Ladruno WP-259: LadrunoOutputGuard (opserr from a threaded loop)
 
 using namespace ladruno_rc_kernel;
 
@@ -448,6 +450,7 @@ int LadrunoRCConcrete::regularizeIfNeeded(void)
     // step-retry would find it "done" and silently proceed on the un-regularized backbone. We
     // re-fail every step; the message is gated to once (regWarned) to avoid spam.
     if (!regWarned) {
+      LadrunoOutputGuard ladrunoOut;   // WP-259: reached from setTrialStrain on a worker
       opserr << "FATAL LadrunoRCConcrete (tag " << this->getTag()
              << "): -autoRegularization requested but no characteristic length is available "
                 "(no active element and no -lch). Refusing to run with a non-objective softening "
@@ -487,6 +490,7 @@ int LadrunoRCConcrete::setTrialStrain(const Vector& e)
     lateralRoot = nra ? 2 : (rsc ? 1 : 0);   // WP-247
     if (status == STATUS_NO_CONVERGE) {
       if (bfWarned < 5) {
+        LadrunoOutputGuard ladrunoOut;   // WP-259 (bfWarned is per instance)
         opserr << "WARNING LadrunoRCConcrete (tag " << this->getTag() << "): BeamFiber lateral balance "
                   "against the ties did not converge; the trial is refused (eps_xx=" << e(0)
                << ", gamma_xy=" << e(1) << ", gamma_xz=" << e(2) << ")\n";
@@ -525,6 +529,7 @@ int LadrunoRCConcrete::setTrialStrain(const Vector& e)
   }
   if (!converged) {
     status = STATUS_NO_CONVERGE;
+    LadrunoOutputGuard ladrunoOut;   // WP-259: opserr is shared under threads
     opserr << "WARNING LadrunoRCConcrete: sigma_33 condensation did not converge (tag "
            << this->getTag() << ", |s33|=" << fabs(stress6[2]) << ")\n";
   }
@@ -608,9 +613,11 @@ int LadrunoRCConcrete::commitState(void)
     dtime_n_commit = dtime_n;
     // advisory error control: warn if the implex extrapolation error is large (the user
     // should reduce the time/step size). Automatic dt-reduction is deferred.
-    if (P.implexControl && implexError > P.implexErrTol)
+    if (P.implexControl && implexError > P.implexErrTol) {
+      LadrunoOutputGuard ladrunoOut;   // WP-259: the commit loop threads (stdBrick, ASDShellQ4, MPM)
       opserr << "WARNING LadrunoRCConcrete (tag " << this->getTag() << "): IMPL-EX error "
              << implexError << " > tol " << P.implexErrTol << " — reduce the step size.\n";
+    }
   }
   histN = histTr;
   cEps33 = strain6[2];
@@ -681,11 +688,13 @@ NDMaterial* LadrunoRCConcrete::getCopy(const char* type)
     Pv.addonPlane = 1;
     if (Pv.crackGate < 0) Pv.crackGate = 1;
     if (Pv.interlockOn) {
-      static bool warned = false;
-      if (!warned) {
+      // WP-259: atomic warn-once (getCopy runs on the main thread today; exchange keeps it race-free
+      // without that argument). Serially: prints on the first call only, as before.
+      static std::atomic<bool> warned(false);
+      if (!warned.exchange(true)) {
+        LadrunoOutputGuard ladrunoOut;
         opserr << "WARNING LadrunoRCConcrete (tag " << this->getTag() << "): -interlock/-cyclic/-xcrack/"
                   "-shearRetention are x-y only and are switched off in the BeamFiber view.\n";
-        warned = true;
       }
       Pv.interlockOn = false; Pv.interlockCyclic = false; Pv.xcrackOn = false;
     }
