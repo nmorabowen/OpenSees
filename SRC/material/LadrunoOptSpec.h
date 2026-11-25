@@ -209,9 +209,14 @@ static const OptSpec kLadrunoNDFiberOptions[] = {
 };
 
 // LadrunoUniaxialFiber (WP-245, nD 33030): a uniaxial material as a beam fibre.
-// `nDMaterial LadrunoUniaxialFiber $tag $uniTag`; no options yet.
+// `nDMaterial LadrunoUniaxialFiber $tag $uniTag [-rho $rho] [-dowel $fc $fy $db $ls [-dowelK $kd] [-dowelSlip $su]]`.
 static const OptSpec kLadrunoUniaxialFiberOptions[] = {
   {"-rho",            1, "WP-245"},
+  // Ladruno WP-257: dowel action of the bar (opt-in; off = no shear, as Model C)
+  {"-dowel",          4, "WP-257"},
+  {"-dowelK",         1, "WP-257"},
+  {"-dowelSlip",      1, "WP-257"},
+  {"-dowelDecay",     1, "WP-257"},
 };
 
 // LadrunoMCFTStrip (WP-254, nD 33031): the Model C MCFT strip as a beam fibre.

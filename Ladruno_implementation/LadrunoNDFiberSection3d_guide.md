@@ -39,6 +39,7 @@ section LadrunoNDFiber $tag -shearProfile parabolic -shearDepth $hy $hz
 # either form also takes [-tangent analytic|numerical] [-tangentStep $d]   (WP-252, §3b)
 
 nDMaterial LadrunoUniaxialFiber $tag $uniTag [-rho $rho]
+    [-dowel $fc $fy $db $ls [-dowelK $kd] [-dowelSlip $su] [-dowelDecay $Cd]]   # WP-257, §4a
 ```
 
 ```python
@@ -159,6 +160,37 @@ uniaxial material's density.
 
 Model C subtracts each bar's area from the nearest concrete strip. Do the same when you mesh:
 the concrete fibre's area should be net of the bars it contains.
+
+## 4a. Dowel action (`-dowel`, WP-257, opt-in)
+
+Model C leaves out dowel action, so a column whose ties are far apart has no shear mechanism that
+does not depend on the ties. `-dowel $fc $fy $db $ls` gives the bar fibre a shear stress per shear
+component `k` (`γxy`; and `γxz` in `BeamFiber`) from the slip of the crack it crosses
+(`LadrunoDowelKernel.h`):
+
+- slip `s = |γ| ls`: a smeared crack of spacing `ls` slips `γ ls` (use the crack spacing; the
+  fibre's `γ` is the section's profile at the bar, e.g. `φ(y) γy` with `-shearProfile parabolic`);
+- capacity per unit bar area (Dulácska 1972; Vintzeleou & Tassios 1987), `α = σ/fy`:
+  `τu = kd (4/π) √(fc fy) √(1 − α²)`, zero once the bar yields (`-dowelK`, default 1.3 = a bar
+  in a massive core; edge bars, where cover splitting governs, need much less);
+- envelope `τ = τu (1 − e^(−3s/su))`, 95 % at `su` (`-dowelSlip`, default `0.05 db`);
+- inside the largest committed slip `smax` the fibre unloads and reloads on the secant to the
+  origin, `τ = τu h(smax) s/smax`: the pinched dowel loop. `smax` is the only history.
+- optional cyclic decay `-dowelDecay $Cd` (default 0 = off, every value untouched): `D`, the
+  cumulative **re-slip** (each increase of the slip below its previous maximum, in units of `su`;
+  a monotonic path adds exactly zero), and `τ` carries `1/(1 + Cd D)`. Implicit, as
+  `LadrunoMCFTStrip -cyclicDegradation`: the trial adds its own re-slip since the last commit, so a
+  committed state re-solves to itself. Dowels lose strength under slip reversals (Vintzeleou &
+  Tassios); without the decay the dowel keeps its capacity to the end of the test.
+
+Tangent exact: `∂τ/∂γ = τu h′ ls` and `∂τ/∂ε = sign(γ) h ∂τu/∂σ Eₜ` (the yield cut couples the
+shear row to the axial strain; the section tangent is unsymmetric, as with `-shearResultant
+modelC`). Initial tangent `3 τu(0) ls/su` on the shear diagonal. Response `dowel` =
+`(τy, τz, smax_y, smax_z, τu, D_y, D_z)`. Off (the default) the fibre is the §4 table, unchanged.
+
+With `-shearResultant modelC` the bar adds `A_b τ` to `V`. On the column battery (Sezen & Moehle
+2002; Lynn et al. 1996) the useful `kd` is a fraction of 1.3; it is a lab parameter, chosen together
+with `LadrunoMCFTStrip -cyclicDegradation` (WP-256).
 
 ## 5. Model C layout (the rcbf-0 oracle's specimens)
 
