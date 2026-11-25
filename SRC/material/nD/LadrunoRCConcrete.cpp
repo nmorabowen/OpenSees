@@ -614,7 +614,7 @@ int LadrunoRCConcrete::commitState(void)
     // advisory error control: warn if the implex extrapolation error is large (the user
     // should reduce the time/step size). Automatic dt-reduction is deferred.
     if (P.implexControl && implexError > P.implexErrTol) {
-      LadrunoOutputGuard ladrunoOut;   // WP-259: the commit loop threads (stdBrick, ASDShellQ4, MPM)
+      LadrunoOutputGuard ladrunoOut;   // WP-259: the commit loop threads (stdBrick, ASDShellQ4)
       opserr << "WARNING LadrunoRCConcrete (tag " << this->getTag() << "): IMPL-EX error "
              << implexError << " > tol " << P.implexErrTol << " — reduce the step size.\n";
     }

@@ -57,8 +57,9 @@ using Ladruno::Concrete3D::State;
 // modules) does not have an early model's spam silently swallow a later model's real diagnostics --
 // same failure mode WP-104 fixed for LadrunoSANISAND's implexRefusals census.
 // WP-259: atomic, claimed with fetch_add in integrate(), so threaded instances (the WP-107 / WP-192
-// loops, MPM mode F) neither race on it nor overshoot the 20-line budget; serially the printed
-// lines and their order are exactly the pre-WP-259 ones.
+// element loops) neither race on it nor overshoot the 20-line budget; serially the printed lines
+// and their order are exactly the pre-WP-259 ones. The claim saturates once the budget is spent
+// (no fetch_add past 20), so the count cannot wrap on a 32-bit long however many returns fail.
 static std::atomic<long> s_returnMapWarnPrinted(0);
 
 void ladrunoConcrete3dResetWarningBudget(void) { s_returnMapWarnPrinted.store(0); }
@@ -533,18 +534,22 @@ int LadrunoConcrete3D::integrate(bool doTangent)
   if (lastStatus != 0) {
     nFail += 1.0; nFailStep += 1.0;
     // WP-259: one atomic claim k (the old count) replaces the check-then-increment; k < 20 prints and
-    // k + 1 == 20 prints the suppression line, which is the serial sequence exactly. -verbose never
-    // touches the budget, as before. LadrunoOutputGuard serialises the lines under threads.
-    const long k = verbose ? 0 : s_returnMapWarnPrinted.fetch_add(1);
+    // k + 1 == 20 prints the suppression line, which is the serial sequence exactly. A spent budget
+    // is not claimed again (saturation: nothing prints past 20 either way). -verbose never touches
+    // the budget, as before. One LadrunoOutputGuard holds both lines, so under threads the
+    // suppression line directly follows the 20th warning.
+    long k = 0;
+    if (!verbose) {
+      k = s_returnMapWarnPrinted.load(std::memory_order_relaxed);
+      if (k < 20) k = s_returnMapWarnPrinted.fetch_add(1);
+    }
     if (verbose || k < 20) {
       LadrunoOutputGuard ladrunoOut;
       opserr << "WARNING LadrunoConcrete3D: return map did not converge (tag "
              << this->getTag() << ") - elastic-trial fallback this call\n";
-    }
-    if (!verbose && k + 1 == 20) {
-      LadrunoOutputGuard ladrunoOut;
-      opserr << "WARNING LadrunoConcrete3D: further return-map warnings suppressed (use -verbose, or "
-             << "getResponse \"returnFailures\" / \"substeps\" per material point)\n";
+      if (!verbose && k + 1 == 20)
+        opserr << "WARNING LadrunoConcrete3D: further return-map warnings suppressed (use -verbose, or "
+               << "getResponse \"returnFailures\" / \"substeps\" per material point)\n";
     }
   }
   return lastStatus;
@@ -793,7 +798,7 @@ int LadrunoConcrete3D::commitState(void)
   sigtmax_n = sigtmax_t; sigcmax_n = sigcmax_t;   // P2g monotone drive history
   eqc_n = eqc_t; etp_n = etp_t;                   // B2 compressive drive history
   if (verbose && (nSubStep > 0.0 || nFailStep > 0.0)) {
-    LadrunoOutputGuard ladrunoOut;   // WP-259: the commit loop threads (stdBrick, ASDShellQ4, MPM)
+    LadrunoOutputGuard ladrunoOut;   // WP-259: the commit loop threads (stdBrick, ASDShellQ4)
     opserr << "LadrunoConcrete3D (tag " << this->getTag() << ") commit: " << nSubStep
            << " sub-incremented returns, " << nFailStep << " final return failures since the last commit\n";
   }

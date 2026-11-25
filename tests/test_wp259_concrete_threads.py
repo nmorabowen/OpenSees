@@ -1,4 +1,4 @@
-"""WP-259 -- the Ladruno concretes on the WP-107 / WP-192 threaded loops and MPM mode F.
+"""WP-259 -- the Ladruno concretes on the WP-107 / WP-192 threaded element loops.
 
 LadrunoConcrete3D and LadrunoRCConcrete answer `ladrunoThreadSafeUpdate()` /
 `ladrunoThreadSafeForm()` true on the views the WP-259 audit proved
@@ -105,10 +105,17 @@ MATERIALS = {
     "c3d_implex": (C3D + ["-lch", 50.0, "-implex"], ("3d", "shell")),
     "c3d_eta": (C3D + ["-lch", 50.0, "-eta", 0.05], ("3d",)),
     "c3d_autoreg": (C3D + ["-autoRegularization"], ("3d", "pe")),
+    # -verbose: every final failure prints (no budget) and every commit prints a summary
+    "c3d_verbose": (C3D + ["-lch", 50.0, "-verbose"], ("3dcr",)),
     "rc": (RC, ("3d", "3dc", "ps", "shell")),
     "rc_implex": (RC + ["-implex"], ("3d", "shell")),
     "rc_autoreg": (RC + ["-autoRegularization", 50.0], ("3d", "shell")),
     "rc_interlock": (RC + ["-interlock", "-agg", 16.0, "-cyclic"], ("shell",)),
+    # -implexControl with a tolerance every commit exceeds: the commit loop prints from workers
+    "rc_implexctl": (RC + ["-implex", "-implexControl", 1.0e-14, 0.1], ("shell",)),
+    # the WP-196 EnergyBalance element sweep (a fifth threaded loop, on ladrunoThreadSafeForm)
+    "c3d_energy": (C3D + ["-lch", 50.0], ("3d+eb",)),
+    "rc_energy": (RC, ("shell+eb",)),
 }
 
 _FE_CHILD = r'''
@@ -118,6 +125,8 @@ sys.path.insert(0, sys.argv[2])
 from _testbed import ops
 cfg = json.loads(sys.argv[3])
 mat, host, nthreads = cfg["mat"], cfg["host"], cfg["threads"]
+energy = host.endswith("+eb")
+host = host.split("+")[0]
 n_push, iters, ds = cfg["n_push"], cfg["iters"], cfg["ds"]
 rc_mat = mat[0] == "LadrunoRCConcrete"
 diag = ["damage"] + (["implexError"] if (rc_mat and "-implex" in mat) else []) \
@@ -207,6 +216,10 @@ else:                                                     # shell wall, PlateFib
     nodes = [nid(i, k) for k in range(NY + 1) for i in range(NX + 1)]
 
 ops.ladrunoThreads(nthreads)
+if energy:
+    ops.region(1, "-eleRange", 1, len(cells))
+    ops.recorder("EnergyBalance", "-v2", "-region", 1, "-time", "-precision", 17,
+                 "-file", cfg["eb_file"])
 ops.timeSeries("Linear", 1)
 ops.pattern("Plain", 1, 1)
 for n in tip:
@@ -232,24 +245,42 @@ for what in diag:
     pts[what] = [[float(v).hex() for v in ops.eleResponse(e, *path, what)] for e, path in gps]
 dmg = [[float.fromhex(v) for v in p] for p in pts["damage"]]
 ops.ladrunoThreads(1)
+eb = None
+if energy:
+    ops.remove("recorders")
+    eb = open(cfg["eb_file"]).read()
 print("RESULT " + json.dumps({"build": ops.ladrunoBuild(), "steps": steps,
                               "q": [float.fromhex(s[1]) for s in steps], "pts": pts,
-                              "dmax": [max(p[c] for p in dmg if len(p) > c) for c in range(2)]}))
+                              "dmax": [max(p[c] for p in dmg if len(p) > c) for c in range(2)],
+                              "eb": eb}))
 '''
 
 _FE_CASES = [(m, h) for m in sorted(MATERIALS) for h in MATERIALS[m][1]]
+
+
+def _base(host):
+    return host.split("+")[0]
 _NELE = {"3d": 96, "3dc": 96, "3dcr": 96, "pe": 72, "ps": 72, "shell": 36}
-_DS = {"3d": 0.03, "3dc": 0.085, "3dcr": 0.085, "pe": 0.03, "ps": 0.03, "shell": 0.05}
-_NPUSH = {"3d": 8, "3dc": 10, "3dcr": 12, "pe": 8, "ps": 8, "shell": 8}
+_DS = {"3d": 0.03, "3dc": 0.085, "3dcr": 0.12, "pe": 0.03, "ps": 0.03, "shell": 0.05}
+_NPUSH = {"3d": 8, "3dc": 10, "3dcr": 9, "pe": 8, "ps": 8, "shell": 8}
 _WARN = "return map did not converge"
+_COUNTED = ("sigma_22 condensation", "sigma_33 condensation", "commit: ", "IMPL-EX error")
 _SUPPRESSED = "further return-map warnings suppressed"
 
 
 def _run_fe(mat, host, nthreads, iters=8):
-    cfg = {"mat": MATERIALS[mat][0], "host": host, "threads": nthreads, "n_push": _NPUSH[host],
-           "iters": iters, "ds": _DS[host]}
+    import tempfile
+    fd, eb_file = tempfile.mkstemp(suffix=".eb.txt")
+    os.close(fd)
+    cfg = {"mat": MATERIALS[mat][0], "host": host, "threads": nthreads,
+           "n_push": _NPUSH[_base(host)], "iters": iters, "ds": _DS[_base(host)],
+           "eb_file": eb_file}
     code, out = run_python_script(_FE_CHILD, argv=[_DIST_BIN, _TESTS, json.dumps(cfg)],
                                   timeout=900)
+    try:
+        os.remove(eb_file)
+    except OSError:
+        pass
     assert code == 0, out[-3000:]
     res = [ln for ln in out.splitlines() if ln.startswith("RESULT ")]
     assert res, out[-3000:]
@@ -259,8 +290,13 @@ def _run_fe(mat, host, nthreads, iters=8):
 def _threaded_text(host, n, nele):
     """The loops that must have announced themselves on n threads."""
     want = ["element update loop THREADED on %d threads" % n, "(%d elements)" % nele]
-    if host in ("3d", "3dc", "3dcr", "shell"):   # stdBrick / ASDShellQ4 thread the WP-192 form loops too
-        want.append("%d of %d FE_Elements computed in parallel" % (nele, nele))
+    if _base(host) in ("3d", "3dc", "3dcr", "shell"):   # stdBrick / ASDShellQ4: the WP-192 loops
+        for loop in ("tangent", "residual"):
+            want.append("element %s loop threaded on %d threads: %d of %d FE_Elements computed "
+                        "in parallel" % (loop, n, nele, nele))
+    if host.endswith("+eb"):
+        want.append("EnergyBalanceRecorder: element sweep threaded on %d threads: %d of %d"
+                    % (n, nele, nele))
     return want
 
 
@@ -276,19 +312,28 @@ def test_fe_threaded_equal_serial(mat, host):
         # warning budget (the one shared counter, atomic since WP-259) saturates. The gate is
         # that the refusals, every point's failure count and the printed lines match 1 thread.
         assert any(r < 0 for r in rcs), (mat, host, rcs)
-        assert nwarn == 20 and _SUPPRESSED in text1, (mat, host, nwarn)
+        if "-verbose" in MATERIALS[mat][0]:   # no budget: every failure prints, every commit sums
+            assert nwarn > 20 and _SUPPRESSED not in text1 and "commit: " in text1, (mat, nwarn)
+        else:
+            assert nwarn == 20 and text1.count(_SUPPRESSED) == 1, (mat, host, nwarn)
         fails = [float.fromhex(p[0]) for p in base["pts"]["returnFailures"]]
         assert sum(fails) > 20, (mat, host, sum(fails))
     else:
-        # the gate means something only if the push ran and the concrete cracked / crushed
-        assert all(r == 0 for r in rcs), (mat, host, rcs)
+        # the gate means something only if the push ran and the concrete cracked / crushed.
+        # `3dc` sits at a sharp crush (LadrunoConcrete3D on nmb: no compressive damage after step
+        # 9, omega_c 0.17 after step 10, refusals from step 11), so only its first 8 steps must
+        # converge: libm differences (Zone-A is GCC / glibc) may move the crush by a step.
+        conv = rcs[:8] if host == "3dc" else rcs
+        assert all(r == 0 for r in conv), (mat, host, rcs)
+        if "-implexControl" in MATERIALS[mat][0]:
+            assert "IMPL-EX error" in text1, (mat, host, "the commit-loop print never ran")
         if host == "3dc":
-            assert base["dmax"][1] > 0.1, (mat, host, "no point crushed", base["dmax"])
+            assert max(base["dmax"]) > 0.1, (mat, host, "no point cracked or crushed", base["dmax"])
         else:
             assert base["dmax"][0] > 0.3, (mat, host, "no point cracked", base["dmax"])
-        q = base["q"]
-        ratio = (q[-1] - q[-2]) / q[0]   # last increment's stiffness over the first's
-        assert ratio < 0.95, (mat, host, "no softening over the push", q)
+            q = base["q"]
+            ratio = (q[-1] - q[-2]) / q[0]   # last increment's stiffness over the first's
+            assert ratio < 0.95, (mat, host, "no softening over the push", q)
     for n in _THREADS[1:]:
         got, text = _run_fe(mat, host, n)
         assert got["build"] == base["build"]
@@ -298,6 +343,9 @@ def test_fe_threaded_equal_serial(mat, host):
         assert got["pts"] == base["pts"], (mat, host, n, "Gauss-point diagnostics differ")
         assert text.count(_WARN) == nwarn, (mat, host, n, "warning budget", nwarn)
         assert text.count(_SUPPRESSED) == text1.count(_SUPPRESSED), (mat, host, n)
-        for w in _threaded_text(host, n, _NELE[host]):
+        for w in _COUNTED:              # every other worker print: same number of lines
+            assert text.count(w) == text1.count(w), (mat, host, n, w)
+        assert got["eb"] == base["eb"], (mat, host, n, "EnergyBalance output differs")
+        for w in _threaded_text(host, n, _NELE[_base(host)]):
             assert w in text, (mat, host, n, w, text[-4000:])
         assert "PARTLY threaded" not in text, text[-4000:]
