@@ -17,7 +17,7 @@ Lynn et al. 1996 (3CLH18, 3CMH18, 3CMD12).
 
 ## Status
 
-Prototype, 2026-11-24 (draft PR). 14 new unit tests and the 130 existing LadrunoForceBeamColumn tests pass on
+Shipped in #1151 (2026-11-25). 14 new unit tests and the 130 existing LadrunoForceBeamColumn tests pass on
 Linux (esmeralda build). Lab gate met with the defaults: 8/8 complete, J 0.149 (§5).
 
 ## 1. Problem
@@ -148,10 +148,10 @@ restart, the fork crosses that point on a 10 kN-accepted step, stays on the unfa
 5–7 kN. An earlier "grind" of 2CLD12 with the restart on was a lab-driver bug (a half-successful overshoot
 predictor left the node past its target and the step direction kept the old sign), not the element.
 
-## 6. Not done before a PR
+## 6. Not done (follow-ups)
 
 - `sendSelf`/`recvSelf` do not carry the mode (an OpenSeesMP copy runs nested). Add the 12 values to the
   data vector and a database round-trip test.
 - 2D element (`LadrunoForceBeamColumn2d`): same change, not needed by the program.
-- Guide/manual entry, ledger row, banner line, stamp headers.
+- Banner line. (Guide: `200_ladruno_frame_elements_apegmsh_emitter_guide.md` §2.3, §5, §6.1; ledger: `ledger/implementations/WP-255-*`, `ledger/quirks/WP-255-*`.)
 - Windows build and the Windows test run (this prototype was built and tested on Linux only).
