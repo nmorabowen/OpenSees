@@ -214,6 +214,27 @@ static const OptSpec kLadrunoUniaxialFiberOptions[] = {
   {"-rho",            1, "WP-245"},
 };
 
+// LadrunoMCFTStrip (WP-254, nD 33031): the Model C MCFT strip as a beam fibre.
+// `nDMaterial LadrunoMCFTStrip $tag $fc $fp $ep $e20 -crackSpacing $smx $smy ...`
+static const OptSpec kLadrunoMCFTStripOptions[] = {
+  {"-crackSpacing",   2, "WP-254"},
+  {"-ties",           3, "WP-254"},
+  {"-tieSteel",       3, "WP-254"},
+  {"-agg",            1, "WP-254"},
+  {"-betaC",          1, "WP-254"},
+  {"-cvci",           1, "WP-254"},
+  {"-Gxz",            1, "WP-254"},
+  {"-tangentStep",    1, "WP-254"},
+};
+
+// LadrunoMCFTSteel (WP-254, uniaxial 33004): Model C's bar law.
+// `uniaxialMaterial LadrunoMCFTSteel $tag $fy $fu [-Es] [-esh] [-esu]`
+static const OptSpec kLadrunoMCFTSteelOptions[] = {
+  {"-Es",             1, "WP-254"},
+  {"-esh",            1, "WP-254"},
+  {"-esu",            1, "WP-254"},
+};
+
 // ---------------------------------------------------------------------------
 // Ladruno WP-185 (apeGmsh#1667): the registry `ladrunoSchema` reads. One row
 // per command that parses with a table above: the name it refuses under (the
@@ -238,6 +259,8 @@ static const OptTable kOptTables[] = {
   {"LadrunoRCFiniteStrain", kLadrunoRCOptions, count(kLadrunoRCOptions)},
   {"LadrunoNDFiber",        kLadrunoNDFiberOptions, count(kLadrunoNDFiberOptions)},
   {"LadrunoUniaxialFiber",  kLadrunoUniaxialFiberOptions, count(kLadrunoUniaxialFiberOptions)},
+  {"LadrunoMCFTStrip",      kLadrunoMCFTStripOptions, count(kLadrunoMCFTStripOptions)},
+  {"LadrunoMCFTSteel",      kLadrunoMCFTSteelOptions, count(kLadrunoMCFTSteelOptions)},
 };
 
 }  // namespace ladruno_opt

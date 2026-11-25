@@ -138,6 +138,8 @@ GLOBS = [
     "SRC/material/section/LadrunoShellModifierSection.*",
     "SRC/material/section/LadrunoNDFiberSection3d.*", "SRC/material/section/LadrunoFiberShearKernel.h",
     "SRC/material/nD/LadrunoUniaxialFiber.*",
+    "SRC/material/nD/LadrunoMCFTStrip.*", "SRC/material/nD/LadrunoMCFTKernel.h",   # WP-254
+    "SRC/material/uniaxial/LadrunoMCFTSteel.*",   # WP-254
     "SRC/modelbuilder/tcl/TclNDMaterialTester.*",   # WP-248
     # WP-122: stamped files that were missing here (a re-stamp would not have maintained them)
     "SRC/analysis/handler/LadrunoAutoPenaltyReduce.*",

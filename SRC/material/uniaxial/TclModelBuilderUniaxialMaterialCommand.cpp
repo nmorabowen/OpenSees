@@ -86,6 +86,7 @@ extern void *OPS_HardeningMaterial(void);
 extern void *OPS_LadrunoUniaxialJ2(void);   // Ladruno
 extern void *OPS_LadrunoRebarBuckling(void);   // Ladruno
 extern void *OPS_LadrunoBondSlip(void);   // Ladruno
+extern void *OPS_LadrunoMCFTSteel(void);   // Ladruno WP-254
 extern void *OPS_LadrunoCohesiveHinge(void);   // Ladruno
 extern void *OPS_FlagShapeMaterial(void);
 extern void *OPS_UniaxialJ2Plasticity(void);
@@ -1036,6 +1037,14 @@ TclModelBuilderUniaxialMaterialCommand (ClientData clientData, Tcl_Interp *inter
     if (strcmp(argv[1],"LadrunoBondSlip") == 0) {   // Ladruno
 
       void *theMat = OPS_LadrunoBondSlip();
+      if (theMat != 0)
+	theMaterial = (UniaxialMaterial *)theMat;
+      else
+	return TCL_ERROR;
+    }
+    if (strcmp(argv[1],"LadrunoMCFTSteel") == 0) {   // Ladruno WP-254
+
+      void *theMat = OPS_LadrunoMCFTSteel();
       if (theMat != 0)
 	theMaterial = (UniaxialMaterial *)theMat;
       else

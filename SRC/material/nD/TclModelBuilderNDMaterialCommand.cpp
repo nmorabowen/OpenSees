@@ -117,6 +117,7 @@ extern  void *OPS_InitDefGradNDMaterial(void);         // Ladruno
 extern  void *OPS_StagedStrainNDMaterial(void);        // Ladruno
 extern  void *OPS_LadrunoRCConcrete(void);             // Ladruno
 extern  void *OPS_LadrunoUniaxialFiber(void);          // Ladruno WP-245
+extern  void *OPS_LadrunoMCFTStrip(void);              // Ladruno WP-254
 extern  void *OPS_LadrunoRCFiniteStrain(void);         // Ladruno
 extern  void *OPS_LadrunoConcrete3D(void);             // Ladruno
 extern  void *OPS_LadrunoHS(void);                     // Ladruno (WP-210)
@@ -338,6 +339,14 @@ TclModelBuilderNDMaterialCommand (ClientData clientData, Tcl_Interp *interp, int
 
     else if ((strcmp(argv[1],"LadrunoUniaxialFiber") == 0)) {  // Ladruno WP-245
       void *theMat = OPS_LadrunoUniaxialFiber();
+      if (theMat != 0)
+        theMaterial = (NDMaterial *)theMat;
+      else
+        return TCL_ERROR;
+    }
+
+    else if ((strcmp(argv[1],"LadrunoMCFTStrip") == 0)) {  // Ladruno WP-254
+      void *theMat = OPS_LadrunoMCFTStrip();
       if (theMat != 0)
         theMaterial = (NDMaterial *)theMat;
       else
