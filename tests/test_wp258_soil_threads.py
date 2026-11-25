@@ -97,6 +97,9 @@ MATERIALS = {
     "sanisand_implex": (["LadrunoSANISAND", *SANISAND, 2, 2, 1, 1e-7, 1e-7,
                          "-Presidual", 0.0, "-Pmin", 1.0e-4 * 101.0, "-implex",
                          "-maxSubsteps", 1000], 1),
+    # vanilla ManzariDafalias (no -Pmin; the deck keeps p > 0): IntScheme 1 and 2
+    "manzari_is1": (["ManzariDafalias", *SANISAND, 1, 2, 1, 1e-7, 1e-7], 1),
+    "manzari_is2": (["ManzariDafalias", *SANISAND, 2, 2, 1, 1e-7, 1e-7], 1),
     "hs": (["LadrunoHS", *HS, "-stage", 0], 1),
     "hs_small": (["LadrunoHS", *HS, "-stage", 0, "-smallStrain", 1.0e5, 1.0e-4], 1),
     "hs_implex": (["LadrunoHS", *HS, "-stage", 0, "-implex"], 1),
@@ -149,7 +152,7 @@ if dim == 2:
     master, vdof = nid(NX // 2, NZ), 2
     nodes = [nid(i, k) for k in range(NZ + 1) for i in range(NX + 1)]
 else:
-    NX, NY, NZ = 6, 2, 3
+    NX, NY, NZ = 8, 3, 4
     D = 1.0
     ops.model("basic", "-ndm", 3, "-ndf", 3)
     dx, dy, dz = W / NX, D / NY, H / NZ
@@ -251,12 +254,20 @@ def _threaded_text(dim, n, nele):
     return want
 
 
+# vanilla ManzariDafalias IntScheme 2 has no substep cap (`-maxSubsteps` is a SANISAND option):
+# on the 3D deck one serial run exceeds the child timeout -- the uncapped-substepping quirk, not
+# a threading one. It is gated in 2D; LadrunoSANISAND covers IntScheme 2 in 3D.
+_SLOW_3D = {"manzari_is2"}
+
+
 @pytest.mark.parametrize("dim", [2, 3])
 @pytest.mark.parametrize("mat", sorted(MATERIALS))
 def test_threaded_equal_serial(mat, dim):
+    if dim == 3 and mat in _SLOW_3D:
+        pytest.skip("vanilla IntScheme 2 is uncapped: too slow for the 3D deck (gated in 2D)")
     if len(_THREADS) < 2:
         pytest.skip("single hardware thread")
-    nele = 72 if dim == 2 else 36
+    nele = 72 if dim == 2 else 96
     base, _ = _run(mat, dim, 1)
     assert all(r == 0 for r in base["gravity_rc"]), (mat, dim, base["gravity_rc"])
     assert len(base["steps"]) > 0
