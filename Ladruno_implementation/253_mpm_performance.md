@@ -176,4 +176,86 @@ owner.
 
 ## Results
 
-*Empty until the baseline runs.*
+**Binary of record:** `3d2cb6330` (exe and pyd `ladrunoBuild` checked before every run). The
+commits after it touch tests, ledger fragments, scripts and results only, so the measured
+binary is the shipped code. Machine nmb: i7-13700KF (8 P + 8 E cores, 24 logical), Windows 11,
+MKL 2026.1.0.0, affinity 0xFFFF. Data:
+`Ladruno_scripts/mpm_bench/results/after_F_3d2cb6330/` (+ `_rerun`, the 5-repeat reruns of §4),
+`after_A_3d2cb6330/` (+ `_rerun`), baselines `baseline_F_t1/` and `baseline_A_1e4/` (build
+`0efa8ca17`). Each directory has a `summary.md`.
+
+### Target verdicts
+
+| # | Measured (median, spread) | Verdict |
+|---|---|---|
+| T1 | 3D `gimp` elastic 10⁵: S(8) = **5.00** (T = 7.18 M p-steps/s, 3 %); non-material ns per particle-step 657 → ≈ 127 (1-thread share applied to the 8-thread time) | **pass** |
+| T2 | S(4) = 2.97 (`gimp`), 2.83 (`bspline2`) | **pass** |
+| T3 | 3D `bspline2` elastic 10⁵: S(8) = 4.54 (4 %) | **pass** |
+| T4 | 2D elastic 10⁵: S(8) = 3.50 (`gimp`), 3.55 (`bspline2`) | **pass** (10⁴, not a target row: 2.53 and 2.78, spreads 30 % and 23 % after the 5-repeat rerun) |
+| T5 | 3D DP 10⁵: 1.54 (`gimp`), 1.71 (`bspline2`); **2D DP 10⁵: 1.27 (`gimp`), 1.31 (`bspline2`)** | 3D pass; **2D MISS** (owner) |
+| T6 | SANISAND S(8) 1.02–1.11 (`bspline2`, 2D and 3D, 10⁴ and 10⁵) | **pass** (2D rows noisy, see below) |
+| T7 | Mode F, every row at 1 thread: G(1) 0.99–1.06, each "faster" or "within noise"; bit-identical (bitcheck against `a3820d5ac` at 1/2/4/8 threads, and every digest). Mode A, 3D 10⁴: G(1) 1.02, bit-identical to `baseline_A_1e4` | **pass** |
+| T8 | Mode F: every 4- and 8-thread digest equals 1 thread (240/240 runs) | **pass** |
+| T9 | esmeralda, 3D `gimp` elastic 10⁶, 24 threads | *pending job 10272* |
+
+### Misses for the owner
+
+- **T5, 2D DruckerPrager (S(8) 1.27–1.32 against 1.4).** The target was set from the 3D
+  material share (≈ 50 %). In 2D the DP material is 61–65 % of the step at 1 thread
+  (`phase split`, `material share`), and those calls stay serial under §5. Amdahl at s ≈ 0.63
+  gives 1.45 at 8 threads, so the target sat within 4 % of the bound; the transfer loops
+  themselves scale as in 3D. Lifting it needs a thread-safe DP (`ladrunoThreadSafeForm`), which
+  is out of scope (thread-safe soil models).
+- **T9** *(filled from esmeralda)*.
+
+### What "soil models stay serial" means in the numbers
+
+Only 3D `ElasticIsotropic` passes `ladrunoThreadSafeUpdate() && ladrunoThreadSafeForm()`; every
+other material runs the split path (threaded kinematics, serial material calls in particle
+order, threaded push). So the speedup of a row is capped by its material share: elastic 3D
+(6–9 %) → S(8) 4.5–5.1; elastic 2D (11–14 %, `ElasticIsotropicPlaneStrain2D` not Form-safe) →
+2.5–3.6; DP (42–65 %) → 1.3–1.7; SANISAND (85–95 %) → 1.0–1.1, never slower (T6).
+
+### #1096, #1098 and #1095
+
+- `mpm.f.admissible` (#1096) is 0.0–0.8 % of a step and `mpm.f.dtcrit` (#1098) 0.2–5.7 %
+  (1 thread, every row). Neither dominates; no action under this WP.
+- #1095: `test_cut_retry_across_connectivity_changes_3d` is green on `3d2cb6330`; no crash at 8
+  threads in the 240 mode-F and 63 mode-A runs, so no minidump to post.
+
+### Mode A (reported, no target)
+
+Threads 1 and 8 only. S(8) 1.05–1.18 at 10⁴ (3D `bspline2` DP excepted, below) and 1.57 at 3D `gimp` elastic 10⁵ (PARDISO and
+WP-192's element loops; not this WP's threading, and not bit-identical across thread counts,
+which T8 does not ask of mode A). **DruckerPrager mode A fails** in 2D (10⁴, both bases) and 3D
+`gimp` 10⁵: Newton does not converge after 4 step cuts near load factor 0.6. Build `c45af1407`
+(before this WP) fails at the same step, t = 0.597656, so it is the block model's limit, not
+this WP's. Kept as data (§4).
+
+The one noisy mode-A row (3D `bspline2` DP 10⁴, 8 threads, 41 %) stays at 43 % with 5 repeats:
+it is bimodal (234–240 against 333–338 p-steps/s), so it is reported within noise.
+
+### Noisy rows
+
+2D SANISAND at 10⁴ stays at 29–45 % spread even with 5 repeats, and its 10⁵ 1-thread row was
+68 %. 2D elastic 10⁴ at 8 threads is 23–30 %. All are reported "within noise" where §4 says so;
+none is a target row except through T6, which passes on every median.
+
+### External reference: Kratos
+
+`Ladruno_scripts/mpm_bench/external/kratos_column.py`, Kratos MPMApplication 10.4.4 (BSD, pip
+wheels, isolated venv), the same quarter column, cells, ppc, E, ν, ρ, g and Δt; 5 warm-up + 20
+timed steps, 3 repeats, nmb (`results/kratos_10.4.4_nmb/kratos_results.jsonl`). **Not matched:**
+Kratos has linear hex shape functions (8 nodes per particle, against the wider `gimp` support; README item 1), a
+NeoHookean law, a fixed floor instead of a Coulomb wall, and a Python-driven step loop (see
+`external/README.md`). A reference point, not a like-for-like ratio.
+
+| N (Kratos / fork) | Kratos T, t = 1 / 4 / 8 [M p-steps/s] | Kratos S(8) | fork 3D `gimp` elastic, t = 1 / 8 | fork / Kratos at t = 1 / 8 |
+|---|---|---|---|---|
+| 11,664 / 10,368 | 0.101 / 0.270 / 0.369 (≤ 4 %) | 3.65 | 1.40 / 6.85 | 14 / 19 |
+| 93,312 / 98,496 | 0.097 / 0.299 / 0.385 (≤ 7 %) | 3.95 | 1.44 / 7.18 | 15 / 19 |
+
+### Regression check
+
+`Ladruno_scripts/mpm_bench/regress.py` against `baseline_nmb.json` (recorded on `3d2cb6330`,
+quiet nmb); the fork checklist entry tells later MPM work packages to run it.

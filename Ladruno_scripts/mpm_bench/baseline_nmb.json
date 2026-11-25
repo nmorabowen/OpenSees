@@ -1,0 +1,51 @@
+{
+ "recorded": "2026-11-24T22:11:53",
+ "builds": {
+  "exe": "3d2cb6330be3206ae9ab5e3c29b802f9b98a1e96",
+  "pyd": "3d2cb6330be3206ae9ab5e3c29b802f9b98a1e96",
+  "exe_path": "C:\\Users\\nmb\\Documents\\Github\\OpenSees\\.claude\\worktrees\\charming-burnell-a4a8a6\\dist\\bin\\OpenSees.exe",
+  "exe_mtime": 1795546433.9385564,
+  "pyd_mtime": 1795546450.0783155,
+  "mkl_probe": "mkl_core.3.dll 2026.1.0.0"
+ },
+ "machine": {
+  "cpu_model": "13th Gen Intel(R) Core(TM) i7-13700KF",
+  "logical_cores": 24,
+  "ram_bytes": 68560179200,
+  "os": "Windows-11-10.0.26100-SP0",
+  "hostname": "nmbMain"
+ },
+ "repeats": 3,
+ "rows": {
+  "F/3D/gimp/elastic/N100000/t1": {
+   "T_median": 1409440.4866416105,
+   "spread": 0.012888742239049246,
+   "N": 98496,
+   "n_ok": 3
+  },
+  "F/3D/gimp/elastic/N100000/t8": {
+   "T_median": 5593673.27021407,
+   "spread": 0.08720227121795643,
+   "N": 98496,
+   "n_ok": 3
+  },
+  "F/3D/gimp/dp/N100000/t1": {
+   "T_median": 692207.270875008,
+   "spread": 0.01612580288519118,
+   "N": 98496,
+   "n_ok": 3
+  },
+  "F/2D/bspline2/elastic/N100000/t8": {
+   "T_median": 9087159.379803544,
+   "spread": 0.015770015255094843,
+   "N": 100352,
+   "n_ok": 3
+  },
+  "A/3D/gimp/elastic/N10000/t1": {
+   "T_median": 6293.579216364866,
+   "spread": 0.01074627646732478,
+   "N": 10648,
+   "n_ok": 3
+  }
+ }
+}
