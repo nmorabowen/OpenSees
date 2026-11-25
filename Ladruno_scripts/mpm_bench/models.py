@@ -33,6 +33,13 @@ SANISAND_PARAMS = [264.32, 0.3129, 0.6944, 1.3309, 0.71, 0.027, 0.83, 0.45, 101.
 SANISAND_SCHEME = 2
 SAN_RHO, SAN_G = 2.0, 9.81
 
+# --- LadrunoHS (WP-258; kPa deck of tests/test_ladruno_mpm_soil_admission.py) ----------------------
+# Reported only, so NOT in MATS: the default matrix is WP-253's. Select it with `--mats hs`.
+HS_PARAMS = [35000.0, 35000.0, 105000.0, 0.5, 10.0, 38.0, 8.0, "-nu", 0.2, "-pref", 100.0,
+             "-Rf", 0.9, "-OCR", 1.5, "-stage", 0]
+EXTRA_MATS = ("hs",)
+STAGED = ("sanisand", "hs")      # kPa decks, stage 0 for the warm-up, then the plastic stage
+
 # --- column (mode F) ------------------------------------------------------------------------------
 A_COL = M0.A_COL
 RHO_COL, G_COL = M0.RHO_COL, M0.G_COL
@@ -89,6 +96,9 @@ def material_command(mat, dim, block=False):
     if mat == "sanisand":
         return (["nDMaterial", "LadrunoSANISAND", MAT_TAG, *SANISAND_PARAMS, SANISAND_SCHEME],
                 {"deck": "kPa (tests/mpm_soil_cases.txt)", "IntScheme": SANISAND_SCHEME})
+    if mat == "hs":
+        return (["nDMaterial", "LadrunoHS", MAT_TAG, *HS_PARAMS],
+                {"deck": "kPa (tests/test_ladruno_mpm_soil_admission.py)"})
     if block:
         E, nu = M0.E_BLOCK, M0.NU_BLOCK
         K, G = M0.block_K_G()
@@ -113,7 +123,7 @@ def column_commands(dim, N, mat, basis):
     """[(command, args)] of the mode-F column and its parameters."""
     nx, ny, nz = column_cells(dim, N)
     h = A_COL / nx
-    san = mat == "sanisand"
+    san = mat in STAGED
     rho = SAN_RHO if san else RHO_COL
     g = SAN_G if san else G_COL
     mcmd, mpar = material_command(mat, dim)
@@ -151,7 +161,7 @@ def block_commands(dim, N, mat, basis):
     """[(command, args)] of the mode-A block (quasi-static, PARDISO) and its parameters."""
     n = block_cells(dim, N)
     h = B / n
-    san = mat == "sanisand"
+    san = mat in STAGED
     rho = SAN_RHO if san else M0.RHO
     g = SAN_G if san else M0.G_ACC
     mcmd, mpar = material_command(mat, dim, block=True)

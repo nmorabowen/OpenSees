@@ -114,8 +114,8 @@ one of these. Line numbers are the pre-change ones.
 the prototype. `ManzariDafaliasRO` and its wrappers were not audited: they now refuse explicitly,
 because the base admits IntScheme 1/2.
 
-**Verdict:** IntScheme 1, 2, 129 (129 only where SAS-ME is allowed, i.e. `LadrunoSANISAND`), with
-or without `-implex`, 3D and PlaneStrain: **admitted**. IntScheme 45: refused (function-static
+**Verdict:** `LadrunoSANISAND` IntScheme 1, 2 and 129, with or without `-implex`, 3D and
+PlaneStrain: **admitted**. Vanilla `ManzariDafalias`: IntScheme 1 only (after the critic, §6.1). IntScheme 45: refused (function-static
 scratch). IntSchemes 0 and 3–9 share ModifiedEuler's helpers and hold no statics, but were not in
 the determinism gate: refused, pending a gate.
 
@@ -175,7 +175,8 @@ re-introduced on purpose.
 | Material | Option | `ladrunoThreadSafeUpdate` / `Form` | Reason |
 |---|---|---|---|
 | `DruckerPrager3D`, `DruckerPragerPlaneStrain` | every option (`materialState` 0/1/2) | **true** | §2.1 |
-| `ManzariDafalias` (vanilla), 3D / PlaneStrain | IntScheme 1, 2 | **true** | §2.2 |
+| `ManzariDafalias` (vanilla), 3D / PlaneStrain | IntScheme 1 | **true** | §2.2 |
+| `ManzariDafalias` (vanilla) | IntScheme 2 | false | no substep cap: the gate cannot run it in bounded time (§6.1 #3); LadrunoSANISAND admits it |
 | `ManzariDafalias` | IntScheme 0, 3–9 | false | not in the determinism gate |
 | `ManzariDafalias` | IntScheme 45 (RungeKutta45) | false | function-static scratch (`:2414-2421`) |
 | `ManzariDafaliasRO` and its 3D / PlaneStrain wrappers | any | false | not audited |
@@ -188,4 +189,111 @@ loop, and MPM mode F threads a particle's material calls when its material answe
 
 ## 5. Results
 
-*(after the build of record)*
+**Binary of record:** `efc4113f1` (WP-258 on WP-253 `faae5c51c`). `ladrunoBuild` of
+`OpenSees.exe` and `opensees.pyd` were checked before every run. Later commits change tests,
+scripts and documents only. Machine nmb (i7-13700KF, affinity `0xFFFF`), MKL 2026.1.0.0, Windows
+11. Data: `Ladruno_scripts/mpm_bench/results/after_F_efc4113f1_wp258/` (+ `_rerun`, the §4
+5-repeat reruns; + `_hs`).
+
+### 5.1 Speedup targets (§1) — every target met
+
+| # | Row | Before (WP-253) | After S(n), median (spread) | Verdict |
+|---|---|---|---|---|
+| U1 | DP 3D 10⁵, 8 threads | 1.54 `gimp` / 1.71 `bspline2` | **5.29** (5 %) / **4.97** (1 %) | pass (≥ 3.0) |
+| U2 | DP 2D 10⁵, 8 threads | 1.27 / 1.31 (WP-253 T5 miss) | **5.17** (9 %) / **5.20** (9 %) | pass (≥ 2.5); WP-253's T5 miss lifted |
+| U3 | SANISAND (IntScheme 2, `bspline2`) 10⁵, 8 threads | 1.08 (3D) / 1.11 (2D) | **4.47** (4 %) / **2.63** (3 %) | pass (≥ 2.5) |
+| U4 | the same rows, 4 threads | — | DP 3.06–3.17; SANISAND 3D 2.82, 2D 2.44 | pass (≥ 2.0) |
+| U5 | 10⁴ rows (reported) | — | DP S(8) 5.25–5.93; SANISAND 4.70 (3D), 3.23 (2D) | reported; every S(n) ≥ 0.95 |
+| U6 | 1 thread, after against WP-253's baseline | — | G(1) 0.99–1.05, each "faster" or "within noise"; **particle digests bit-identical** to `baseline_F_t1` (origin `a3820d5ac` + scopes) and to WP-253's `after_F_3d2cb6330`, 12/12 rows | pass |
+| U7 | `regress.py` against `baseline_nmb.json` | — | no regression (3D `gimp` elastic 8 threads +20 %, other rows within ±4 %) | pass |
+
+T8-style determinism: in the bench, every 4- and 8-thread digest equals its 1-thread digest
+(24/24 rows).
+
+**What the remaining gap is.** 2D SANISAND reaches only 2.63 at 8 threads against 2.44 at 4. The
+material share is 83–89 % of a 2D SANISAND step at one thread, so the bound is set by the
+material update's own scaling. At 10⁵ its 2D call is about 3× cheaper than in 3D
+(2903 vs 9798 ns per particle-step), so the per-call `Vector`/`Matrix` heap traffic (30–50
+temporaries per substep, #933) is a larger fraction. The likely ceiling is allocator contention,
+not a lock. No measurement here isolates it; it is #933's work.
+
+### 5.2 HS (reported, no target)
+
+`--mats hs` (added to the harness as a reported-only material: the default matrix stays WP-253's
+81 rows). The kPa deck is the one from `test_ladruno_mpm_soil_admission.py`: stage 0 for the
+warm-up, then stage 1. On `bspline2` at 10⁵, S(8) is **4.52** in 3D (0.599 → 2.71 M p-steps/s)
+and **4.74** in 2D (1.07 → 5.09). The material share at one thread is 34 % (3D) and 50 % (2D).
+The 8-thread digests equal 1 thread.
+
+### 5.3 Determinism gates (Windows, `efc4113f1`)
+
+- `tests/test_wp258_soil_threads.py` (FE): bit-identical to 1 thread at 2, 4 and 8 threads.
+  - Materials: DP, vanilla ManzariDafalias IS1, LadrunoSANISAND IS1/IS2/IS129/`-implex`, and HS, `-smallStrain`, `-implex`, `-sigmat`.
+  - Meshes: 2D (`LadrunoQuad`, update loop) and 3D (`stdBrick`, update / tangent / residual / commit loops).
+  - Element tags are shuffled.
+  - The stage flips happen inside the threaded loops.
+  - Every deck is plastic: the footing secant ratio over the push is 0.54–0.92.
+  - Plus a worker-print test under openseespy: DP at the apex prints `NormCep` from workers.
+- `tests/test_ladruno_mpm_wp258_soil_threads.py` (mode F): every particle array (`x v V F R epsHat sigHat sig`) is float64-equal at 2, 4 and 8 threads, and `mpm debug threads` reads [n, n].
+  - Soils: SANISAND IS1/IS2/IS129/`-implex` and HS (plain, `-smallStrain`, `-implex`), in 2D and 3D on `bspline2`: a staged, confined column with a rigid plate pushing down after `mpm stage 1`.
+  - DP: WP-253's collapsing column (`gimp`, 2D and 3D).
+  - A shuffled-particle SANISAND 3D case.
+- `tests/test_ladruno_mpm_wp253_threads.py` (WP-253's gate, updated): `3d_druckerprager` now threads both loops; `3d_ladrunoj2_split` keeps the split path covered. All of the file passes.
+- **Mutation evidence** (working-tree mutants, built and run, never committed):
+  - M1, the `PythonStream` off-GIL path disabled: the worker-print child dies with `0xC0000005`. This reproduces WP-107's segfault mechanism.
+  - M2′, `LadrunoSANISAND3D::mSigma_M` back to a plain shared static: all four SANISAND 3D FE cases go red.
+  - M2, the same on vanilla `ManzariDafalias3D`, stayed green because the matrix did not yet run vanilla ManzariDafalias. That is why `manzari_is1` was added.
+- **Race stress** (`Ladruno_scripts/wp258_race_stress.py`, 8 threads, 10 repeats per case, each
+  checked against its 1-thread digest; `results/after_F_efc4113f1_wp258/race_stress.json`):
+  0 mismatches in 110 runs.
+  - FE: SANISAND IS2 3D, `-implex` 3D, IS129 2D; HS `-smallStrain` 3D; DP 2D; vanilla ManzariDafalias IS1 3D.
+  - MPM: SANISAND IS2 3D shuffled, `-implex` 3D, IS1 2D; HS `-implex` 3D; DP 3D.
+
+### 5.4 Not done here, and why
+
+- **TSan.** GCC's libgomp is not TSan-instrumented, so OpenMP's own barriers report as races
+  unless the runtime is LLVM libomp built with Archer. That is a toolchain project on esmeralda,
+  not a WP step. The brief's fallback was run instead: repeated 8-thread runs compared by digest
+  (`Ladruno_scripts/wp258_race_stress.py`). The class of bug that the TSan item in the WP-107
+  quirk was meant to catch turned out not to be a race (§2.4).
+- **Mode A soil particles stay serial.** The mode-A particle element (`LadrunoMPMPoint`) does not
+  opt into the WP-107 / WP-192 loops (ADR 232 §6). `test_s7_k2_threads_honoured_as_one` still
+  sees its SERIAL warning. Opting the element in is a separate audit.
+- **Vanilla ManzariDafalias IntScheme 2** is admitted (the same base path LadrunoSANISAND IS2
+  exercises) but is not in the FE matrix: it has no substep cap, and one serial run of the deck
+  exceeds the child timeout (the uncapped-substepping quirk, not a threading one).
+
+## 6. Review of record
+
+### 6.1 Fable critic (the other family), on `efc4113f1`: AMEND
+
+It found no data race and no change to serial arithmetic on any admitted call graph. It traced
+the ledger through multi-loop commit rounds, serial/threaded mixes, a marker in either kind of run,
+stale partials, `wipe` and a refused marker commit: no data is lost or misattributed, no lock
+nests, and the 1-thread path is the old arithmetic plus one atomic load. It also checked HS's
+generation counter (all seven map writers bump under the mutex), the DP and ManzariDafalias call
+graphs, SAS-ME and the `thread_local` conversions. Findings and what was done:
+
+| # | Finding | Action |
+|---|---|---|
+| 1 | `avgImplexError` is folded per thread, so under a threaded commit loop it is schedule-dependent in its last bits, and no test read the ledger | **Owner decision (§7).** Gated: `test_wp258_soil_threads.py` now reads `implexError` (max), `implexRefusals` and `avgImplexError` after the threaded push. Max and counters must match exactly; the average must be within 1e-12 relative. |
+| 2 | `thread-class-static` (and `thread-static`) scanned only files that spell the opt-in: the inheriting wrappers, DruckerPrager's base `.cpp`, `LadrunoSANISANDSasME.cpp` were unscanned | Fixed: `_thread_material_files` adds descendants (unless they refuse), bases up to the framework classes, and every file with a column-0 method definition of those classes. Four self-tests cover the cases. Reverting `LadrunoSANISAND3D::mSigma_M`'s `thread_local` now fails the lint. |
+| 3 | The gates did not assert that the push ran or was plastic; vanilla ManzariDafalias IntScheme 2 was admitted but ungated | Fixed: every push step must return 0 at one thread, and the footing secant ratio must be < 0.95 in every case. Vanilla ManzariDafalias now admits IntScheme 1 only; LadrunoSANISAND admits 1, 2 and 129, which is what is gated. Not done: no FE element threads a plane-strain wrapper's `getTangent` (LadrunoQuad threads only its update loop), so those `thread_local` buffers are reached concurrently only through MPM 2D's `getInitialTangent` / `getStress`. The worker-print test cannot prove that a worker, rather than the master, printed. Its mutant M1 crashed, so in that run a worker printed. |
+| 4 | A worker's `opserr` goes to fd 2; the master's goes to `sys.stderr` | Recorded as a limitation (quirk fragment). Where `sys.stderr` is not fd 2 (Jupyter on Windows), a worker's warn-once line is lost. A per-thread queue flushed on the caller after the loop would fix it; that is a follow-up. |
+| 5 | Stale comments (`ManzariDafalias.h`, `LadrunoSANISAND.h`, `Material.h`) | Fixed. |
+| 6 | Nits: check-then-increment warn budgets can print up to 10 + T − 1 lines under threads; the partial max was seeded from the first error, not 0 | The budgets are cosmetic and recorded here. The partial max is now seeded at 0 with `e > max`, as in the serial code. |
+
+### 6.2 `/code-review high`
+
+*(below)*
+
+## 7. Decisions for the owner
+
+1. **`avgImplexError` under threads.** With LadrunoSANISAND `-implex` on an element whose commit
+   loop threads (e.g. `stdBrick`; MPM mode F), the process-wide average implex error may differ
+   from the 1-thread value in its last bits, and between runs. `implexError` (the max), every
+   refusal and guard counter, and every displacement, stress and state stay bit-identical. ASDConcrete
+   (WP-192) set the precedent. Options: (a) accept it as a diagnostic exception (this PR's
+   default); (b) keep `-implex` serial on threaded commit loops, which costs `-implex`
+   its commit-loop speedup; (c) an ordered replay of every commit's error, which needs a
+   per-round buffer of every point's error (≈1 MB per 10⁵ points per round) and a flush hook.

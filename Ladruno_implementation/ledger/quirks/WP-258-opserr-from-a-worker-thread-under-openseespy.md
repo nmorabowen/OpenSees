@@ -27,3 +27,8 @@ date: 2026-11-25
 - **Corollary for the "a static grep is an audit" quirk (WP-107).** That entry's conclusion,
   that the next tool is TSan, was right in spirit. The defect, though, was not a race: it was a
   thread-affinity bug in a shared stream. A race detector would not have flagged it.
+- **Limitation.** The worker's text goes to fd 2, and the GIL-holding thread's to `sys.stderr`.
+  Where those differ (Jupyter on Windows, pytest `capsys`), a line a worker printed is not shown
+  there. For a warn-once diagnostic that line is lost. `PyGILState_Check()` also answers 1
+  unconditionally once a sub-interpreter exists. The full fix is a per-thread queue flushed
+  through the Python path on the caller after `ladruno_parallelFor` joins; it is a follow-up.

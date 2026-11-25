@@ -60,7 +60,7 @@ def matrix(site="nmb"):
     for N in ns:
         for dim in (3, 2):
             for basis in Mo.BASES:
-                for mat in Mo.MATS:
+                for mat in Mo.MATS + Mo.EXTRA_MATS:      # EXTRA_MATS only when --mats names them
                     if mat == "sanisand" and (basis == "gimp" or N >= 1_000_000):
                         continue            # 232k K0 (bspline2 only); 10^6 one step = minutes
                     for th in ths:
@@ -122,6 +122,8 @@ def tag_of(c, rep):
 def select(cfgs, args):
     out = []
     for c in C.select(cfgs, args):
+        if c["mat"] in Mo.EXTRA_MATS and not (args.mats and c["mat"] in args.mats):
+            continue                        # WP-258: reported-only materials, never by default
         if args.dims and c["dim"] not in args.dims:
             continue
         if args.bases and c["basis"] not in args.bases:
@@ -188,7 +190,7 @@ def child_F(ops, cfg, res):
     rc = ops.mpm("analyze", cfg["warmup"], dt)
     res["warmup_py_wall_s"] = time.perf_counter() - t0
     res["warmup_rc"] = rc
-    if cfg["mat"] == "sanisand":            # stage 0 (elastic) for the warm-up, then the plastic stage
+    if cfg["mat"] in Mo.STAGED:             # stage 0 (elastic) for the warm-up, then the plastic stage
         res["stage_flip_particles"] = ops.mpm("stage", Mo.MAT_TAG, 1)
         dtc2 = B.first(ops.mpm("criticalTimeStep"))
         res["dt_crit_after_flip"] = dtc2
@@ -222,7 +224,7 @@ def child_A(ops, cfg, res):
     prof = C.StepProfiler(ops, cfg["_h5"])
     steps = []
     for k in range(n_steps):
-        if cfg["mat"] == "sanisand" and k == cfg["warmup"]:
+        if cfg["mat"] in Mo.STAGED and k == cfg["warmup"]:
             res["stage_flip_particles"] = ops.mpm("stage", Mo.MAT_TAG, 1)
         before = {w: C.info(ops, w) for w in ("connectivityChanges", "retries", "acceptedSteps")}
         err, rc = None, None
