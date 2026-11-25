@@ -16,6 +16,10 @@
 //      wherever the scan bracketed a root.
 //   K5 tangent: the forward-difference condensed tangent vs a central difference with a
 //      smaller step, at uncracked and cracked smooth states; uncracked = diag(Ec, Ec/2).
+//   C1-C3 (WP-256, -cyclicDegradation on): a monotonic path is bit-identical to the option off;
+//      a reversal is bit-identical until the first committed crack re-opening; repeated cycles at
+//      one amplitude lose peak shear stress every cycle, while the option off repeats; C4 a committed
+//      state re-solves to itself (the damage is implicit).
 //   K6 root rule: before the first commit the full range is bisected (bracketed flag 0);
 //      after it a root near the committed eps_y is taken (flag 1).
 //
@@ -23,6 +27,7 @@
 // the numpy reference (tests/_testbed/mcft_strip_ref.py):
 //   STRIP fc fp ep e20 smx smy agg kbeta cvci rho fyt fut Es esh esu
 //   n  then n lines  ex g commit      -> per line: sx txy ey e1 e2 w fst bracketed
+// "stripc": the same with three more strip numbers, ccyc mcyc cdrv (WP-256 cyclic strut degradation)
 // "section" on stdin: a Model C section (strips + bars) through the parabolic modelC shear map:
 //   SECTION hy hz nstrip nbar
 //   nstrip lines  y z A fc fp ep e20 smx smy agg kbeta cvci rho fyt fut Es esh esu
@@ -224,6 +229,117 @@ static void runChecks()
   }
 }
 
+// ------------------------------------------------------------------ WP-256 cyclic degradation
+struct Step { double sx, txy, ey, reopen; };
+
+static std::vector<Step> drive(Strip S, const std::vector<double>& ex, const std::vector<double>& g)
+{
+  Hist H; std::vector<Step> out;
+  for (size_t k = 0; k < g.size(); ++k) {
+    double ey; Out o;
+    evaluate(S, H, ex[k], g[k], ey, o);
+    commit(S, H, ey, o);
+    out.push_back({o.sx, o.txy, ey, H.reopen});   // the re-opening this step's trial used (implicit)
+  }
+  return out;
+}
+
+static void runCyclicChecks()
+{
+  const double CC = 300.0;
+  // ---------------------------------------------------------------- C1
+  {
+    printf("C1 monotonic path unchanged\n");
+    std::vector<double> ex, g;
+    for (int k = 0; k <= 150; ++k) { ex.push_back(-2e-4); g.push_back(1e-4 * k); }
+    int bad = 0;
+    for (int which = 0; which < 2; ++which) {
+      Strip off = which ? coverStrip() : coreStrip(), on = off;
+      on.ccyc = CC;
+      const auto a = drive(off, ex, g), b = drive(on, ex, g);
+      for (size_t k = 0; k < a.size(); ++k)
+        if (!(a[k].sx == b[k].sx && a[k].txy == b[k].txy && a[k].ey == b[k].ey) || b[k].reopen != 0.0) ++bad;
+    }
+    CHECK(bad == 0, "C1: %d monotonic steps differ with the option on", bad);
+    printf("  core and cover, 151 steps each: %d differ, re-opening stays 0\n", bad);
+  }
+  // ---------------------------------------------------------------- C2
+  {
+    printf("C2 unchanged until the first re-opening\n");
+    // up to gamma 0.006, back to -0.006: identical until the crack re-opens on the reversal
+    std::vector<double> ex, g;
+    for (int k = 0; k <= 60; ++k) { ex.push_back(-2e-4); g.push_back(1e-4 * k); }
+    for (int k = 1; k <= 120; ++k) { ex.push_back(-2e-4); g.push_back(0.006 - 1e-4 * k); }
+    Strip off = coreStrip(), on = off; on.ccyc = CC;
+    const auto a = drive(off, ex, g), b = drive(on, ex, g);
+    int firstDiff = -1, firstReopen = -1;
+    for (size_t k = 0; k < a.size(); ++k) {
+      if (firstDiff < 0 && !(a[k].sx == b[k].sx && a[k].txy == b[k].txy)) firstDiff = (int)k;
+      if (firstReopen < 0 && b[k].reopen > 0.0) firstReopen = (int)k;
+    }
+    CHECK(firstReopen > 60, "C2: re-opening must start after the reversal (step %d)", firstReopen);
+    CHECK(firstDiff >= firstReopen, "C2: a difference at step %d before the first re-opening (%d)", firstDiff, firstReopen);
+    CHECK(firstDiff > 0, "C2: the option must act after the re-opening");
+    printf("  reversal at step 60; first re-opening committed at %d, first difference at %d\n", firstReopen, firstDiff);
+  }
+  // ---------------------------------------------------------------- C3
+  {
+    printf("C3 repeated cycles lose strut strength\n");
+    // 8 full cycles at gamma = +-0.006 under axial compression
+    std::vector<double> ex, g;
+    const int q = 30;
+    ex.push_back(-3e-4); g.push_back(0.0);
+    for (int c = 0; c < 8; ++c) {
+      for (int k = 1; k <= q; ++k) { ex.push_back(-3e-4); g.push_back(0.006 * k / q); }
+      for (int k = 1; k <= 2 * q; ++k) { ex.push_back(-3e-4); g.push_back(0.006 - 0.006 * k / q); }
+      for (int k = 1; k <= q; ++k) { ex.push_back(-3e-4); g.push_back(-0.006 + 0.006 * k / q); }
+    }
+    for (int which = 0; which < 2; ++which) {
+      Strip off = which ? coverStrip() : coreStrip(), on = off; on.ccyc = CC;
+      const auto a = drive(off, ex, g), b = drive(on, ex, g);
+      std::vector<double> pa, pb, ra;
+      for (int c = 0; c < 8; ++c) {
+        const size_t kp = 1 + (size_t)c * 4 * q + q - 1;   // the +peak of cycle c
+        pa.push_back(fabs(a[kp + 1].txy)); pb.push_back(fabs(b[kp + 1].txy)); ra.push_back(b[kp + 1].reopen);
+      }
+      int nonDecr = 0, reopenFlat = 0;
+      for (int c = 1; c < 8; ++c) { if (!(pb[c] < pb[c - 1])) ++nonDecr; if (!(ra[c] > ra[c - 1])) ++reopenFlat; }
+      const double offDrift = fabs(pa[7] - pa[1]) / pa[1];
+      // the strut strength factor 1/(1 + ccyc P) falls every cycle in both strips; the shear stress of
+      // the tied strip (the one that carries the shear) falls with it. An untied cover strip
+      // (sigma_y = 0) rotates instead: its small residual shear may rise.
+      CHECK(reopenFlat == 0, "C3 (%s): re-opening (strut damage) must grow every cycle", which ? "cover" : "core");
+      if (!which) {
+        CHECK(nonDecr == 0, "C3 (core): peak shear stress must fall every cycle with the option on (%d rises)", nonDecr);
+        CHECK(pb[7] < 0.9 * pa[7], "C3 (core): 8 cycles must cost more than 10 %% (%g vs %g)", pb[7], pa[7]);
+      }
+      CHECK(offDrift < 1e-12, "C3 (%s): the option off must repeat cycle 2 on cycle 8 (%g)", which ? "cover" : "core", offDrift);
+      printf("  %s: peak |txy| cycle 1..8 off %.3f -> %.3f (drift %.1e), on %.3f -> %.3f MPa, P %.4f\n",
+             which ? "cover" : "core", pa[0], pa[7], offDrift, pb[0], pb[7], ra[7]);
+    }
+  // ---------------------------------------------------------------- C4
+  {
+    printf("C4 a committed state re-solves to itself\n");
+    // implicit damage: re-evaluating the committed strain under the new memory gives the same stress
+    Strip S = coreStrip(); S.ccyc = CC;
+    Hist H; int bad = 0, n = 0; double worst = 0.0;
+    for (int k = 0; k <= 240; ++k) {
+      const double g = 0.006 * sin(k * PI / 30.0), ex = -3e-4;
+      double ey, ey2; Out o, o2;
+      evaluate(S, H, ex, g, ey, o);
+      commit(S, H, ey, o);
+      evaluate(S, H, ex, g, ey2, o2);
+      ++n;
+      const double dd = std::max(fabs(o2.sx - o.sx), fabs(o2.txy - o.txy)) / S.conc.fc;
+      worst = std::max(worst, dd);
+      if (dd > 1e-12) ++bad;
+    }
+    CHECK(bad == 0, "C4: %d of %d committed states move when re-solved", bad, n);
+    printf("  %d cyclic steps, %d move by more than 1e-12 fc (worst %.1e), re-opening %.4f\n", n, bad, worst, H.reopen);
+  }
+  }
+}
+
 static bool readStrip(FILE* in, Strip& S)
 {
   double v[15];
@@ -234,12 +350,13 @@ static bool readStrip(FILE* in, Strip& S)
   return true;
 }
 
-static int runStripPath(FILE* in)
+static int runStripPath(FILE* in, bool cyclic = false)
 {
   char tok[32];
   if (fscanf(in, "%31s", tok) != 1 || strcmp(tok, "STRIP") != 0) return 2;
   Strip S;
   if (!readStrip(in, S)) return 2;
+  if (cyclic && fscanf(in, "%lf %lf %d", &S.ccyc, &S.mcyc, &S.cdrv) != 3) return 2;   // WP-256: ccyc mcyc cdrv
   int n; if (fscanf(in, "%d", &n) != 1) return 2;
   Hist H;
   for (int k = 0; k < n; ++k) {
@@ -308,8 +425,10 @@ static int runSectionPath(FILE* in)
 int main(int argc, char** argv)
 {
   if (argc > 1 && strcmp(argv[1], "strip") == 0) return runStripPath(stdin);
+  if (argc > 1 && strcmp(argv[1], "stripc") == 0) return runStripPath(stdin, true);
   if (argc > 1 && strcmp(argv[1], "section") == 0) return runSectionPath(stdin);
   runChecks();
+  runCyclicChecks();
   if (nfail == 0) printf("GPP MCFT STRIP GATE: PASS\n");
   else printf("GPP MCFT STRIP GATE: FAIL (%d)\n", nfail);
   return nfail == 0 ? 0 : 1;
