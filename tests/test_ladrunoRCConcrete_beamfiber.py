@@ -261,6 +261,32 @@ def test_serialization_v8_carries_the_crack_check():
                        probe_fn=lambda: [_probe()["txy"], *_probe()["tie"], *_probe()["lat"], _cc_flag()])
 
 
+def _leg(a, b, n):
+    return [tuple(a[d] + (b[d] - a[d]) * k / n for d in range(3)) for k in range(1, n + 1)]
+
+
+def test_lateral_no_root_modelC_keeps_the_end_point():
+    """WP-247 -lateralNoRoot: no ties, a large shear excursion, unloading, then shear reversal at small eps_xx.
+    Past the reversal the fibre has no lateral root (sigma_yy < 0 up to the range end): the default refuses
+    the trial; modelC keeps Model C's bisection end point, finishes the path, and reports lateralRoot = 2."""
+    path = (_leg((0.0, 0.0, 0.0), (0.0, 8.0e-3, 0.0), 60) + _leg((0.0, 8.0e-3, 0.0), (-1.5e-5, 0.0, 0.0), 40)
+            + _leg((-1.5e-5, 0.0, 0.0), (-1.5e-5, -8.0e-3, 0.0), 80))
+
+    def run(mode):
+        _build(MCFT + ["-lateralNoRoot", mode], path)
+        seen = set()
+        for k in range(len(path)):
+            if ops.analyze(1) != 0:
+                return k, seen
+            seen.add(ops.eleResponse(1, "section", "fiber", 0.0, 0.0, 1, "lateralRoot")[0])
+        return len(path), seen
+
+    n0, seen0 = run("refuse")
+    n1, seen1 = run("modelC")
+    assert n0 < len(path) and 2.0 not in seen0, (n0, seen0)
+    assert n1 == len(path) and 2.0 in seen1, (n1, seen1)
+
+
 # ----------------------------------------------------------------------------- parser
 @pytest.mark.parametrize("flags", [
     ["-ties", -0.01, 0.0, FY, ES],
@@ -273,6 +299,8 @@ def test_serialization_v8_carries_the_crack_check():
     ["-crackCheck", "sum", 0.0, 100.0],
     ["-crackCheck", "sum", 150.0],
     ["-crackCheck", "min", 150.0, 100.0],
+    ["-lateralNoRoot", "accept"],          # WP-247: refuse | modelC only
+    ["-lateralNoRoot"],
 ])
 def test_parser_refuses(flags):
     ops.wipe()
@@ -287,6 +315,8 @@ def test_parser_accepts():
     _rc(1, "-ties", 0.004, 0.002, FY, ES, "-tieHardening", 0.01)
     _rc(2, *MCFT, "-ties", 0.0, 0.0, FY, ES)
     _rc(3, *MCFT, "-ties", 0.002, 0.002, FY, ES, "-crackCheck", "sum", 150.0, 100.0)
+    _rc(4, *MCFT, "-lateralNoRoot", "refuse")                                  # WP-247
+    _rc(5, *MCFT, "-ties", 0.002, 0.0, FY, ES, "-lateralNoRoot", "modelC")
 
 
 # ----------------------------------------------------------------------------- classic Tcl engine
