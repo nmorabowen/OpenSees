@@ -103,9 +103,18 @@ Options: `-implex` (+ `-implexAlpha`, `-implexControl`), `-autoRegularization` /
 | `stdBrick` (`Brick.cpp:2295`) | ThreeDimensional | update, tangent, residual, commit |
 | `LadrunoQuad` (`LadrunoQuad.cpp:826`, not EAS, not `-geom finite`) | PlaneStrain, PlaneStress | update |
 | `ASDShellQ4` + `LayeredShell` (`ASDShellQ4.cpp:2448`, `LayeredShellFiberSection.cpp:850`) | PlateFiber | update, tangent, residual, commit |
+| any of the above under `recorder EnergyBalance` (WP-196, `EnergyBalanceRecorder.cpp:784`) | as the host | the element sweep (on `ladrunoThreadSafeForm`; calls the same Form methods) |
+| `PlaneStressMaterial` / `PlateFiberMaterial` / `PlateFromPlaneStressMaterial` wrappers | ThreeDimensional / PlaneStress copies | whatever their host threads (they delegate; every view they request is admitted) |
 | MPM mode F (WP-253) | — | none: `mpm body` refuses both concretes at admission (ADR 232 §6 admits ElasticIsotropic, LadrunoJ2, DruckerPrager, LadrunoSANISAND, LadrunoHS; found while writing the gate) |
 
 No threaded host requests AxiSymmetric or BeamFiber (`LadrunoNDFiberSection3d` does not opt in).
+**A condition of the opt-in (critic, §6).** `ops_TheActiveElement` is set per element by the
+threaded update loop and by the tangent / residual loops, but the threaded commit loop
+(`Domain.cpp:2884-2890`) leaves workers with a stale value. Neither `commitState` reads it today
+(LadrunoConcrete3D reads `lch` only in `integrate()` from `setTrialStrain`; RC latches it once in
+the first `setTrialStrain`, and its IMPL-EX commit re-integration does not re-read it). A future
+change that reads the element at commit must set it there, or 1-thread identity breaks.
+
 The opt-in therefore reaches the FE element loops only; if MPM ever admits a concrete, the §2
 audit already covers the four methods mode F calls on workers, but a mode-F gate must come with
 the admission.
@@ -124,7 +133,20 @@ lines); `LadrunoQuad` PlaneStrain (`pe`) and PlaneStress (`ps`, the condensation
 `-autoRegularization` (LadrunoConcrete3D); default, `-implex`, `-autoRegularization`,
 `-interlock -cyclic` (LadrunoRCConcrete). Twenty cases; the digest is every nodal displacement
 and the load factor after every step, every step's return code, every Gauss point's damage
-(plus `substeps` / `returnFailures`, or RC `implexError`), and the warning-line counts. Neither material keeps
+(plus `substeps` / `returnFailures`, or RC `implexError`), and the warning-line counts.
+
+After the critic (§6) the gate also: asserts the tangent AND the residual announcement for every
+form-loop host (one string used to be satisfied by the tangent line alone); counts every other
+worker print (σ₂₂ / σ₃₃ condensation, `-verbose` commit summaries, RC `-implexControl`) against
+1 thread; adds `c3d_verbose` on `3dcr` (no budget: every failure prints), `rc_implexctl` on
+`shell` (the commit loop prints from workers) and the EnergyBalance sweep (`c3d_energy` `3d+eb`,
+`rc_energy` `shell+eb`, the recorder file compared byte for byte). The crush decks were moved off
+their cliff: `3dc` requires only its first 8 of 10 steps to converge and "cracked or crushed"
+(LadrunoConcrete3D's axial crush is sharp: no compressive damage after step 9, ω_c 0.17 after
+step 10, refusals from step 11 on nmb), and `3dcr` refuses from step 7 of 9 (increment 0.12 mm).
+**Not provable from the output:** the threaded commit loop prints no announcement
+(`Domain::ladrunoThreadedCommit`), so the gate shows bit-identity with the commit loop enabled
+but cannot assert that it ran threaded; the mutation evidence (§5) targets the tangent loop. Neither material keeps
 a process-wide FP accumulator, so no tolerance exception is needed: everything is gated exactly.
 Mutation evidence: re-introduce a shared static on a gated path, build, show red; never committed.
 

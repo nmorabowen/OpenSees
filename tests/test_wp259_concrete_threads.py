@@ -42,6 +42,7 @@ Each configuration runs in a child process per thread count.
 import json
 import os
 import sys
+import tempfile
 
 import pytest
 
@@ -130,7 +131,7 @@ host = host.split("+")[0]
 n_push, iters, ds = cfg["n_push"], cfg["iters"], cfg["ds"]
 rc_mat = mat[0] == "LadrunoRCConcrete"
 diag = ["damage"] + (["implexError"] if (rc_mat and "-implex" in mat) else []) \
-       + ([] if rc_mat else ["substeps", "returnFailures"])
+       + ([] if rc_mat else ["substeps", "returnFailures", "kappaP"])
 NL = 4                                                    # shell layers
 
 ops.wipe()
@@ -252,7 +253,9 @@ if energy:
 print("RESULT " + json.dumps({"build": ops.ladrunoBuild(), "steps": steps,
                               "q": [float.fromhex(s[1]) for s in steps], "pts": pts,
                               "dmax": [max(p[c] for p in dmg if len(p) > c) for c in range(2)],
-                              "eb": eb}))
+                              "eb": eb,
+                              "kpmax": max([max(float.fromhex(v) for v in p)
+                                            for p in pts.get("kappaP", [["0x0p+0"]])])}))
 '''
 
 _FE_CASES = [(m, h) for m in sorted(MATERIALS) for h in MATERIALS[m][1]]
@@ -262,25 +265,28 @@ def _base(host):
     return host.split("+")[0]
 _NELE = {"3d": 96, "3dc": 96, "3dcr": 96, "pe": 72, "ps": 72, "shell": 36}
 _DS = {"3d": 0.03, "3dc": 0.085, "3dcr": 0.12, "pe": 0.03, "ps": 0.03, "shell": 0.05}
-_NPUSH = {"3d": 8, "3dc": 10, "3dcr": 9, "pe": 8, "ps": 8, "shell": 8}
+_KP_MIN = 0.5
+_NPUSH = {"3d": 8, "3dc": 8, "3dcr": 9, "pe": 8, "ps": 8, "shell": 8}
 _WARN = "return map did not converge"
-_COUNTED = ("sigma_22 condensation", "sigma_33 condensation", "commit: ", "IMPL-EX error")
+_COUNTED = ("sigma_22 condensation", "sigma_33 condensation", ") commit: ", "IMPL-EX error")
 _SUPPRESSED = "further return-map warnings suppressed"
 
 
 def _run_fe(mat, host, nthreads, iters=8):
-    import tempfile
-    fd, eb_file = tempfile.mkstemp(suffix=".eb.txt")
-    os.close(fd)
+    eb_file = None
+    if host.endswith("+eb"):
+        fd, eb_file = tempfile.mkstemp(suffix=".eb.txt")
+        os.close(fd)
     cfg = {"mat": MATERIALS[mat][0], "host": host, "threads": nthreads,
            "n_push": _NPUSH[_base(host)], "iters": iters, "ds": _DS[_base(host)],
            "eb_file": eb_file}
     code, out = run_python_script(_FE_CHILD, argv=[_DIST_BIN, _TESTS, json.dumps(cfg)],
                                   timeout=900)
-    try:
-        os.remove(eb_file)
-    except OSError:
-        pass
+    if eb_file:
+        try:
+            os.remove(eb_file)
+        except OSError:
+            pass
     assert code == 0, out[-3000:]
     res = [ln for ln in out.splitlines() if ln.startswith("RESULT ")]
     assert res, out[-3000:]
@@ -313,22 +319,26 @@ def test_fe_threaded_equal_serial(mat, host):
         # that the refusals, every point's failure count and the printed lines match 1 thread.
         assert any(r < 0 for r in rcs), (mat, host, rcs)
         if "-verbose" in MATERIALS[mat][0]:   # no budget: every failure prints, every commit sums
-            assert nwarn > 20 and _SUPPRESSED not in text1 and "commit: " in text1, (mat, nwarn)
+            assert nwarn > 20 and _SUPPRESSED not in text1 and ") commit: " in text1, (mat, nwarn)
         else:
             assert nwarn == 20 and text1.count(_SUPPRESSED) == 1, (mat, host, nwarn)
         fails = [float.fromhex(p[0]) for p in base["pts"]["returnFailures"]]
         assert sum(fails) > 20, (mat, host, sum(fails))
     else:
-        # the gate means something only if the push ran and the concrete cracked / crushed.
-        # `3dc` sits at a sharp crush (LadrunoConcrete3D on nmb: no compressive damage after step
-        # 9, omega_c 0.17 after step 10, refusals from step 11), so only its first 8 steps must
-        # converge: libm differences (Zone-A is GCC / glibc) may move the crush by a step.
-        conv = rcs[:8] if host == "3dc" else rcs
-        assert all(r == 0 for r in conv), (mat, host, rcs)
+        # the gate means something only if the push ran and the concrete cracked / crushed
+        assert all(r == 0 for r in rcs), (mat, host, rcs)
         if "-implexControl" in MATERIALS[mat][0]:
             assert "IMPL-EX error" in text1, (mat, host, "the commit-loop print never ran")
         if host == "3dc":
-            assert max(base["dmax"]) > 0.1, (mat, host, "no point cracked or crushed", base["dmax"])
+            # the compressive branch must have run: RC's compressive damage, or LadrunoConcrete3D's
+            # compressive hardening. LadrunoConcrete3D's axial crush is sharp (on nmb, 0.085 mm
+            # steps: kappa_p 0.64 after 6 steps, 0.93 after 8, no compressive damage until step
+            # 10, refusals from step 11), so the deck stops at 8 steps, three short of the cliff,
+            # and gates on kappa_p.
+            if MATERIALS[mat][0][0] == "LadrunoRCConcrete":
+                assert base["dmax"][1] > 0.1, (mat, host, "no point crushed", base["dmax"])
+            else:
+                assert base["kpmax"] > _KP_MIN, (mat, host, "no compressive hardening", base["kpmax"])
         else:
             assert base["dmax"][0] > 0.3, (mat, host, "no point cracked", base["dmax"])
             q = base["q"]
