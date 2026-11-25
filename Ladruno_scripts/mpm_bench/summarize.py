@@ -164,7 +164,7 @@ def tables(agg, base=None):
                 sc = "-" if not s else f"{s['S']:.2f}{' (within noise)' if s['within_noise'] else ''}"
                 nsp = f"{a1['ns_per_particle_step']:.0f}" if a1 and a1.get("ns_per_particle_step") else "-"
                 extra = f" {a1.get('newton_k_mean', 0):.1f} |" if mode == "A" and a1 else (" - |" if mode == "A" else "")
-                lines.append(f"| {r[2]} | {r[3]} | {r[4]:g} ({a1['N'] if a1 else '-'}) | "
+                lines.append(f"| {r[2]} | {r[3]} | {r[4]:g} ({a1.get('N', '-') if a1 else '-'}) | "
                              + " | ".join(cells) + f" | {sc} | {nsp} |{extra}")
     # phase split, mode F, threads = 1
     ph = [k for k in keys if k[0] == "F" and k[5] == 1 and agg[k].get("phase_share")]
