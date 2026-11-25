@@ -553,6 +553,74 @@ $$
   residual folds at cracking and has more than one root; starting from the committed state follows
   the branch the fibre is on, the rule of the rotating-MCFT strip reference. The g++ gate checks it
   against nested bracketing bisection from the same committed state (B3).
+- **Root scan when Newton stalls (WP-247).** Past the tension peak, `σyy` softens faster than light
+  ties stiffen (`ρ fyt < f_cr`), so `r_y(εyy)` is not monotone. On the crack-onset step a full Newton
+  step from the uncracked side can land on the falling branch and cycle there, although a root sits
+  next to the committed strain. Without the scan the view refused that trial. A force-based column
+  of the lab set (Sezen–Moehle 2CLD12) then stopped at 0.22 % drift, on the step where its first
+  core fibre cracked in shear. When Newton fails, the driver now applies Model C's rule:
+  - It samples the committed lateral normal plus geometric offsets `±[1e-8, 1e-1]`, along y and
+    then z.
+  - It takes the **increasing** sign change of that direction's residual nearest the committed
+    value and bisects it.
+  - At every sample, the other two lateral unknowns are balanced by a 2×2 Newton.
+
+  The result is accepted on the same balance test as a stalled Newton, so a bracket around a jump
+  still refuses. Every state that Newton reaches is kept. The scan runs only on the steps where
+  Newton fails, and its cost is capped:
+  - It walks outward from the committed value and stops at the first bracket.
+  - The 2×2 inner solve takes at most 12 iterations and 4 halvings per sample. Each sample starts it
+    from the previous sample's solution, and from the committed state only if that fails.
+  - The whole scan has a budget of 3000 return maps. Past it, the trial refuses as before.
+  - The 2×2 inner solve stops as soon as its line search finds no descent (a flat direction, such as
+    `σzz` of a cover fibre cracked in z). Before, it ran to its cap at every such sample.
+- **Lateral Newton cost (WP-247).** The material's default tangent is the damaged secant `W_B C0`,
+  stiffer than the true slope on a softening branch, so plain Newton on the lateral balance contracted
+  by a constant factor of about 0.6 and needed about 30 iterations. Two changes:
+  - A **Broyden update** corrects the lateral Jacobian after each accepted step with the residual
+    change it produced; a step that fails the line search resets it to the fresh tangent. A
+    converging fibre now takes about 4 iterations.
+  - A Newton whose best residual has not halved in 8 iterations is left for the root scan, instead
+    of running all 50.
+
+  The balance tests and the tangent returned to the section (condensed from the material's own
+  `Dtan6` and `J`) are unchanged, so converged states agree with plain Newton to the balance
+  tolerance, not bit for bit. On the gate paths, a fibre call costs about 5 return maps instead of 30,
+  and a stalling cover fibre about 200 instead of about 1060.
+
+  The g++ gate `rc_rootscan_gpp.cpp` covers it on that fibre:
+  - R1: the scan runs on the crack-onset step only.
+  - R2: every step matches nested bisection to 2e-16.
+  - R3: γxz with ties in z gives the same fibre.
+  - R4: a long cracking ramp converges throughout.
+- **No lateral root, `-lateralNoRoot` (WP-247, opt-in).** After a shear failure, a cover fibre
+  (no ties) can lose its lateral root altogether. On a shear reversal at small `εxx`, `σyy` stays
+  negative up to the box's end, so no strain balances it. The default, `refuse`, refuses the trial,
+  as before. `-lateralNoRoot modelC` applies Model C's rule, which never refuses a strip:
+  - It bisects `r_y` over the nearest increasing y-bracket. With no bracket, it bisects over Model C's
+    full range `[−0.004, 0.15]`.
+  - It keeps the end point: the jump, or the end of the range when `σyy` has one sign throughout.
+  - `εzz` and `γyz` are still balanced, to `1e-4` × the stress scale. Model C's strip is a membrane with
+    no zz or yz equation, and a cracked fibre's `σyz` can be flat, so a residual of a few `1e-6` MPa that
+    the inner solve cannot remove does not refuse the strip.
+  - `r_y` is left unbalanced, a small stress on a nearly dead strip.
+
+  This is a modelling choice: the fibre carries a lateral stress the ties do not balance. Use it to
+  reproduce Model C. A force-based column of the lab set (Sezen–Moehle 3CLH18) stopped on its first
+  unloading after the shear failure without it. The response `lateralRoot` reports how the last trial
+  was found: 0 Newton, 1 root scan, 2 `modelC`. When the accepted state sits on a flat branch, the
+  condensed tangent adds `1e-6 E` to the lateral block. Gate R6 replays a shear reversal on a cover
+  fibre: `refuse` stops at step 129 of 180, and `modelC` converges on every step at Model C's rule
+  written out, leaving `|σyy| < 0.03 MPa`. Gate R7 replays a cover fibre of the lab 2CLD12 column from
+  its real committed history, dumped where the column stopped at step 1257: cracked, closed in
+  compression, with a flat `σyz`. `refuse` refuses it; `modelC` accepts it with `3.5e-7` MPa left in
+  `(σzz, σyz)`. Without the `1e-4` tolerance, `modelC` refused it too.
+- **Lateral box (WP-247).** The lateral unknowns stay in Model C's bracket: `εyy, εzz ∈ [−0.01, 0.15]`,
+  `γyz ∈ ±0.15`. Newton's iterates and the scan's samples are projected into it. A cover fibre that is
+  fully cracked in y has a nearly flat `σyy`. Without the box, a near-singular Jacobian sent Newton to
+  `εyy ≈ 3e4` with a small residual, and the fibre never left that state. This was a high-axial-load
+  column (2CHD12), which then refused 250 steps later. Gate R5 replays a tension–crush–unload path:
+  every lateral strain stays below 1e-5. With the box removed, the same gate fails with `εyy = 3.3e4`.
 - **Add-ons.** The view sets `-addonPlane spatial` on its copy (the fibre's shear sits in γxy and
   γxz) and resolves an **unset** `-crackGate` to `damage`. An explicit `-crackGate strain` is kept:
   in a fibre it opens the latch from Poisson expansion at ~0.5 f′c, `σyy` is pinned above zero and
@@ -707,7 +775,7 @@ nDMaterial LadrunoRCConcrete $tag $E $nu \
     [-tensStiff {vc|cm} [-tensStiffC $c] [-tensStiffAlpha $a]] \
     [-betaC $C] [-crackedNu $nu_c] \
     [-addonPlane {membrane|spatial}] [-crackGate {strain|damage}] \
-    [-ties $rhoY $rhoZ $fyt $Es] [-tieHardening $b] [-crackCheck sum $smx $smt] \
+    [-ties $rhoY $rhoZ $fyt $Es] [-tieHardening $b] [-crackCheck sum $smx $smt] [-lateralNoRoot {refuse|modelC}] \
     [-autoRegularization $lch_ref]
 
 # identical grammar (minus the view choice); ThreeDimensional-only, for -geom finite:
@@ -739,6 +807,7 @@ nDMaterial LadrunoRCFiniteStrain $tag $E $nu  <same backbones + flags as above>
 | `-ties` | smeared ties of the **BeamFiber view** (§12.1): ratio per lateral direction (fibre y, z), yield stress, modulus. Inert in the other views; `LadrunoRCFiniteStrain` refuses it | none (free lateral) |
 | `-tieHardening` | bilinear kinematic hardening ratio of the ties, `Et = b Es` past yield, `0 ≤ b < 1` (§12.1) | 0 |
 | `-crackCheck` | Model C crack check of the **BeamFiber view** (§12.1): `sum $smx $smt` caps the principal tension at `v_ci,max tanθ + ρ(fyt − f_s)`; `smx`, `smt` crack-spacing parameters (mm, > 0). Inert in the other views; `LadrunoRCFiniteStrain` refuses it | none |
+| `-lateralNoRoot` | What the **BeamFiber view** does when the lateral balance has no root (§12.1, WP-247): `refuse` the trial, or `modelC`, keeping Model C's bisection end point with `r_y` unbalanced. Inert in the other views; `LadrunoRCFiniteStrain` refuses it | `refuse` |
 | `-autoRegularization` | enable Bažant–Oh crack-band at reference length `$lch_ref` (§6) | OFF |
 
 > [!important] Flag implication chain + defaults-off

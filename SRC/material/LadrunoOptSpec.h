@@ -188,6 +188,8 @@ static const OptSpec kLadrunoRCOptions[] = {
   {"-addonPlane", 1, "WP-241"}, {"-crackGate", 1, "WP-241"},
   // Ladruno WP-243: smeared ties of the BeamFiber view (LadrunoRCConcrete only; RCF refuses them)
   {"-ties", 4, "WP-243"}, {"-tieHardening", 1, "WP-243"}, {"-crackCheck", 3, "WP-243"},
+  // Ladruno WP-247: what the BeamFiber view does when the lateral balance has no root
+  {"-lateralNoRoot", 1, "WP-247"},
 };
 
 // ---------------------------------------------------------------------------
@@ -201,6 +203,9 @@ static const OptSpec kLadrunoNDFiberOptions[] = {
   {"-shearResultant", 1, "WP-245"},
   {"-alpha",          1, "WP-245"},
   {"-noCentroid",     0, "WP-245"},
+  // Ladruno WP-252: the section tangent by forward differences of the resultants
+  {"-tangent",        1, "WP-252"},
+  {"-tangentStep",    1, "WP-252"},
 };
 
 // LadrunoUniaxialFiber (WP-245, nD 33030): a uniaxial material as a beam fibre.
