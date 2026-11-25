@@ -215,9 +215,52 @@ element LadrunoForceBeamColumn $eleTag $iNode $jNode $transfTag $beamIntTag \
     <-hingeY $matTagY> <-hingeYI $matTagYI> <-hingeYJ $matTagYJ> <-hingeYIJ $matTagYI <$matTagYJ>> \
     <-hingeBiaxial $ndMatTag> <-hingeBiaxialI $ndMatTagI> <-hingeBiaxialJ $ndMatTagJ> \
     <-hingeBiaxialIJ $ndMatTagI <$ndMatTagJ>> \
-    <-hingeLoc $xiI <$xiJ>> <-implex> <-pm $P0 <$alpha>> <-shear $GAy <$GAz>>
+    <-hingeLoc $xiI <$xiJ>> <-implex> <-pm $P0 <$alpha>> <-shear $GAy <$GAz>> \
+    <-monolithic <$maxIter <$tol>>> <-monoAccept $aF $aM <$aC>> <-monoRestart 0|1> \
+    <-monoStall $nIter <$ratio>> <-monoScale $sF $sM $sC> <-monoHalve $n>
 ```
 *(Explicit `LadrunoForceBeamColumn2d` and `LadrunoForceBeamColumn3d` commands, as well as the legacy inline `$numSecs $secTag1 ... $secTagN $transfTag` form, are also supported.)*
+
+#### Monolithic state determination (`-monolithic`, 3D only, WP-255)
+
+The default state determination is the nested force-based iteration: each section is solved with its
+flexibility `f_s = K_s^-1`, then the element with `F = sum w b^T f_s b`. After a shear failure a section
+whose strips and bars are all on flat branches has a singular `K_s`; the nested loop stops with
+`evalBulkState() -- could not invert flexibility`. `-monolithic` replaces it with one Newton on all
+section deformations and the basic forces, `x = (e_1, ..., e_n, q)`, using the section tangents directly
+(the element solve of the Model C MCFT column, calibrated on Sezen & Moehle 2002 and Lynn et al. 1996):
+
+```
+R_i = (s_i(e_i) - b_i q - s_p,i) / sc_i                      section equilibrium, each section
+R_c = (sum_i w_i L b_i^T e_i + v_sh(q) + v_T(q) - v) / sc_c  compatibility with the trial v
+```
+
+No section is inverted; only the whole block matrix must be regular, so a section with `K_s = 0` is
+fine while the element has a stiff path through the others. The element tangent `dq/dv` comes from the
+same LU with six right-hand sides. Converged states equal the nested ones (to the tolerance); only
+the path to them, and the cases that converge, differ. Any `-mono*` flag turns the mode on.
+
+| Flag | Arguments | Default | Meaning |
+| :--- | :--- | :--- | :--- |
+| `-monolithic` *(alias `-solveMonolithic`)* | `<$maxIter <$tol>>` | `40`, `1e-5` | Turns the mode on. Converged when the scaled residual `||R||_2 < tol`. |
+| `-monoAccept` | `$aF $aM <$aC>` | off (`0 0 1e-2` when given without `$aC`) | Accepts a solve that stopped without converging when every section force residual is `< $aF`, every moment residual `< $aM` and the scaled compatibility `< $aC`. Model C's calibrated runs use `10e3 10e6` (10 kN, 10 kN m in N, mm). Count and size via `monoStats`. |
+| `-monoRestart` | `0` or `1` | `1` | Retry a failed solve from the committed state (Model C's start rule) after the attempt from the last trial state. Near a fold it decides which branch the solve lands on. |
+| `-monoStall` | `$nIter <$ratio>` | `0` (off), `0.99` | Stop a Newton whose residual fell by less than `1 - ratio` over the last `$nIter` iterations. Makes failing solves cheap, but also cuts off slow solves that would have converged. |
+| `-monoScale` | `$sF $sM $sC` | `1e5 1e8 1e-5` | Residual scales: force rows (P, Vy, Vz), moment rows (Mz, My, T), compatibility. The axial compatibility row is scaled by `$sC L`. In model units. |
+| `-monoHalve` | `$n` | `12` | Maximum halvings of the backtracking line search (step accepted on `||R_t|| < (1 - 1e-4 lambda) ||R||`). |
+
+* Refused with embedded hinges (`-hinge*`, `-hingeY*`, `-hingeBiaxial*`) and `-axialRelease`; the 2D
+  element does not have the mode (its parser rejects the flags).
+* `revertToLastCommit` does not call `getSectionFlexibility` in this mode.
+* Not carried by `sendSelf`/`recvSelf` yet: an OpenSeesMP copy runs the nested iteration.
+* Each global Newton iteration runs one element solve, so a failed global attempt with fallback algorithms
+  can run hundreds of element solves; `-monoStall` or a cheaper driver limits that cost.
+* Design and lab results: `Ladruno_implementation/255_lfbc_monolithic_solve.md`.
+
+```python
+ops.element("LadrunoForceBeamColumn", 1, 1, 2, transfTag, integTag,
+            "-shear", GAy, GAz, "-monolithic", "-monoAccept", 10e3, 10e6)
+```
 
 ---
 
@@ -366,7 +409,7 @@ All frame families (`LadrunoDispBeamColumn2d/3d`, `LadrunoForceBeamColumn2d/3d`,
 
 | Element / Material | Direct Parameter Names | Forwarded Sub-Component Syntax |
 | :--- | :--- | :--- |
-| `LadrunoDispBeamColumn2d`<br>`LadrunoDispBeamColumn3d`<br>`LadrunoForceBeamColumn2d`<br>`LadrunoForceBeamColumn3d` | `'rho'`, `'lch'`, `'GAy'` / `'GAvy'` (`LadrunoForceBeamColumn`), `'GAz'` / `'GAvz'` (3D `LadrunoForceBeamColumn`) | • `'section' $secNum $arg...` (1-based section index)<br>• `'sectionX' $x $arg...` (physical coordinate $x \in [0,L]$)<br>• `'hinge'` / `'hingeZ'` / `'hingeIJ'` / `'hingeZIJ' $arg...` (single hinge or both dual-$z$ hinges)<br>• `'hingeI'` / `'hingeZI'` / `'hinge1' $arg...` (end $I$)<br>• `'hingeJ'` / `'hingeZJ'` / `'hinge2' $arg...` (end $J$)<br>• `'hingeY'` / `'hingeYIJ'` / `'hingeYI'` / `'hingeY1'` / `'hingeYJ'` / `'hingeY2' $arg...` (**3D only**)<br>• `'hingeBiaxial'` / `'hingeC'` / `'hingeBiaxialIJ'` / `'hingeCIJ'` / `'hingeBiaxialI'` / `'hingeCI'` / `'hingeBiaxial1'` / `'hingeBiaxialJ'` / `'hingeCJ'` / `'hingeBiaxial2' $arg...` (**3D only**)<br>• *(no prefix)*: broadcasts `$argv` to all sections and active hinges |
+| `LadrunoDispBeamColumn2d`<br>`LadrunoDispBeamColumn3d`<br>`LadrunoForceBeamColumn2d`<br>`LadrunoForceBeamColumn3d` | `'rho'`, `'lch'`, `'GAy'` / `'GAvy'` (`LadrunoForceBeamColumn`), `'GAz'` / `'GAvz'` (3D `LadrunoForceBeamColumn`), `'monoRestart'` (0/1) and `'monoStall'` (nIter) (3D `LadrunoForceBeamColumn` with `-monolithic`) | • `'section' $secNum $arg...` (1-based section index)<br>• `'sectionX' $x $arg...` (physical coordinate $x \in [0,L]$)<br>• `'hinge'` / `'hingeZ'` / `'hingeIJ'` / `'hingeZIJ' $arg...` (single hinge or both dual-$z$ hinges)<br>• `'hingeI'` / `'hingeZI'` / `'hinge1' $arg...` (end $I$)<br>• `'hingeJ'` / `'hingeZJ'` / `'hinge2' $arg...` (end $J$)<br>• `'hingeY'` / `'hingeYIJ'` / `'hingeYI'` / `'hingeY1'` / `'hingeYJ'` / `'hingeY2' $arg...` (**3D only**)<br>• `'hingeBiaxial'` / `'hingeC'` / `'hingeBiaxialIJ'` / `'hingeCIJ'` / `'hingeBiaxialI'` / `'hingeCI'` / `'hingeBiaxial1'` / `'hingeBiaxialJ'` / `'hingeCJ'` / `'hingeBiaxial2' $arg...` (**3D only**)<br>• *(no prefix)*: broadcasts `$argv` to all sections and active hinges |
 | `LadrunoIMKBeam2d` | `'E'`, `'A'`, `'Iz'` (or `'I'`), `'rho'`, `'GAvy'` (or `'GAy'`, `'GAv'`), `'P0'`, `'pmAlpha'` | • `'hingeI'` / `'hinge1'` / `'hingeZi'` / `'hingeZI'` / `'hingeMzI'` / `'matZi' $arg...`<br>• `'hingeJ'` / `'hinge2'` / `'hingeZj'` / `'hingeZJ'` / `'hingeMzJ'` / `'matZj' $arg...`<br>• `'matZ'` / `'hingeZ'` / `'material'` / `'hinge' $arg...` (both ends, or `'hinge' i|j|0|1 $arg...`)<br>• `'shearHinge'` / `'shearHingeY'` / `'matShear' $arg...` |
 | `LadrunoIMKBeam` (3D) | `'E'`, `'A'`, `'Iz'`, `'Iy'`, `'G'`, `'Jx'` (or `'J'`), `'rho'`, `'GAvy'` (or `'GAy'`), `'GAvz'` (or `'GAz'`), `'P0'`, `'pmAlpha'` | • `'hingeI'` / `'hinge1'` / `'hingeZi'` / `'hingeZI'` / `'hingeMzI'` / `'matZi' $arg...`<br>• `'hingeJ'` / `'hinge2'` / `'hingeZj'` / `'hingeZJ'` / `'hingeMzJ'` / `'matZj' $arg...`<br>• `'hingeYi'` / `'hingeYI'` / `'hingeMyI'` / `'matYi' $arg...`<br>• `'hingeYj'` / `'hingeYJ'` / `'hingeMyJ'` / `'matYj' $arg...`<br>• `'matZ'` / `'hingeZ' $arg...` (both $z$ hinges)<br>• `'matY'` / `'hingeY' $arg...` (both $y$ hinges)<br>• `'hingeBiaxial'` / `'hingeBiaxialI'` / `'hingeBiaxialJ' $arg...`<br>• `'shearHingeY'` / `'shearHingeZ'` / `'shearHinge' $arg...`<br>• `'material'` / `'hinge' $arg...` (all 4 hinges, or `'hinge' Zi|Zj|Yi|Yj|0|1|2|3 $arg...`) |
 | `ForceBeamColumn2d`<br>`ForceBeamColumn3d` | `'rho'`, `'lch'` | • `'section' $secNum $arg...`<br>• `'sectionX' $x $arg...`<br>• `'allSections' $arg...` (or default fallback without prefix) |
@@ -398,6 +441,7 @@ All frame and wall elements share the canonical token matcher in [`SRC/element/L
 | `'hingeBiaxial'` / `'hingeBiaxialI'` / `'hingeBiaxialJ'` `$matResp...` | — | Forwards `$matResp` to biaxial hinge `NDMaterial` |
 | `'implexError'` / `'ImplexError'` | `1`: `[maxImplexErr]` across active hinges | `1`: `[maxImplexErr]` across active hinges |
 | `'avgImplexError'` / `'AvgImplexError'` | `1`: `[avgImplexErr]` across active hinges | `1`: `[avgImplexErr]` across active hinges |
+| `'monoStats'` | — | `5` (`LadrunoForceBeamColumn3d`): `[on, iterations, scaledResidual, nAccepted, maxAcceptedForceResidual]` of the last monolithic solve (`on` = 0 and zeros without `-monolithic`) |
 | `'integrationPoints'` | `N`: `[x_1, ..., x_N]` (physical coords $\xi_i L$) | `N`: `[x_1, ..., x_N]` (physical coords $\xi_i L$) |
 | `'integrationWeights'` | `N`: `[w_1, ..., w_N]` (physical weights $w_i L$) | `N`: `[w_1, ..., w_N]` (physical weights $w_i L$) |
 | `'section'` `$secNum` `$secResp...` | Forwards to 1-based section `$secNum` (`'force'`, `'deformation'`, `'fiber'`, etc.) | Forwards to 1-based section `$secNum` |
