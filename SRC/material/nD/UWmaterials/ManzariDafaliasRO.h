@@ -49,6 +49,10 @@
 class ManzariDafaliasRO : public ManzariDafalias
 {
   public:
+    // Ladruno WP-258: the RO family is NOT in the WP-258 audit; the base
+    // ManzariDafalias now admits IntScheme 1/2, so refuse here explicitly.
+    bool ladrunoThreadSafeUpdate(void) const { return false; }
+    bool ladrunoThreadSafeForm(void) const { return false; }
 
     // full constructor
     ManzariDafaliasRO(int tag, int classTag, double G0, double nu, double B, double a1, double gamma1, double e_init, double Mc, double c, 

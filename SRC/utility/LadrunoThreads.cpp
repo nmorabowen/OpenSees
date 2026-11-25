@@ -36,6 +36,7 @@
 #include <ctype.h>
 #include <thread>
 #include <mutex>
+#include <atomic>    // Ladruno WP-258: the loop serial number
 
 #ifdef _LADRUNO_OPENMP
 #include <omp.h>
@@ -188,6 +189,14 @@ ladruno_hardwareThreads(void)
 // ---------------------------------------------------------------------------
 
 thread_local int ladruno_tlInRegion = 0;
+thread_local long long ladruno_tlLoopId = 0;   // Ladruno WP-258
+
+// Ladruno WP-258: one number per ladruno_parallelFor call (see the header).
+static long long ladruno_nextLoopId(void)
+{
+    static std::atomic<long long> serial(0);
+    return ++serial;
+}
 
 // -1 = not seeded yet (from LADRUNO_THREADS_HYBRID), 0 = refused, 1 = allowed.
 static int ladrunoHybrid = -1;
@@ -238,6 +247,7 @@ ladruno_parallelFor(int n, int nThreads, int chunk,
     int first = n;
     if (chunk < 1)
         chunk = 1;
+    const long long loopId = ladruno_nextLoopId();   // Ladruno WP-258
 
 #ifdef _LADRUNO_OPENMP
     if (nThreads >= 2 && n >= 2) {
@@ -247,6 +257,7 @@ ladruno_parallelFor(int n, int nThreads, int chunk,
         #pragma omp parallel num_threads(nThreads) reduction(+:sum)
         {
             ladruno_tlInRegion = 1;
+            ladruno_tlLoopId = loopId;   // Ladruno WP-258
             #pragma omp for schedule(dynamic, chunk)
             for (int i = 0; i < n; i++) {
                 const int r = body(i, ctx);
@@ -260,6 +271,7 @@ ladruno_parallelFor(int n, int nThreads, int chunk,
                 }
             }
             ladruno_tlInRegion = 0;
+            ladruno_tlLoopId = 0;   // Ladruno WP-258
         }
         if (firstFail != 0)
             *firstFail = first;
@@ -269,7 +281,9 @@ ladruno_parallelFor(int n, int nThreads, int chunk,
 
     (void)nThreads;
     const int saved = ladruno_tlInRegion;
+    const long long savedLoop = ladruno_tlLoopId;   // Ladruno WP-258
     ladruno_tlInRegion = 1;
+    ladruno_tlLoopId = loopId;
     for (int i = 0; i < n; i++) {
         const int r = body(i, ctx);
         sum += r;
@@ -279,6 +293,7 @@ ladruno_parallelFor(int n, int nThreads, int chunk,
         }
     }
     ladruno_tlInRegion = saved;
+    ladruno_tlLoopId = savedLoop;   // Ladruno WP-258
     if (firstFail != 0)
         *firstFail = first;
     return sum;

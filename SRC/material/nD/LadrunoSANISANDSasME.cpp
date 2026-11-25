@@ -120,6 +120,7 @@
 //
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
+#include <LadrunoThreads.h>   // Ladruno WP-258: LadrunoOutputGuard
 #include "UWmaterials/ManzariDafalias.h"
 #include <profiler/ProfilerMacros.h>
 #include <OPS_Globals.h>
@@ -1456,6 +1457,7 @@ ManzariDafalias::ladrunoSasIntegrate(void)
         // nothing to reset on wipe); every refusal is counted in sasStats.
         if (!mLadrunoSas.warned) {
             mLadrunoSas.warned = true;
+            LadrunoOutputGuard ladrunoOut;   // Ladruno WP-258: opserr from a worker
             opserr << "WARNING LadrunoSANISAND (SAS-ME, IntScheme 129) material tag " << this->getTag()
                    << ": update REFUSED (" << refuseName(code) << ", code " << code
                    << "); the trial is left on the committed state and the step must be cut."

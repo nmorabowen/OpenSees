@@ -48,6 +48,9 @@
 #include <Information.h>
 #include <Parameter.h>                   // Ladruno (ADR-92 P1): setParameter/updateParameter
 #include <LadrunoMaterialStatus.h>        // Ladruno (ADR-86b): LADRUNO_MATERIAL_REFUSED
+#include <LadrunoThreads.h>               // Ladruno WP-258: LadrunoOutputGuard, ladruno_inThreadedRegion
+#include <atomic>                         // Ladruno WP-258
+#include <mutex>                          // Ladruno WP-258
 
 #include <string.h>
 #include <math.h>
@@ -2740,21 +2743,18 @@ LadrunoSANISAND::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
 bool
 LadrunoSANISAND::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
 {
-    // TWO independent refusals, and the base's is currently the binding one.
+    // Ladruno WP-258: both WP-107 refusals are lifted.
     //
-    // (1) -implex: the diagnostics are a process-wide ledger (LadrunoImplexGlobals
-    //     below) with FLOATING-POINT accumulators, so threading would make the
-    //     reported average depend on the thread count -- not fixable with an
-    //     atomic, and exactly the determinism WP-107 exists to preserve.
-    // (2) the base class refuses outright: a threaded IntScheme-1 integration
-    //     SEGFAULTS once the plastic branch is exercised in volume, with no
-    //     function-scope static anywhere on its call graph. See the long note on
-    //     ManzariDafalias::ladrunoThreadSafeUpdate().
+    // (1) -implex: the process-wide ledger (LadrunoImplexGlobals below) now
+    //     keeps per-thread error partials keyed by the commit loop and folds
+    //     them before any read, and its refusal counters are std::atomic; the
+    //     -implex warn budgets are atomic and print under LadrunoOutputGuard.
+    //     No number that feeds the answer comes from the ledger.
+    // (2) the base's segfault was opserr -> PythonStream on a worker thread
+    //     (see ManzariDafalias::ladrunoThreadSafeUpdate()).
     //
-    // (1) is kept explicit even though (2) already refuses everything, because
-    // (1) is a DESIGN constraint that survives any fix to (2).
-    if (mImplexOpt.enabled)
-        return false;
+    // What is admitted is the base's answer: IntScheme 1, 2 and 129, with or
+    // without -implex, 3D and PlaneStrain.
     return this->ManzariDafalias::ladrunoThreadSafeUpdate();
 }
 
@@ -2777,6 +2777,28 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     }
     void accumulate(double e)
     {
+        // Ladruno WP-258: inside a threaded commit loop, add to this thread's
+        // partial (no lock, no shared write); see ladrunoFold() below.
+        if (ladruno_inThreadedRegion()) {
+            LadrunoPartial &q = ladrunoPartial();
+            const long long loop = ladruno_currentLoopId();
+            if (q.loop != loop) {
+                if (q.count > 0) {
+                    std::lock_guard<std::mutex> g(ladrunoMutex);
+                    ladrunoFold(q);
+                }
+                q.loop = loop;
+            }
+            if (q.count == 0) {
+                q.maxe = e;
+                ladrunoAnyPartial.store(true);   // once per thread per loop
+            } else if (e > q.maxe)
+                q.maxe = e;
+            q.sum += e;
+            q.count++;
+            return;
+        }
+        this->ladrunoFlush();
         if (e > maxError)
             maxError = e;
         sumError += e;
@@ -2802,24 +2824,49 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     // stops firing and the pair degrades to the old since-process-start
     // behaviour. These are diagnostics; nothing here may be given a job that
     // affects the answer.
+    //
+    // Ladruno WP-258 -- under threads. The commit loop runs on several threads,
+    // so "the marker committed before everyone else" no longer holds, and the
+    // accumulators would race. Inside a threaded loop (ladruno_parallelFor),
+    // the marker records its LOOP id instead of resetting, and every point
+    // accumulates into its thread's partial tagged with the loop id. A partial
+    // is folded (under a mutex) when its thread moves to another loop and
+    // before any read: a partial from a loop OLDER than the latest marker loop
+    // belongs to a finished round and is dropped; otherwise the globals are
+    // reset once for the marker's round and the partial merged. One commit loop
+    // is one round, so every point's error lands in the round it belongs to.
+    // The max is exact; the sum is folded in thread order, so avgImplexError
+    // may differ from the serial value in its last bits (a diagnostic, as the
+    // ASDConcrete WP-192 partials). Serial paths fold any partials first and
+    // then run the original code, so a one-thread run is unchanged.
     void noteCommitRound(const void *who)
     {
-        if (firstCommitter == 0)
-            firstCommitter = who;
-        else if (who == firstCommitter) {
+        if (ladruno_inThreadedRegion()) {                       // Ladruno WP-258
+            const void *none = 0;
+            if (firstCommitter.compare_exchange_strong(none, who))
+                return;
+            if (who == firstCommitter.load())
+                ladrunoMarkerLoop.store(ladruno_currentLoopId());
+            return;
+        }
+        this->ladrunoFlush();                                    // Ladruno WP-258
+        if (firstCommitter.load() == 0)
+            firstCommitter.store(who);
+        else if (who == firstCommitter.load()) {
             maxError = 0.0;
             sumError = 0.0;
             count    = 0;
         }
     }
 
-    double getMaxError(void) const { return maxError; }
+    double getMaxError(void) { this->ladrunoFlush(); return maxError; }   // Ladruno WP-258: flush first
 
     // Ladruno ADR-92 fix (red/blue major RED-1 F6, contract item 6): the mean
     // over the current commit round, read NON-DESTRUCTIVELY, so every
     // integration point a recorder touches reports the same value.
-    double getAverageError(void) const
+    double getAverageError(void)   // Ladruno WP-258: flushes the threaded partials first
     {
+        this->ladrunoFlush();
         return (count > 0) ? (sumError / (double)count) : 0.0;
     }
 
@@ -2951,6 +2998,13 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     // CHILD process when a gate needs a fresh throttle").
     void resetOnWipe(void)
     {
+        {                                                       // Ladruno WP-258
+            std::lock_guard<std::mutex> g(ladrunoMutex);
+            for (LadrunoPartial *q : ladrunoPartials)
+                *q = LadrunoPartial();
+            ladrunoMarkerLoop.store(0);
+            ladrunoRoundLoop = 0;
+        }
         maxError          = 0.0;
         sumError          = 0.0;
         count             = 0;
@@ -2969,8 +3023,58 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     }
 
   private:
+    // Ladruno WP-258: one thread's share of a threaded commit loop's errors.
+    struct LadrunoPartial {
+        long long loop;
+        double    maxe;
+        double    sum;
+        long      count;
+        LadrunoPartial() : loop(0), maxe(0.0), sum(0.0), count(0) {}
+    };
+    LadrunoPartial &ladrunoPartial(void)
+    {
+        thread_local LadrunoPartial *q = 0;
+        if (q == 0) {
+            q = new LadrunoPartial();   // registered for the process' life: folded by any thread
+            std::lock_guard<std::mutex> g(ladrunoMutex);
+            ladrunoPartials.push_back(q);
+        }
+        return *q;
+    }
+    // Under ladrunoMutex. See the note above noteCommitRound().
+    void ladrunoFold(LadrunoPartial &q)
+    {
+        if (q.count > 0) {
+            const long long marker = ladrunoMarkerLoop.load();
+            if (q.loop >= marker) {
+                if (marker != 0 && ladrunoRoundLoop != marker) {
+                    maxError = 0.0;
+                    sumError = 0.0;
+                    count    = 0;
+                    ladrunoRoundLoop = marker;
+                }
+                if (count == 0 || q.maxe > maxError)
+                    maxError = q.maxe;
+                sumError += q.sum;
+                count    += q.count;
+            }
+        }
+        q = LadrunoPartial();
+    }
+    void ladrunoFlush(void)
+    {
+        if (!ladrunoAnyPartial.load())   // the serial hot path: nothing threaded to fold
+            return;
+        std::lock_guard<std::mutex> g(ladrunoMutex);
+        ladrunoAnyPartial.store(false);
+        for (LadrunoPartial *q : ladrunoPartials)
+            if (q->count > 0)
+                ladrunoFold(*q);
+    }
+
     LadrunoImplexGlobals()
       : maxError(0.0), sumError(0.0), count(0), firstCommitter(0),
+        ladrunoMarkerLoop(0), ladrunoRoundLoop(0), ladrunoAnyPartial(false),   // Ladruno WP-258
         nRefusedD2(0), nRefusedControl(0), nRefusedCompanion(0),
         nRefusedLatched(0),   // Ladruno WP-99 (F7)
         nFloorFallback(0), nGuardF0(0), nHoldPreserved(0),
@@ -2983,18 +3087,24 @@ class LadrunoImplexGlobals                                    // Ladruno (ADR-92
     double      maxError;
     double      sumError;
     long        count;
-    const void *firstCommitter;   // Ladruno ADR-92 fix: the commit-round marker
-    long        nRefusedD2;
-    long        nRefusedControl;
-    long        nRefusedCompanion;
-    long        nRefusedLatched;   // Ladruno WP-99 (F7): post-latch, NOT in the total
-    long        nFloorFallback;    // Ladruno ADR-92 P2-1
-    long        nGuardF0;          // Ladruno ADR-92 P2-2
-    long        nHoldPreserved;    // Ladruno ADR-92 P2-3
-    long        nReversalNoise;    // Ladruno ADR-92 P2-5
-    long        nTrialGuardF0;     // Ladruno ADR-92 P2-6
-    long        nHoldSkipCommit;   // Ladruno ADR-92 P2-5c
-    long        nCtlFactorBackoff; // Ladruno ADR-92 P2-9
+    std::atomic<const void *> firstCommitter;   // Ladruno ADR-92 fix: the commit-round marker (WP-258: atomic)
+    std::atomic<long long> ladrunoMarkerLoop;   // Ladruno WP-258: loop id of the latest threaded marker commit
+    long long   ladrunoRoundLoop;               // Ladruno WP-258: the marker loop whose round the globals hold
+    std::atomic<bool> ladrunoAnyPartial;        // Ladruno WP-258: some partial may hold data
+    std::mutex  ladrunoMutex;                   // Ladruno WP-258: guards ladrunoPartials and every fold
+    std::vector<LadrunoPartial *> ladrunoPartials;   // Ladruno WP-258
+    // Ladruno WP-258: the counters are atomic -- they are bumped from worker threads.
+    std::atomic<long> nRefusedD2;
+    std::atomic<long> nRefusedControl;
+    std::atomic<long> nRefusedCompanion;
+    std::atomic<long> nRefusedLatched;   // Ladruno WP-99 (F7): post-latch, NOT in the total
+    std::atomic<long> nFloorFallback;    // Ladruno ADR-92 P2-1
+    std::atomic<long> nGuardF0;          // Ladruno ADR-92 P2-2
+    std::atomic<long> nHoldPreserved;    // Ladruno ADR-92 P2-3
+    std::atomic<long> nReversalNoise;    // Ladruno ADR-92 P2-5
+    std::atomic<long> nTrialGuardF0;     // Ladruno ADR-92 P2-6
+    std::atomic<long> nHoldSkipCommit;   // Ladruno ADR-92 P2-5c
+    std::atomic<long> nCtlFactorBackoff; // Ladruno ADR-92 P2-9
 };
 
 } // anonymous namespace
@@ -3344,9 +3454,9 @@ LadrunoSANISAND::ladrunoTrialUpdate(void)
         // version was a single `static bool`, so on a model with several
         // SANISAND materials it named whichever tag happened to latch first
         // and hid the rest.
-        // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
-        static int ladrunoCommitLatchWarnCount = 0;   // Ladruno WP-99 (F7)
+        static std::atomic<int> ladrunoCommitLatchWarnCount(0);   // Ladruno WP-99 (F7)
         if (ladrunoCommitLatchWarnCount < 10) {
+            LadrunoOutputGuard ladrunoOut;   // Ladruno WP-258: opserr from a worker
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                    << ": REFUSING every further update (" << LADRUNO_MATERIAL_REFUSED << "). ";
             // Ladruno WP-130 (review r1 + merge with WP-129): name the cause.
@@ -3783,9 +3893,9 @@ LadrunoSANISAND::ladrunoWarnRoundoffAlphaIn(void)
         return;
 
     mRoundoffAlphaInWarned = true;
-    // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
-    static int ladrunoRoundoffAlphaInWarnCount = 0;   // Ladruno WP-112 (F14)
+    static std::atomic<int> ladrunoRoundoffAlphaInWarnCount(0);   // Ladruno WP-112 (F14)
     if (ladrunoRoundoffAlphaInWarnCount < 10) {
+        LadrunoOutputGuard ladrunoOut;   // Ladruno WP-258: opserr from a worker
         opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                << ": -flipAlphaIn vanilla and ||alpha - alpha_in|| = " << dNorm
                << " is at round-off (<= 1e-8 * max(||alpha|| = " << aNorm
@@ -4017,9 +4127,9 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
         // "once per instance" bounds the output. Throttling the message is only
         // safe because the count is now recoverable from `implexRefusals`.
         LadrunoImplexGlobals::instance().noteRefusalD2();
-        // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
-        static int ladrunoImplexD2WarnCount = 0;     // Ladruno ADR-92 fix
+        static std::atomic<int> ladrunoImplexD2WarnCount(0);     // Ladruno ADR-92 fix
         if (ladrunoImplexD2WarnCount < 10) {
+            LadrunoOutputGuard ladrunoOut;   // Ladruno WP-258: opserr from a worker
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                    << ": -implex REFUSES this step -- the pseudo-time increment CHANGED"
                       " SIGN (" << mImplexDtCommit << " -> " << mImplexDt << ")."
@@ -4408,19 +4518,19 @@ LadrunoSANISAND::ladrunoImplexTrial(void)
                 // budget AND additionally allow one line at each NEW |dt| (i.e. once
                 // per rung), under a hard overall cap so the 2.58 MB failure mode
                 // RED-1 F7 measured cannot come back.
-                // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
-                static double ladrunoImplexCtlLastDt    = -1.0;   // Ladruno ADR-92 fix
-                // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
-                static int    ladrunoImplexCtlRungLines = 0;      // Ladruno ADR-92 fix
+                static std::atomic<double> ladrunoImplexCtlLastDt(-1.0);   // Ladruno ADR-92 fix
+                static std::atomic<int>    ladrunoImplexCtlRungLines(0);      // Ladruno ADR-92 fix
                 bool newRung = false;                             // Ladruno ADR-92 fix
-                if (dtAbs != ladrunoImplexCtlLastDt && ladrunoImplexCtlRungLines < 40) {
+                // Ladruno WP-258: atomics (the pair is a cosmetic log throttle; a
+                // lost update across threads changes which lines print, nothing else)
+                if (dtAbs != ladrunoImplexCtlLastDt.load() && ladrunoImplexCtlRungLines.load() < 40) {
                     ladrunoImplexCtlLastDt = dtAbs;
                     ladrunoImplexCtlRungLines++;
                     newRung = true;
                 }
-                // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
-                static int ladrunoImplexCtlWarnCount = 0;   // Ladruno ADR-92 fix
+                static std::atomic<int> ladrunoImplexCtlWarnCount(0);   // Ladruno ADR-92 fix
                 if (newRung || ladrunoImplexCtlWarnCount < 10) {
+                    LadrunoOutputGuard ladrunoOut;   // Ladruno WP-258: opserr from a worker
                     opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                            << ": -implexControl REFUSES this step -- implexError "
                            << mImplexError << " > tol " << mImplexOpt.errorTol
@@ -4629,9 +4739,9 @@ LadrunoSANISAND::ladrunoImplexCommit(void)
     const bool companionFailed = mSubstepCapHitInME || mLadrunoSas.refused;   // Ladruno ADR-92 fix; WP-129
     if (companionFailed) {
         LadrunoImplexGlobals::instance().noteRefusalCompanion();
-        // ladruno-lint: thread-ok never threaded: ladrunoThreadSafeUpdate refuses via the ManzariDafalias base (WP-107)
-        static int ladrunoImplexCompanionWarnCount = 0;   // Ladruno ADR-92 fix
+        static std::atomic<int> ladrunoImplexCompanionWarnCount(0);   // Ladruno ADR-92 fix
         if (ladrunoImplexCompanionWarnCount < 10) {
+            LadrunoOutputGuard ladrunoOut;   // Ladruno WP-258: opserr from a worker
             opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                    << ": the -implex COMPANION hit the -maxSubsteps cap at commitState."
                       " This commit is REFUSED (" << LADRUNO_MATERIAL_REFUSED
@@ -4915,6 +5025,7 @@ LadrunoSANISAND::commitState(void)
             mLadrunoLatchCause = mLadrunoCPPMRefused ? 1 : (mLadrunoSas.refused ? 2 : 3); // Ladruno WP-130
             if (!mLadrunoSas.commitRefusalWarned) {
                 mLadrunoSas.commitRefusalWarned = true;
+                LadrunoOutputGuard ladrunoOut;   // Ladruno WP-258: opserr from a worker
                 opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
                        << ": a REFUSED update ("
                        << (mLadrunoLatchCause == 1 ? "BackwardEuler_CPPM: -cppmOnFail refuse or a failed -meFallback"

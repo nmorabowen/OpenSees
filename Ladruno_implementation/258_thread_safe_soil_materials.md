@@ -53,7 +53,61 @@ reported mode-F row, no target.
 
 ## 2. Audit — shared mutable state on the threaded call graphs
 
-*(filled before any code change; §2.1–2.3)*
+The worker-thread methods are the WP-107 / WP-192 contract's: `setTrialStrain` (Update) and
+`getStress`, `getTangent`, `getInitialTangent`, `commitState`, `revertToLastCommit` (Form). MPM
+mode F (WP-253) calls `setTrialStrain`, `getStress`, `commitState` and `getInitialTangent` on
+workers. Everything else (parsers, `getCopy`, `sendSelf`/`recvSelf`, `setParameter` /
+`updateParameter`, `updateMaterialStage`, the MPM stage walk, `Print`, `getResponse`) runs on the
+main thread between loops. Shared infrastructure already per-thread inside a threaded region
+(WP-192): `Matrix::Solve` / `Invert` work areas (`Matrix.cpp:55-77`, `:425`, `:533`, `:642`);
+every loop (`Domain::update`, the integrators' tangent / residual loops, `Domain::commit`, MPM mode
+F) runs through `ladruno_parallelFor`, which sets `ladruno_tlInRegion`.
+
+### 2.1 DruckerPrager (vanilla UW, `DruckerPrager3D`, `DruckerPragerPlaneStrain`)
+
+| Item | Where | Kind | Reached from | Fix | Serial bits |
+|---|---|---|---|---|---|
+| `strain`, `stress`, `tangent` | `DruckerPragerPlaneStrain.h:75-77`, `.cpp:29-31` | class-static return buffers | `getStrain`, `getStress`, `getTangent`, `getInitialTangent` (PlaneStrain) | `static thread_local` | unchanged |
+| `ladNormCepMsgCount` + `opserr "NormCep"` | `DruckerPrager.cpp:798-803` | function static, non-atomic RMW, `opserr` | `plastic_integrator` (every apex point after ADR-95) | `std::atomic` claim of the same 10-line budget, `LadrunoOutputGuard` | unchanged (same lines, same order) |
+| `opserr "Jact = … count = …"` | `DruckerPrager.cpp:638-641` | `opserr` | the corner-loop bailout (`count > 3`) | `LadrunoOutputGuard` | unchanged |
+| `numDruckerPragerMaterials` | `:56` | file static | parser | none (main thread) | — |
+| `static Vector data(45)` | `:1117`, `:1182` | function static | `sendSelf` / `recvSelf` | none (main thread) | — |
+| `mElastFlag`, `mFlag` | `DruckerPrager.h:133-134` | **per instance** | read in `plastic_integrator`, `updateElasticParam` | none; `materialState` is written by `updateParameter` (main thread) | — |
+| `g.Invert(g_contra)` | `:549`, `:584` | Matrix work area | the corner return | already per-thread in a region (WP-192) | — |
+| locals `Vector`/`Matrix` | `plastic_integrator` | heap temporaries | every call | none (re-entrant; allocator contention only) | — |
+| `ops_InitialStateAnalysis` | `:322` | global read | `revertToStart` (main thread) | none | — |
+
+No `throw`/`exit` on the worker paths (`exit` only in the base's "subclass responsibility" stubs,
+which the leaves override). **Verdict: safe for every option once the three rows above are
+fixed; both leaves opt in.**
+
+### 2.2 ManzariDafalias / LadrunoSANISAND
+
+*(see below — filled from the read-only audit, before any SANISAND code change)*
+
+### 2.3 LadrunoHS / HSSmall
+
+HSSmall is the same class with `use_small_strain` (`OPS_LadrunoHSSmall`, `LadrunoHS.cpp:326`).
+The kernel `LadrunoHSKernel.h` is pure: `inline` functions on stack arrays and a
+`const HSParams&`; its only statics are `static constexpr` (`:58`, `:168`, `:768-769`, `:795`,
+`:1707`); no `Matrix`/`Vector`, `opserr`, `throw` or `exit`; it solves its own 2×2 systems
+(`solve_2x4_neg`, `:1006`) and its eigenvalues by Jacobi (`:318`).
+
+| Item | Where | Kind | Reached from | Fix | Serial bits |
+|---|---|---|---|---|---|
+| tag stage map, ref-count map, mutex | `LadrunoHS.cpp:60-73` | immortal registry (function-static `new`) | **written**: parser, constructor (`getCopy`), destructor (`wipe`), `recvSelf`, `updateParameter` (incl. the MPM stage walk) — all main thread. **Read**: `syncStageFromRegistry` from `integrate3D`, `getStress`, `getStressZZ`, `getStrain`, `getTangent`, `getInitialTangent`, `commitState`, `revertToLastCommit` | atomic **generation** counter bumped by every writer under the mutex; `syncStageFromRegistry` returns when the generation equals the instance's last-seen value, else takes the lock as before | unchanged: the lazy transition runs at exactly the same calls (invariant in the code comment) |
+| the same lock | `syncStageFromRegistry` | one process-wide `std::mutex` taken 3–4× per point per iteration (up to 25× in condensed modes) | every worker method | removed from the hot path by the generation | — (a scalability defect, WP-192 trap 4, not a race: every access was locked) |
+| `ladrunoNoteCommitRefusal()` | `:833` → `LadrunoMaterialStatus.h:155-159` | process-wide `std::atomic<int>` | `commitState` | none (integer, order-free); WP-253 adds the per-thread tally | — |
+| `stressOut_`, `strainOut_`, `tangentOut_`, `initTangentOut_` | `LadrunoHS.h:142-145` | per-instance return buffers | getters | none | — |
+| IMPL-EX state | `:635-679`, `:837-841` | per instance | `-implex` | none (no global accumulator, unlike SANISAND/ASDConcrete) | — |
+| `-sig0`/`-sig03`, `-sigmat` | `sig0_comp_`, `buildInitialTangent6x6` (`:467-498`) | per instance / pure | FE (MPM refuses `-sig0`) | none | — |
+| `static Vector data` | `:990`, `:1063` | function static | `sendSelf` / `recvSelf` | none (main thread) | — |
+| `opserr` | parser, send/recv, `updateParameter` only | — | never from a worker method | none | — |
+| `ops_Dt`, `ops_TheActiveElement`, Domain | not referenced | — | — | — | — |
+
+**Verdict: safe for every option (HS, `-smallStrain`, `-implex`, `-sigmat`, `-sig0`/`-sig03`,
+every dimension mode); opts in unconditionally.** The registry's three immortal objects carry
+`thread-ok` waivers (written only on the main thread, under the mutex).
 
 ## 3. Determinism gate
 

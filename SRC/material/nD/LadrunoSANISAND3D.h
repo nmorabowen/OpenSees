@@ -104,8 +104,10 @@ class LadrunoSANISAND3D : public LadrunoSANISAND // Ladruno
 
   private :
 
-  static Vector mSigma_M  ; // mSigma with continuum mechanic sign convention
-  static Vector mEpsilon_M; // mEpsilon with continuum mechanic sign convention
+  // Ladruno WP-258: thread_local -- the getters fill and return these, so two
+  // instances on two threads would otherwise share one buffer.
+  static thread_local Vector mSigma_M  ; // mSigma with continuum mechanic sign convention
+  static thread_local Vector mEpsilon_M; // mEpsilon with continuum mechanic sign convention
 
 };
 

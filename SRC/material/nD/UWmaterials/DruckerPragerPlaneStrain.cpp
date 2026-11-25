@@ -26,9 +26,10 @@
 #include <FEM_ObjectBroker.h>
 
 //static vectors and matrices
-Vector DruckerPragerPlaneStrain::strain(3);
-Vector DruckerPragerPlaneStrain::stress(3);
-Matrix DruckerPragerPlaneStrain::tangent(3,3);
+// Ladruno WP-258: thread_local (one buffer per thread; serial path unchanged)
+thread_local Vector DruckerPragerPlaneStrain::strain(3);
+thread_local Vector DruckerPragerPlaneStrain::stress(3);
+thread_local Matrix DruckerPragerPlaneStrain::tangent(3,3);
 
 //null constructor
 DruckerPragerPlaneStrain::DruckerPragerPlaneStrain() : 

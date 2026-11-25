@@ -31,6 +31,7 @@
 #include <string.h>
 #include <climits>                 // Ladruno (ADR-86b): INT_MAX, substep-counter saturation
 #include <atomic>                  // Ladruno WP-107: the two ModifiedEuler warn budgets
+#include <LadrunoThreads.h>        // Ladruno WP-258: LadrunoOutputGuard
 #include <limits>                  // Ladruno WP-127: quiet_NaN for the substep trace
 #include <cstdlib>                 // Ladruno WP-130: abs() in ladrunoInvertLocal
 
@@ -1234,39 +1235,42 @@ void ManzariDafalias::elastic_integrator(const Vector& CurStress, const Vector& 
 bool
 ManzariDafalias::ladrunoThreadSafeUpdate(void) const   // Ladruno WP-107
 {
-    // REFUSED, unconditionally -- and the reason is the most useful thing WP-107
-    // found, so it is recorded here rather than in a ledger only.
+    // Ladruno WP-258: ADMITTED for IntScheme 1 (ModifiedEuler), 2
+    // (BackwardEuler_CPPM, whose live path inverts on the stack in
+    // ladrunoInvertLocal) and, for LadrunoSANISAND, 129 (SAS-ME). Every other
+    // scheme stays serial: 45 (RungeKutta45) keeps function-static scratch and
+    // a plain warn budget, and 0 / 3-9 were not in WP-258's determinism gate.
     //
-    // The first version of this returned `mScheme == INT_ModifiedEuler`, on the
-    // strength of a COMPLETE function-scope-static audit of the
-    //   integrate -> explicit_integrator -> ModifiedEuler
-    //             -> {GetElastoPlasticTangent, Stress_Correction,
-    //                 IntersectionFactor, GetStateDependent, GetStiffness}
-    // call graph, which finds NONE (every static Vector/Matrix in this file is in
-    // RungeKutta45, NewtonIter, getPStrain or sendSelf/recvSelf -- all off the
-    // IntScheme-1 path), plus no Matrix::Solve/Invert anywhere on it.
+    // WP-107 refused the whole family unconditionally because IntScheme 1
+    // SEGFAULTED on an OpenMP worker once the plastic branch was exercised --
+    // even with every update serialised under `omp critical`, so not a data
+    // race. WP-258 found the mechanism: the plastic branch PRINTS (the
+    // ModifiedEuler substep-cap and low-p clamp warnings below), and under
+    // openseespy `opserr` is a PythonStream whose err_out() called
+    // PySys_FormatStderr from a thread with no Python thread state. The elastic
+    // branch never prints, which is why it was clean. PythonStream now writes
+    // straight to stderr from a thread that does not hold the GIL
+    // (PythonStream.h, WP-258), and every print on these paths takes
+    // LadrunoOutputGuard.
     //
-    // That audit is not a proof, and the measurement says so. On a 6400-element
-    // LadrunoQuad -bbar plane-strain deck:
-    //   * IntScheme 1, threads > 1, with the ELASTIC branch only (gravity stage,
-    //     mElastFlag == 0): clean, bit-identical.
-    //   * IntScheme 1, threads > 1, once the PLASTIC branch is exercised in
-    //     volume: segfaults, 4/4 at 4 threads.
-    // Ruled out by experiment, none of which changed the outcome: the fork's
-    // subclass (vanilla ManzariDafalias crashes identically), the linear solver
-    // (BandGeneral and Pardiso both), worker-thread stack size
-    // (KMP_STACKSIZE=64M), and the warning path (it faults with zero warnings
-    // emitted). The same element with ElasticIsotropicPlaneStrain2D is clean
-    // 6/6 at 8 threads on 10 000 elements, so the element half is not at fault.
-    //
-    // WP-107's rule is "un-audited is never threaded". A located-but-unfixed
-    // hazard is strictly worse than an un-audited one, so this family is refused
-    // until someone finds it. A threaded run on a ManzariDafalias-family deck
-    // therefore falls back to the serial loop, loudly, naming the element tag.
-    //
-    // See Ladruno_implementation/107_ladruno_openmp_element_loop.md section 5 and
-    // LEDGER_quirks.md ("a static grep is not a re-entrancy proof").
-    return false;
+    // The rest of the audit (Ladruno_implementation/258_thread_safe_soil_materials.md
+    // section 2.2): the 3D / PlaneStrain wrappers' class-static return buffers
+    // are thread_local; the class-wide mElastFlag is only READ on workers (it is
+    // written by updateMaterialStage / the MPM stage walk, on the main thread);
+    // mI1 ... mIIdevCo are constant after static initialisation; the warn
+    // budgets are std::atomic. ManzariDafaliasRO and its wrappers are not
+    // audited and refuse (ManzariDafaliasRO.h).
+    if (mScheme == INT_ModifiedEuler || mScheme == INT_BackwardEuler)
+        return true;
+    return mScheme == LADRUNO_INT_SAS_ME && mLadrunoSas.allowed;
+}
+
+// Ladruno WP-258: the same audit covers getStress / getTangent /
+// getInitialTangent / commitState (the WP-192 form contract).
+bool
+ManzariDafalias::ladrunoThreadSafeForm(void) const
+{
+    return this->ladrunoThreadSafeUpdate();
 }
 
 void ManzariDafalias::explicit_integrator(const Vector& CurStress, const Vector& CurStrain, const Vector& CurElasticStrain,
@@ -1780,6 +1784,7 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
         mLadrunoMEStats[LMS_ENTRY_PMIN] += 1.0;                             // Ladruno WP-127
         static std::atomic<int> ladrunoClampWarnCount(0);                   // Ladruno
         if (ladrunoClampWarnCount.load() < 10) {                             // Ladruno
+            LadrunoOutputGuard ladrunoOut;   // Ladruno WP-258: opserr from a worker
             opserr << "WARNING ManzariDafalias::ModifiedEuler() - material tag "
                    << this->getTag() << ": mean stress p = " << p
                    << " is below the floor m_Pmin + m_Presidual = " << m_Pmin + m_Presidual
@@ -1909,6 +1914,7 @@ void ManzariDafalias::ModifiedEuler(const Vector& CurStress, const Vector& CurSt
             // said to do "if Lane 3 lands". It has.
             static std::atomic<int> ladrunoSubstepCapWarnCount(0);      // Ladruno
             if (ladrunoSubstepCapWarnCount.load() < 10) {
+                LadrunoOutputGuard ladrunoOut;   // Ladruno WP-258: opserr from a worker
                 opserr << "WARNING ManzariDafalias::ModifiedEuler() - material tag "
                        << this->getTag() << ": substep cap " << mMaxSubstepsInME
                        << " reached at T = " << T << ", dT = " << dT
@@ -2393,6 +2399,7 @@ void ManzariDafalias::RungeKutta45(const Vector& CurStress, const Vector& CurStr
         Vector& NextElasticStrain, Vector& NextStress, Vector& NextAlpha, Vector& NextFabric,
         double& NextDGamma, double& NextVoidRatio,  double& G, double& K, Matrix& aC, Matrix& aCep, Matrix& aCep_Consistent) 
 {    
+    // ladruno-lint: thread-ok RungeKutta45 is IntScheme 45, which ladrunoThreadSafeUpdate refuses (WP-258): never on a worker
     static bool do_once = true;
 
     if (do_once) {
@@ -2408,13 +2415,18 @@ void ManzariDafalias::RungeKutta45(const Vector& CurStress, const Vector& CurStr
     double temp4, q;
 
     //Static allocation so we can avoid mallocs and get maximum speed. This is not thread-safe
+    // ladruno-lint: thread-ok RungeKutta45 is IntScheme 45, which ladrunoThreadSafeUpdate refuses (WP-258): never on a worker
     static Vector n(6), d(6), b(6), R(6), dDevStrain(6), r(6); 
+    // ladruno-lint: thread-ok RungeKutta45 is IntScheme 45, which ladrunoThreadSafeUpdate refuses (WP-258): never on a worker
     static Vector nStress(6), nAlpha(6), nFabric(6), ndPStrain(6);
+    // ladruno-lint: thread-ok RungeKutta45 is IntScheme 45, which ladrunoThreadSafeUpdate refuses (WP-258): never on a worker
     static Vector dSigma1(6), dSigma2(6), dSigma3(6), dSigma4(6), dSigma5(6), dSigma6(6), dSigma(6), 
         dAlpha1(6), dAlpha2(6), dAlpha3(6), dAlpha4(6), dAlpha5(6), dAlpha6(6), dAlpha(6), 
         dFabric1(6), dFabric2(6), dFabric3(6), dFabric4(6), dFabric5(6), dFabric6(6), dFabric(6),
         dPStrain1(6), dPStrain2(6), dPStrain3(6), dPStrain4(6), dPStrain5(6), dPStrain6(6), dPStrain(6);
+    // ladruno-lint: thread-ok RungeKutta45 is IntScheme 45, which ladrunoThreadSafeUpdate refuses (WP-258): never on a worker
     static Matrix aCep1(6,6), aCep2(6,6), aCep3(6,6), aCep4(6,6), aCep5(6,6), aCep6(6,6), aCep_thisStep(6,6), aD(6,6);
+    // ladruno-lint: thread-ok RungeKutta45 is IntScheme 45, which ladrunoThreadSafeUpdate refuses (WP-258): never on a worker
     static Vector thisSigma(6), thisAlpha(6), thisFabric(6);    
     
     // Zero everything out for good measure. 
@@ -2449,6 +2461,7 @@ void ManzariDafalias::RungeKutta45(const Vector& CurStress, const Vector& CurStr
         // worst case 11 lines). See the long comment at the ModifiedEuler() site for the
         // reasoning. Guard here is `p < m_Pmin` -- RungeKutta45() computes p WITHOUT
         // m_Presidual, unlike ModifiedEuler(). Diagnostics only; no numerics change.
+        // ladruno-lint: thread-ok RungeKutta45 is IntScheme 45, which ladrunoThreadSafeUpdate refuses (WP-258): never on a worker
         static int ladrunoClampWarnCountRK45 = 0;                           // Ladruno
         if (ladrunoClampWarnCountRK45 < 10) {                               // Ladruno
             opserr << "WARNING ManzariDafalias::RungeKutta45() - material tag "
@@ -6213,6 +6226,7 @@ const Vector&
 ManzariDafalias::getPStrain() 
 {
     opserr << "ManzariDafalias::getPStrain - base class function called. This is an error\n ";
+    // ladruno-lint: thread-ok getPStrain is reached only from setResponse/getResponse (main thread, between loops)
     static Vector result(6);
     result = mEpsilon - mEpsilonE;
     return result; 

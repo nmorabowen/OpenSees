@@ -220,6 +220,7 @@ class ManzariDafalias : public NDMaterial
 	//       work arrays plus a `static bool do_once`.
 	//   IntScheme 3/5 and the MaxStrain/MaxEnergy family -> not audited.
 	virtual bool ladrunoThreadSafeUpdate(void) const;   // Ladruno WP-107
+	virtual bool ladrunoThreadSafeForm(void) const;     // Ladruno WP-258
 
 
   protected:

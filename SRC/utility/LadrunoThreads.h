@@ -123,6 +123,16 @@ int ladruno_parallelRanks(void);
 extern thread_local int ladruno_tlInRegion;
 inline bool ladruno_inThreadedRegion(void) { return ladruno_tlInRegion != 0; }
 
+// Ladruno WP-258 -- the serial number of the ladruno_parallelFor() call this
+// thread is executing a body of (0 outside every call). Each call takes a new
+// number from one process-wide counter before it forks, and every executing
+// thread sees the same number for the whole call, so a material can tell on a
+// worker, without a shared write, which LOOP a call belongs to: one commit loop
+// is one commit ROUND (LadrunoSANISAND's IMPL-EX error ledger keys its
+// per-thread partials on it).
+extern thread_local long long ladruno_tlLoopId;
+inline long long ladruno_currentLoopId(void) { return ladruno_tlLoopId; }
+
 // One iteration of a ladruno_parallelFor loop. Returns 0 on success.
 typedef int (*LadrunoIndexBody)(int i, void *ctx);
 

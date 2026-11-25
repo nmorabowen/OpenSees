@@ -69,12 +69,23 @@ class DruckerPragerPlaneStrain : public DruckerPrager {
   const Matrix& getTangent();
   const Matrix& getInitialTangent();
 
+  // Ladruno WP-258: re-entrant on DIFFERENT instances (WP-107 / WP-192 contract,
+  // Material.h). plastic_integrator() works on per-instance members and stack
+  // temporaries, its Matrix::Invert uses the per-thread work area inside a
+  // threaded region, and its two diagnostics go through LadrunoOutputGuard.
+  // The condensed return buffers below are thread_local (WP-258).
+  // Audit: Ladruno_implementation/258_thread_safe_soil_materials.md section 2.1.
+  bool ladrunoThreadSafeUpdate(void) const { return true; }
+  bool ladrunoThreadSafeForm(void) const { return true; }
+
   private :
 
   // static vectors and matrices
-  static Vector strain;
-  static Vector stress;
-  static Matrix tangent;
+  // Ladruno WP-258: thread_local -- getStress/getTangent/getInitialTangent fill
+  // and return them, so two instances on two threads would share one buffer.
+  static thread_local Vector strain;
+  static thread_local Vector stress;
+  static thread_local Matrix tangent;
 
 
 }; 
