@@ -139,6 +139,59 @@ def test_probe_scope_actually_suppresses_the_refusal_note():
             break
         i += 1
     body = code[body_start:i + 1]
-    assert re.search(r"if\s*\(\s*ladrunoProbeScopeDepth\(\)\s*==\s*0\s*\)\s*\+\+\s*ladrunoCommitRefusalCounter\(\)", body), (
-        "ladrunoNoteCommitRefusal must count a refusal only when no probe scope is open"
+    guarded, outside = split_probe_guard(body)
+    assert guarded is not None, "ladrunoNoteCommitRefusal must open with `if (ladrunoProbeScopeDepth() == 0)`"
+    # WP-253 added a per-thread tally next to the global counter, so the guard body became a braced block.
+    # Both increments must sit inside the depth == 0 branch, and nothing may count outside it.
+    for counter in ("ladrunoCommitRefusalCounter", "ladrunoThreadCommitRefusals"):
+        assert re.search(r"\+\+\s*" + counter + r"\(\)", guarded), (
+            f"ladrunoNoteCommitRefusal must count {counter} only when no probe scope is open"
+        )
+    assert not re.search(r"ladrunoCommitRefusalCounter|ladrunoThreadCommitRefusals", outside), (
+        "ladrunoNoteCommitRefusal counts a refusal outside its probe-scope guard"
     )
+
+
+_PROBE_GUARD = re.compile(r"if\s*\(\s*ladrunoProbeScopeDepth\(\)\s*==\s*0\s*\)\s*")
+
+
+def split_probe_guard(body):
+    """Split a function body into (the statement the depth == 0 guard controls, everything else).
+
+    Accepts both `if (...) stmt;` and `if (...) { ... }`. Returns (None, body) when there is no guard."""
+    m = _PROBE_GUARD.search(body)
+    if not m:
+        return None, body
+    j = m.end()
+    if body[j] == "{":
+        depth, k = 0, j
+        while True:
+            depth += body[k] == "{"
+            depth -= body[k] == "}"
+            if depth == 0:
+                break
+            k += 1
+        end = k + 1
+    else:
+        end = body.index(";", j) + 1
+    return body[j:end], body[:m.start()] + body[end:]
+
+
+def test_the_guard_splitter_has_teeth():
+    braced = "{ if (ladrunoProbeScopeDepth() == 0) { ++ladrunoCommitRefusalCounter(); ++ladrunoThreadCommitRefusals(); } }"
+    g, o = split_probe_guard(braced)
+    assert "ladrunoCommitRefusalCounter" in g and "ladrunoThreadCommitRefusals" in g
+    assert "Refusal" not in o
+    braceless = "{ if (ladrunoProbeScopeDepth() == 0) ++ladrunoCommitRefusalCounter(); }"
+    g, o = split_probe_guard(braceless)
+    assert "ladrunoCommitRefusalCounter" in g and "Refusal" not in o
+    hoisted = ("{ ++ladrunoCommitRefusalCounter(); "
+               "if (ladrunoProbeScopeDepth() == 0) { ++ladrunoThreadCommitRefusals(); } }")
+    g, o = split_probe_guard(hoisted)
+    assert "ladrunoCommitRefusalCounter" not in g and "ladrunoCommitRefusalCounter" in o
+    # braceless guard controls only the first statement; the second increment is outside it
+    half = ("{ if (ladrunoProbeScopeDepth() == 0) ++ladrunoCommitRefusalCounter(); "
+            "++ladrunoThreadCommitRefusals(); }")
+    g, o = split_probe_guard(half)
+    assert "ladrunoThreadCommitRefusals" in o
+    assert split_probe_guard("{ ++ladrunoCommitRefusalCounter(); }")[0] is None
