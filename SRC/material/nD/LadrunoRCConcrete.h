@@ -110,6 +110,7 @@ class LadrunoRCConcrete : public NDMaterial {
   int    bfIters;                    // Newton iterations of the last lateral solve
   int    bfWarned;                   // non-convergence messages printed (rate limit, not serialized)
   int    ccBinds;                    // 1 when the Model C crack check binds at the last trial
+  int    lateralRoot;                // WP-247: 0 Newton | 1 root scan | 2 -lateralNoRoot modelC (last trial)
 
   // working state (engineering shear; stress = true stress)
   double strain6[6];

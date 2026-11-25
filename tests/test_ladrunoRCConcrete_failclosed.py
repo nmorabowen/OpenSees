@@ -70,11 +70,12 @@ ACCEPTED = {
     # Ladruno WP-243: the BeamFiber-view ties (LadrunoRCConcrete only, see RC_ONLY)
     "-ties": [0.004, 0.004, 420.0, 200000.0], "-tieHardening": [0.01],
     "-crackCheck": ["sum", 150.0, 100.0],
+    "-lateralNoRoot": ["modelC"],                 # Ladruno WP-247 (LadrunoRCConcrete only)
 }
 
 # Declared in the shared table, accepted by LadrunoRCConcrete only: LadrunoRCFiniteStrain has no
 # BeamFiber view and refuses them by name (test_rcf_refuses_rc_only_options).
-RC_ONLY = {"-ties", "-tieHardening", "-crackCheck"}
+RC_ONLY = {"-ties", "-tieHardening", "-crackCheck", "-lateralNoRoot"}
 
 REFUSED = {
     "misspelled": ["-tensStif", "vc"],    # one letter short of -tensStiff
