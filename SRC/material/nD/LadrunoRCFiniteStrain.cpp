@@ -184,9 +184,10 @@ void* OPS_LadrunoRCFiniteStrain(void)
       autoReg = true; int nd = 1;
       if (OPS_GetDoubleInput(&nd, &lchRef) < 0) { opserr << "LadrunoRCFiniteStrain: -autoRegularization needs $lch_ref.\n"; return 0; }
     }
-    // Ladruno WP-243: the ties and the crack check belong to LadrunoRCConcrete's BeamFiber view; this class has no
+    // Ladruno WP-243/247: the ties, the crack check and -lateralNoRoot belong to LadrunoRCConcrete's BeamFiber view; this class has no
     // BeamFiber view (finite-strain fibres are not a beam-section object), so they fail closed.
-    else if (strcmp(opt, "-ties") == 0 || strcmp(opt, "-tieHardening") == 0 || strcmp(opt, "-crackCheck") == 0) {
+    else if (strcmp(opt, "-ties") == 0 || strcmp(opt, "-tieHardening") == 0 || strcmp(opt, "-crackCheck") == 0
+             || strcmp(opt, "-lateralNoRoot") == 0) {   // WP-247
       opserr << "nDMaterial LadrunoRCFiniteStrain error: " << opt << " is a BeamFiber-view option of "
                 "LadrunoRCConcrete; LadrunoRCFiniteStrain has no BeamFiber view.\n";
       return 0;
