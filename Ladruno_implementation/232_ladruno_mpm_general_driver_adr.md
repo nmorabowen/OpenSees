@@ -1250,6 +1250,12 @@ ADR-88).
   2026-11-23). #1110 narrowed: `mpm traction` is a grid-face, GIMP-only load; on S2 it gives
   0.108 (HS) and 0.033 (SANISAND) against 0.03, with no gated number changed. Done: #1103 item 2
   (restart pack v1) and #1106 items 2, 4, 5. Results: `249_mpm_hardening.md`.
+- **2026-11-24** — WP-253 (#1147, MPM performance and #1097; not a §9 phase). Mode F's transfer
+  loops thread on `ladrunoThreads`, bit-identical to 1 thread (node-centric gather); materials
+  that are not Form-safe keep their serial calls. 3D `gimp` elastic 10⁵: S(8) = 5.00 (target 4.0).
+  Miss for the owner: 2D DruckerPrager S(8) 1.27–1.31 against 1.4 (serial material, 61–65 % of
+  the step). #1096/#1098 do not dominate; no #1095 crash. Regression check `mpm_bench/regress.py`.
+  Results: `253_mpm_performance.md`.
 
 ---
 

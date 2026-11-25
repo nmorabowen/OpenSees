@@ -2339,6 +2339,7 @@ features:
       - tests/test_ladruno_mpm_soil_refusal.py         # WP-232k: W17 refusal abort (classic Tcl deck)
       - tests/test_ladruno_mpm_soil_restart.py         # WP-232k: restart pack 4, stage flag re-asserted
       - tests/test_mpm_soil_reference.py               # WP-232k: the FE reference records' own checks
+      - tests/test_ladruno_mpm_wp253_threads.py        # WP-253: mode F at 2/4 threads == 1 thread bit for bit; loop guard; failures; classic Tcl
     tcl: WAIVED(classic-Tcl runs through OpenSees.exe inside the pytest files -- tests/ladruno_mpm_harness.py writes one deck per case, and test_ladruno_mpm_lifecycle.py carries the refusal / loadPattern-stage deck)
     zone_b: []
     core_files:
