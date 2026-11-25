@@ -203,7 +203,7 @@ MKL 2026.1.0.0, affinity 0xFFFF. Data:
 | T2 | S(4) = 2.97 (`gimp`), 2.83 (`bspline2`) | **pass** |
 | T3 | 3D `bspline2` elastic 10⁵: S(8) = 4.54 (4 %) | **pass** |
 | T4 | 2D elastic 10⁵: S(8) = 3.50 (`gimp`), 3.55 (`bspline2`) | **pass** (10⁴, not a target row: 2.53 and 2.78, spreads 30 % and 23 % after the 5-repeat rerun) |
-| T5 | 3D DP 10⁵: 1.54 (`gimp`), 1.71 (`bspline2`); **2D DP 10⁵: 1.27 (`gimp`), 1.31 (`bspline2`)** | 3D pass; **2D MISS** (owner) |
+| T5 | 3D DP 10⁵: 1.54 (`gimp`), 1.71 (`bspline2`); **2D DP 10⁵: 1.27 (`gimp`), 1.31 (`bspline2`)** | 3D pass; **2D MISS, owner-accepted 2026-11-25** |
 | T6 | SANISAND S(8) 1.02–1.11 (`bspline2`, 2D and 3D, 10⁴ and 10⁵) | **pass** (2D rows noisy, see below) |
 | T7 | Mode F, every row at 1 thread: G(1) 0.99–1.06, each "faster" or "within noise"; bit-identical (bitcheck against `a3820d5ac` at 1/2/4/8 threads, and every digest). Mode A, 3D 10⁴: G(1) 1.02, bit-identical to `baseline_A_1e4` | **pass** |
 | T8 | Mode F: every 4- and 8-thread digest equals 1 thread (240/240 runs) | **pass** |
@@ -217,6 +217,9 @@ MKL 2026.1.0.0, affinity 0xFFFF. Data:
   gives 1.45 at 8 threads, so the target sat within 4 % of the bound; the transfer loops
   themselves scale as in 3D. Lifting it needs a thread-safe DP (`ladrunoThreadSafeForm`), which
   is out of scope (thread-safe soil models).
+  **Owner-accepted on 2026-11-25** (relayed by the MPM orchestrator, #1075): merge on green with
+  the target unchanged. WP-258, the thread-safe soil materials, opts DP, SANISAND and HS into
+  the threaded material path.
 - **T9** *(filled from esmeralda)*.
 
 ### What "soil models stay serial" means in the numbers
