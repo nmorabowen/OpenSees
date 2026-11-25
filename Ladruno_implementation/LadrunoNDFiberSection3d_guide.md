@@ -36,6 +36,7 @@ The concrete fibre is `LadrunoRCConcrete` with its BeamFiber view (WP-243,
 section LadrunoNDFiber $tag -shearProfile uniform   [-alpha $a]                      [-noCentroid] { fibres }
 section LadrunoNDFiber $tag -shearProfile parabolic -shearDepth $hy $hz
                             [-shearResultant modelC|conjugate]                       [-noCentroid] { fibres }
+# either form also takes [-tangent analytic|numerical] [-tangentStep $d]   (WP-252, §3b)
 
 nDMaterial LadrunoUniaxialFiber $tag $uniTag [-rho $rho]
 ```
@@ -54,10 +55,41 @@ ops.fiber(yb, zb, Abar, 6)
 | `-shearResultant` | `modelC` (default) \| `conjugate` | `parabolic` only. |
 | `-alpha` | `a` (> 0) | The stock shear shape factor. `uniform` only. |
 | `-noCentroid` | — | As stock: fibre coordinates are used as given. |
+| `-tangent` | `analytic` (default) \| `numerical` | WP-252, §3b. `numerical` = forward difference of the six resultants. |
+| `-tangentStep` | `d` in (0, 1e-2), default `1e-7` | WP-252: the fibre-strain perturbation of `-tangent numerical`. |
 
 The parser fails closed: an unknown token, a missing value or a wrong combination makes the
 command fail with the token named (WP-167). There is no `-GJ`/`-torsion`: an ND section carries
 torsion through its fibres. 3D models only (`ndm 3`); `ndm 2` is refused.
+
+## 3b. Numerical tangent (`-tangent numerical`, WP-252)
+
+By default the section tangent is assembled from each fibre's own tangent. For
+`LadrunoRCConcrete` that is the damaged secant `W_B C0`, positive by construction. Past a shear
+failure the true section response can have a slope of the other sign: in the lab set
+(Lynn et al. 1996, 3CLH18), the column lengthens as it loses strength under a constant axial load,
+so the axial stiffness at the tip is negative. With the secant, the global Newton then moves away
+from equilibrium by about 1.3x per iteration. No displacement step is small enough, and arc length
+on the lateral load fails on its first increment.
+
+`-tangent numerical` replaces the assembled tangent with the forward difference of the six
+resultants:
+
+- Column j perturbs `e_j` by `d / c_j`, where `c_j` is the largest fibre-strain sensitivity to `e_j`
+  (1 for `ε0`, the largest `|y|` or `|z|` for the curvatures, the profile factor for the shears), so
+  the largest fibre strain moves by `d` (`-tangentStep`, default `1e-7`).
+- Every fibre is re-evaluated, its BeamFiber lateral balance included, so the column carries
+  whatever the fibres actually do: a falling branch, a crack check, a lateral root switch.
+- The fibres are then set back at the base deformation, so the trial state that a commit stores
+  is the base one. This is exact when `setTrialStrain` is idempotent from the committed state
+  (`LadrunoRCConcrete`'s BeamFiber view: WP-246).
+- A column whose perturbed sweep a fibre refuses keeps its analytic values. A component that no
+  fibre feels (torsion with no out-of-plane fibres) stays analytic too.
+
+The resultants are unchanged: on the RC cracking path of the tests they are bit-identical to the
+analytic section's. The cost is seven fibre sweeps per state determination instead of one. In the
+lab column that made the pre-peak part about 3.5x slower, and it let plain Newton cross the 3CLH18
+step that the secant could not.
 
 ## 3. Kinematics and resultants
 
@@ -169,6 +201,11 @@ and `coverTag` is the same concrete without ties.
   - a `forceBeamColumn` cantilever whose tip deflection is `PL³/3EI + PL/(k G A)` with the section's own k, to 1e-12 (the unsymmetric modelC tangent on UmfPack);
   - a two-round database round trip (elastic concrete in shear under the conjugate resultant, plus yielded and unloaded Steel01 bars).
   - the classic Tcl exe gives the same section.
+- `tests/test_ladrunoNDFiberSection3d_numtan.py` (Zone-A, WP-252):
+  - elastic strips: the numerical tangent equals the analytic one, 1e-11;
+  - RC strips on a cracking shear path: the resultants are bit-identical to the analytic section's on
+    every step, and the numerical tangent's one-step prediction error is 0.31x the secant's;
+  - parser refusals and acceptances.
 
 ## 7. Scope
 

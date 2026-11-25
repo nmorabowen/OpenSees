@@ -540,6 +540,8 @@ static bool currentSectionIsWarping = false;
 static bool currentSectionComputeCentroid = true;
 static bool currentSectionIsLadruno = false;          // Ladruno WP-245
 static ladruno_shear::Spec currentLadrunoSpec;        // Ladruno WP-245
+static int    currentLadrunoTanMode = 0;              // Ladruno WP-252
+static double currentLadrunoTanStep = 1.0e-7;         // Ladruno WP-252
 
 int
 buildSection(Tcl_Interp *interp, TclModelBuilder *theTclModelBuilder,
@@ -1889,7 +1891,8 @@ buildSection(Tcl_Interp *interp, TclModelBuilder *theTclModelBuilder,
 	 SectionForceDeformation *section = 0;
 	 if (currentSectionIsND && currentSectionIsLadruno) {   // Ladruno WP-245
 	   LadrunoNDFiberSection3d *lsec = new LadrunoNDFiberSection3d(secTag, numFibers > 0 ? numFibers : 1,
-								     currentLadrunoSpec, currentSectionComputeCentroid);
+								     currentLadrunoSpec, currentSectionComputeCentroid,
+								     currentLadrunoTanMode, currentLadrunoTanStep);   // WP-252
 	   for (i = 0; i < numFibers; i++)
 	     if (lsec->addFiber(*fiber[i]) < 0) {
 	       opserr << "WARNING - LadrunoNDFiber " << secTag << ": failed to add fibre " << i << endln;
@@ -2633,7 +2636,8 @@ TclCommand_addLadrunoNDFiberSection (ClientData clientData, Tcl_Interp *interp, 
     OPS_ResetInputNoBuilder(clientData, interp, 3, argc - 1, argv, theDomain);
     ladruno_shear::Spec spec;
     bool compCentroid = true;
-    if (LadrunoNDFiberSection3d::parseOptions(secTag, spec, compCentroid) < 0)
+    int tanMode = 0; double tanStep = 1.0e-7;   // Ladruno WP-252
+    if (LadrunoNDFiberSection3d::parseOptions(secTag, spec, compCentroid, tanMode, tanStep) < 0)
 	return TCL_ERROR;
 
     currentSectionTag = secTag;
@@ -2642,6 +2646,7 @@ TclCommand_addLadrunoNDFiberSection (ClientData clientData, Tcl_Interp *interp, 
     currentSectionComputeCentroid = compCentroid;
     currentSectionIsLadruno = true;
     currentLadrunoSpec = spec;
+    currentLadrunoTanMode = tanMode; currentLadrunoTanStep = tanStep;   // WP-252
 
     SectionRepres *fiberSectionRepr = new FiberSectionRepr(secTag, 30, 30);
     if (theTclModelBuilder->addSectionRepres(*fiberSectionRepr) < 0) {
