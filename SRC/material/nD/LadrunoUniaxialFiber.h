@@ -34,6 +34,12 @@
 //                          tangent diag(E_t, 0, 0)
 //   BeamFiber2d (order 2): strain (eps, gxy)      -> stress (sig(eps), 0)
 //
+// WP-257, opt-in: -dowel $fc $fy $db $ls [-dowelK $kd] [-dowelSlip $su] gives the bar a
+// dowel shear stress per shear component from the crack slip s = |gamma| ls, capped by
+// kd (4/pi) sqrt(fc fy) sqrt(1 - (sigma/fy)^2) (Dulacska; Vintzeleou & Tassios), with an
+// origin-oriented secant unloading and an optional cyclic decay -dowelDecay $Cd
+// (LadrunoDowelKernel.h). Off (the default) = no shear.
+//
 // Any other view (ThreeDimensional, PlaneStress, PlateFiber, ...) is refused:
 // a bar has no meaning there. The fibre's area should be the bar area; the
 // concrete fibre it sits in should be net of it (Model C subtracts each bar's
@@ -45,6 +51,7 @@
 #include <NDMaterial.h>
 #include <Vector.h>
 #include <Matrix.h>
+#include "LadrunoDowelKernel.h"
 
 class UniaxialMaterial;
 
@@ -52,6 +59,8 @@ class LadrunoUniaxialFiber : public NDMaterial
 {
   public:
     LadrunoUniaxialFiber(int tag, UniaxialMaterial& theUni, int order = 3, double rho = -1.0);
+    // WP-257: switch the dowel term on (before use); the parameters must be valid()
+    void setDowel(const ladruno_dowel::Params& P);
     LadrunoUniaxialFiber();
     ~LadrunoUniaxialFiber();
 
@@ -89,6 +98,13 @@ class LadrunoUniaxialFiber : public NDMaterial
     double rho;         // < 0: use the uniaxial material's own getRho()
     Vector eps3, sig3, eps2, sig2;
     Matrix D3, D2;
+    // WP-257 dowel action (off unless -dowel)
+    bool dowel;
+    ladruno_dowel::Params dp;
+    double smaxC[2];    // committed maximum slip, gxy and gxz
+    double scC[2];      // committed slip (decay)
+    double DC[2];       // committed cumulative re-slip / su (decay)
+    ladruno_dowel::Out dowelOut(int k);   // component k of the trial strain
 };
 
 #endif

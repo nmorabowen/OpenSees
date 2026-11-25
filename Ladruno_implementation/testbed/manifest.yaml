@@ -2436,6 +2436,10 @@ features:
     feature_class: material
     required_tiers: [T0, T1]
     pytest: tests/test_ladrunoNDFiberSection3d.py
+    tests:
+      - tests/test_ladrunoNDFiberSection3d.py
+      - tests/test_ladrunoUniaxialFiber_dowel.py   # WP-257
+      - tests/test_ladrunoDowel_cpp.py             # WP-257
     tcl: WAIVED(classic-Tcl runs through OpenSees.exe inside tests/test_ladrunoNDFiberSection3d.py::test_classic_tcl_engine_gives_the_same_section)
     zone_b: []
     core_files:
@@ -2452,6 +2456,10 @@ features:
       drives the uniaxial law, zero shear stress and stiffness (no dowel, as Model
       C), so reinforcing bars sit in the same NDFiber / LadrunoNDFiber section as
       the concrete. `nDMaterial LadrunoUniaxialFiber $tag $uniTag [-rho rho]`.
+      WP-257: opt-in `-dowel $fc $fy $db $ls [-dowelK kd] [-dowelSlip su] [-dowelDecay Cd]`, dowel
+      shear of the bar (Dulacska / Vintzeleou-Tassios capacity cut by the axial
+      stress, origin-oriented secant, optional cyclic decay on the re-slip), law in LadrunoDowelKernel.h (g++ gate
+      tests/_testbed/dowel_gpp.cpp).
 
   - feature: LadrunoMCFTStrip
     classtag: 33031          # ND_TAG family
