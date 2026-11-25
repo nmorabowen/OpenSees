@@ -87,7 +87,7 @@ class ElasticSection2d: public SectionForceDeformation
   
   static thread_local Vector s;   // Ladruno
   static thread_local Matrix ks;  // Ladruno
-  // ladruno-lint: thread-class-ok written only in the constructors (main thread); read-only in getType
+  // ladruno-lint: thread-class-ok written only in the constructors (main thread); read-only in getType (Ladruno WP-258)
   static ID code;
   
   int parameterID;

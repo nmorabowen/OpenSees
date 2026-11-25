@@ -189,12 +189,19 @@ CASES = (["dp_2d", "dp_3d"]
          + ["sanisand_is2_3ds"])
 
 
+_HW_CACHE = []
+
+
 def _hw():
-    code, out = run_python_script(_PROBE)
-    for line in out.splitlines():
-        if line.startswith("LADRUNO_PROBE_HW"):
-            return int(line.split()[1])
-    return 1
+    """Hardware threads, probed once per session (a child process loads the pyd)."""
+    if not _HW_CACHE:
+        code, out = run_python_script(_PROBE)
+        hw = 1
+        for line in out.splitlines():
+            if line.startswith("LADRUNO_PROBE_HW"):
+                hw = int(line.split()[1])
+        _HW_CACHE.append(hw)
+    return _HW_CACHE[0]
 
 
 def _run(case, nthreads):

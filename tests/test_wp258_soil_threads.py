@@ -273,8 +273,8 @@ def test_threaded_equal_serial(mat, dim):
     # the gate means something only if the push ran and was plastic (critic of record): every
     # push step returned 0, and the footing's secant stiffness fell by 5 % or more over the push
     assert all(st[0] == 0 for st in base["steps"]), (mat, dim, [st[0] for st in base["steps"]])
-    q = base["q"]
-    ratio = (q[-1] - q[-2]) / (q[1] - q[0])
+    q = base["q"]                       # the load factor starts the push at 0
+    ratio = (q[-1] - q[-2]) / q[0]      # last increment's stiffness over the first's
     assert 0.0 < ratio < 0.95, (mat, dim, "not plastic enough to gate anything", q)
     for n in _THREADS[1:]:
         got, text = _run(mat, dim, n)

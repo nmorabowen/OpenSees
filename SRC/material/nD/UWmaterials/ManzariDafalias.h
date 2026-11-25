@@ -553,28 +553,28 @@ class ManzariDafalias : public NDMaterial
 	// from the deck's `-pRe`. `updateParameter()` never re-runs `initialize()`,
 	// so no runtime parameter change can drop the seam.
 	double  m_PreElastic;   // Ladruno (ADR-93 II.1)
-	// ladruno-lint: thread-class-ok class-wide stage flag (ADR 232 232k): read on workers, written only on the main thread (updateMaterialStage, MPM stage walk, replay)
+	// ladruno-lint: thread-class-ok class-wide stage flag (ADR 232 232k): read on workers, written only on the main thread (updateMaterialStage, MPM stage walk, replay) (Ladruno WP-258)
 	static char unsigned mElastFlag;	// 0: elastic stage, 1: elastoplastic
   public:
 	// Ladruno #2444: `wipe` returns the class-wide stage to its elastic default.
 	static void resetStageOnWipe(void) { mElastFlag = 0; }
   protected:
 
-	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit)
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Vector mI1;			// 2nd Order Identity Tensor
-	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit)
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIIco;		// 4th-order identity tensor, covariant
-	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit)
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIIcon;		// 4th-order identity tensor, contravariant
-	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit)
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIImix;		// 4th-order identity tensor, mixed variant
-	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit)
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIIvol;		// 4th-order volumetric tensor, IIvol = I1 tensor I1 
-	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit)
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIIdevCon;	// 4th order deviatoric tensor, contravariant
-	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit)
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIIdevMix;	// 4th order deviatoric tensor, mixed variant
-	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit)
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIIdevCo;		// 4th order deviatoric tensor, covariant
 	// initialize these Vector and Matrices:
 	static class initTensors {
