@@ -13,6 +13,8 @@ EXACTLY equal (float64 ==, no tolerance) at 2 and 4 threads to the 1-thread run,
   elastic material is NOT Form-safe -- class-wide statics -- so its calls stay serial);
 * DruckerPrager (not allowlisted: serial material calls, threaded transfer);
 * FLIP < 1 with local damping; `mpm gridvel`; a particle body force;
+* the 3D column with its particles added in a shuffled order (spatially incoherent storage:
+  the transpose's windowed per-block histograms at their widest);
 * failure paths: A7 (a particle carried out of the grid) and a commit refusal (W17) print the
   same error at n threads as at 1.
 
@@ -136,6 +138,22 @@ def col3d(basis="gimp", mat="elastic", flip=None, damping=None, antilocking=None
     return cmds
 
 
+def col3d_shuffled(seed=253):
+    """col3d("gimp") with its particles added one by one in a seeded random order: storage order
+    is spatially incoherent, so each thread block touches nodes owned by many other blocks (the
+    transpose's windowed histogram at its widest)."""
+    import random
+    hs = 0.125                                   # h / ppc
+    pts = [((i + 0.5) * hs, (j + 0.5) * hs, (k + 0.5) * hs)
+           for k in range(12) for j in range(4) for i in range(6)]
+    random.Random(seed).shuffle(pts)
+    cmds = [c for c in col3d("gimp") if not (c[0] == "mpm" and c[1][0] == "body")]
+    at = next(n for n, c in enumerate(cmds) if c[0] == "mpm" and c[1][0] == "grid") + 1
+    cmds[at:at] = [("mpm", ["particle", p, 1, 1, 2000.0, hs ** 3, "-x", *x, "-lp", hs / 2, hs / 2,
+                            hs / 2]) for p, x in enumerate(pts)]
+    return cmds
+
+
 def col2d(basis="gimp", antilocking="fbar", gridvel=False, mat="elastic"):
     m = ("ElasticIsotropic", 1, 2.0e7, 0.45) if mat == "elastic" else DP
     cmds = [("wipe", []), ("model", ["basic", "-ndm", 2, "-ndf", 2]), ("nDMaterial", list(m)),
@@ -211,6 +229,8 @@ CASES = {
     "3d_body_force": dict(cmds=lambda: col3d("bspline2"), both=True, post=_body_force),
     "3d_gimp_elastic_fbar": dict(cmds=lambda: col3d("gimp", antilocking="fbar"), both=True),
     "3d_small_kinematics": dict(cmds=lambda: col3d("gimp", small=True), both=True),
+    # incoherent storage order: the transpose's per-block histogram windows span many owners
+    "3d_shuffled_particles": dict(cmds=col3d_shuffled, both=True),
     # the -deep profiler: threaded material calls fold their walls per particle (afterParallel)
     "3d_elastic_deep_profiled": dict(cmds=lambda: col3d("gimp"), both=True, deep=True),
 }

@@ -251,24 +251,40 @@ inline void Engine::buildSupportsThreaded()
 }
 
 // The touched nodes (discovery order) and the node -> entry transpose in ascending entry order.
-// One block per thread: a block's histogram row is nTouched ints.
+// One block per thread. A block's histogram row is WINDOWED (WP-253 review): it spans only the
+// slots of the owner blocks (the discovering blocks) of the nodes it touches, not all nTouched
+// slots. Particles that are spatially coherent give windows of about 3 nTouched / nb, so memory
+// and the per-thread clear/sum work scale with 1/threads; incoherent particles widen every window
+// to all owners, which is the dense nb x nTouched histogram this replaced and is never worse.
+// Slots, tPtr and tEntry are the same as the dense version's: only the histogram storage changed.
 inline void Engine::transposeThreaded()
 {
   const int N = P.size();
   const int nbT = std::max(1, std::min(N, nThreads));
   if ((int)tDisc.size() < nbT) tDisc.resize((size_t)nbT);
-  // (a) discovery: each node is claimed by exactly one block
+  tWin.resize((size_t)2 * nbT);
+  // (a) discovery: each node is claimed by exactly one block, which stores (block + 1) in its
+  //     mark; every block records the range of owner blocks among the nodes it touches
   forBlocks(N, nbT, [&](long lo, long hi, int b) {
     std::vector<long> &d = tDisc[b];
     d.clear();
+    int oLo = b, oHi = b;
     for (long k = supStart[lo]; k < supStart[hi]; k++) {
       const long i = supNode[k];
-      if (tMark.a[i].load(std::memory_order_relaxed) == 0 &&
-          tMark.a[i].exchange(1, std::memory_order_relaxed) == 0) {
+      // a compare-exchange, never an exchange: a losing claim must not overwrite the winner's
+      // id (a later reader would take the wrong owner, and its window would miss the node)
+      int o = tMark.a[i].load(std::memory_order_relaxed);
+      if (o == 0 && tMark.a[i].compare_exchange_strong(o, b + 1, std::memory_order_relaxed)) {
         d.push_back(i);
         gmark[i] = 1;
+        o = b + 1;
       }
+      o -= 1;
+      if (o < oLo) oLo = o;
+      if (o > oHi) oHi = o;
     }
+    tWin[2 * b] = oLo;
+    tWin[2 * b + 1] = oHi;
   });
   // GUARD (WP-253): `touched` is in DISCOVERY order, which depends on thread timing (which block
   // claims a node first) and is NOT the serial first-touch order. Every loop that walks it must
@@ -281,41 +297,68 @@ inline void Engine::transposeThreaded()
   const long nT = (long)touched.size();
   nTouchedP2G = (int)nT;
   for (long t = 0; t < nT; t++) tSlot[touched[t]] = (int)t;
-  // (b) per-block histograms over the touched slots
-  tHist.resize((size_t)nbT * nT);
+  // owner o's slots are [tOwnOff[o], tOwnOff[o+1]); block b's row covers its owner window and
+  // row(b)[t - tOwnOff[tWin[2b]]] is its count (later its write cursor) for slot t
+  tOwnOff.resize((size_t)nbT + 1);
+  tOwnOff[0] = 0;
+  for (int o = 0; o < nbT; o++) tOwnOff[o + 1] = tOwnOff[o] + (long)tDisc[o].size();
+  tHOff.resize((size_t)nbT + 1);
+  tHOff[0] = 0;
+  for (int b = 0; b < nbT; b++)
+    tHOff[b + 1] = tHOff[b] + (tOwnOff[tWin[2 * b + 1] + 1] - tOwnOff[tWin[2 * b]]);
+  tCovPtr.assign((size_t)nbT + 1, 0);
+  tCov.clear();
+  for (int o = 0; o < nbT; o++) {
+    for (int b = 0; b < nbT; b++)
+      if (tWin[2 * b] <= o && o <= tWin[2 * b + 1]) tCov.push_back(b);
+    tCovPtr[o + 1] = (int)tCov.size();
+  }
+  auto cell = [&](int b, long t) -> int & {
+    return tHist[(size_t)(tHOff[b] + t - tOwnOff[tWin[2 * b]])];
+  };
+  // (b) per-block histograms over the block's window
+  tHist.resize((size_t)tHOff[nbT]);
   forBlocks(N, nbT, [&](long lo, long hi, int b) {
-    int *h = tHist.data() + (size_t)b * nT;
-    std::fill(h, h + nT, 0);
-    for (long k = supStart[lo]; k < supStart[hi]; k++) h[tSlot[supNode[k]]]++;
+    std::fill(tHist.begin() + tHOff[b], tHist.begin() + tHOff[b + 1], 0);
+    for (long k = supStart[lo]; k < supStart[hi]; k++) cell(b, tSlot[supNode[k]])++;
   });
-  // (c) node totals, their prefix, then each block's write offset per node (blocks ascending)
+  // (c) node totals, their prefix, then each block's write offset per node (blocks ascending:
+  //     the blocks whose window holds the node's owner, every other block's count being zero)
   tPtr.resize((size_t)nT + 1);
   tPtr[0] = 0;
   const int nbN = blocksFor(nT);
+  auto ownerOf = [&](long t) -> int {   // the owner block of slot t (t < nT)
+    return (int)(std::upper_bound(tOwnOff.begin(), tOwnOff.end(), t) - tOwnOff.begin()) - 1;
+  };
   forBlocks(nT, nbN, [&](long lo, long hi, int) {
+    if (lo >= hi) return;
+    int o = ownerOf(lo);
     for (long t = lo; t < hi; t++) {
+      while (t >= tOwnOff[o + 1]) o++;
       int s = 0;
-      for (int b = 0; b < nbT; b++) s += tHist[(size_t)b * nT + t];
+      for (int c = tCovPtr[o]; c < tCovPtr[o + 1]; c++) s += cell(tCov[c], t);
       tPtr[t + 1] = s;
     }
   });
   for (long t = 0; t < nT; t++) tPtr[t + 1] += tPtr[t];
   forBlocks(nT, nbN, [&](long lo, long hi, int) {
+    if (lo >= hi) return;
+    int o = ownerOf(lo);
     for (long t = lo; t < hi; t++) {
+      while (t >= tOwnOff[o + 1]) o++;
       int run = tPtr[t];
-      for (int b = 0; b < nbT; b++) {
-        int &h = tHist[(size_t)b * nT + t];
-        const int c = h;
+      for (int c = tCovPtr[o]; c < tCovPtr[o + 1]; c++) {
+        int &h = cell(tCov[c], t);
+        const int n = h;
         h = run;
-        run += c;
+        run += n;
       }
     }
   });
   // (d) fill: a block writes its entries in ascending k into its own runs
   tEntry.resize((size_t)supStart[N]);
   forBlocks(N, nbT, [&](long lo, long hi, int b) {
-    int *h = tHist.data() + (size_t)b * nT;
-    for (long k = supStart[lo]; k < supStart[hi]; k++) tEntry[h[tSlot[supNode[k]]]++] = (int)k;
+    for (long k = supStart[lo]; k < supStart[hi]; k++) tEntry[cell(b, tSlot[supNode[k]])++] = (int)k;
   });
 }
 

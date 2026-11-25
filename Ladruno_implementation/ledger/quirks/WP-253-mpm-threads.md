@@ -72,3 +72,16 @@ threaded element loop in the same process runs SERIAL ("the DEEP profiler gate i
 that deep-profiles must end with `profiler start` (no `-deep`), then `stop` and `reset`, or the
 WP-192 tests that run after it in the same pytest process (Zone-A runs them all in one) fail.
 WP-253's deep case did exactly this and broke four WP-192 tests. The gate fix is #1150.
+
+#### Also learned (WP-253): an atomic claim that stores an owner id must use compare-exchange, not exchange
+
+The threaded transpose claims each grid node with an atomic mark. `load() == 0 && exchange(1) == 0`
+is correct while the mark is only a flag: a losing `exchange` writes 1 over 1. When the transpose
+began storing the CLAIMING BLOCK in the mark (`b + 1`, for the windowed histogram), the same idiom
+broke. The losing block's `exchange` overwrote the winner's id. Its own return value was still
+right, but any block that loaded the mark later read the wrong owner. Its histogram window then
+missed the node, and at 8 threads the result was heap corruption (`0xc0000374`) and non-identical
+particles in about one run in five. 2 and 4 threads passed. Store an id with
+`compare_exchange_strong(expected = 0, b + 1)`: a loser never writes, and gets the winner's id
+back in `expected`. The windowed-histogram self-check that found it compared each entry's mark
+with its slot's owner (`mark == owner + 1`).

@@ -1566,6 +1566,11 @@ class Engine {
   // node -> entry transpose: tEntry[tPtr[t] .. tPtr[t+1]) are the support entries k of touched
   // node t (= touched[t], t < nTouchedP2G) in ascending k, i.e. the serial scatter's order
   std::vector<int>    supCnt, pOf, tPtr, tEntry, tSlot, tHist;
+  // the transpose's windowed histogram: block b's row spans the slots of owner blocks
+  // tWin[2b] .. tWin[2b+1] (tOwnOff = each owner's first slot), stored from tHOff[b];
+  // tCov[tCovPtr[o] ..) = the blocks, ascending, whose window holds owner o
+  std::vector<int>    tWin, tCov, tCovPtr;
+  std::vector<long>   tOwnOff, tHOff;
   std::vector<long>   tBlkSum, tImg;
   std::vector<double> tSg;
   std::vector<std::vector<long>> tDisc;   // per block: the nodes it discovered
