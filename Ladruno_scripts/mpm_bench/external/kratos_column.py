@@ -7,7 +7,8 @@ rho = 2000 kg/m3, g = 9.81 down, dt = 0.25 dt_crit, symmetry planes x = 0 and y 
 floor at z = 0. N = 8 * 9*9*18 = 11,664 (m = 9) or 93,312 (m = 18).
 
 Usage:  python kratos_column.py --N 10000 --threads 1 [--steps 20] [--warmup 5] [--scheme musl]
-Prints one JSON line. The timing window is the wall of the full per-step cycle
+Prints one JSON line (Kratos's teardown warnings follow it on stdout: grep '^{', or use
+--json-out FILE). The timing window is the wall of the full per-step cycle
 (AdvanceInTime + InitializeSolutionStep + Predict (search + P2G) + SolveSolutionStep
 + FinalizeSolutionStep); no output process, no mesh/particle generation (that is in Initialize,
 before the clock). See README.md for what is and is not matched.
@@ -57,6 +58,7 @@ def main():
     ap.add_argument("--warmup", type=int, default=5)
     ap.add_argument("--scheme", default="musl", choices=["musl", "usl", "usf", "central_difference"])
     ap.add_argument("--workdir", default=None)
+    ap.add_argument("--json-out", default=None, help="also write the result JSON to this file")
     ap.add_argument("--law", default="HyperElasticNeoHookean3DLaw")
     a = ap.parse_args()
     # thread env must be set before Kratos loads
@@ -168,7 +170,12 @@ def main():
            "step_median_s": ws[len(ws) // 2],
            "throughput_particle_steps_per_s": n_mp0 * a.steps / W,
            "throughput_from_median": n_mp0 / ws[len(ws) // 2]}
-    print(json.dumps(out))
+    # Kratos writes its teardown warnings to stdout AFTER this line: read the line that starts
+    # with "{" (or --json-out), never the last line
+    print(json.dumps(out), flush=True)
+    if a.json_out:
+        with open(a.json_out, "w") as f:
+            f.write(json.dumps(out) + "\n")
 
 
 if __name__ == "__main__":

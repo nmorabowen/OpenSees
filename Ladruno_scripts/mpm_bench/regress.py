@@ -58,7 +58,7 @@ def judge(base_rows, agg):
             out.append((ks, b and b["T_median"], None, None, None, "FAILED"))
             bad = True
             continue
-        if not b:
+        if not b or not b.get("T_median"):
             out.append((ks, None, now, None, None, "no baseline"))
             continue
         change = now / b["T_median"] - 1.0
@@ -91,17 +91,21 @@ def main():
     except SystemExit as e:
         print(e)
         return 2
-    Bn.run_configs(configs(), args, od, REPEATS, doc, "regress")
+    Bn.run_configs(configs(), args, od, args.repeats, doc, "regress")
     agg = S.aggregate([doc["rows"]])
     C.write_json(od / "regress_results.json", doc)
     if args.record:
+        missing = [B.key_str(r) for r in ROWS if r not in agg or agg[r]["T"]["median"] is None]
+        if missing:   # never write a baseline a later check cannot divide by
+            print("baseline NOT written: no successful run for " + ", ".join(missing))
+            return 1
         rec = {"recorded": doc["conditions"]["started"], "builds": doc["builds"], "machine": doc["machine"],
                "repeats": args.repeats, "rows": {B.key_str(r): {
                    "T_median": agg[r]["T"]["median"], "spread": agg[r]["T"]["spread"],
-                   "N": agg[r].get("N"), "n_ok": agg[r]["n_ok"]} for r in ROWS if r in agg}}
+                   "N": agg[r].get("N"), "n_ok": agg[r]["n_ok"]} for r in ROWS}}
         C.write_json(base_path, rec)
         print(f"baseline written to {base_path}")
-        return 0 if len(rec["rows"]) == len(ROWS) else 1
+        return 0
     base = json.loads(base_path.read_text(encoding="utf-8"))
     res, bad = judge(base["rows"], agg)
     print(f"\nbaseline build {base['builds']['exe']}  now {doc['builds']['exe']}\n")

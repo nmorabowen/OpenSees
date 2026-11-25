@@ -20,7 +20,7 @@ package was `KratosParticleMechanicsApplication` up to v9; from v10 it is `Krato
 ## Run
 
 `kratos_column.py --N {1000,10000,100000} --threads n [--steps 20] [--warmup 5] [--scheme musl|usl|usf|central_difference] [--law ...] [--workdir dir]`
-prints one JSON line (versions, N, dt, timing, a sanity block). N snaps to the fork's cell counts:
+prints one JSON line (versions, N, dt, timing, a sanity block; Kratos teardown warnings follow it on stdout, so take the line starting with `{` or pass `--json-out FILE`). N snaps to the fork's cell counts:
 m = 9 gives N = 11,664 (the fork's "10^4"), m = 18 gives N = 93,312 ("10^5"), m = 4 gives 1,024.
 
 **Timing window**: the wall of the full per-step cycle `AdvanceInTime` + `InitializeSolutionStep`

@@ -38,8 +38,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
       LadrunoMPMPattern.cpp OPS_LadrunoMPM.cpp LadrunoMPMIO.cpp LadrunoMPMImplicit.cpp
       LadrunoMPMSoil.cpp LadrunoMPMTwoPhase.cpp)
   if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.18)
-    set_source_files_properties(${_ladruno_mpm_sources} TARGET_DIRECTORY OPS_Domain
-                                PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+    set_property(SOURCE ${_ladruno_mpm_sources} TARGET_DIRECTORY OPS_Domain
+                 APPEND PROPERTY COMPILE_OPTIONS "-ffp-contract=off")
   else()
     message(WARNING "Ladruno WP-253: CMake < 3.18 cannot set -ffp-contract=off on the MPM sources;"
                     " the threaded MPM step's bit-identity then relies on no -march with FMA")
