@@ -162,4 +162,133 @@ Mutation evidence: re-introduce a shared static on a gated path, build, show red
 
 ## 5. Results
 
-(filled in after the build)
+**Binary of record:** `7c01546a3` (`ladrunoBuild` of `dist/bin/OpenSees.exe` and
+`dist/bin/opensees.pyd` checked before every run; built with `Ladruno_scripts\build.bat`, all five
+targets). Later commits change tests and documents only. Machine nmb (i7-13700KF), Windows 11,
+MKL 2026.1. **The machine was not idle:** other sessions held it at 28–34 % total CPU during the
+bench and stress runs, so the speedups below are lower bounds of what an idle nmb gives. Data:
+`Ladruno_files/testbed/perf/wp259/`.
+
+### 5.1 Determinism gate (Windows, `7c01546a3`)
+
+`tests/test_wp259_concrete_threads.py`: **24 / 24 cases bit-identical to 1 thread at 2, 4 and 8
+threads.** The comparison covers:
+
+- every nodal displacement and the load factor after every step;
+- every return code;
+- every Gauss point's diagnostics;
+- the warning-line counts;
+- in the EnergyBalance cases, the recorder file.
+
+Every case asserts that the update loop announced itself on n threads; on `stdBrick` and
+`ASDShellQ4` cases, the tangent and residual loops too. Every base run cracks (ω_t 0.48–0.94) or
+crushes (RC ω_c ≈ 0.3; LadrunoConcrete3D κ_p 0.93). The exception is `3dcr`, which is meant to
+refuse: steps 7–9 of 9 refuse, printing 20 warning lines plus the suppression line (4 371 lines
+under `-verbose`).
+
+### 5.2 Mutation evidence (working-tree mutants, built and run, never committed)
+
+- **M1 + M2, built together.** `LadrunoConcrete3D::getTangent` and
+  `LadrunoRCConcrete::getTangent` copy into, and return, a function-static `Matrix` shared by
+  every instance: the classic shared return buffer.
+- **Result: 15 red, 4 green**, against the gate as it stood then (19 cases, `3dcr` deselected).
+  - Red: every `stdBrick` and `ASDShellQ4` case of both materials, at 2 threads. Examples:
+    `c3d-3d` "nodal displacements differ at push step 0"; `rc-shell` load factor
+    `0x1.9612405e55abcp+15` vs `…ab9p+15` at step 0.
+  - Green: the four `LadrunoQuad` cases. This is expected: `LadrunoQuad` threads only its
+    update loop, which never calls `getTangent` concurrently.
+- The mutants were reverted (`git checkout`) and the binary of record rebuilt from a clean tree.
+- The mutants target the tangent loop. The commit loop prints no announcement (§3), so it is gated
+  by bit-identity only.
+
+### 5.3 Speed (reported; no pre-registered target)
+
+Source: `Ladruno_scripts/wp259_bench.py`, `bench_7c01546a3.json`.
+
+- **Deck:** the gate's `3d` cantilever refined to 40 × 8 × 12 = 3 840 `stdBrick` (30 720 material
+  points), 6 DisplacementControl steps.
+- **Statistic:** 3 repeats; median wall time of the push only.
+- **`mnewton`:** ModifiedNewton `-initial` + UmfPack, FixedNumIter 20. One factorization; every
+  iteration is the threaded update and residual loops plus one triangular solve.
+- **`newton`:** full Newton + `system Pardiso`, FixedNumIter 6. The tangent loop threads too, and
+  there is one factorization per iteration.
+
+| Material | Algorithm | 1 thread (s) | 4 threads (s) / S(4) | 8 threads (s) / S(8) | spread (max) | 1-vs-n digest |
+|---|---|---|---|---|---|---|
+| LadrunoConcrete3D | mnewton | 53.7 | 28.9 / **1.86** | 23.0 / **2.34** | 10 % | equal |
+| LadrunoConcrete3D | newton | 418.6 | 111.6 / **3.75** | 79.8 / **5.24** | 24 % | n/a (PARDISO) |
+| LadrunoRCConcrete | mnewton | 16.0 | 11.1 / **1.45** | 10.5 / **1.53** | 2 % | equal |
+| LadrunoRCConcrete | newton | 11.9 | 6.5 / **1.81** | 5.2 / **2.30** | 8 % | n/a (PARDISO) |
+
+**Reading it.**
+
+- Before this WP, every row ran its element loops serially.
+- **LadrunoConcrete3D `newton` is the material-dominated row.** Its last two steps refuse: return
+  maps fail in volume, which is the expensive path. So the tangent and update loops dominate,
+  and the row scales 5.2× at 8 threads.
+- **The `mnewton` rows are capped** by the serial UmfPack triangular solve and the serial scatter.
+- **LadrunoRCConcrete is cheap per call**, so the same serial remainder caps it at 1.5×.
+- No row is slower threaded.
+- In every `mnewton` row the threaded digests equal 1 thread. The PARDISO rows are not compared:
+  PARDISO is not byte-reproducible run to run by design (ADR-75 P1f).
+
+### 5.4 Race stress
+
+`Ladruno_scripts/wp259_race_stress.py --repeats 10 --threads 8`: **0 mismatches in 80 runs.** Eight cases, each 10 runs at 8 threads against its 1-thread digest (`race_stress_7c01546a3.json`): `c3d-3d`, `c3d-3dcr` (refusals + saturated budget), `c3d_implex-shell`, `c3d-ps`, `rc-3d`, `rc_implex-shell`, `rc_interlock-shell`, `rc-ps`.
+
+### 5.5 Not done here
+
+- **Zone-A (GCC / Ubuntu).** It is dispatched at the ready flip; its run id is in the handoff.
+- **TSan.** Not run: GCC's libgomp is not TSan-instrumented (the WP-258 §5.4 reasoning holds). The
+  race stress is the fallback.
+- **A commit-loop announcement**, so that a gate can assert the commit loop threaded. It needs a
+  vanilla `Domain.cpp` edit, which is out of scope; recorded as a follow-up.
+- **A shared warn-budget helper** in `LadrunoThreads.h`; a follow-up. The exact `fetch_add` claim
+  of §2.1 is now written out in LadrunoConcrete3D. DruckerPrager and SANISAND keep
+  check-then-increment budgets, which can overshoot by T − 1 lines.
+
+## 6. Review of record
+
+### 6.1 Fable critic (the other family), on `0724afa48`: AMEND
+
+**Verdict on the code.** No shared mutable state was missed and the opt-in conditions are right.
+Every wrapper that delegates to these concretes (`PlaneStressMaterial`, `PlateFiberMaterial`,
+`PlateFromPlaneStressMaterial`) lands on an admitted view. Serially, the warning-budget rewrite
+prints the same lines in the same order.
+
+**What it verified:**
+
+- the kernel statics;
+- the per-instance buffers, and that `getCopy` shares no pointers;
+- `ops_TheActiveElement` in each loop;
+- every `getCharacteristicLength` the hosts reach;
+- the output guards (none nest);
+- MPM's class-tag admission.
+
+Findings and what was done:
+
+| # | Finding | Action |
+|---|---|---|
+| 1 | #1154 targets `ladruno`, so its diff shows WP-258's commits; WP-258's Zone-A was red at the time | Base kept at `ladruno`, the brief's rule; the PR says it is stacked and which commits to review. #1153's Zone-A was re-running when checked. This PR's Zone-A is dispatched at the flip. |
+| 2 | §5 empty; no mutation or stress evidence recorded | §5 written (this section). |
+| 3 | The gate's "FE_Elements computed in parallel" string was satisfied by the tangent line alone; the commit loop prints nothing | Fixed: the tangent and residual lines are asserted separately. The commit loop is recorded as not provable from the output (§3, §5.5). |
+| 4 | `3dc` / `3dcr` sit at a cliff; Zone-A (glibc) may move it | Fixed. `3dc` stops at 8 steps, three short of the crush cliff, and gates on κ_p / RC ω_c. `3dcr` uses a larger increment and refuses from step 7 of 9, a margin of 2–3 steps. |
+| 5 | The WP-196 EnergyBalance sweep threads on `ladrunoThreadSafeForm` and is neither audited nor gated | Fixed: a §2.3 row, plus two cases, `c3d_energy` (`3d+eb`) and `rc_energy` (`shell+eb`). They compare the recorder file byte for byte and assert the sweep announcement. |
+| 6 | `-verbose`, RC `-implexControl`, the Gc/lch warning, the wrappers and an RC refusal are not exercised under threads | Added `-verbose` (`c3d_verbose` on `3dcr`) and `-implexControl` (`rc_implexctl`), with every worker print counted. Still ungated: the Gc/lch warning, explicit wrapper decks and an RC refusal. The `ASDShellQ4` PlateFiber cases run the wrappers' shared code. |
+| 7 | The 20th warning and the suppression line took separate guards | Fixed: one guard holds both. |
+| 8 | The 32-bit `long` counter could wrap after 2³¹ failures | Fixed: the claim saturates (no `fetch_add` once the budget is spent). |
+| 9 | Stale "MPM" wording | Fixed (comments, test docstring). |
+| 10 | Commit workers keep a stale `ops_TheActiveElement` | Recorded as a condition of the opt-in (§2.3). |
+
+### 6.2 `/code-review high`, on `7c01546a3`
+
+Five findings: three fixed in the next commit, two recorded.
+
+- **Fixed:**
+  - `3dc`'s "cracked or crushed" check could pass on tensile damage alone. It now checks κ_p
+    (LadrunoConcrete3D) or ω_c (RC).
+  - The EnergyBalance temp file was created for every run.
+  - The substring that counts commit summaries was loose; it is now `) commit: `.
+- **Recorded:**
+  - the commit loop cannot be asserted threaded (§5.5);
+  - the exact warn-budget claim should be a shared helper (§5.5).
