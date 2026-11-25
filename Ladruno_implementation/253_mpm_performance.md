@@ -176,9 +176,20 @@ owner.
 
 ## Results
 
-**Binary of record:** `3d2cb6330` (exe and pyd `ladrunoBuild` checked before every run). The
-commits after it touch tests, ledger fragments, scripts and results only, so the measured
-binary is the shipped code. Machine nmb: i7-13700KF (8 P + 8 E cores, 24 logical), Windows 11,
+**Binary of record:** `3d2cb6330` (exe and pyd `ladrunoBuild` checked before every run). Two
+later commits change code. `f9964c50e` changes only GCC/Clang compile flags (`-ffp-contract=off`
+appended; MSVC binaries are unchanged). `dc29414ae` is the review fix to the mode-F transpose.
+Its per-block histogram was a dense nb x nTouched array, so memory and the per-thread clear/sum
+work did not shrink with threads. Each block's row now spans only the slots of the blocks that
+own the nodes it touches. Slots, `tPtr` and `tEntry` are unchanged, and incoherent particle order
+degrades to the old size, never beyond it. The node claim became a compare-exchange: a losing
+`exchange` overwrote the stored owner id, a heap corruption at 8 threads that the shuffled-order
+case and a temporary self-check caught. See the quirk ledger. Confirmation on `dc29414ae`: the
+full MPM suite passes (536, now including the shuffled-order bit-identity case), and the 3D
+elastic 1e5 rows at 1 and 8 threads are within noise of `3d2cb6330`:
+gimp 1.41/6.53 M vs 1.42/6.24 M; bspline2 1.04/4.44 M vs 1.06/4.80 M, with ratio 0.925 inside a
+noise band of 0.101 (`results/after_F_dc29414ae_transpose/`). The tables below stay on
+`3d2cb6330`. T9 (esmeralda job 10272) was queued on that build. Machine nmb: i7-13700KF (8 P + 8 E cores, 24 logical), Windows 11,
 MKL 2026.1.0.0, affinity 0xFFFF. Data:
 `Ladruno_scripts/mpm_bench/results/after_F_3d2cb6330/` (+ `_rerun`, the 5-repeat reruns of §4),
 `after_A_3d2cb6330/` (+ `_rerun`), baselines `baseline_F_t1/` and `baseline_A_1e4/` (build
