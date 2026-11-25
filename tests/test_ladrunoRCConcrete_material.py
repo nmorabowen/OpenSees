@@ -271,15 +271,28 @@ def _vci_max(sqrt_fc, w, a_g):
 
 @pytest.mark.t1
 def test_interlock_off_matches_asd_on_shear_path():
-    """With -interlock OFF the membrane-shear path must stay byte-faithful to the
-    ASDConcrete3D spine (extends the Phase-1 reduce gate to a sheared state)."""
+    """With -interlock OFF the membrane-shear path stays byte-faithful to the ASDConcrete3D
+    spine (extends the Phase-1 reduce gate to a sheared state) while the stress has one sign.
+
+    Ladruno WP-246: once a compressive principal appears beside the tensile damage, the clone
+    departs on purpose. ASDConcrete3D's return leaves a mixed-sign committed effective stress
+    outside its own tensile surface and re-advances xt on every step (holds relax, ramps depend on
+    the step count); the kernel takes that committed overshoot off the trial measure
+    (rc_beamfiber_gpp.cpp B11/B12 gate the idempotence). Measured departure on this path: 2 %."""
+    import numpy as np
     rc = _path_tension_then_shear(lambda t: _rc(t, beta=False, interlock=False), 5.0e-4, 2.0e-3)
     asd = _path_tension_then_shear(_asd, 5.0e-4, 2.0e-3)
     assert len(rc) == len(asd)
+    nsame = 0
     for (g1, s1), (g2, s2) in zip(rc, asd):
+        S = np.array([[s2[0], s2[3], s2[5]], [s2[3], s2[1], s2[4]], [s2[5], s2[4], s2[2]]])
+        single_sign = np.linalg.eigvalsh(S)[0] >= 0.0
+        nsame += single_sign
         for k in range(6):
-            tol = 1.0e-5 * (abs(s2[k]) if abs(s2[k]) > 1.0 else 1.0)
+            scale = abs(s2[k]) if abs(s2[k]) > 1.0 else 1.0
+            tol = (1.0e-5 if single_sign else 3.0e-2) * scale
             assert abs(s1[k] - s2[k]) <= tol, f"gxy={g1:.2e} comp{k}: RC {s1[k]} vs ASD {s2[k]}"
+    assert nsame >= 5, nsame     # the byte-faithful leg is exercised
 
 
 @pytest.mark.t1

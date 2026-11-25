@@ -383,8 +383,7 @@ inline int cellCorners(const Grid &g, const double *x, long ext[8], double gN[8]
 inline double detN(int nd, const double *A)
 {
   if (nd == 2) return A[0] * A[3] - A[1] * A[2];
-  return A[0] * (A[4] * A[8] - A[5] * A[7]) - A[1] * (A[3] * A[8] - A[5] * A[6]) +
-         A[2] * (A[3] * A[7] - A[4] * A[6]);
+  return ladruno_hypo::det3(A);   // WP-249 (#1106 item 5): the same expression, one copy
 }
 
 // J1: dFbar = (det dFc / det dF)^(1/d) dF on the step increment (d = ndm; in plane

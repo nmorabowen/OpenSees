@@ -162,6 +162,10 @@ zero ⇒ pure plastic, no damage). The peak of `-Ts` is `ft`; the peak of `-Cs` 
 > **E-consistent by construction** (`buildBackbone` mirrors the `ASDConcrete3D` `HardeningLaw`
 > constructor + `adjust()`), **not** `q = y/(1−d)` on raw points.
 
+One deliberate departure from the clone (WP-246): the trial equivalent measure is shifted by the
+committed overshoot of the surface, so re-solving a committed strain returns the committed stress
+(Quirk §22.4a).
+
 ## 3. MCFT compression softening (`-beta`)
 
 The Modified Compression Field Theory (Vecchio & Collins 1986) softens the compressive **strength**
@@ -955,6 +959,12 @@ tonne/mm³, N (the apeGmsh/STKO convention).
    principal plane (`g_nt = 0`) and the bound/friction is inert.
 4. **Pinching is a PANEL phenomenon** — a fixed-crack material point at constant normal strain gives a
    *fat* loop; the pinched waist needs principal rotation in a meshed wall.
+4a. **The cloned return was not idempotent (WP-246).** The return scales the tensile and compressive
+   cones by different factors, so a mixed-sign committed effective stress sat outside its own tensile
+   surface: re-entry at the committed strain re-advanced `xt` (holds relaxed the stress, a ramp
+   depended on its step count). The kernel now takes the committed overshoot off the trial measure
+   (upstream `ASDConcrete3D` still drifts). Gate: re-solve a committed strain from its committed
+   state (`rc_beamfiber_gpp.cpp` B11/B12); a one-pass oracle that mirrors the algorithm cannot catch it.
 
 **Tension stiffening / regularization (Phase 3)**
 5. **TS equibiaxial self-consistency coefficient is 0.5, not 1** — the naive rank-1 `(0.5,0.5)` floor

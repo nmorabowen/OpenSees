@@ -470,6 +470,18 @@ def compute(P, st_committed, strain6, betaMode='strength'):
 
     xt_trial = xt_meas + xt_pl
     xc_trial = xc_meas + xc_pl
+    # Ladruno WP-246 (mirrors LadrunoRCKernel.h::returnMap3D): take the committed overshoot of the
+    # surface off the trial measure. The return rescales the tensile and compressive cones by
+    # different factors, so a mixed-sign committed effective stress can sit outside its own
+    # surface; without the shift a zero increment re-advances the threshold.
+    if st_committed.xt > 0.0 or st_committed.xc > 0.0:
+        Sn = stress_decomposition(st_committed.stress_eff, P.cdf)[0]
+        ot = (st_committed.xt - xt_pl) - equiv_tensile(Sn, P.fcft_ratio, P.Kc) / E
+        oc = (st_committed.xc - xc_pl) - equiv_compressive(Sn, P.fcft_ratio, P.Kc, k1_c) / E
+        if ot < 0.0:
+            xt_trial += ot
+        if oc < 0.0:
+            xc_trial += oc
 
     rc1 = P.eta / (P.eta + 1.0) if P.eta > 0.0 else 0.0   # dtime=1 convention; eta=0 -> rc1=0
     rc2 = 1.0 - rc1

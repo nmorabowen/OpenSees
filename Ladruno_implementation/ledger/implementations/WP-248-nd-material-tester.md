@@ -1,0 +1,10 @@
+---
+wp: WP-248
+title: "WP-248 — model testNDMaterial: an nD material tester with explicit commit (ndTest)"
+date: 2026-11-23
+status: "draft"
+pr: "#1142"
+section: "table"
+banner: "testNDMaterial — nD material tester: views, mixed strain/stress control, explicit commit (WP-248)"
+---
+| **WP-248 — `model testNDMaterial` and `ndTest`** ([[TclNDMaterialTester_guide]]; apeGmsh ADR 0135 D9, the viewer's material tester) — A classic-Tcl model builder beside `testUniaxial` and `testPlaneStress`. It holds a copy of one `nDMaterial` in a requested view (`getCopy(view)`: ThreeDimensional, PlaneStrain, PlaneStress, BeamFiber, PlateFiber, ... whatever the material offers) and registers one command: `ndTest material $tag $view` (returns the order n), `strain e1..en`, `mixed $kinds v1..vn ?-tol? ?-maxIter?` (n letters e/s: strain given or stress given; Newton on the stress-controlled block of the tangent, from the current trial strain; returns the iterations, refuses a singular block or no convergence by name), `getStrain`, `getStress`, `getTangent` (row by row), `order`, `commit` and `revert` (`revertToLastCommit`, then the committed strain as the trial so the queries read the committed state). **Nothing commits unless asked**, unlike the stock testers' commit-every-N, so a stress-controlled or searched step is free of trial budgets. Every refusal is a Tcl error starting `ndTest:` and naming the token. Tcl only (openseespy has no model-builder testers). Gate: `tests/tcl/wp248_nd_material_tester.tcl` via `tests/test_wp248_nd_material_tester_tcl.py` (Zone-A when the exe exists): 3D Hooke and the tangent; uniaxial stress by mixed control (σ11 = Eε11, ε22 = ε33 = −νε11, one Newton step); triaxial with σ2 = σ3 = −p (σ1 = Eε1 − 2νp); the plane-stress view; J2 perfectly plastic plateau at σy; revert restores the committed strain; elastic unloading at E after yield; repeated trials repeatable; ten refusals. | modelbuilder (Tcl) | — | `SRC/modelbuilder/tcl/TclNDMaterialTester.{h,cpp}`, `tests/tcl/wp248_nd_material_tester.tcl`, `tests/test_wp248_nd_material_tester_tcl.py`, `Ladruno_implementation/TclNDMaterialTester_guide.md` | draft | #1142 |

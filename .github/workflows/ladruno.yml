@@ -214,7 +214,9 @@ jobs:
       github.repository == 'nmorabowen/OpenSees' &&
       (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    # 60, not 40 (WP-250): a normal run takes ~32 min, and Azure-region runners
+    # (westus*, eastus) are ~1.4x slower, so they hit 40 and got cancelled.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
