@@ -153,6 +153,7 @@ namespace {
 	// in thread-registration order and may differ in its last bits.
 	struct LadrunoImplexPartial { double maxe = 0.0; double sum = 0.0; int count = 0; };
 	std::mutex& ladrunoImplexMutex() { static std::mutex m; return m; }
+	// ladruno-lint: thread-ok the partials registry is only touched under ladrunoImplexMutex
 	std::vector<LadrunoImplexPartial*>& ladrunoImplexPartials() { static std::vector<LadrunoImplexPartial*> v; return v; }
 	LadrunoImplexPartial& ladrunoImplexTL() {
 		thread_local LadrunoImplexPartial* p = nullptr;
