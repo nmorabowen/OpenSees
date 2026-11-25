@@ -20,6 +20,18 @@
 | gimp | dp | 10000 (-) | fail | fail | - | - | 0.0 |
 | gimp | elastic | 10000 (10000) | 0.033 (0%) | 0.0354 (1%) | 1.07 | 30294 | 6.2 |
 
+### After against baseline (same thread count), and G(n) = T_after(n) / T_baseline(1)
+
+| row | threads | T ratio | verdict | G(n) |
+|---|---|---|---|---|
+| A 3D bspline2 dp N=10000 | 1 | 1.02 | within noise | 1.02 |
+| A 3D bspline2 elastic N=10000 | 1 | 1.02 | within noise | 1.02 |
+| A 3D bspline2 elastic N=10000 | 8 | 1.02 | within noise | 1.07 |
+| A 3D gimp dp N=10000 | 1 | 1.02 | faster | 1.02 |
+| A 3D gimp dp N=10000 | 8 | 1.15 | faster | 1.21 |
+| A 3D gimp elastic N=10000 | 1 | 1.02 | faster | 1.02 |
+| A 3D gimp elastic N=10000 | 8 | 1.09 | faster | 1.10 |
+
 ### Determinism (particle-array digests against 1 thread)
 
 | row | threads | identical to t=1 |
