@@ -31,43 +31,65 @@ class _FILETIME(ctypes.Structure):
     _fields_ = [("dwLowDateTime", ctypes.c_uint32), ("dwHighDateTime", ctypes.c_uint32)]
 
 
-def _probe_cpu_load(sample_s: float = 0.25) -> Optional[float]:
-    """Sample system-wide CPU utilization (%) over `sample_s` without external deps."""
+def _ft_u64(ft: _FILETIME) -> int:
+    return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
+
+
+def _snap_system_times() -> Optional[Tuple[int, int]]:
+    """Return `(idle_100ns, total_100ns)` across all CPUs, or `None` if unavailable."""
     if sys.platform == "win32":
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-        def _snap():
-            idle, kernel, user = _FILETIME(), _FILETIME(), _FILETIME()
-            if not k32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
-                return None
-            def _u64(ft):
-                return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
-            return _u64(idle), _u64(kernel), _u64(user)
-
-        s0 = _snap()
-        if s0 is None:
+        idle, kernel, user = _FILETIME(), _FILETIME(), _FILETIME()
+        if not k32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
             return None
-        time.sleep(sample_s)
-        s1 = _snap()
-        if s1 is None:
-            return None
-        d_idle = s1[0] - s0[0]
-        d_tot = (s1[1] - s0[1]) + (s1[2] - s0[2])
-        if d_tot <= 0:
-            return 0.0
-        return round(100.0 * max(0.0, min(1.0, 1.0 - d_idle / d_tot)), 2)
+        return _ft_u64(idle), _ft_u64(kernel) + _ft_u64(user)
     try:
-        def _proc_stat():
-            with open("/proc/stat", "r", encoding="utf-8") as fh:
-                parts = [int(x) for x in fh.readline().split()[1:]]
-            return parts[3] + (parts[4] if len(parts) > 4 else 0), sum(parts)
-        i0, t0 = _proc_stat()
-        time.sleep(sample_s)
-        i1, t1 = _proc_stat()
-        dt = t1 - t0
-        return round(100.0 * max(0.0, min(1.0, 1.0 - (i1 - i0) / dt)), 2) if dt > 0 else 0.0
+        with open("/proc/stat", "r", encoding="utf-8") as fh:
+            parts = [int(x) for x in fh.readline().split()[1:]]
+        idle = parts[3] + (parts[4] if len(parts) > 4 else 0)
+        return idle, sum(parts)
     except OSError:
         return None
+
+
+def _read_process_cpu_100ns(proc_handle: int) -> Optional[int]:
+    """Return `(kernel + user)` CPU time in 100-ns ticks for a Windows process handle."""
+    if sys.platform != "win32" or not proc_handle:
+        return None
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetProcessTimes.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_FILETIME),
+        ctypes.POINTER(_FILETIME),
+        ctypes.POINTER(_FILETIME),
+        ctypes.POINTER(_FILETIME),
+    ]
+    creation, exit_t, kernel, user = _FILETIME(), _FILETIME(), _FILETIME(), _FILETIME()
+    if not k32.GetProcessTimes(
+        ctypes.c_void_p(proc_handle),
+        ctypes.byref(creation),
+        ctypes.byref(exit_t),
+        ctypes.byref(kernel),
+        ctypes.byref(user),
+    ):
+        return None
+    return _ft_u64(kernel) + _ft_u64(user)
+
+
+def _probe_cpu_load(sample_s: float = 0.25) -> Optional[float]:
+    """Sample system-wide CPU utilization (%) over `sample_s` without external deps."""
+    s0 = _snap_system_times()
+    if s0 is None:
+        return None
+    time.sleep(sample_s)
+    s1 = _snap_system_times()
+    if s1 is None:
+        return None
+    d_idle = s1[0] - s0[0]
+    d_tot = s1[1] - s0[1]
+    if d_tot <= 0:
+        return 0.0
+    return round(100.0 * max(0.0, min(1.0, 1.0 - d_idle / d_tot)), 2)
 
 # NOTE: NEVER import h5py or numpy at module top level — child processes run `_run_child`
 # and import `opensees.pyd`, which bundles its own HDF5 DLL. Import h5py/numpy only inside
@@ -429,23 +451,41 @@ def _spawn_one(pyd: Path, out_dir: Path, deck: str, size: str, mode: str, thread
 
     cpu_before = _probe_cpu_load(0.25)
     ts_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    cp = subprocess.run(cmd, env=env, text=True, capture_output=True)
-    cpu_after = _probe_cpu_load(0.15)
-    stderr_tail = (cp.stderr or "")[-4000:]
-    if cp.returncode != 0 or not json_path.exists():
+    sys0 = _snap_system_times()
+    proc_busy: Optional[int] = None
+    with subprocess.Popen(cmd, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
+        stdout_txt, stderr_txt = proc.communicate()
+        returncode = proc.returncode
+        sys1 = _snap_system_times()
+        handle = getattr(proc, "_handle", None)
+        if handle is not None:
+            proc_busy = _read_process_cpu_100ns(int(handle))
+    cpu_during_ext: Optional[float] = None
+    if sys0 is not None and sys1 is not None and proc_busy is not None:
+        d_idle = sys1[0] - sys0[0]
+        d_tot = sys1[1] - sys0[1]
+        if d_tot > 0:
+            d_busy_sys = max(0, d_tot - d_idle)
+            d_busy_ext = max(0, d_busy_sys - proc_busy)
+            cpu_during_ext = round(100.0 * max(0.0, min(1.0, d_busy_ext / d_tot)), 2)
+    cpu_after = _probe_cpu_load(0.25)
+    stderr_tail = (stderr_txt or "")[-4000:]
+    if returncode != 0 or not json_path.exists():
         return {
             "ok": False, "deck": deck, "size": size, "mode": mode, "rep": rep,
-            "threads": threads, "returncode": cp.returncode,
+            "threads": threads, "returncode": returncode,
             "timestamp_utc": ts_utc,
             "cpu_load_before_pct": cpu_before,
             "cpu_load_after_pct": cpu_after,
-            "stdout_tail": (cp.stdout or "")[-2000:],
+            "cpu_load_during_ext_pct": cpu_during_ext,
+            "stdout_tail": (stdout_txt or "")[-2000:],
             "stderr_tail": stderr_tail,
         }
     rec = json.loads(json_path.read_text(encoding="utf-8"))
     rec["timestamp_utc"] = ts_utc
     rec["cpu_load_before_pct"] = cpu_before
     rec["cpu_load_after_pct"] = cpu_after
+    rec["cpu_load_during_ext_pct"] = cpu_during_ext
     rec["stderr_tail"] = stderr_tail
     threaded, anns = _parse_threading(threads, stderr_tail)
     rec["threaded"] = threaded
@@ -480,6 +520,8 @@ def main() -> int:
     ap.add_argument("--sizes", type=str, default="")
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--affinity", type=str, default="none")
+    ap.add_argument("--max-load", type=float, default=None,
+                    help="if set, abort before running if median pre-flight host CPU load exceeds this %%")
     ap.add_argument("--verify-d2-linear", action="store_true")
     # child-only flags
     ap.add_argument("--child", action="store_true")
@@ -510,6 +552,17 @@ def main() -> int:
 
     exe_build = _probe_exe_build(exe)
     print(f"OpenSees.exe ladrunoBuild: {exe_build}")
+
+    if args.max_load is not None:
+        samples = [v for v in (_probe_cpu_load(0.5) for _ in range(3)) if v is not None]
+        if not samples:
+            print("ERROR: --max-load set but _probe_cpu_load returned None", file=sys.stderr)
+            return 3
+        med_load = statistics.median(samples)
+        print(f"Pre-flight CPU load samples: {samples} (median={med_load:.2f}%, threshold<={args.max_load:.1f}%)")
+        if med_load > args.max_load:
+            print(f"ABORT: host CPU load median {med_load:.2f}% exceeds --max-load {args.max_load:.1f}%", file=sys.stderr)
+            return 3
 
     if args.verify_d2_linear:
         drm_smoke = _parent_write_h5drm(out_dir, "smoke")
@@ -558,8 +611,19 @@ def main() -> int:
         records.append(rec)
         if rec.get("ok"):
             cb = rec.get("cpu_load_before_pct")
-            cpu_s = f" cpu={cb:4.1f}%" if cb is not None else ""
-            warn_s = " [BUSY!]" if (cb is not None and cb > 25.0) else ""
+            ca = rec.get("cpu_load_after_pct")
+            ce = rec.get("cpu_load_during_ext_pct")
+            load_thresh = args.max_load if args.max_load is not None else 10.0
+            vals = [v for v in (cb, ca, ce) if v is not None]
+            cpu_parts = []
+            if cb is not None:
+                cpu_parts.append(f"b={cb:4.1f}%")
+            if ca is not None:
+                cpu_parts.append(f"a={ca:4.1f}%")
+            if ce is not None:
+                cpu_parts.append(f"ext={ce:4.1f}%")
+            cpu_s = (" " + "/".join(cpu_parts)) if cpu_parts else ""
+            warn_s = " [BUSY!]" if (vals and max(vals) > load_thresh) else ""
             print(
                 f" steady={rec['steady_wall_s']:7.3f}s (s1={rec.get('step1_wall_s', 0.0):5.3f}s)"
                 f"{cpu_s}{warn_s} {rec['threaded']}",

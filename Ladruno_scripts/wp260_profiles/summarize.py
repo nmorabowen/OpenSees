@@ -14,9 +14,11 @@ Accounting & sanity rules (`wp-briefs.md` §2, §3, §6):
       * `deep_ovh` (`1t_deep / 1t_coarse`) < 0.95;
       * scope call counts (`formUnbalance`, `linearSolve`, `formTangent`, `update`) differ
         across modes or repetitions;
-      * `|residual| > 0.5%`; or
+      * `|residual| > 0.5%`;
       * any unresolved remainder (`upd_other`, `newStep_other`, `unbal_other`, `dc_other`,
-        `tan_other`, `ls_other`, `commit_other`) > 5.0%.
+        `tan_other`, `ls_other`, `commit_other`) > 5.0%; or
+      * host CPU load (`cpu_load_before_pct`, `cpu_load_after_pct`, or `cpu_load_during_ext_pct`
+        when present) is missing or exceeds `--max-load` (default 10.0%).
 """
 from __future__ import annotations
 
@@ -422,6 +424,8 @@ def main() -> int:
     ap.add_argument("--export-json", type=Path, default=None, help="write manifest.json, trees.json, dump_trees.txt here")
     ap.add_argument("--out-results", type=Path, default=OUT_RESULTS)
     ap.add_argument("--out-comment", type=Path, default=None)
+    ap.add_argument("--max-load", type=float, default=10.0,
+                    help="max host CPU load %% allowed for a deck to be rankable (default: 10.0)")
     ap.add_argument("--dump-trees", action="store_true")
     args = ap.parse_args()
 
@@ -560,6 +564,29 @@ def main() -> int:
                 unexplained_flags.append(f"`{d}[{sz}]` `{fn}` = {100 * med_sh[fn]:.1f}%")
                 reasons.append(f"unresolved {fn}={100 * med_sh[fn]:.1f}%>5%")
 
+        all_recs = r1d + r1c + rnc
+        before_loads = [r["cpu_load_before_pct"] for r in all_recs if r.get("cpu_load_before_pct") is not None]
+        after_loads = [r["cpu_load_after_pct"] for r in all_recs if r.get("cpu_load_after_pct") is not None]
+        during_loads = [r["cpu_load_during_ext_pct"] for r in all_recs if r.get("cpu_load_during_ext_pct") is not None]
+        max_before = max(before_loads) if before_loads else None
+        max_after = max(after_loads) if after_loads else None
+        max_during = max(during_loads) if during_loads else None
+        present_maxes = [v for v in (max_before, max_after, max_during) if v is not None]
+        max_load = max(present_maxes) if present_maxes else None
+
+        if not before_loads:
+            reasons.append("cpu_load_before=missing")
+        elif max_before > args.max_load:
+            reasons.append(f"cpu_load_before={max_before:.1f}%>{args.max_load:.1f}%")
+
+        if not after_loads:
+            reasons.append("cpu_load_after=missing")
+        elif max_after > args.max_load:
+            reasons.append(f"cpu_load_after={max_after:.1f}%>{args.max_load:.1f}%")
+
+        if during_loads and max_during is not None and max_during > args.max_load:
+            reasons.append(f"cpu_load_during_ext={max_during:.1f}%>{args.max_load:.1f}%")
+
         rankable = len(reasons) == 0
         if not rankable:
             not_rankable_notes.append(f"`{d}[{sz}]`: " + ", ".join(reasons))
@@ -576,6 +603,8 @@ def main() -> int:
             "shares": med_sh, "tag_shares": med_tags, "tag_desc": tag_desc,
             "w1d": w1d, "w1c": w1c, "wnc": wnc,
             "deep_ovh": deep_ovh, "scale": scale,
+            "max_load_before": max_before, "max_load_after": max_after,
+            "max_load_during": max_during, "max_load": max_load,
             "threaded": rnc[0].get("threaded", "unknown"),
             "rankable": rankable, "not_rankable_reasons": reasons,
             "calls": ref_calls,
@@ -621,30 +650,41 @@ def main() -> int:
 
     # Format 5-part deliverable (`wp-briefs.md` §5)
     mode_tag = "SMOKE / PRE-#1153/#1154 VERIFICATION" if manifest.get("smoke") else "FULL BASELINE"
-    cpu_loads = [r["cpu_load_before_pct"] for r in ok_recs if r.get("cpu_load_before_pct") is not None]
-    cpu_summary = (
-        f"min={min(cpu_loads):.1f}%, med={statistics.median(cpu_loads):.1f}%, max={max(cpu_loads):.1f}%"
-        if cpu_loads else "not recorded"
-    )
+
+    def _fmt_load_stats(vals: List[float]) -> str:
+        return (
+            f"min={min(vals):.1f}%, med={statistics.median(vals):.1f}%, max={max(vals):.1f}%"
+            if vals else "not recorded"
+        )
+
+    before_all = [r["cpu_load_before_pct"] for r in ok_recs if r.get("cpu_load_before_pct") is not None]
+    after_all = [r["cpu_load_after_pct"] for r in ok_recs if r.get("cpu_load_after_pct") is not None]
+    during_all = [r["cpu_load_during_ext_pct"] for r in ok_recs if r.get("cpu_load_during_ext_pct") is not None]
+    probe_parts = [f"before: `{_fmt_load_stats(before_all)}`", f"after: `{_fmt_load_stats(after_all)}`"]
+    if during_all:
+        probe_parts.append(f"during_ext: `{_fmt_load_stats(during_all)}`")
 
     md: List[str] = []
     md.append(f"# WP-260 Wave 0 (`260-w0`) — {mode_tag}")
     md.append("")
     md.append(f"- **Binary SHA (verified `OpenSees.exe` == all `opensees.pyd` records):** `{exe_build}`")
     md.append(f"- **Environment (`OMP_*`/`KMP_*`/`MKL_*`/`LADRUNO_*`):** `{json.dumps(manifest.get('parent_env', {}))}`")
-    md.append(f"- **Affinity arg:** `{manifest.get('affinity_arg', 'none')}` | **Production threads:** `{manifest.get('production_threads', 8)}` | **Per-run CPU load probe (before spawn):** `{cpu_summary}`")
+    md.append(f"- **Affinity arg:** `{manifest.get('affinity_arg', 'none')}` | **Production threads:** `{manifest.get('production_threads', 8)}`")
+    md.append(f"- **Host CPU load gate (`--max-load`):** `<= {args.max_load:.1f}%` (fail-closed on `cpu_load_before_pct`, `cpu_load_after_pct`, and `cpu_load_during_ext_pct` when present)")
+    md.append(f"- **Per-run CPU load probes:** {' | '.join(probe_parts)}")
     md.append("- **Step-1 exclusion (Finding 2):** step 1 runs BEFORE `profiler reset/start`, so step-1 symbolic/first-touch/D2 one-off factor costs are excluded from BOTH wall times AND rollup phase shares (and reported separately below).")
-    md.append("- **Accounting & rankability gates (Findings 1 & 3, brief §6):** `residual = step_wall - accounted` is NEVER clamped (`sum > 100.5%` fails hard). Any deck with `deep_ovh < 0.95`, mode call-count mismatch, `|residual| > 0.5%`, or unresolved remainder `> 5.0%` is marked `NO` (not rankable) and excluded from ranking.")
+    md.append(f"- **Accounting & rankability gates (Findings 1 & 3, brief §6):** `residual = step_wall - accounted` is NEVER clamped (`sum > 100.5%` fails hard). Any deck with `deep_ovh < 0.95`, mode call-count mismatch, `|residual| > 0.5%`, unresolved remainder `> 5.0%`, or host CPU load `> {args.max_load:.1f}%` (or missing) is marked `NO` (not rankable) and excluded from ranking.")
     md.append("")
 
     # Part 1: Phase-share table
     md.append("## 1. Phase-Share Table (`1t_deep`) & 3-Mode Wall Times")
     md.append("")
-    md.append("| Deck[Size] | DOF~ | Steps | `soe.sym` | `soe.fac` | `soe.tri` | `soe.cgs` | `soe.addA` | `elem_kern` | `mpm.a.prep` | `upd_constr` | `dc.setSz` | `dc.named` | `unbal_o` | `cmt_el` | `cmt_rec` | `residual` | `1t_deep` | `1t_coarse` | `nt_coarse` | `deep_ovh` | `1tc/ntc` | `threaded?` | `rankable?` |")
-    md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|")
+    md.append("| Deck[Size] | DOF~ | Steps | `soe.sym` | `soe.fac` | `soe.tri` | `soe.cgs` | `soe.addA` | `elem_kern` | `mpm.a.prep` | `upd_constr` | `dc.setSz` | `dc.named` | `unbal_o` | `cmt_el` | `cmt_rec` | `residual` | `1t_deep` | `1t_coarse` | `nt_coarse` | `deep_ovh` | `1tc/ntc` | `threaded?` | `max_load` | `rankable?` |")
+    md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|")
     for r in rows:
         sh = r["shares"]
         rk = "YES" if r["rankable"] else "NO"
+        ml = f"{r['max_load']:.1f}%" if r["max_load"] is not None else "missing"
         md.append(
             f"| `{r['label']}` | {r['ndof']} | {r['nsteps']} "
             f"| {100 * sh['soe.symbolic']:.1f}% | {100 * sh['soe.factor']:.1f}% | {100 * sh['soe.trisolve']:.1f}% "
@@ -655,10 +695,18 @@ def main() -> int:
             f"| {r['w1d'][0]:.3f}s [{r['w1d'][1]:.3f}..{r['w1d'][2]:.3f}] "
             f"| {r['w1c'][0]:.3f}s [{r['w1c'][1]:.3f}..{r['w1c'][2]:.3f}] "
             f"| {r['wnc'][0]:.3f}s [{r['wnc'][1]:.3f}..{r['wnc'][2]:.3f}] "
-            f"| {r['deep_ovh']:.2f}x | {r['scale']:.2f}x | {r['threaded']} | {rk} |"
+            f"| {r['deep_ovh']:.2f}x | {r['scale']:.2f}x | {r['threaded']} | {ml} | {rk} |"
         )
     md.append("")
     md.append("**`elem_by_type` breakdown:** " + " ; ".join(f"`{r['label']}`: {r['tag_desc']}" for r in rows))
+    md.append("")
+    load_items = []
+    for r in rows:
+        b_s = f"{r['max_load_before']:.1f}%" if r["max_load_before"] is not None else "missing"
+        a_s = f"{r['max_load_after']:.1f}%" if r["max_load_after"] is not None else "missing"
+        d_s = f", during_ext={r['max_load_during']:.1f}%" if r["max_load_during"] is not None else ""
+        load_items.append(f"`{r['label']}`: before={b_s}, after={a_s}{d_s}")
+    md.append(f"**Per-deck max host CPU load (threshold <= {args.max_load:.1f}%):** " + " ; ".join(load_items))
     md.append("")
 
     # Step-1 one-off summary (Finding 2: report D2's one-off factor time separately)
