@@ -182,15 +182,32 @@ jobs:
   # file). The glibc gate replays tests/_testbed/concrete3d_replay_records.linux-glibc.txt bit-exactly; while that
   # fixture is missing the job FAILS after uploading its glibc recording: the first run of the PR that adds this lane
   # is red by design, its artifact is committed as the fixture, and the next run gates on it (the script's header).
-  # Pinned image: the libm tag carries the glibc version (ldd --version), so an image update is a libm mismatch, not
-  # a kernel change; re-record on a deliberate image bump. g++ and the header only, no build: runs on drafts too.
+  # Pinned glibc (#1135): the job runs in a container pinned BY DIGEST, so glibc (the libm the fixture is bit-exact
+  # on) changes only when someone edits the digest below. `runs-on: ubuntu-24.04` alone is not a pin: the runner image
+  # floats under that label (2026-11-16 it moved glibc 2.39-0ubuntu8.9 -> 8.12 and turned this job red on every PR).
+  # buildpack-deps:noble ships g++, git and the rest the script needs, so no apt step can pull a newer libc6 in.
+  # The libm tag carries the glibc version (ldd --version), so a digest bump is a libm mismatch, not a kernel change.
+  # DELIBERATE DIGEST BUMP (the re-record procedure): (1) edit the digest; (2) push: the run is red at the GATE with
+  # "REPLAY ERROR: records written under libm=<old> do not replay bit-exactly under <new>" (or green if glibc did not
+  # change) and uploads concrete3d-replay-linux-glibc-<sha>; (3) `gh run download <run> -n concrete3d-replay-linux-glibc-<sha>`
+  # and commit the file over tests/_testbed/concrete3d_replay_records.linux-glibc.txt; (4) the next run gates on it.
+  # Diff the fixture in review: only the #= / #@ libm tag and libm-sensitive output values may move.
+  # g++ and the header only, no build: runs on drafts too.
   concrete3d-replay:
-    name: Concrete3D record replay (glibc 24.04, bit-exact; red until the glibc fixture is committed)
+    name: Concrete3D record replay (glibc, digest-pinned noble container, bit-exact)
     if: github.repository == 'nmorabowen/OpenSees'
     runs-on: ubuntu-24.04
+    container:
+      # buildpack-deps:noble as of 2026-11-20; bump only together with a re-record (procedure above)
+      image: buildpack-deps:noble@sha256:924bf5a2e44d8ad64669df739cc3a7d331dfb0a5b41815f0ca71a4819a503e8a
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Toolchain in the pinned container
+        run: |
+          # the workspace is owned by the runner's uid, the container runs as root
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          ldd --version | head -1; g++ --version | head -1; git --version; awk -W version 2>&1 | head -1
       - name: libm guard, glibc recording, replay of the committed glibc fixture (fails while it is missing)
         run: bash tests/_testbed/concrete3d_replay_ci.sh "$RUNNER_TEMP/c3d_replay"
       - name: Field-classification contract (rows generated from the testbed's field table, on the glibc fixture)

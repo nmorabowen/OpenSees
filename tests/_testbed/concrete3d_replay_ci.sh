@@ -6,7 +6,8 @@
 #
 # The committed libmmt records (concrete3d_replay_records.txt) were written by the Windows pyd and replay bit-exactly
 # only under Intel's libmmt (concrete3d_replay_libmmt.bat). The glibc fixture is concrete3d_replay_records.linux-glibc.txt,
-# and the job runs on a pinned image (ubuntu-24.04 in ladruno.yml). The libm tag is linux-glibc-<version from
+# and the job runs in a container pinned by digest (ladruno.yml, #1135: the ubuntu-24.04 runner label alone floats
+# its glibc; the digest bump + re-record procedure is in the job's comment). The libm tag is linux-glibc-<version from
 # `ldd --version`>: it is compiled in, stamped into every recording's #@ line, and compared by the libm guard, so a
 # glibc update on the image reads as a LIBM MISMATCH (exit 2), never as a kernel change. `check` also compares the
 # fixture's #@ kernel-blob with this tree's kernel header blob, so any kernel edit needs a re-record.
