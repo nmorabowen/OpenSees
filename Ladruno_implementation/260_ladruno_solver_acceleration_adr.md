@@ -1,7 +1,7 @@
 ---
 title: "WP-260 — Solver & Wave Acceleration for OpenSees Ladruno: Architecture, Contracts, and Phased Roadmap"
 project: Ladruno
-status: draft — NO C++ code (bootstrap ADR for architectural review)
+status: decisions D1-D7 recorded (2026-11-26); ready for owner merge
 priority: high
 owner: nmora
 wp: "WP-260 (program #1156)"
@@ -17,7 +17,7 @@ aliases:
   - WP-260
   - Solver & Wave Acceleration
   - FastSolve
-updated: 2026-11-25
+updated: 2026-11-26
 ---
 
 # WP-260 — Solver & Wave Acceleration Program (`FastSolve`)
@@ -196,12 +196,12 @@ All WP-260 work packages compose through six seams. They are frozen when the own
 
 ---
 
-## 8. Open Owner Decisions (`D1–D7`)
+## 8. Owner Decisions (`D1–D7` — Approved 2026-11-26)
 
-- **D1 — Phase-0 Benchmark Decks:** Confirm the 4–5 representative decks (suggested: 100k–500k DOF 3D nonlinear `LadrunoBrick` + `SANISAND`/`Concrete3D`, implicit `LadrunoCPML` + `H5DRM`, explicit `CDL`/`ExplicitBathe` + `CPML`, Mode-A Implicit MPM, and Model C MCFT `2CLD12`).
-- **D2 — Windows CPU baseline:** Confirm `dist\` stays at the current ISA baseline (no global `/arch:AVX2`, per ADR-77 V0), with per-TU runtime dispatch allowed only for a measured hot kernel.
-- **D3 — GPU / CUDA Envelope:** Target workstation GPU model/VRAM & whether CUDA (`cuDSS` + GPU explicit/MPM) is in Wave 3 scope; decides whether Contract #5 gains `LADRUNO_HD`.
-- **D4 — Allocator & LTO Policy:** Approve testing `mimalloc` + `/GL /LTCG` in Wave 1 (`WP-260e`) subject to `G-BYTE` + clean Windows/Linux CI build times.
-- **D5 — #933 (WP-146):** Fold #933's P0/P1 findings into WP-260 and close #933, or keep it as its own gated WP.
-- **D6 — Re-open implicit Bathe?** Authorize the pre-registered shared-factor benchmark of §2.3; `LadrunoImplicitBathe` (260d's integrator part) proceeds only if it clears ADR-77's ≥1.3× bar.
-- **D7 — Review pack:** Confirm ADR-87 D4 applies to this ADR's acceptance and to which WP-260 PRs (family-level), or amend ADR-87.
+- **D1 — Phase-0 Benchmark Decks (LOCKED):** 5 north-star decks for `260-w0`: (1) 3D implicit nonlinear `LadrunoBrick` + `SANISAND`/`Concrete3D` (`Pardiso` + reuse), (2) 3D implicit wave `LadrunoBrick` + `LadrunoCPML` + `H5DRM`, (3) 3D explicit wave `CDL` & `ExplicitBathe` on `LadrunoBrick -uri` + `LadrunoCPML` (+ consistent-SMS variant), (4) Mode-A Implicit MPM (`LadrunoMPMImplicit`), and (5) Model C MCFT `2CLD12`.
+- **D2 — Windows CPU baseline (LOCKED):** `dist\` stays at the current ISA baseline (no global `/arch:AVX2`, per ADR-77 V0), with per-TU runtime dispatch allowed only for a measured hot kernel.
+- **D3 — GPU / CUDA Envelope (LOCKED):** Defer GPU/CUDA to a Wave-3 written case (`plan §0.5 rule 6`); Wave 1–2 stay CPU-first (`*Kernel.h` keeps plain C++ POD discipline without `LADRUNO_HD` yet).
+- **D4 — Allocator & LTO Policy (LOCKED):** Approved evaluating `mimalloc` + `/GL /LTCG` in `260e` subject to `G-BYTE` + clean Windows/Linux CI build times.
+- **D5 — #933 (WP-146) (LOCKED):** Fold `#933`'s P0/P1 findings into WP-260 and close `#933` pointing to `#1156`.
+- **D6 — Re-open implicit Bathe? (LOCKED):** Wait for `260-w0` numbers — authorize the pre-registered shared-factor benchmark (`260d-B`, must clear ADR-77's `>= 1.3×` bar) only if `260-w0` shows `soe.factor` + transient steps dominate Deck 1/2.
+- **D7 — Review pack (LOCKED):** Opus 5.5's review on PR #1157 suffices to merge this docs bootstrap PR; reserve full owner-run ADR-87 D4 handoff packs (`Ladruno_implementation/reviews/handoff_260<x>.md` + `reviews/adr260<x>_verdict.md`) for Wave 2/3 family PRs (`AMG`, `ExplicitEngine`, `IMEX`, `GPStore`).

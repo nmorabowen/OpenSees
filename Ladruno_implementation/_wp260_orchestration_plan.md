@@ -1,10 +1,10 @@
 ---
 title: "WP-260 orchestration plan — work packages, waves, parallelism, and dual-agent protocol"
 project: Ladruno
-status: draft — awaiting owner D1-D7 after Bootstrap ADR review (revised 2026-11-25b after the PR #1157 review)
+status: decisions D1-D7 recorded (2026-11-26); ready for owner merge
 program_issue: "#1156"
 companion: 260_ladruno_solver_acceleration_adr
-updated: 2026-11-25
+updated: 2026-11-26
 ---
 
 # WP-260 Orchestration Plan (`Solver & Wave Acceleration`)
