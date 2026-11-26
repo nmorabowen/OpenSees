@@ -2,12 +2,25 @@
 
 Before starting any WP, read `SKILL.md`, `references/contracts.md`, `references/fork-checklist.md`, and `Ladruno_implementation/260_ladruno_solver_acceleration_adr.md` (§2.2 open-PR overlaps, §2.3 prior closed lanes). If a brief's **Blocked by** names an open PR or an owner decision, do not start: post a handoff on the `program` issue.
 
+**Only the packages the owner picked after `260-w0` may start** (plan §0.5: phase share ≥ 10 %, projected whole-run gain ≥ 1.10×, top 2–3 at a time). The other briefs are kept ready, not scheduled.
+
 ---
 
 ## `260-w0` — Phase-0 Profiler Baseline (Read/Bench Only)
 - **Branch:** `wp/260w0-phase0-profiles` from `origin/ladruno`.
 - **Blocked by:** D1.
-- **Goal:** Run `profiler start -perStep -deep` on the owner-approved D1 decks (3D implicit nonlinear solid/soil, implicit `LadrunoCPML` + `H5DRM`, explicit `CDL`/`ExplicitBathe` + `CPML`, Mode-A Implicit MPM, Model C MCFT `2CLD12`) and post exact phase time percentages to the `WP-260` `program` issue. Zero `SRC/` edits. Each later WP's speedup target is checked against these ceilings.
+- **Goal:** measure where the time goes on the owner-approved D1 decks (3D implicit nonlinear solid/soil, implicit `LadrunoCPML` + `H5DRM`, explicit `CDL`/`ExplicitBathe` + `CPML`, Mode-A Implicit MPM, Model C MCFT `2CLD12`) and rank the WP-260 menu by projected whole-run gain. Zero `SRC/` edits; the deck scripts and a small summarizer go under `Ladruno_scripts/wp260_profiles/`.
+- **How to measure (two runs per deck, from one 5-target build whose `ladrunoBuild` SHA is recorded):**
+  1. **Phase shares:** `profiler start -deep -perStep` at **1 thread**. The deep gate cannot be on while a loop is threaded, so shares come from the 1-thread run only.
+  2. **Wall time at production threads:** coarse `profiler start -perStep` at the thread count the deck is normally run with (state it).
+  3. Run each 3 times, interleaved across decks; report the median and the spread.
+- **Read the scopes carefully:** `elem.tangent` times the whole loop **including the `soe.addA` scatter**; element cost is the `elem_by_type` rows. Split assembly into kernel (`elem_by_type`) and scatter (`soe.addA`). Report `soe.symbolic` / `soe.factor` / `soe.trisolve` separately, plus `formUnbalance`, `update`, `commit.elements`, `commit.record`, and `dc.setSize` / `domainChanged` where present.
+- **Deliverable (one comment on the `program` issue + the same tables in `Ladruno_scripts/wp260_profiles/README.md`):**
+  1. *Phase-share table:* per deck, the % of wall time per scope above (1-thread run) and the production-thread wall time.
+  2. *Phase → package map:* `soe.factor`/`soe.symbolic`/`soe.trisolve` → 260a (PARDISO levers), 260g, 260m; `soe.addA`, `dc.setSize` → 260a (MUMPS), 260f; `elem_by_type` (by element/material) → 260c1, 260c2, 260f, 260h, 260k; `update`/`formUnbalance` in explicit decks → 260b, 260l; `commit.record` → recorders (outside WP-260; flag it if it is large).
+  3. *Ranking:* for every Wave-1/2 package and each deck, `p`, the conservative `s` used, and `G = 1 / ((1 − p) + p / s)`; mark which packages pass the gate (`p ≥ 10 %` and `G ≥ 1.10×` on at least one deck).
+  4. *Proposed first pick:* the top 2–3 by `G`, for the owner to confirm.
+- **Done When:** the comment is posted with all four parts, the scripts reproduce it from the recorded SHA, and Claude has reviewed the ranking (review protocol §4).
 
 ---
 

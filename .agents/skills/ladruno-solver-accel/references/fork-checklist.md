@@ -67,8 +67,9 @@ A follow-up to a WP-260 quirk edits that quirk's fragment (`#### Follow-up (WP-2
 2. Local 5-target build green; `ladrunoBuild` SHA matches PR `HEAD`.
 3. `pytest -m zone_a` green (both `OpenSees.exe` and `opensees.pyd` exercised where applicable).
 4. Explicit ADR-68 gate proof (`G-BYTE` MD5/signbit identity, `G-EQUIV` oracle, or `G-OPT` + fail-closed checks; TSan for threaded changes).
-5. Before/after `profiler start -perStep -deep` table pasted in the PR description.
+5. Before/after profile table pasted in the PR description: the D1 decks the WP was picked on, method of the `260-w0` brief (1-thread `-deep` for phase shares, production threads for wall time, 3 interleaved runs, median), phase speedup `s` and whole-run gain.
 6. Zone-A Ubuntu CI dispatched (`gh workflow run ladruno.yml --ref <branch>`) and green (`gh pr checks <pr>`).
-7. Claude adversarial review addressed (fixed, or declined with rationale in the PR).
-8. Family-level PR (per D7): `Ladruno_implementation/reviews/handoff_260<x>.md` written for the owner's ADR-87 D4 run; `reviews/adr260<x>_verdict.md` committed.
-9. `Ladruno_internal/ISSUES.md` §3 `### Handoff` comment posted on the PR and board `#937` refreshed.
+7. `### Review request` posted (`references/review-protocol.md`); Claude's verdict is `ready`, every finding answered by number.
+8. The PR states the plan §0.5 numbers it was picked on (p, s, projected G) next to the measured whole-run gain.
+9. Family-level PR (per D7): `Ladruno_implementation/reviews/handoff_260<x>.md` written for the owner's ADR-87 D4 run; `reviews/adr260<x>_verdict.md` committed.
+10. `Ladruno_internal/ISSUES.md` §3 `### Handoff` comment posted on the PR and board `#937` refreshed.

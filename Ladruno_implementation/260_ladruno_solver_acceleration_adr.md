@@ -40,6 +40,8 @@ This ADR establishes:
 4. The unified mixed-precision policy and explicitly rejected Tier-3 traps, and
 5. Open owner decisions (`D1–D7`) before Wave 1/2/3 commits.
 
+**Selection principle (adopted 2026-11-25).** §3's inventory is a menu, not a schedule, and its speedup figures are hypotheses until measured. `260-w0` profiles the D1 decks first; a work package is scheduled only if the phase it targets takes ≥ 10 % of a D1 run and its projected whole-run gain `1 / ((1 − p) + p / s)` is ≥ 1.10×; the owner picks the top 2–3 at a time and the menu is re-ranked after each merge with the measured gain. Rules: `_wp260_orchestration_plan.md` §0.5.
+
 ---
 
 ## 2. Grounded Baseline & Live De-Duplication (`origin/ladruno` @ `7e91aaf1c`)
