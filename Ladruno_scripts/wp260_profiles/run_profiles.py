@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+from datetime import datetime, timezone
 import json
 import math
 import os
@@ -24,6 +25,49 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+
+class _FILETIME(ctypes.Structure):
+    _fields_ = [("dwLowDateTime", ctypes.c_uint32), ("dwHighDateTime", ctypes.c_uint32)]
+
+
+def _probe_cpu_load(sample_s: float = 0.25) -> Optional[float]:
+    """Sample system-wide CPU utilization (%) over `sample_s` without external deps."""
+    if sys.platform == "win32":
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        def _snap():
+            idle, kernel, user = _FILETIME(), _FILETIME(), _FILETIME()
+            if not k32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
+                return None
+            def _u64(ft):
+                return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
+            return _u64(idle), _u64(kernel), _u64(user)
+
+        s0 = _snap()
+        if s0 is None:
+            return None
+        time.sleep(sample_s)
+        s1 = _snap()
+        if s1 is None:
+            return None
+        d_idle = s1[0] - s0[0]
+        d_tot = (s1[1] - s0[1]) + (s1[2] - s0[2])
+        if d_tot <= 0:
+            return 0.0
+        return round(100.0 * max(0.0, min(1.0, 1.0 - d_idle / d_tot)), 2)
+    try:
+        def _proc_stat():
+            with open("/proc/stat", "r", encoding="utf-8") as fh:
+                parts = [int(x) for x in fh.readline().split()[1:]]
+            return parts[3] + (parts[4] if len(parts) > 4 else 0), sum(parts)
+        i0, t0 = _proc_stat()
+        time.sleep(sample_s)
+        i1, t1 = _proc_stat()
+        dt = t1 - t0
+        return round(100.0 * max(0.0, min(1.0, 1.0 - (i1 - i0) / dt)), 2) if dt > 0 else 0.0
+    except OSError:
+        return None
 
 # NOTE: NEVER import h5py or numpy at module top level — child processes run `_run_child`
 # and import `opensees.pyd`, which bundles its own HDF5 DLL. Import h5py/numpy only inside
@@ -245,32 +289,64 @@ def _run_child(args) -> int:
 
     cfg = decks.DECKS[args.deck](ops, size=args.size, h5drm_path=args.h5drm)
     nsteps = cfg["nsteps"]
-
-    ops.profiler("reset")
     flags = ["-deep", "-perStep"] if args.deep else ["-perStep"]
-    ops.profiler("start", *flags)
-    t0 = time.perf_counter()
-    try:
+
+    def _run_steps(k: int) -> None:
         if cfg["kind"] == "MPM_ModeA":
-            for _ in range(nsteps):
+            for _ in range(k):
                 rc = ops.mpm("analyze", 1, cfg["dt"])
                 if rc != 0:
                     raise RuntimeError(f"{args.deck}: mpm analyze returned {rc}")
         elif cfg["kind"] == "Transient":
-            rc = ops.analyze(nsteps, cfg["dt"])
+            rc = ops.analyze(k, cfg["dt"])
             if rc != 0:
                 raise RuntimeError(f"{args.deck}: analyze returned {rc}")
         else:
-            rc = ops.analyze(nsteps)
+            rc = ops.analyze(k)
             if rc != 0:
                 raise RuntimeError(f"{args.deck}: analyze returned {rc}")
-    finally:
-        wall_s = time.perf_counter() - t0
-        ops.profiler("stop")
 
     h5_path = Path(args.h5)
     h5_path.parent.mkdir(parents=True, exist_ok=True)
     run_id = f"{args.deck}_{args.size}_{args.mode}_r{args.rep}"
+
+    # Finding 2 (brief §2): step 1 (symbolic factor, allocation, first-touch, and
+    # D2's one-off Linear -factorOnce numeric factorization) MUST leave BOTH the wall
+    # times AND the rollup phase shares. Run 1 warm-up step BEFORE profiler reset/start.
+    # On D2 (1t_deep), capture step 1 into a separate H5 so the one-off symbolic +
+    # numeric factor time is reported alongside the steady-state shares.
+    step1_h5_str: Optional[str] = None
+    step1_run_id: Optional[str] = None
+    if args.deck == "d2_cpml_wave" and args.deep:
+        step1_h5 = h5_path.with_name(h5_path.stem + "__step1.h5")
+        if step1_h5.exists():
+            step1_h5.unlink()
+        step1_run_id = f"{run_id}_step1"
+        ops.profiler("reset")
+        ops.profiler("start", *flags)
+        t_s1 = time.perf_counter()
+        try:
+            _run_steps(1)
+        finally:
+            step1_wall_s = time.perf_counter() - t_s1
+            ops.profiler("stop")
+        ops.profiler("report", str(step1_h5), "-run", step1_run_id)
+        step1_h5_str = str(step1_h5)
+    else:
+        t_s1 = time.perf_counter()
+        _run_steps(1)
+        step1_wall_s = time.perf_counter() - t_s1
+
+    # Steady-state profiled window: `nsteps` steps after step 1
+    ops.profiler("reset")
+    ops.profiler("start", *flags)
+    t0 = time.perf_counter()
+    try:
+        _run_steps(nsteps)
+    finally:
+        wall_s = time.perf_counter() - t0
+        ops.profiler("stop")
+
     ops.profiler("report", str(h5_path), "-run", run_id)
     ops.wipe()
 
@@ -279,6 +355,7 @@ def _run_child(args) -> int:
         "deck": args.deck,
         "size": args.size,
         "family": cfg["family"],
+        "constraints": cfg.get("constraints", "Transformation"),
         "mode": args.mode,
         "rep": args.rep,
         "threads": args.threads,
@@ -286,6 +363,9 @@ def _run_child(args) -> int:
         "nsteps": nsteps,
         "nelm": cfg["nelm"],
         "ndof_est": cfg.get("ndof_est", 0),
+        "step1_wall_s": step1_wall_s,
+        "step1_h5": step1_h5_str,
+        "step1_run_id": step1_run_id,
         "wall_s": wall_s,
         "h5": str(h5_path),
         "run_id": run_id,
@@ -303,6 +383,16 @@ def _run_child(args) -> int:
 # Wait — in this file, let's defer `h5py`/`numpy` imports inside parent-only functions!
 def _parent_write_h5drm(out_dir: Path, size: str) -> Path:
     return _ensure_h5drm(out_dir, size)
+
+
+def _sum_scope_ns(node: Dict[str, Any], name: str) -> int:
+    tot = 0
+    for k, ch in node.get("children", {}).items():
+        if k == name:
+            tot += int(ch.get("wall_ns", 0))
+        else:
+            tot += _sum_scope_ns(ch, name)
+    return tot
 
 
 def _spawn_one(pyd: Path, out_dir: Path, deck: str, size: str, mode: str, threads: int,
@@ -337,16 +427,25 @@ def _spawn_one(pyd: Path, out_dir: Path, deck: str, size: str, mode: str, thread
     if h5drm_path is not None:
         cmd.extend(["--h5drm", str(h5drm_path)])
 
+    cpu_before = _probe_cpu_load(0.25)
+    ts_utc = datetime.now(timezone.utc).isoformat(timespec="seconds")
     cp = subprocess.run(cmd, env=env, text=True, capture_output=True)
+    cpu_after = _probe_cpu_load(0.15)
     stderr_tail = (cp.stderr or "")[-4000:]
     if cp.returncode != 0 or not json_path.exists():
         return {
             "ok": False, "deck": deck, "size": size, "mode": mode, "rep": rep,
             "threads": threads, "returncode": cp.returncode,
+            "timestamp_utc": ts_utc,
+            "cpu_load_before_pct": cpu_before,
+            "cpu_load_after_pct": cpu_after,
             "stdout_tail": (cp.stdout or "")[-2000:],
             "stderr_tail": stderr_tail,
         }
     rec = json.loads(json_path.read_text(encoding="utf-8"))
+    rec["timestamp_utc"] = ts_utc
+    rec["cpu_load_before_pct"] = cpu_before
+    rec["cpu_load_after_pct"] = cpu_after
     rec["stderr_tail"] = stderr_tail
     threaded, anns = _parse_threading(threads, stderr_tail)
     rec["threaded"] = threaded
@@ -354,8 +453,15 @@ def _spawn_one(pyd: Path, out_dir: Path, deck: str, size: str, mode: str, thread
     parsed = _extract_h5(h5_path, rec["run_id"])
     series_ms = parsed["series_wall_ms"]
     rec["series_wall_ms"] = series_ms
-    rec["step1_wall_ms"] = series_ms[0] if series_ms else None
-    rec["steady_wall_s"] = (sum(series_ms[1:]) / 1000.0) if len(series_ms) > 1 else rec["wall_s"]
+    # Step 1 already ran before profiler reset/start, so ALL entries in series_ms are steady-state.
+    rec["steady_wall_s"] = (sum(series_ms) / 1000.0) if series_ms else rec["wall_s"]
+    rec["step1_wall_ms"] = 1000.0 * rec["step1_wall_s"] if rec.get("step1_wall_s") is not None else None
+    if rec.get("step1_h5") and rec.get("step1_run_id"):
+        s1_parsed = _extract_h5(Path(rec["step1_h5"]), rec["step1_run_id"])
+        s1_tree = s1_parsed["tree"]
+        rec["step1_soe_symbolic_s"] = _sum_scope_ns(s1_tree, "soe.symbolic") / 1e9
+        rec["step1_soe_factor_s"] = _sum_scope_ns(s1_tree, "soe.factor") / 1e9
+        rec["step1_soe_trisolve_s"] = _sum_scope_ns(s1_tree, "soe.trisolve") / 1e9
     rec["_tree"] = parsed["tree"]
     return rec
 
@@ -369,6 +475,7 @@ def main() -> int:
     ap.add_argument("--export-dir", type=Path, default=None)
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--full", action="store_true")
+    ap.add_argument("--reps", type=int, default=0, help="override base rep count (default: 1 smoke, 3 full)")
     ap.add_argument("--only", type=str, default="")
     ap.add_argument("--sizes", type=str, default="")
     ap.add_argument("--threads", type=int, default=8)
@@ -435,7 +542,7 @@ def main() -> int:
         if d == "d2_cpml_wave" and s not in h5drm_files:
             h5drm_files[s] = _parent_write_h5drm(out_dir, s)
 
-    base_reps = 1 if args.smoke or not args.full else 3
+    base_reps = args.reps if args.reps > 0 else (3 if args.full else 1)
     modes = [("1t_deep", 1, True), ("1t_coarse", 1, False), ("nt_coarse", args.threads, False)]
 
     records: List[Dict[str, Any]] = []
@@ -450,7 +557,14 @@ def main() -> int:
             trees[rec["run_id"]] = {"tree": tr, "series_wall_ms": rec.get("series_wall_ms", [])}
         records.append(rec)
         if rec.get("ok"):
-            print(f" steady={rec['steady_wall_s']:7.3f}s (tot={rec['wall_s']:6.3f}s) {rec['threaded']}", flush=True)
+            cb = rec.get("cpu_load_before_pct")
+            cpu_s = f" cpu={cb:4.1f}%" if cb is not None else ""
+            warn_s = " [BUSY!]" if (cb is not None and cb > 25.0) else ""
+            print(
+                f" steady={rec['steady_wall_s']:7.3f}s (s1={rec.get('step1_wall_s', 0.0):5.3f}s)"
+                f"{cpu_s}{warn_s} {rec['threaded']}",
+                flush=True,
+            )
         else:
             print(f" FAILED (rc={rec.get('returncode')})", flush=True)
             print(rec.get("stderr_tail", ""), file=sys.stderr)
@@ -461,8 +575,10 @@ def main() -> int:
             for mode, nt, deep in modes:
                 run_combo(rep, deck, size, mode, nt, deep)
 
-    # Brief §2: raise from 3 to 5 reps if spread > 5% on steady_wall_s
+    # Brief §2 + Finding 6: raise from 3 to 5 reps if spread > 5%, INTERLEAVED across
+    # all decks/modes being raised (never back-to-back on one deck/mode).
     if args.full and base_reps == 3:
+        need_extra: List[Tuple[str, str, str, int, bool, float]] = []
         for deck, size in targets:
             for mode, nt, deep in modes:
                 vals = [r["steady_wall_s"] for r in records
@@ -471,9 +587,14 @@ def main() -> int:
                     med = statistics.median(vals)
                     spread = (max(vals) - min(vals)) / med if med > 0 else 0.0
                     if spread > 0.05:
-                        print(f"  -> spread {100 * spread:.1f}% > 5% on {deck}[{size}] {mode}; running reps 4..5")
-                        for rep in (3, 4):
-                            run_combo(rep, deck, size, mode, nt, deep)
+                        need_extra.append((deck, size, mode, nt, deep, spread))
+        if need_extra:
+            print(f"Raising {len(need_extra)} (deck, size, mode) entries to 5 reps (interleaved):")
+            for deck, size, mode, _nt, _deep, spread in need_extra:
+                print(f"  - {deck}[{size}] {mode}: spread={100 * spread:.1f}% > 5%")
+            for rep in (3, 4):
+                for deck, size, mode, nt, deep, _spread in need_extra:
+                    run_combo(rep, deck, size, mode, nt, deep)
 
     mpath = out_dir / "manifest.json"
     if args.only and mpath.exists():

@@ -11,8 +11,8 @@ Zero `SRC/` modifications; scripts follow `.agents/skills/ladruno-solver-accel/r
 
 ## Decks (`decks.py`)
 All 5 D1 families (`S` and `L` sizes):
-- `d1a_brick_sanisand` (`S`, `L`): `LadrunoBrick -formulation bbar` + `LadrunoSANISAND`, `Pardiso` + `KrylovNewton -maxDim 20 -reuseFactor 5`, `Newmark`
-- `d1b_brick_concrete3d` (`S`, `L`): `LadrunoBrick -formulation bbar` + `LadrunoConcrete3D`, `Pardiso` + `KrylovNewton -maxDim 20 -reuseFactor 5`, `DisplacementControl`
+- `d1a_brick_sanisand` (`S`, `L`): `LadrunoBrick -formulation bbar` + `LadrunoSANISAND`, `Pardiso` + `KrylovNewton -maxDim 20 -reuseFactor 3 -reuseIter 8`, `Newmark`
+- `d1b_brick_concrete3d` (`S`, `L`): `LadrunoBrick -formulation bbar` + `LadrunoConcrete3D`, `Pardiso` + `KrylovNewton -maxDim 20 -reuseFactor 3 -reuseIter 8`, `DisplacementControl`
 - `d2_cpml_wave` (`S`, `L >= 1e5 DOF`): `LadrunoBrick -formulation std` + `LadrunoCPML` + `H5DRM`, `Pardiso` + `Linear -factorOnce`, `Newmark`
 - `d3a_explicit_cdl_cpml` (`S`, `L`): `CentralDifferenceLadruno`, `LadrunoBrick -formulation uri -lumped` + `LadrunoCPML -lumped`, `Diagonal`
 - `d3b_explicit_bathe_cpml` (`S`, `L`): `ExplicitBathe`, `LadrunoBrick -formulation uri -lumped` + `LadrunoCPML -lumped`, `Diagonal`

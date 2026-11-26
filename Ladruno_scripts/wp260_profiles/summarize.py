@@ -3,11 +3,20 @@
 Supports both raw HDF5 directories (`--dir`) and committed JSON snapshots (`--from-json`)
 without needing `.h5` files or `opensees.pyd`. Always writes `RESULTS.md` (never overwrites `README.md`).
 
-Accounting rule (`wp-briefs.md` §3):
-  - `elem.tangent` = `elem_by_type` + `soe.addA` + unbucketed wrapper (`other`).
-  - `mpm.a.prepare` gets its own column (never folded into `dc_other`).
-  - `soe.cgs` gets its own column.
-  - Prints `residual = step_wall - accounted`; NEVER clamps `other` at 0; fails if sum > 100.5%.
+Accounting & sanity rules (`wp-briefs.md` §2, §3, §6):
+  - `elem.tangent` = `elem_by_type` + `soe.addA` + wrapper (`tan_other`, incl. `dof.tangent`).
+  - `mpm.a.prepare` and `soe.cgs` get their own columns.
+  - `upd_constrained` accounts for `TransformationConstraintHandler::enforceSPs()` unbucketed
+    element updates inside `newStep` and `update` on `constraints Transformation` decks.
+  - `residual = step_wall - accounted`; NEVER clamped at 0; fails hard if sum > 100.5%.
+  - Sanity + brief §6 rankability gate: a deck is marked NOT RANKABLE and excluded from
+    ranking/picks if:
+      * `deep_ovh` (`1t_deep / 1t_coarse`) < 0.95;
+      * scope call counts (`formUnbalance`, `linearSolve`, `formTangent`, `update`) differ
+        across modes or repetitions;
+      * `|residual| > 0.5%`; or
+      * any unresolved remainder (`upd_other`, `newStep_other`, `unbal_other`, `dc_other`,
+        `tan_other`, `commit_other`) > 5.0%.
 """
 from __future__ import annotations
 
@@ -29,6 +38,8 @@ TAG_NAMES = {
     33025: "LadrunoForceBeamColumn3d",
     33026: "LadrunoMPMPoint",
 }
+
+CALL_CHECK_SCOPES = ("formUnbalance", "linearSolve", "formTangent", "update")
 
 
 # --------------------------------------------------------------------------- #
@@ -57,7 +68,7 @@ def _p_260c1(sh: Dict[str, float], tags: Dict[int, float], meta: Dict[str, Any])
 
 def _p_260c2(sh: Dict[str, float], tags: Dict[int, float], meta: Dict[str, Any]) -> Optional[float]:
     if meta["family"] == "D1b-Brick-Concrete3D":
-        # Concrete3D work in D1b: LadrunoBrick (33002) buckets + note unbucketed enforceSPs update when present
+        # Conservative ranking: LadrunoBrick (33002) elem_by_type share only (excludes upd_constrained)
         return tags.get(33002, 0.0)
     return 0.0
 
@@ -88,7 +99,7 @@ PACKAGE_SPECS = [
      "LogStrain GP (none in D1)", _p_260c1),
     ("260c2", "G-BYTE/G-EQUIV", "eligible", "Blocked (#1153/#1154)",
      "1.5-4x Concrete3D/HS", 1.25, "plan §1 rule-2: 1+(1.5-1)/2",
-     "LadrunoBrick Concrete3D (D1b)", _p_260c2),
+     "LadrunoBrick Concrete3D (D1b, 33002 only)", _p_260c2),
     ("260d", "G-EQUIV/G-OPT", "not phase-rankable", "Unblocked",
      "2-5x adaptive runs", None, "changes step count -> whole-run bench required",
      "not phase-rankable", None),
@@ -161,6 +172,13 @@ def _sum_name(node: Dict[str, Any], name: str) -> int:
     return tot
 
 
+def _scope_calls(tree: Dict[str, Any]) -> Dict[str, int]:
+    return {
+        name: sum(int(n.get("calls", 0)) for n in _find_all(tree, name))
+        for name in CALL_CHECK_SCOPES
+    }
+
+
 def _sum_elem_by_type(node: Dict[str, Any]) -> Tuple[int, Dict[int, int]]:
     tot = 0
     by_tag: Dict[int, int] = {}
@@ -181,7 +199,7 @@ def _gather_elem_kernels(node: Dict[str, Any], by_tag: Dict[int, int]) -> int:
     return tot
 
 
-def analyze_tree(tree: Dict[str, Any]) -> Dict[str, Any]:
+def analyze_tree(tree: Dict[str, Any], *, constraints: str = "Transformation") -> Dict[str, Any]:
     # MPM runs wrap "mpm.a.prepare" + "step" inside "mpm.a.step"
     top_nodes = _find_all(tree, "mpm.a.step")
     if not top_nodes:
@@ -206,16 +224,60 @@ def analyze_tree(tree: Dict[str, Any]) -> Dict[str, Any]:
         return (_sum_name(n, "soe.symbolic") + _sum_name(n, "soe.factor")
                 + _sum_name(n, "soe.trisolve") + _sum_name(n, "soe.cgs") + _sum_name(n, "soe.addA"))
 
-    dc_other = sum(n["wall_ns"] - sub_soe(n) for n in _find_all(root_scope, "domainChanged"))
-    newstep_other = sum(n["wall_ns"] - _gather_elem_kernels(n, {}) - sub_soe(n)
-                        for n in _find_all(root_scope, "newStep"))
+    dc_setsize = _sum_name(root_scope, "dc.setSize")
+    dc_named_sub = (
+        _sum_name(root_scope, "dc.numberDOF")
+        + _sum_name(root_scope, "dc.handle")
+        + _sum_name(root_scope, "dc.clearAll")
+        + _sum_name(root_scope, "dc.algorithm")
+        + sum(
+            n["wall_ns"] - _gather_elem_kernels(n, {}) - sub_soe(n)
+            for n in _find_all(root_scope, "dc.integrator")
+        )
+    )
+    dc_other = sum(
+        n["wall_ns"] - _gather_elem_kernels(n, {}) - sub_soe(n)
+        for n in _find_all(root_scope, "domainChanged")
+    ) - dc_setsize - dc_named_sub
+
+    dof_tan = sum(n["wall_ns"] - sub_soe(n) for n in _find_all(root_scope, "dof.tangent"))
+    tan_other = sum(
+        n["wall_ns"] - _gather_elem_kernels(n, {}) - sub_soe(n)
+        for n in _find_all(root_scope, "formTangent")
+    ) - dof_tan
+    ls_other = sum(
+        n["wall_ns"] - sub_soe(n)
+        for n in _find_all(root_scope, "linearSolve")
+    )
+    conv_test = _sum_name(root_scope, "convTest")
+
+    newstep_rem = sum(n["wall_ns"] - _gather_elem_kernels(n, {}) - sub_soe(n)
+                      for n in _find_all(root_scope, "newStep"))
     unbal_other = sum(n["wall_ns"] - _gather_elem_kernels(n, {})
                       for n in _find_all(root_scope, "formUnbalance"))
-    upd_other = sum(n["wall_ns"] - _gather_elem_kernels(n, {}) - sub_soe(n)
-                    for n in _find_all(root_scope, "update"))
+    upd_rem = sum(n["wall_ns"] - _gather_elem_kernels(n, {}) - sub_soe(n)
+                  for n in _find_all(root_scope, "update"))
+
+    # Finding 3: TransformationConstraintHandler::enforceSPs() updates constrained
+    # elements inside newStep and update (outside elem.update). Give it its own
+    # named column (`upd_constrained`) on Transformation decks so resolved enforceSPs
+    # time does not count as an unexplained remainder, while non-Transformation decks
+    # still surface any unbucketed newStep/update time as unexplained.
+    if constraints == "Transformation":
+        upd_constrained = newstep_rem + upd_rem
+        newstep_other = 0
+        upd_other = 0
+    else:
+        upd_constrained = 0
+        newstep_other = newstep_rem
+        upd_other = upd_rem
 
     commit_elem = _sum_name(root_scope, "commit.elements")
     commit_rec = _sum_name(root_scope, "commit.record")
+    commit_other = sum(
+        n["wall_ns"] - _sum_name(n, "commit.elements") - _sum_name(n, "commit.record")
+        for n in _find_all(root_scope, "commit")
+    )
 
     # Never clamp! Compute exact residual = step_wall - sum(disjoint accounted parts)
     disjoint_ns = {
@@ -226,12 +288,20 @@ def analyze_tree(tree: Dict[str, Any]) -> Dict[str, Any]:
         "soe.addA": soe_adda,
         "elem_kernel": elem_kern,
         "mpm.a.prepare": mpm_prep,
+        "upd_constrained": upd_constrained,
+        "dc.setSize": dc_setsize,
+        "dc.named": dc_named_sub,
+        "dof.tangent": dof_tan,
+        "ls_other": ls_other,
+        "convTest": conv_test,
+        "tan_other": tan_other,
         "newStep_other": newstep_other,
         "unbal_other": unbal_other,
         "upd_other": upd_other,
         "dc_other": dc_other,
         "commit.elements": commit_elem,
         "commit.record": commit_rec,
+        "commit_other": commit_other,
     }
     accounted_ns = sum(disjoint_ns.values())
     residual_ns = step_wall - accounted_ns
@@ -252,6 +322,7 @@ def analyze_tree(tree: Dict[str, Any]) -> Dict[str, Any]:
         "tag_shares": tag_shares,
         "step_wall_ns": step_wall,
         "overcount_ratio": overcount_ratio,
+        "calls": _scope_calls(tree),
     }
 
 
@@ -270,6 +341,58 @@ def _dump_tree_str(node: Dict[str, Any], name: str = "root", pad: str = "") -> L
     for k, ch in node["children"].items():
         lines.extend(_dump_tree_str(ch, k, pad + "  "))
     return lines
+
+
+def _compute_coverage_gaps(rows: List[Dict[str, Any]]) -> List[str]:
+    """Finding 4: derive coverage gaps (>= 10% phase not targeted by any eligible package)
+    directly from `rows` rather than hard-coded strings."""
+    eligible_specs = [sp for sp in PACKAGE_SPECS if sp[2] == "eligible" and sp[8] is not None]
+    gaps: List[str] = []
+    for r in rows:
+        sh = r["shares"]
+        tags = r["tag_shares"]
+        fam = r["family"]
+        lbl = r["label"]
+        # 1. upd_constrained >= 10% (TransformationConstraintHandler::enforceSPs)
+        if sh["upd_constrained"] >= 0.10:
+            gaps.append(
+                f"`{lbl}` `upd_constrained` = {100 * sh['upd_constrained']:.1f}% "
+                f"(`TransformationConstraintHandler::enforceSPs` — no WP-260 package targets it; "
+                f"depends on `constraints Transformation`)"
+            )
+        # 2. mpm.a.prepare >= 10% (MPM program #1075)
+        if sh["mpm.a.prepare"] >= 0.10:
+            gaps.append(
+                f"`{lbl}` `mpm.a.prepare` = {100 * sh['mpm.a.prepare']:.1f}% "
+                f"(MPM host work — owned by program `#1075`, outside WP-260)"
+            )
+        # 3. commit.record >= 10% (recorders)
+        if sh["commit.record"] >= 0.10:
+            gaps.append(
+                f"`{lbl}` `commit.record` = {100 * sh['commit.record']:.1f}% "
+                f"(recorders — outside WP-260)"
+            )
+        # 4. Dominant elem_kernel tag >= 10% not covered by any eligible package on this deck
+        covered_by_eligible = sum(
+            float(sp[8](sh, tags, {"family": fam}) or 0.0) for sp in eligible_specs
+        )
+        uncovered_elem = max(0.0, sh["elem_kernel"] - covered_by_eligible)
+        if uncovered_elem >= 0.10:
+            dom_tag = max(tags.items(), key=lambda kv: kv[1])[0] if tags else None
+            tname = TAG_NAMES.get(dom_tag, f"tag{dom_tag}") if dom_tag is not None else "elem_kernel"
+            gaps.append(
+                f"`{lbl}` uncovered `elem_kernel` ≈ {100 * uncovered_elem:.1f}% "
+                f"(dominant `{tname}`; no eligible Wave-1 package covers it)"
+            )
+        # 5. soe.symbolic / soe.trisolve / soe.cgs >= 10% when no eligible package covers them
+        for sk in ("soe.symbolic", "soe.trisolve", "soe.cgs"):
+            if sh[sk] >= 0.10:
+                if sk == "soe.trisolve" and fam == "D3c-SMS-Consistent":
+                    continue  # covered by 260b
+                gaps.append(
+                    f"`{lbl}` `{sk}` = {100 * sh[sk]:.1f}% (no eligible Wave-1 package targets `{sk}`)"
+                )
+    return gaps
 
 
 def main() -> int:
@@ -349,19 +472,30 @@ def main() -> int:
     combos = sorted({(k[0], k[1]) for k in by_dsm})
     share_keys = [
         "soe.symbolic", "soe.factor", "soe.trisolve", "soe.cgs", "soe.addA",
-        "elem_kernel", "mpm.a.prepare", "newStep_other", "unbal_other",
-        "upd_other", "dc_other", "commit.elements", "commit.record",
+        "elem_kernel", "mpm.a.prepare", "upd_constrained",
+        "dc.setSize", "dc.named", "dof.tangent", "ls_other", "convTest",
+        "tan_other", "newStep_other", "unbal_other", "upd_other", "dc_other",
+        "commit.elements", "commit.record", "commit_other",
         "residual", "formTangent_all", "sanisand_sub_ns",
     ]
+    unexplained_keys = ("upd_other", "newStep_other", "unbal_other", "dc_other", "tan_other", "ls_other", "commit_other")
     rows: List[Dict[str, Any]] = []
     unexplained_flags = []
+    not_rankable_notes = []
+
     for d, sz in combos:
         r1d = by_dsm.get((d, sz, "1t_deep"), [])
         r1c = by_dsm.get((d, sz, "1t_coarse"), [])
         rnc = by_dsm.get((d, sz, "nt_coarse"), [])
         if not r1d or not r1c or not rnc:
             continue
-        parsed1 = [analyze_tree(get_tree(r)) for r in r1d]
+
+        # Legacy manifest compatibility: infer constraint handler if missing
+        c_handler = r1d[0].get("constraints")
+        if not c_handler:
+            c_handler = "Plain" if r1d[0]["family"] in ("D4-MPM-ModeA", "D5-MCFT-2CLD12") else "Transformation"
+
+        parsed1 = [analyze_tree(get_tree(r), constraints=c_handler) for r in r1d]
         med_sh = {k: statistics.median([p["shares"][k] for p in parsed1]) for k in share_keys}
         all_tags = {t for p in parsed1 for t in p["tag_shares"]}
         med_tags = {t: statistics.median([p["tag_shares"].get(t, 0.0) for p in parsed1]) for t in all_tags}
@@ -377,30 +511,72 @@ def main() -> int:
         deep_ovh = w1d[0] / w1c[0] if w1c[0] > 0 else 0.0
         scale = w1c[0] / wnc[0] if wnc[0] > 0 else 0.0
 
-        # Flag unexplained remainders > 5%
-        for fn in ("residual", "upd_other", "newStep_other", "unbal_other", "dc_other"):
+        # Finding 1 + Finding 3 rankability gates
+        reasons: List[str] = []
+        if deep_ovh < 0.95:
+            reasons.append(f"deep_ovh={deep_ovh:.2f}x<0.95")
+
+        # Compare scope call counts across ALL records of all three modes
+        mode_calls = {
+            "1t_deep": [_scope_calls(get_tree(r)) for r in r1d],
+            "1t_coarse": [_scope_calls(get_tree(r)) for r in r1c],
+            "nt_coarse": [_scope_calls(get_tree(r)) for r in rnc],
+        }
+        ref_calls = mode_calls["1t_deep"][0]
+        call_diffs = []
+        for mname, clist in mode_calls.items():
+            for ci, cdict in enumerate(clist):
+                for sc in CALL_CHECK_SCOPES:
+                    if cdict[sc] != ref_calls[sc]:
+                        call_diffs.append(f"{mname}[r{ci}].{sc}={cdict[sc]}!={ref_calls[sc]}")
+        if call_diffs:
+            reasons.append("call-count mismatch: " + "; ".join(call_diffs[:3]))
+
+        if abs(med_sh["residual"]) > 0.005:
+            reasons.append(f"|residual|={100 * med_sh['residual']:+.2f}%>0.5%")
+
+        for fn in unexplained_keys:
             if med_sh[fn] > 0.05:
                 unexplained_flags.append(f"`{d}[{sz}]` `{fn}` = {100 * med_sh[fn]:.1f}%")
+                reasons.append(f"unresolved {fn}={100 * med_sh[fn]:.1f}%>5%")
+
+        rankable = len(reasons) == 0
+        if not rankable:
+            not_rankable_notes.append(f"`{d}[{sz}]`: " + ", ".join(reasons))
+
+        step1_vals = [r["step1_wall_s"] for r in r1d if r.get("step1_wall_s") is not None]
+        s1_med = statistics.median(step1_vals) if step1_vals else None
+        s1_sym_vals = [r["step1_soe_symbolic_s"] for r in r1d if r.get("step1_soe_symbolic_s") is not None]
+        s1_fac_vals = [r["step1_soe_factor_s"] for r in r1d if r.get("step1_soe_factor_s") is not None]
 
         rows.append({
             "deck": d, "size": sz, "label": f"{d}[{sz}]", "family": r1d[0]["family"],
+            "constraints": c_handler,
             "nsteps": r1d[0]["nsteps"], "nelm": r1d[0]["nelm"], "ndof": r1d[0].get("ndof_est", 0),
             "shares": med_sh, "tag_shares": med_tags, "tag_desc": tag_desc,
             "w1d": w1d, "w1c": w1c, "wnc": wnc,
             "deep_ovh": deep_ovh, "scale": scale,
             "threaded": rnc[0].get("threaded", "unknown"),
+            "rankable": rankable, "not_rankable_reasons": reasons,
+            "calls": ref_calls,
+            "step1_wall_s": s1_med,
+            "step1_soe_symbolic_s": statistics.median(s1_sym_vals) if s1_sym_vals else None,
+            "step1_soe_factor_s": statistics.median(s1_fac_vals) if s1_fac_vals else None,
         })
 
-    # Per-deck p/s/G matrix (Rule 2)
+    # Per-deck p/s/G matrix (Rule 2); ONLY rankable decks participate in ranking/picks
+    rankable_rows = [r for r in rows if r["rankable"]]
+    has_L = {r["deck"] for r in rankable_rows if r["size"] == "L"}
     matrix_rows = []
     for pkg, tier, rstatus, blocker, hyp, s_r2, src, p_desc, pfn in PACKAGE_SPECS:
         deck_cells = {}
         best_G = 1.0
         best_p = 0.0
         best_lbl = "-"
-        # Rule 1: rank on L if present for that deck family, else S/smoke
-        has_L = {r["deck"] for r in rows if r["size"] == "L"}
         for r in rows:
+            if not r["rankable"]:
+                deck_cells[r["label"]] = "N/R"
+                continue
             if pfn is None or rstatus in ("not phase-rankable", "not eligible (Wave 3)"):
                 deck_cells[r["label"]] = "-"
                 continue
@@ -408,7 +584,6 @@ def main() -> int:
             if s_r2 is not None and p > 0.0:
                 g = 1.0 / ((1.0 - p) + (p / s_r2))
                 deck_cells[r["label"]] = f"{100 * p:.1f}% / {g:.2f}x"
-                # Prefer L deck for ranking selection when available
                 is_rank_size = (r["size"] == "L") or (r["deck"] not in has_L)
                 if is_rank_size and g > best_G:
                     best_G, best_p, best_lbl = g, p, r["label"]
@@ -426,40 +601,67 @@ def main() -> int:
 
     # Format 5-part deliverable (`wp-briefs.md` §5)
     mode_tag = "SMOKE / PRE-#1153/#1154 VERIFICATION" if manifest.get("smoke") else "FULL BASELINE"
+    cpu_loads = [r["cpu_load_before_pct"] for r in ok_recs if r.get("cpu_load_before_pct") is not None]
+    cpu_summary = (
+        f"min={min(cpu_loads):.1f}%, med={statistics.median(cpu_loads):.1f}%, max={max(cpu_loads):.1f}%"
+        if cpu_loads else "not recorded"
+    )
+
     md: List[str] = []
     md.append(f"# WP-260 Wave 0 (`260-w0`) — {mode_tag}")
     md.append("")
     md.append(f"- **Binary SHA (verified `OpenSees.exe` == all `opensees.pyd` records):** `{exe_build}`")
     md.append(f"- **Environment (`OMP_*`/`KMP_*`/`MKL_*`/`LADRUNO_*`):** `{json.dumps(manifest.get('parent_env', {}))}`")
-    md.append(f"- **Affinity arg:** `{manifest.get('affinity_arg', 'none')}` | **Production threads:** `{manifest.get('production_threads', 8)}`")
-    md.append("- **Step-1 drop:** steady-state wall times computed from `-perStep` `series/wall_ms[1:]`. `other/residual` is NEVER clamped (`sum > 100.5%` fails).")
+    md.append(f"- **Affinity arg:** `{manifest.get('affinity_arg', 'none')}` | **Production threads:** `{manifest.get('production_threads', 8)}` | **Per-run CPU load probe (before spawn):** `{cpu_summary}`")
+    md.append("- **Step-1 exclusion (Finding 2):** step 1 runs BEFORE `profiler reset/start`, so step-1 symbolic/first-touch/D2 one-off factor costs are excluded from BOTH wall times AND rollup phase shares (and reported separately below).")
+    md.append("- **Accounting & rankability gates (Findings 1 & 3, brief §6):** `residual = step_wall - accounted` is NEVER clamped (`sum > 100.5%` fails hard). Any deck with `deep_ovh < 0.95`, mode call-count mismatch, `|residual| > 0.5%`, or unresolved remainder `> 5.0%` is marked `NO` (not rankable) and excluded from ranking.")
     md.append("")
 
     # Part 1: Phase-share table
     md.append("## 1. Phase-Share Table (`1t_deep`) & 3-Mode Wall Times")
     md.append("")
-    md.append("| Deck[Size] | DOF~ | Steps | `soe.sym` | `soe.fac` | `soe.tri` | `soe.cgs` | `soe.addA` | `elem_kern` | `mpm.a.prep` | `newStp_o` | `unbal_o` | `upd_o` | `dc_o` | `cmt_el` | `cmt_rec` | `residual` | `1t_deep` | `1t_coarse` | `nt_coarse` | `deep_ovh` | `1tc/ntc` | `threaded?` |")
-    md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|")
+    md.append("| Deck[Size] | DOF~ | Steps | `soe.sym` | `soe.fac` | `soe.tri` | `soe.cgs` | `soe.addA` | `elem_kern` | `mpm.a.prep` | `upd_constr` | `dc.setSz` | `dc.named` | `unbal_o` | `cmt_el` | `cmt_rec` | `residual` | `1t_deep` | `1t_coarse` | `nt_coarse` | `deep_ovh` | `1tc/ntc` | `threaded?` | `rankable?` |")
+    md.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|")
     for r in rows:
         sh = r["shares"]
+        rk = "YES" if r["rankable"] else "NO"
         md.append(
             f"| `{r['label']}` | {r['ndof']} | {r['nsteps']} "
             f"| {100 * sh['soe.symbolic']:.1f}% | {100 * sh['soe.factor']:.1f}% | {100 * sh['soe.trisolve']:.1f}% "
             f"| {100 * sh['soe.cgs']:.1f}% | {100 * sh['soe.addA']:.1f}% | {100 * sh['elem_kernel']:.1f}% "
-            f"| {100 * sh['mpm.a.prepare']:.1f}% | {100 * sh['newStep_other']:.1f}% | {100 * sh['unbal_other']:.1f}% "
-            f"| {100 * sh['upd_other']:.1f}% | {100 * sh['dc_other']:.1f}% | {100 * sh['commit.elements']:.1f}% "
-            f"| {100 * sh['commit.record']:.1f}% | {100 * sh['residual']:+.1f}% "
+            f"| {100 * sh['mpm.a.prepare']:.1f}% | {100 * sh['upd_constrained']:.1f}% | {100 * sh['dc.setSize']:.1f}% "
+            f"| {100 * sh['dc.named']:.1f}% | {100 * sh['unbal_other']:.1f}% | {100 * sh['commit.elements']:.1f}% "
+            f"| {100 * sh['commit.record']:.1f}% | {100 * sh['residual']:+.2f}% "
             f"| {r['w1d'][0]:.3f}s [{r['w1d'][1]:.3f}..{r['w1d'][2]:.3f}] "
             f"| {r['w1c'][0]:.3f}s [{r['w1c'][1]:.3f}..{r['w1c'][2]:.3f}] "
             f"| {r['wnc'][0]:.3f}s [{r['wnc'][1]:.3f}..{r['wnc'][2]:.3f}] "
-            f"| {r['deep_ovh']:.2f}x | {r['scale']:.2f}x | {r['threaded']} |"
+            f"| {r['deep_ovh']:.2f}x | {r['scale']:.2f}x | {r['threaded']} | {rk} |"
         )
     md.append("")
     md.append("**`elem_by_type` breakdown:** " + " ; ".join(f"`{r['label']}`: {r['tag_desc']}" for r in rows))
-    if unexplained_flags:
-        md.append("")
-        md.append("> **Remainders > 5 % (see `dump_trees.txt`):** " + ", ".join(unexplained_flags))
     md.append("")
+
+    # Step-1 one-off summary (Finding 2: report D2's one-off factor time separately)
+    s1_items = []
+    for r in rows:
+        if r["step1_wall_s"] is not None:
+            extra = ""
+            if r["step1_soe_symbolic_s"] is not None or r["step1_soe_factor_s"] is not None:
+                extra = (
+                    f" (`soe.symbolic`={r['step1_soe_symbolic_s']:.4f}s, "
+                    f"`soe.factor`={r['step1_soe_factor_s']:.4f}s — one-off `Linear -factorOnce`)"
+                )
+            s1_items.append(f"`{r['label']}`: {r['step1_wall_s']:.4f}s{extra}")
+    if s1_items:
+        md.append("**Step-1 one-off costs (excluded from steady-state shares & wall times):** " + " ; ".join(s1_items))
+        md.append("")
+
+    if not_rankable_notes:
+        md.append("> **NOT RANKABLE decks (excluded from §4 ranking & §5 picks):** " + " | ".join(not_rankable_notes))
+        md.append("")
+    if unexplained_flags:
+        md.append("> **Unexplained remainders > 5 % (see `dump_trees.txt`):** " + ", ".join(unexplained_flags))
+        md.append("")
 
     # Part 2: Size trend (S vs L)
     md.append("## 2. Size Trend (`p` at S vs L)")
@@ -480,16 +682,24 @@ def main() -> int:
         md.append("_Only one size present in this run (smoke/partial run); full S vs L table prints once S and L both run._")
     md.append("")
 
-    # Part 3: Phase -> package map + gaps
+    # Part 3: Phase -> package map + data-driven coverage gaps (Finding 4)
     md.append("## 3. Phase -> Package Map & Coverage Gaps")
     md.append("")
     md.append("- **`soe.{symbolic,factor,trisolve,cgs}`** -> `260a` (`soe.factor` on Pardiso via opt-in `iparm`; `soe.addA`/`dc.setSize` on MUMPS only), `260g` (mixed-precision IR, unranked), `260m` (AMG, Wave 3).")
     md.append("- **`soe.addA`** -> `260a` (MUMPS only), `260f` (persistent assembly/fast scatter, unranked).")
     md.append("- **`elem_by_type`** -> `260c1` (`LogStrain` finite-strain, N/A in small-strain D1), `260c2` (`LadrunoConcrete3D` on D1b, blocked `#1154`), `260h` (analytic return maps, unranked & blocked `#1153/#1154`), `260k` (Wave 3).")
     md.append("- **Explicit `LadrunoCPML` + `commit.elements` + `ExplicitBathe formTangent` + SMS `soe.trisolve`** -> `260b` (`Unblocked`).")
+    md.append("- **`upd_constrained` (`TransformationConstraintHandler::enforceSPs`)** -> unbucketed double element update on constrained elements inside `newStep`/`update`. **Handler dependence (Finding 9):** on D1b this share (~29 %) comes from `constraints Transformation` (fixed base + `equalDOF` top cap); a production D1b using a different constraint handler would not see it.")
+    md.append("- **`260c2` conservative ranking note (Finding 5):** `_p_260c2` ranks D1b using ONLY the `LadrunoBrick` (`33002`) `elem_by_type` share (conservative), excluding `upd_constrained` (which would raise D1b's total Concrete3D-evaluating share if counted, because `enforceSPs` calls `LadrunoBrick::update()` on constrained elements).")
     md.append("- **`mpm.a.prepare`** -> MPM host work (program `#1075`, tracked cleanly in its own column).")
-    md.append("- **`commit.record`** -> recorders (outside WP-260; none >= 10% here).")
-    md.append("- **Coverage gaps >= 10 %:** D5 `LadrunoMCFTStrip` fibre/section kernel (`elem_kern` on D5 — no package in WP-260 targets it); `TransformationConstraintHandler::enforceSPs()` double-update (`upd_other` / `newStep_other` on D1b and explicit decks).")
+    md.append("- **`commit.record`** -> recorders (outside WP-260; flagged automatically below if >= 10 %).")
+    gaps = _compute_coverage_gaps(rankable_rows)
+    if gaps:
+        md.append("- **Coverage gaps >= 10 % (computed from rankable rows):**")
+        for g in gaps:
+            md.append(f"  - {g}")
+    else:
+        md.append("- **Coverage gaps >= 10 % (computed from rankable rows):** none.")
     md.append("")
 
     # Part 4: Full per-deck p / s / G matrix (brief §4)
@@ -533,7 +743,7 @@ def main() -> int:
         for m in passing[:3]:
             md.append(f"- **`{m['pkg']}`** ({m['tier']}, blocker: {m['blocker']}): peak on `{m['best_lbl']}`, `p = {100 * m['best_p']:.1f}%`, rule-2 `s = {m['s']:.2f}x` -> **`G = {m['best_G']:.2f}x`**.")
     else:
-        md.append("- No eligible package cleared both `p >= 10%` and `G >= 1.10x` on this run.")
+        md.append("- No eligible package cleared both `p >= 10%` and `G >= 1.10x` on rankable decks in this run.")
 
     text = "\n".join(md) + "\n"
     args.out_results.write_text(text, encoding="utf-8")

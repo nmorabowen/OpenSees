@@ -3,9 +3,9 @@
 Covers all 5 D1 workload families (`wp-briefs.md` §1) with size parameter `size in {"smoke", "S", "L"}`
 and ZERO SRC/ edits:
   - d1a_brick_sanisand     : LadrunoBrick (bbar) + LadrunoSANISAND (SAS-ME), Pardiso +
-                             KrylovNewton -reuseFactor 5, Newmark (S, L >= 8x S)
+                             KrylovNewton -reuseFactor 3, Newmark (S, L >= 8x S)
   - d1b_brick_concrete3d   : LadrunoBrick (bbar) + LadrunoConcrete3D, Pardiso +
-                             KrylovNewton -reuseFactor 5, DisplacementControl (S, L >= 8x S)
+                             KrylovNewton -reuseFactor 3, DisplacementControl (S, L >= 8x S)
   - d2_cpml_wave           : LadrunoBrick (std) interior + LadrunoCPML jacket + H5DRM input,
                              Pardiso + Linear -factorOnce, Newmark (S, L >= 1e5 DOF)
   - d3a_explicit_cdl_cpml  : CentralDifferenceLadruno, LadrunoBrick -formulation uri -lumped +
@@ -181,7 +181,7 @@ def run_d1a_brick_sanisand(ops, *, size: str = "S", **_kw) -> Dict:
     ops.analysis("Transient")
 
     dt = 0.01
-    ts_t = [i * dt for i in range(nsteps + 2)]
+    ts_t = [i * dt for i in range(nsteps + 4)]
     ts_a = [3.5 * math.sin(2.0 * math.pi * 2.0 * t) for t in ts_t]
     ops.timeSeries("Path", 2, "-time", *ts_t, "-values", *ts_a)
     ops.pattern("UniformExcitation", 2, 1, "-accel", 2)
@@ -195,6 +195,7 @@ def run_d1a_brick_sanisand(ops, *, size: str = "S", **_kw) -> Dict:
         "ndof_est": ndof_est,
         "size": size,
         "family": "D1a-Brick-SANISAND",
+        "constraints": "Transformation",
     }
 
 
@@ -275,6 +276,7 @@ def run_d1b_brick_concrete3d(ops, *, size: str = "S", **_kw) -> Dict:
         "ndof_est": ndof_est,
         "size": size,
         "family": "D1b-Brick-Concrete3D",
+        "constraints": "Transformation",
     }
 
 
@@ -409,6 +411,7 @@ def run_d2_cpml_wave(ops, *, size: str = "S", h5drm_path: Optional[str] = None,
         "ndof_est": free_dof,
         "size": size,
         "family": "D2-CPML-Implicit",
+        "constraints": "Transformation",
     }
 
 
@@ -445,6 +448,7 @@ def _setup_explicit_cpml(ops, deck_key: str, integrator: str, *, size: str) -> D
         "ndof_est": free_dof,
         "size": size,
         "family": f"D3-{integrator}",
+        "constraints": "Transformation",
     }
 
 
@@ -508,6 +512,7 @@ def run_d3c_explicit_sms_cons(ops, *, size: str = "S", **_kw) -> Dict:
         "ndof_est": 3 * (nx + 1) * (ny + 1) * nz,
         "size": size,
         "family": "D3c-SMS-Consistent",
+        "constraints": "Transformation",
     }
 
 
@@ -543,6 +548,7 @@ def run_d4_mpm_modeA(ops, *, size: str = "S", **_kw) -> Dict:
         "ndof_est": 0,
         "size": size,
         "family": "D4-MPM-ModeA",
+        "constraints": "Plain",
     }
 
 
@@ -633,6 +639,7 @@ def run_d5_mcft_2cld12(ops, *, size: str = "S", **_kw) -> Dict:
         "ndof_est": 6 * n_ele,
         "size": size,
         "family": "D5-MCFT-2CLD12",
+        "constraints": "Plain",
     }
 
 
