@@ -597,10 +597,20 @@ def main() -> int:
                     run_combo(rep, deck, size, mode, nt, deep)
 
     mpath = out_dir / "manifest.json"
+    tpath = out_dir / "trees.json"
     if args.only and mpath.exists():
         old = json.loads(mpath.read_text(encoding="utf-8"))
         kept = [r for r in old.get("records", []) if (r.get("deck"), r.get("size")) not in set(targets)]
         records = kept + records
+        if tpath.exists():
+            old_trees = json.loads(tpath.read_text(encoding="utf-8"))
+            merged_trees = {
+                r["run_id"]: old_trees[r["run_id"]]
+                for r in kept
+                if r.get("run_id") in old_trees
+            }
+            merged_trees.update(trees)
+            trees = merged_trees
 
     manifest = {
         "exe_build": exe_build,
@@ -613,7 +623,6 @@ def main() -> int:
         "records": records,
     }
     mpath.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    tpath = out_dir / "trees.json"
     tpath.write_text(json.dumps(trees, indent=1), encoding="utf-8")
     print(f"Wrote {mpath} and {tpath}")
 

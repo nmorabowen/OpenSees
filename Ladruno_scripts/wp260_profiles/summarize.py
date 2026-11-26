@@ -16,7 +16,7 @@ Accounting & sanity rules (`wp-briefs.md` §2, §3, §6):
         across modes or repetitions;
       * `|residual| > 0.5%`; or
       * any unresolved remainder (`upd_other`, `newStep_other`, `unbal_other`, `dc_other`,
-        `tan_other`, `commit_other`) > 5.0%.
+        `tan_other`, `ls_other`, `commit_other`) > 5.0%.
 """
 from __future__ import annotations
 
@@ -343,10 +343,23 @@ def _dump_tree_str(node: Dict[str, Any], name: str = "root", pad: str = "") -> L
     return lines
 
 
+def _eligible_elem_kernel_covered(tags: Dict[int, float], fam: str) -> float:
+    """Return ONLY the `elem_kernel` share targeted by eligible Wave-1 packages on `fam`.
+
+    Must NOT subtract non-element phases (e.g. `soe.factor` from 260a, `soe.trisolve`
+    or `commit.elements` / `formTangent_all` from 260b) from `sh['elem_kernel']`.
+    """
+    covered = 0.0
+    if fam in ("D3-CentralDifferenceLadruno", "D3-ExplicitBathe"):
+        covered += tags.get(33023, 0.0)  # 260b: LadrunoCPML
+    if fam == "D1b-Brick-Concrete3D":
+        covered += tags.get(33002, 0.0)  # 260c2: LadrunoBrick (Concrete3D)
+    return covered
+
+
 def _compute_coverage_gaps(rows: List[Dict[str, Any]]) -> List[str]:
     """Finding 4: derive coverage gaps (>= 10% phase not targeted by any eligible package)
     directly from `rows` rather than hard-coded strings."""
-    eligible_specs = [sp for sp in PACKAGE_SPECS if sp[2] == "eligible" and sp[8] is not None]
     gaps: List[str] = []
     for r in rows:
         sh = r["shares"]
@@ -373,12 +386,19 @@ def _compute_coverage_gaps(rows: List[Dict[str, Any]]) -> List[str]:
                 f"(recorders — outside WP-260)"
             )
         # 4. Dominant elem_kernel tag >= 10% not covered by any eligible package on this deck
-        covered_by_eligible = sum(
-            float(sp[8](sh, tags, {"family": fam}) or 0.0) for sp in eligible_specs
-        )
-        uncovered_elem = max(0.0, sh["elem_kernel"] - covered_by_eligible)
+        covered_elem = _eligible_elem_kernel_covered(tags, fam)
+        uncovered_elem = max(0.0, sh["elem_kernel"] - covered_elem)
         if uncovered_elem >= 0.10:
-            dom_tag = max(tags.items(), key=lambda kv: kv[1])[0] if tags else None
+            covered_tags = set()
+            if fam in ("D3-CentralDifferenceLadruno", "D3-ExplicitBathe"):
+                covered_tags.add(33023)
+            if fam == "D1b-Brick-Concrete3D":
+                covered_tags.add(33002)
+            uncov_tags = {t: v for t, v in tags.items() if t not in covered_tags}
+            dom_tag = (
+                max(uncov_tags.items(), key=lambda kv: kv[1])[0]
+                if uncov_tags else (max(tags.items(), key=lambda kv: kv[1])[0] if tags else None)
+            )
             tname = TAG_NAMES.get(dom_tag, f"tag{dom_tag}") if dom_tag is not None else "elem_kernel"
             gaps.append(
                 f"`{lbl}` uncovered `elem_kernel` ≈ {100 * uncovered_elem:.1f}% "
@@ -689,7 +709,12 @@ def main() -> int:
     md.append("- **`soe.addA`** -> `260a` (MUMPS only), `260f` (persistent assembly/fast scatter, unranked).")
     md.append("- **`elem_by_type`** -> `260c1` (`LogStrain` finite-strain, N/A in small-strain D1), `260c2` (`LadrunoConcrete3D` on D1b, blocked `#1154`), `260h` (analytic return maps, unranked & blocked `#1153/#1154`), `260k` (Wave 3).")
     md.append("- **Explicit `LadrunoCPML` + `commit.elements` + `ExplicitBathe formTangent` + SMS `soe.trisolve`** -> `260b` (`Unblocked`).")
-    md.append("- **`upd_constrained` (`TransformationConstraintHandler::enforceSPs`)** -> unbucketed double element update on constrained elements inside `newStep`/`update`. **Handler dependence (Finding 9):** on D1b this share (~29 %) comes from `constraints Transformation` (fixed base + `equalDOF` top cap); a production D1b using a different constraint handler would not see it.")
+    d1b_rows = [r for r in rows if r["family"] == "D1b-Brick-Concrete3D"]
+    d1b_uc_desc = (
+        ", ".join(f"`{r['label']}`={100 * r['shares']['upd_constrained']:.1f}%" for r in d1b_rows)
+        if d1b_rows else "~29 %"
+    )
+    md.append(f"- **`upd_constrained` (`TransformationConstraintHandler::enforceSPs`)** -> unbucketed double element update on constrained elements inside `newStep`/`update`. **Handler dependence (Finding 9):** on D1b this share ({d1b_uc_desc}) comes from `constraints Transformation` (fixed base + `equalDOF` top cap); a production D1b using a different constraint handler would not see it.")
     md.append("- **`260c2` conservative ranking note (Finding 5):** `_p_260c2` ranks D1b using ONLY the `LadrunoBrick` (`33002`) `elem_by_type` share (conservative), excluding `upd_constrained` (which would raise D1b's total Concrete3D-evaluating share if counted, because `enforceSPs` calls `LadrunoBrick::update()` on constrained elements).")
     md.append("- **`mpm.a.prepare`** -> MPM host work (program `#1075`, tracked cleanly in its own column).")
     md.append("- **`commit.record`** -> recorders (outside WP-260; flagged automatically below if >= 10 %).")

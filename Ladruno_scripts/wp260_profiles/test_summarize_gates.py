@@ -95,3 +95,32 @@ def test_refuses_unresolved_remainder_above_5_percent(tmp_path):
     snap = _make_mutated_snap(tmp_path, QUIET_SNAP, mut)
     txt = _run_summarize(snap, tmp_path / "out.md")
     assert "unresolved newStep_other=" in txt and ">5%" in txt
+
+
+def test_coverage_gaps_does_not_subtract_non_elem_phases(tmp_path):
+    """Regression guard: _compute_coverage_gaps must NOT subtract non-element phases
+    (soe.trisolve, soe.factor, commit.elements) from elem_kernel when computing
+    uncovered element shares."""
+    txt_smoke = _run_summarize(SMOKE_SNAP, tmp_path / "smoke.md")
+    # On d3c_explicit_sms_cons[smoke], elem_kernel=80.4% (LadrunoBrick) and 260b targets
+    # soe.trisolve (10.4%), NOT elem_kernel -> uncovered elem_kernel must be 80.4%, not 69.9%.
+    assert "`d3c_explicit_sms_cons[smoke]` uncovered `elem_kernel` ≈ 80.4%" in txt_smoke
+    # On d3a[smoke], if LadrunoBrick (33002) is 15% while commit.elements is ~19%,
+    # commit.elements (targeted by 260b) must NOT mask uncovered LadrunoBrick!
+    def mut_d3a(m, t):
+        for r in m["records"]:
+            if r["deck"] == "d3a_explicit_cdl_cpml" and r["mode"] == "1t_deep":
+                step = t[r["run_id"]]["tree"]["children"]["step"]
+                eu = step["children"]["solveCurrentStep"]["children"]["update"]["children"]["elem.update"]
+                for row in eu["elem_by_type"]:
+                    if row[0] == 33002:
+                        row[2] = int(step["wall_ns"] * 0.15)
+                        eu["wall_ns"] += row[2]
+                        step["children"]["solveCurrentStep"]["children"]["update"]["wall_ns"] += row[2]
+                        step["children"]["solveCurrentStep"]["wall_ns"] += row[2]
+                        step["wall_ns"] += row[2]
+
+    snap = _make_mutated_snap(tmp_path, QUIET_SNAP, mut_d3a)
+    txt = _run_summarize(snap, tmp_path / "d3a_gap.md")
+    assert "`d3a_explicit_cdl_cpml[smoke]` uncovered `elem_kernel`" in txt
+    assert "dominant `LadrunoBrick`" in txt
