@@ -1,4 +1,4 @@
-#= RE-RECORDED by `concrete3d_replay record` under libm=linux-glibc-2.39-0ubuntu8.9 on kernel-blob=94dbd6a85b95d3603f1cf449802fbe91ab45d6b3.
+#= RE-RECORDED by `concrete3d_replay record` under libm=linux-glibc-2.39-0ubuntu8.12 on kernel-blob=94dbd6a85b95d3603f1cf449802fbe91ab45d6b3.
 #= OUTPUTS, this build's: every O, D/M, W, Z and N line, the K line's status=, subInfo= and cls=, an R record's
 #= pass= and T[2]. INPUTS and selection, the source fixture's, verbatim: G P E S X H I C, T (but an R record's
 #= T[2]), the K line's kind= seq= tag= ele= dim= calls= integ= and a C/F record's pass=, and the record order.
@@ -26,7 +26,7 @@
 # libmmt and under glibc 2.39-0ubuntu8.9 (unset 788; COMPATIBLE's is its 'both', 834). Classes: refusal, rescue-fail (the rescue's adaptive path at its floor or its budget, ladruno's only
 # final failure), sub-increment (the deterministic chain by piece count, the ladder's levels 1 and 2, the rescue's
 # direct and sub-incremented returns), kink, direct, and dead (a cracked dead point).
-#@ libm=linux-glibc-2.39-0ubuntu8.9 kernel-blob=94dbd6a85b95d3603f1cf449802fbe91ab45d6b3 binary=concrete3d_replay-record M-lines=concrete3d_replay-record N-lines=concrete3d_replay-record
+#@ libm=linux-glibc-2.39-0ubuntu8.12 kernel-blob=94dbd6a85b95d3603f1cf449802fbe91ab45d6b3 binary=concrete3d_replay-record M-lines=concrete3d_replay-record N-lines=concrete3d_replay-record
 # unset: 17 of 28077 records (R 875, F 224, C 26978; kink candidates 714)
 # COMPATIBLE: 11 of 9917 records (R 723, F 125, C 9069; kink candidates 121)
 Q log=-0.9942522733438669 exp=0.69073433063735468 cos=0.93232734560603447 sin=0.36161543196496199 pow=0.22506221362103412 atan2=1.1659045405098132 acos=1.2661036727794992 log=0.53062825106217038 exp=0.18268352405273466 cos=-0.12884449429552464 sin=0.99166481045246857 pow=2.2165288177689004 atan2=-2.2785068482627988 acos=2.4496374784634765 log=3.6136169696133895 exp=7.7210207816561242e-17 cos=0.82583678044350006 sin=-0.56390922325026249 pow=225.97524421936134 atan2=1.1906348248240526 acos=0.044725087168733454
