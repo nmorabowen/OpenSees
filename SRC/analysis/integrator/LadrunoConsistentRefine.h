@@ -45,6 +45,7 @@
 #include <Vector.h>
 #include <OPS_Globals.h>
 
+#include <cmath>
 #include <vector>
 
 namespace Ladruno {
@@ -81,9 +82,18 @@ applyConsistentRefine(std::vector<ConsistentBlock> &blocks, LinearSOE *theSOE, V
         int neq = theSOE->getNumEqn();
         int    localActive = blocks.empty() ? 0 : 1;
         int    localBad    = (Ainv == 0 || neq != a.Size()) ? 1 : 0;
-        // Ladruno (WP-260b): pack (localActive, localBad) into one 2-double Allreduce.
-        double gActive = 0.0, gBad = 0.0;
-        theSOE->globalReduceSum2((double)localActive, (double)localBad, gActive, gBad);
+        int    localNeedW  = (!sc.wValid || sc.wSOE != (const void *)theSOE ||
+                              (int)sc.w.size() != neq) ? 1 : 0;
+        // Ladruno (WP-260b): pack (localActive, localBad*2^24 + localNeedW) into one
+        // 2-double Allreduce (exact IEEE-754 integers up to 16M ranks) so every rank
+        // enters/skips assembleSharedSum(sc.ones) in lockstep (deadlock-free).
+        const double kPackShift = 16777216.0;   // 2^24
+        double gActive = 0.0, gBadAndW = 0.0;
+        theSOE->globalReduceSum2((double)localActive,
+                                 (double)localNeedW + kPackShift * (double)localBad,
+                                 gActive, gBadAndW);
+        const double gBad   = std::floor(gBadAndW / kPackShift);
+        const double gNeedW = gBadAndW - gBad * kPackShift;
         if (gActive == 0.0)
             return 0;   // nothing scaled anywhere -> every rank returns together
         if (gBad > 0.0)
@@ -93,9 +103,8 @@ applyConsistentRefine(std::vector<ConsistentBlock> &blocks, LinearSOE *theSOE, V
 
         // Ladruno (WP-260b / ADR-67 P1.1): weight w_i = 1/multiplicity_i (mult = #ranks
         // sharing DOF i). Cached per (SOE, neq) and invalidated by domainChanged() /
-        // recvSelf() (which run collectively across all ranks), avoiding an extra halo
-        // exchange + heap allocations on every step.
-        if (!sc.wValid || sc.wSOE != (const void *)theSOE || (int)sc.w.size() != neq) {
+        // recvSelf(); synchronized via gNeedW so all ranks call assembleSharedSum together.
+        if (gNeedW > 0.0) {
             sc.w.assign((size_t)(neq > 0 ? neq : 0), 1.0);
             if (sc.ones.Size() != neq)
                 sc.ones = Vector(neq);

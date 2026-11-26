@@ -1159,14 +1159,19 @@ const Vector &LadrunoQuad::getResistingForce(void)
       if (edotV != 0.0) {
         double rhoBV = theMaterial[i]->getRho();
         if (rhoBV > 0.0) {
-          // Ladruno (WP-260b): cache elastic dilatational speed c_d per GP (G-BYTE).
+          // Ladruno (WP-260b): cache elastic dilatational speed c_d per GP ONLY for
+          // materials with guaranteed constant getInitialTangent() (excludes stress/
+          // stage-dependent soils such as LadrunoHS, PDMY*, SANISAND, and wrappers),
+          // guarded by rho and disabled on setParameter() (0-ULP G-BYTE).
+          const bool canCacheCd =
+              !bvCdCacheDisabled && LadrunoShell::hasConstantInitialTangent(theMaterial[i]);
           double cd;
-          if (!bvCdCacheDisabled && bvCdValid[i] && bvRhoCache[i] == rhoBV) {
+          if (canCacheCd && bvCdValid[i] && bvRhoCache[i] == rhoBV) {
             cd = bvCdCache[i];
           } else {
             const Matrix &ddBV = theMaterial[i]->getInitialTangent();
             cd = sqrt(fabs(ddBV(0,0)) / rhoBV);             // elastic dilatational speed
-            if (!bvCdCacheDisabled) {
+            if (canCacheCd) {
               bvCdCache[i]  = cd;
               bvRhoCache[i] = rhoBV;
               bvCdValid[i]  = true;

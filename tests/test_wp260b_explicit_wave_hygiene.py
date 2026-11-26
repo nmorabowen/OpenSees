@@ -22,6 +22,8 @@ Verifies every ADR-68 gate for WP-260b:
      and revertToLastCommit.
 """
 import math
+import os
+import tempfile
 import pytest
 
 from _testbed import ops
@@ -611,3 +613,382 @@ def test_cpml_threaded_bit_identity(kind):
     t4 = _run_cpml_wave(kind, nthreads=4)
     _assert_bit_identical(t1, t4, f"CPML 1T vs 4T ({kind})")
     assert max(abs(u) for u in t1) > 0.0
+
+
+# ----------------------------------------------------------------------------
+# 9. Stress-dependent NDMaterial exclusion from bvCdCache + Brick setParameter
+# ----------------------------------------------------------------------------
+def test_bv_cd_cache_excludes_stress_dependent_hs():
+    """LadrunoHS getInitialTangent() varies with committed stress & stage; bvCdCache
+    must NOT cache c_d for it (0-ULP bit-identical to setParameter-disabled oracle)."""
+    def run_brick_hs(disable_cache, stage_switch=False):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 3)
+        ops.nDMaterial(
+            "LadrunoHS", 1, 35000.0, 35000.0, 105000.0, 0.5, 10.0, 38.0, 8.0,
+            "-nu", 0.2, "-pref", 100.0, "-Rf", 0.9, "-rho", 2.0,
+            "-stage", 0 if stage_switch else 1,
+        )
+        coords = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                  (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+        for i, (x, y, z) in enumerate(coords, 1):
+            ops.node(i, float(x), float(y), float(z))
+            if z == 0:
+                ops.fix(i, 1, 1, 1)
+        ops.element("LadrunoBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1,
+                    "-formulation", "std", "-lumped", "-bulkViscosity", 0.5, 1.2)
+        if disable_cache:
+            ops.parameter(1, "element", 1, "material", 1, "E50_ref")
+        ops.timeSeries("Constant", 1)
+        ops.pattern("Plain", 1, 1)
+        for n in (5, 6, 7, 8):
+            ops.load(n, 0.0, 0.0, -500.0)
+        ops.constraints("Plain")
+        ops.numberer("Plain")
+        ops.system("Diagonal")
+        ops.test("NormDispIncr", 1e-12, 1)
+        ops.algorithm("Linear")
+        ops.integrator("CentralDifferenceLadruno")
+        ops.analysis("Transient")
+        out = []
+        n1 = 20 if stage_switch else 50
+        for _ in range(n1):
+            assert ops.analyze(1, 5e-4) == 0
+            out.append(ops.nodeDisp(5, 3))
+        if stage_switch:
+            ops.updateMaterialStage("-material", 1, "-stage", 1)
+            for _ in range(30):
+                assert ops.analyze(1, 5e-4) == 0
+                out.append(ops.nodeDisp(5, 3))
+        return out
+
+    _assert_bit_identical(
+        run_brick_hs(False, False), run_brick_hs(True, False),
+        "LadrunoBrick + LadrunoHS (stage 1) bvCdCache exclusion",
+    )
+    _assert_bit_identical(
+        run_brick_hs(False, True), run_brick_hs(True, True),
+        "LadrunoBrick + LadrunoHS (stage 0->1) bvCdCache exclusion",
+    )
+
+    def run_quad_hs(disable_cache):
+        ops.wipe()
+        ops.model("basic", "-ndm", 2, "-ndf", 2)
+        ops.nDMaterial(
+            "LadrunoHS", 1, 35000.0, 35000.0, 105000.0, 0.5, 10.0, 38.0, 8.0,
+            "-nu", 0.2, "-pref", 100.0, "-Rf", 0.9, "-rho", 2.0, "-stage", 1,
+        )
+        for i, (x, y) in enumerate([(0, 0), (1, 0), (1, 1), (0, 1)], 1):
+            ops.node(i, float(x), float(y))
+            if y == 0:
+                ops.fix(i, 1, 1)
+        ops.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-type", "PlaneStrain", "-thick", 1.0,
+                    "-formulation", "std", "-bulkViscosity", 0.5, 1.2)
+        if disable_cache:
+            ops.parameter(1, "element", 1, "material", 1, "E50_ref")
+        ops.timeSeries("Constant", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(3, 0.0, -500.0)
+        ops.load(4, 0.0, -500.0)
+        ops.constraints("Plain")
+        ops.numberer("Plain")
+        ops.system("Diagonal")
+        ops.test("NormDispIncr", 1e-12, 1)
+        ops.algorithm("Linear")
+        ops.integrator("CentralDifferenceLadruno")
+        ops.analysis("Transient")
+        out = []
+        for _ in range(50):
+            assert ops.analyze(1, 5e-4) == 0
+            out.append(ops.nodeDisp(3, 2))
+        return out
+
+    _assert_bit_identical(
+        run_quad_hs(False), run_quad_hs(True),
+        "LadrunoQuad + LadrunoHS bvCdCache exclusion",
+    )
+
+
+def test_brick_bv_cd_cache_set_parameter_invalidation():
+    """Verify LadrunoBrick ElasticIsotropic bvCdCache is 0-ULP identical to uncached
+    before and after an element-level updateParameter(E)."""
+    def run(attach_before_steps):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 3)
+        ops.nDMaterial("ElasticIsotropic", 1, 1.0e7, 0.25, 2.0)
+        coords = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                  (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+        for i, (x, y, z) in enumerate(coords, 1):
+            ops.node(i, float(x), float(y), float(z))
+            if z == 0:
+                ops.fix(i, 1, 1, 1)
+        ops.element("LadrunoBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1,
+                    "-formulation", "std", "-lumped", "-bulkViscosity", 0.5, 1.2)
+        if attach_before_steps:
+            ops.parameter(1, "element", 1, "E")
+        ops.timeSeries("Constant", 1)
+        ops.pattern("Plain", 1, 1)
+        for n in (5, 6, 7, 8):
+            ops.load(n, 0.0, 0.0, -500.0)
+        ops.constraints("Plain")
+        ops.numberer("Plain")
+        ops.system("Diagonal")
+        ops.test("NormDispIncr", 1e-12, 1)
+        ops.algorithm("Linear")
+        ops.integrator("CentralDifferenceLadruno")
+        ops.analysis("Transient")
+        out = []
+        for _ in range(20):
+            assert ops.analyze(1, 5e-5) == 0
+            out.append(ops.nodeDisp(5, 3))
+        if not attach_before_steps:
+            # Attach mid-run after bvCdCache has been populated for 20 steps!
+            ops.parameter(1, "element", 1, "E")
+        ops.updateParameter(1, 4.0e7)
+        for _ in range(30):
+            assert ops.analyze(1, 5e-5) == 0
+            out.append(ops.nodeDisp(5, 3))
+        return out
+
+    u_pre = run(True)
+    u_mid = run(False)
+    _assert_bit_identical(u_pre, u_mid, "LadrunoBrick bvCdCache mid-run setParameter")
+    assert max(abs(x) for x in u_pre) > 0.0
+
+
+# ----------------------------------------------------------------------------
+# 10. Lumped pure-alphaM O(n) fast paths: 0-ULP oracle vs Element::getRayleighDampingForces
+# ----------------------------------------------------------------------------
+@pytest.mark.parametrize("elem_kind", ["brick", "brick20", "quad", "cpml"])
+def test_lumped_alphaM_fast_path_0ulp_oracle(elem_kind):
+    """Compare pure alphaM fast path (betaK=0) against Element::getRayleighDampingForces
+    dense fallback triggered via betaK=1e-300 (contributes 0.0 in FP64 -> 0-ULP oracle)."""
+    def run(beta_k):
+        ops.wipe()
+        if elem_kind == "quad":
+            ops.model("basic", "-ndm", 2, "-ndf", 2)
+            ops.nDMaterial("ElasticIsotropic", 1, 1.0e7, 0.25, 2.0)
+            for i, (x, y) in enumerate([(0, 0), (1, 0), (1, 1), (0, 1)], 1):
+                ops.node(i, float(x), float(y))
+                if y == 0:
+                    ops.fix(i, 1, 1)
+            ops.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-type", "PlaneStrain", "-thick", 1.0)
+            load_node, dof, dt = 3, 1, 1e-4
+            load_vec = (100.0, 0.0)
+        elif elem_kind == "brick20":
+            ops.model("basic", "-ndm", 3, "-ndf", 3)
+            ops.nDMaterial("ElasticIsotropic", 1, 1.0e7, 0.25, 2.0)
+            corners = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                       (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+            mids = [(0.5, 0, 0), (1, 0.5, 0), (0.5, 1, 0), (0, 0.5, 0),
+                    (0.5, 0, 1), (1, 0.5, 1), (0.5, 1, 1), (0, 0.5, 1),
+                    (0, 0, 0.5), (1, 0, 0.5), (1, 1, 0.5), (0, 1, 0.5)]
+            for idx, (x, y, z) in enumerate(corners + mids, start=1):
+                ops.node(idx, float(x), float(y), float(z))
+                if z == 0:
+                    ops.fix(idx, 1, 1, 1)
+            ops.element("LadrunoBrick20", 1, *range(1, 21), 1, "-formulation", "std", "-lumped")
+            load_node, dof, dt = 7, 1, 5e-5
+            load_vec = (100.0, 0.0, 0.0)
+        else:
+            ops.model("basic", "-ndm", 3, "-ndf", 3)
+            coords = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                      (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+            for i, (x, y, z) in enumerate(coords, 1):
+                ops.node(i, float(x), float(y), float(z))
+                if z == 0:
+                    ops.fix(i, 1, 1, 1)
+            if elem_kind == "brick":
+                ops.nDMaterial("ElasticIsotropic", 1, 1.0e7, 0.25, 2.0)
+                ops.element("LadrunoBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1,
+                            "-formulation", "uri", "-lumped")
+                dt = 1e-4
+            else:
+                ops.element(
+                    "LadrunoCPML", 1, 1, 2, 3, 4, 5, 6, 7, 8,
+                    "-E", 1.0e8, "-nu", 0.25, "-rho", 2000.0,
+                    "-box", 0.0, 0.5, 0.0, 0.5, 0.0, 0.5, 1.0, 1.0, 1.0,
+                    "-m", 2.0, "-R0", 1e-4, "-kappaMax", 1.0, "-alphaMax", 0.0,
+                    "-lumped",
+                )
+                dt = 5e-4
+            load_node, dof = 7, 1
+            load_vec = (1000.0, 0.0, 0.0)
+
+        ops.rayleigh(25.0, beta_k, 0.0, 0.0)
+        ops.timeSeries("Constant", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(load_node, *load_vec)
+        ops.constraints("Plain")
+        ops.numberer("Plain")
+        ops.system("Diagonal")
+        ops.test("NormDispIncr", 1e-12, 1)
+        ops.algorithm("Linear")
+        ops.integrator("CentralDifferenceLadruno")
+        ops.analysis("Transient")
+        out = []
+        for _ in range(40):
+            assert ops.analyze(1, dt) == 0
+            out.append(ops.nodeDisp(load_node, dof))
+        return out
+
+    u_fast = run(0.0)
+    u_oracle = run(1.0e-300)
+    _assert_bit_identical(u_fast, u_oracle, f"lumped alphaM fast path ({elem_kind})")
+    assert max(abs(x) for x in u_fast) > 0.0
+
+
+# ----------------------------------------------------------------------------
+# 11. LadrunoCPML lazy tangents revertToLastCommit + Biot u-p Rayleigh 8T + restart
+# ----------------------------------------------------------------------------
+def test_cpml_lazy_tangents_revert_to_last_commit():
+    """Forced failed step at a different dt triggers revertToLastCommit; retrying at
+    the original dt must rematerialize K_eff_/C_eff_ bit-identically to a clean run."""
+    def run(inject_fail):
+        ops.wipe()
+        ops.model("basic", "-ndm", 3, "-ndf", 3)
+        coords = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                  (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+        for i, (x, y, z) in enumerate(coords, 1):
+            ops.node(i, float(x), float(y), float(z))
+            if z == 0:
+                ops.fix(i, 1, 1, 1)
+        ops.element(
+            "LadrunoCPML", 1, 1, 2, 3, 4, 5, 6, 7, 8,
+            "-E", 1.0e8, "-nu", 0.25, "-rho", 2000.0,
+            "-box", 0.0, 0.5, 0.0, 0.5, 0.0, 0.5, 1.0, 1.0, 1.0,
+            "-m", 2.0, "-R0", 1e-4, "-kappaMax", 1.0, "-alphaMax", 0.0,
+        )
+        ops.timeSeries("Constant", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(5, 1.0e4, 0.0, 0.0)
+        ops.constraints("Plain")
+        ops.numberer("Plain")
+        ops.system("BandGeneral")
+        ops.test("NormDispIncr", 1e-12, 10)
+        ops.algorithm("Newton")
+        ops.integrator("Newmark", 0.5, 0.25)
+        ops.analysis("Transient")
+        out = []
+        for _ in range(5):
+            assert ops.analyze(1, 1e-3) == 0
+            out.append(ops.nodeDisp(5, 1))
+        if inject_fail:
+            ops.test("NormDispIncr", 1e-30, 1)
+            assert ops.analyze(1, 5e-3) != 0
+            ops.test("NormDispIncr", 1e-12, 10)
+        for _ in range(5):
+            assert ops.analyze(1, 1e-3) == 0
+            out.append(ops.nodeDisp(5, 1))
+        return out
+
+    _assert_bit_identical(run(True), run(False), "CPML lazy tangents revertToLastCommit")
+
+
+def test_cpml_biot_up_rayleigh_threaded_bit_identity():
+    """Biot u-p LadrunoCPML with Rayleigh damping must be 0-ULP bit-identical 1T vs 8T."""
+    def run(nt):
+        ops.wipe()
+        ops.ladrunoThreads(nt)
+        ops.model("basic", "-ndm", 2, "-ndf", 3)
+        nx, ny = 4, 3
+
+        def nid(i, j):
+            return 1 + i + (nx + 1) * j
+
+        for j in range(ny + 1):
+            for i in range(nx + 1):
+                ops.node(nid(i, j), float(i), float(j))
+                if i == 0 or i == nx or j == 0:
+                    ops.fix(nid(i, j), 1, 1, 1)
+        etag = 1
+        for j in range(ny):
+            for i in range(nx):
+                ns = (nid(i, j), nid(i + 1, j), nid(i + 1, j + 1), nid(i, j + 1))
+                ops.element(
+                    "LadrunoCPML", etag, *ns,
+                    "-E", 1.0e7, "-nu", 0.25, "-rho", 2.0,
+                    "-box", 1.0, 3.0, 1.0, 3.0, "-Lx", 1.0, "-Ly", 1.0,
+                    "-m", 2.0, "-R0", 1e-4, "-kappaMax", 1.0, "-alphaMax", 0.0,
+                    "-up", "-Kf", 2.0e6, "-poro", 0.4, "-rhoF", 1.0,
+                    "-alphaB", 1.0, "-Ks", 1.0e10,
+                    "-permH", 1e-3, 1e-3, "-gammaW", 9.81,
+                )
+                etag += 1
+        ops.rayleigh(0.5, 1e-4, 0.0, 0.0)
+        ops.timeSeries("Constant", 1)
+        ops.pattern("Plain", 1, 1)
+        ops.load(nid(2, ny), 100.0, -50.0, 0.0)
+        ops.constraints("Plain")
+        ops.numberer("Plain")
+        ops.system("BandGeneral")
+        ops.test("NormDispIncr", 1e-10, 10)
+        ops.algorithm("Newton")
+        ops.integrator("Newmark", 0.5, 0.25)
+        ops.analysis("Transient")
+        out = []
+        for _ in range(15):
+            assert ops.analyze(1, 1e-3) == 0
+            out.extend(ops.nodeDisp(nid(2, ny)))
+        ops.ladrunoThreads(1)
+        return out
+
+    t1 = run(1)
+    t8 = run(8)
+    _assert_bit_identical(t1, t8, "CPML Biot u-p + Rayleigh 1T vs 8T")
+    assert max(abs(x) for x in t1) > 0.0
+
+
+def test_explicit_bathe_and_cpml_database_save_restore():
+    """Verify ExplicitBathe::sendSelf/recvSelf cache invalidation and LadrunoCPMLKernel
+    packState/unpackState lazy tangent materialization across database save/restore."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, "wp260b_chk")
+
+        def build():
+            ops.wipe()
+            ops.model("basic", "-ndm", 3, "-ndf", 3)
+            coords = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
+                      (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+            for i, (x, y, z) in enumerate(coords, 1):
+                ops.node(i, float(x), float(y), float(z))
+                if z == 0:
+                    ops.fix(i, 1, 1, 1)
+            ops.element(
+                "LadrunoCPML", 1, 1, 2, 3, 4, 5, 6, 7, 8,
+                "-E", 1.0e8, "-nu", 0.25, "-rho", 2000.0,
+                "-box", 0.0, 0.5, 0.0, 0.5, 0.0, 0.5, 1.0, 1.0, 1.0,
+                "-m", 2.0, "-R0", 1e-4, "-kappaMax", 1.0, "-alphaMax", 0.0,
+                "-lumped",
+            )
+            ops.timeSeries("Constant", 1)
+            ops.pattern("Plain", 1, 1)
+            ops.load(5, 1.0e4, 0.0, 0.0)
+            ops.constraints("Plain")
+            ops.numberer("Plain")
+            ops.system("Diagonal")
+            ops.test("NormDispIncr", 1e-12, 1)
+            ops.algorithm("Linear")
+            ops.integrator("ExplicitBathe", 0.54)
+            ops.analysis("Transient")
+            ops.database("File", db)
+
+        build()
+        for _ in range(10):
+            assert ops.analyze(1, 5e-4) == 0
+        ops.save(1)
+        u_cont = []
+        for _ in range(10):
+            assert ops.analyze(1, 5e-4) == 0
+            u_cont.append(ops.nodeDisp(5, 1))
+
+        build()
+        ops.restore(1)
+        u_rest = []
+        for _ in range(10):
+            assert ops.analyze(1, 5e-4) == 0
+            u_rest.append(ops.nodeDisp(5, 1))
+        ops.wipe()  # release Windows file handles before TemporaryDirectory cleanup
+
+    _assert_bit_identical(u_cont, u_rest, "ExplicitBathe + CPML database save/restore")
+    assert max(abs(x) for x in u_cont) > 0.0
