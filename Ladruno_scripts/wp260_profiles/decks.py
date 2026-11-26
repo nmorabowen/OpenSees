@@ -1,30 +1,85 @@
-"""Deterministic north-star benchmark decks for WP-260 Wave 0 (`260-w0`).
+"""Deterministic north-star benchmark decks for WP-260 Wave 0 (`260-w0`), matching D1.
 
-Covers all 5 D1 workload families on `origin/ladruno` @ 7e91aaf1c with ZERO SRC/ changes:
-  1. d1a_brick_sanisand     : 3D LadrunoBrick (bbar) + LadrunoSANISAND (SAS-ME), Pardiso, Newmark
-  2. d1b_brick_concrete3d   : 3D LadrunoBrick (bbar) + LadrunoConcrete3D, Pardiso, cyclic cracking/damage
-  3. d2_cpml_wave           : 3D stdBrick interior + LadrunoCPML absorbing jacket, Pardiso, Newmark
-  4. d3a_explicit_cdl_cpml  : Explicit CentralDifferenceLadruno + Diagonal + ssp LadrunoBrick + LadrunoCPML
-  5. d3b_explicit_bathe_cpml: Explicit ExplicitBathe + Diagonal + ssp LadrunoBrick + LadrunoCPML
-  6. d3c_explicit_sms_cons  : Explicit CentralDifferenceSMSConsistent + Pardiso + fine-slice LadrunoBrick
-  7. d4_mpm_modeA           : Mode-A implicit MPM dynamic cantilever (2D GIMP + Pardiso + Newmark)
-  8. d5_mcft_2cld12         : 2CLD12-representative RC column (LadrunoForceBeamColumn -monolithic +
-                              LadrunoNDFiber + LadrunoMCFTStrip -cyclicDegradation)
+Covers all 5 D1 workload families (`wp-briefs.md` §1) with size parameter `size in {"smoke", "S", "L"}`
+and ZERO SRC/ edits:
+  - d1a_brick_sanisand     : LadrunoBrick (bbar) + LadrunoSANISAND (SAS-ME), Pardiso +
+                             KrylovNewton -reuseFactor 5, Newmark (S, L >= 8x S)
+  - d1b_brick_concrete3d   : LadrunoBrick (bbar) + LadrunoConcrete3D, Pardiso +
+                             KrylovNewton -reuseFactor 5, DisplacementControl (S, L >= 8x S)
+  - d2_cpml_wave           : LadrunoBrick (std) interior + LadrunoCPML jacket + H5DRM input,
+                             Pardiso + Linear -factorOnce, Newmark (S, L >= 1e5 DOF)
+  - d3a_explicit_cdl_cpml  : CentralDifferenceLadruno, LadrunoBrick -formulation uri -lumped +
+                             LadrunoCPML -lumped, Diagonal (S, L >= 8x S)
+  - d3b_explicit_bathe_cpml: ExplicitBathe, LadrunoBrick -formulation uri -lumped +
+                             LadrunoCPML -lumped, Diagonal (S, L >= 8x S)
+  - d3c_explicit_sms_cons  : CentralDifferenceSMSConsistent, Pardiso, LadrunoBrick (bbar) (S)
+  - d4_mpm_modeA           : Mode-A implicit MPM dynamic cantilever, Pardiso, Newmark (S)
+  - d5_mcft_2cld12         : 2CLD12 RC column (LadrunoForceBeamColumn -monolithic +
+                             LadrunoNDFiber + LadrunoMCFTStrip -cyclicDegradation) (S)
+
+Note: This module NEVER imports `h5py` so child processes importing `opensees.pyd` avoid HDF5
+library conflicts. Parent processes generate `.h5drm` files and pass `h5drm_path` via args.
 """
 from __future__ import annotations
 
 import math
-from typing import Callable, Dict, Tuple
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Tuple
+
+
+SIZE_SPECS: Dict[str, Dict[str, Dict]] = {
+    "d1a_brick_sanisand": {
+        "smoke": {"nx": 4, "ny": 4, "nz": 8, "nsteps": 6},
+        "S": {"nx": 6, "ny": 6, "nz": 10, "nsteps": 16},        # 360 hex
+        "L": {"nx": 12, "ny": 12, "nz": 20, "nsteps": 10},     # 2,880 hex (8x S)
+    },
+    "d1b_brick_concrete3d": {
+        "smoke": {"nx": 4, "ny": 4, "nz": 8, "nsteps": 6},
+        "S": {"nx": 6, "ny": 6, "nz": 10, "nsteps": 16},        # 360 hex
+        "L": {"nx": 12, "ny": 12, "nz": 20, "nsteps": 10},     # 2,880 hex (8x S)
+    },
+    "d2_cpml_wave": {
+        "smoke": {"n_int": 6, "n_pml": 2, "nsteps": 6},        # 10x10x8 = 800 hex
+        "S": {"n_int": 10, "n_pml": 2, "nsteps": 16},          # 14x14x12 = 2,352 hex
+        "L": {"n_int": 30, "n_pml": 3, "nsteps": 8},           # 36x36x33 = 42,768 hex (~134k free DOF >= 1e5)
+    },
+    "d3a_explicit_cdl_cpml": {
+        "smoke": {"n_int": 6, "n_pml": 2, "nsteps": 20},
+        "S": {"n_int": 8, "n_pml": 2, "nsteps": 80},           # 12x12x10 = 1,440 hex
+        "L": {"n_int": 20, "n_pml": 2, "nsteps": 25},          # 24x24x22 = 12,672 hex (8.8x S)
+    },
+    "d3b_explicit_bathe_cpml": {
+        "smoke": {"n_int": 6, "n_pml": 2, "nsteps": 20},
+        "S": {"n_int": 8, "n_pml": 2, "nsteps": 60},           # 1,440 hex
+        "L": {"n_int": 20, "n_pml": 2, "nsteps": 20},          # 12,672 hex (8.8x S)
+    },
+    "d3c_explicit_sms_cons": {
+        "smoke": {"nx": 4, "ny": 4, "nz_bulk": 3, "nsteps": 15},
+        "S": {"nx": 8, "ny": 8, "nz_bulk": 5, "nsteps": 150},
+    },
+    "d4_mpm_modeA": {
+        "smoke": {"h": 0.25, "cells_x": 44, "cells_y": 22, "nsteps": 4},
+        "S": {"h": 0.10, "cells_x": 110, "cells_y": 55, "nsteps": 12},
+    },
+    "d5_mcft_2cld12": {
+        "smoke": {"n_strips": 24, "nsteps": 6},
+        "S": {"n_strips": 40, "nsteps": 24},
+    },
+}
+
+DECK_SIZES: Dict[str, List[str]] = {
+    k: [s for s in ("S", "L") if s in v] for k, v in SIZE_SPECS.items()
+}
 
 
 # --------------------------------------------------------------------------- #
-#  Shared mesh & helper builders                                              #
+#  Shared mesh helpers                                                        #
 # --------------------------------------------------------------------------- #
 def _nid(ix: int, iy: int, iz: int, nx: int, ny: int) -> int:
     return 1 + ix + (nx + 1) * (iy + (ny + 1) * iz)
 
 
-def _build_hex_nodes(ops, xs: list[float], ys: list[float], zs: list[float]) -> Tuple[int, int, int]:
+def _build_hex_nodes(ops, xs: List[float], ys: List[float], zs: List[float]) -> Tuple[int, int, int]:
     nx, ny, nz = len(xs) - 1, len(ys) - 1, len(zs) - 1
     for iz, z in enumerate(zs):
         for iy, y in enumerate(ys):
@@ -46,21 +101,21 @@ def _hex_conn(ix: int, iy: int, iz: int, nx: int, ny: int) -> Tuple[int, ...]:
 
 
 # --------------------------------------------------------------------------- #
-#  D1a: Implicit 3D LadrunoBrick + LadrunoSANISAND (SAS-ME)                  #
+#  D1a: Implicit 3D LadrunoBrick + LadrunoSANISAND + Pardiso + FactorReuse   #
 # --------------------------------------------------------------------------- #
-def run_d1a_brick_sanisand(ops, *, smoke: bool = False) -> Dict:
-    """Soil block (kPa, m, Mg -> kN) under confining pressure then cyclic shear."""
+def run_d1a_brick_sanisand(ops, *, size: str = "S", **_kw) -> Dict:
+    sp = SIZE_SPECS["d1a_brick_sanisand"][size]
+    nx, ny, nz, nsteps = sp["nx"], sp["ny"], sp["nz"], sp["nsteps"]
+
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
 
-    nx, ny, nz = (4, 4, 8) if smoke else (6, 6, 10)
     Lx, Ly, Lz = 4.0, 4.0, 8.0
     xs = [Lx * i / nx for i in range(nx + 1)]
     ys = [Ly * j / ny for j in range(ny + 1)]
     zs = [Lz * k / nz for k in range(nz + 1)]
     _build_hex_nodes(ops, xs, ys, zs)
 
-    # Laminar shear-box boundary condition: couple boundary & horizontal layer DOFs (1, 3) to corner column
     for iz in range(nz + 1):
         for iy in range(ny + 1):
             for ix in range(nx + 1):
@@ -97,7 +152,7 @@ def run_d1a_brick_sanisand(ops, *, smoke: bool = False) -> Dict:
     ops.pattern("Plain", 1, 1)
     for iy in range(ny):
         for ix in range(nx):
-            f_node = -150.0 * top_area / 4.0
+            f_node = -100.0 * top_area / 4.0
             for nd in (_nid(ix, iy, nz, nx, ny), _nid(ix + 1, iy, nz, nx, ny),
                        _nid(ix + 1, iy + 1, nz, nx, ny), _nid(ix, iy + 1, nz, nx, ny)):
                 ops.load(nd, 0.0, 0.0, f_node)
@@ -112,7 +167,6 @@ def run_d1a_brick_sanisand(ops, *, smoke: bool = False) -> Dict:
     if ops.analyze(1) != 0:
         raise RuntimeError("d1a_brick_sanisand gravity init failed")
 
-    # Switch to Stage 1 elastoplastic and reset profiler BEFORE nonlinear transient excitation
     ops.updateMaterialStage("-material", 1, "-stage", 1)
     ops.loadConst("-time", 0.0)
     ops.wipeAnalysis()
@@ -120,39 +174,41 @@ def run_d1a_brick_sanisand(ops, *, smoke: bool = False) -> Dict:
     ops.constraints("Transformation")
     ops.numberer("RCM")
     ops.system("Pardiso")
-    ops.test("NormDispIncr", 1e-6, 25)
-    ops.algorithm("Newton")
+    ops.test("NormDispIncr", 1e-6, 45)
+    # D1 (1): Pardiso + LadrunoFactorReuse
+    ops.algorithm("KrylovNewton", "-maxDim", 20, "-reuseFactor", 3, "-reuseIter", 8)
     ops.integrator("Newmark", 0.5, 0.25)
     ops.analysis("Transient")
 
-    # Strong sinusoidal base excitation (3.5 m/s^2) on laminar soil column -> drives active SANISAND yielding cleanly
     dt = 0.01
-    nsteps = 8 if smoke else 24
     ts_t = [i * dt for i in range(nsteps + 2)]
     ts_a = [3.5 * math.sin(2.0 * math.pi * 2.0 * t) for t in ts_t]
     ops.timeSeries("Path", 2, "-time", *ts_t, "-values", *ts_a)
     ops.pattern("UniformExcitation", 2, 1, "-accel", 2)
 
+    ndof_est = 3 * (nx + 1) * (ny + 1) * nz
     return {
         "kind": "Transient",
         "dt": dt,
         "nsteps": nsteps,
         "nelm": nx * ny * nz,
+        "ndof_est": ndof_est,
+        "size": size,
         "family": "D1a-Brick-SANISAND",
-        "setup_fn": None,
     }
 
 
 # --------------------------------------------------------------------------- #
-#  D1b: Implicit 3D LadrunoBrick + LadrunoConcrete3D (CDPM2 cracking/damage)   #
+#  D1b: Implicit 3D LadrunoBrick + LadrunoConcrete3D + Pardiso + FactorReuse  #
 # --------------------------------------------------------------------------- #
-def run_d1b_brick_concrete3d(ops, *, smoke: bool = False) -> Dict:
-    """3D stub column under compression + cyclic lateral top shear past tensile cracking."""
+def run_d1b_brick_concrete3d(ops, *, size: str = "S", **_kw) -> Dict:
+    sp = SIZE_SPECS["d1b_brick_concrete3d"][size]
+    nx, ny, nz, nsteps = sp["nx"], sp["ny"], sp["nz"], sp["nsteps"]
+
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
 
-    nx, ny, nz = (4, 4, 8) if smoke else (6, 6, 10)
-    B, D, H = 300.0, 300.0, 900.0  # mm
+    B, D, H = 300.0, 300.0, 900.0
     xs = [B * i / nx for i in range(nx + 1)]
     ys = [D * j / ny for j in range(ny + 1)]
     zs = [H * k / nz for k in range(nz + 1)]
@@ -162,7 +218,6 @@ def run_d1b_brick_concrete3d(ops, *, smoke: bool = False) -> Dict:
         for ix in range(nx + 1):
             ops.fix(_nid(ix, iy, 0, nx, ny), 1, 1, 1)
 
-    # Rigid diaphragm cap at top z = H
     top_master = _nid(0, 0, nz, nx, ny)
     for iy in range(ny + 1):
         for ix in range(nx + 1):
@@ -170,7 +225,6 @@ def run_d1b_brick_concrete3d(ops, *, smoke: bool = False) -> Dict:
             if nd != top_master:
                 ops.equalDOF(top_master, nd, 1, 2, 3)
 
-    # Units: N, mm, MPa; rho = 2.4e-9 tonne/mm^3
     ops.nDMaterial("LadrunoConcrete3D", 1, 30000.0, 0.2, 35.0, 3.0, 0.14, 35.0,
                    "-lch", H / nz, "-rho", 2.4e-9)
 
@@ -182,7 +236,6 @@ def run_d1b_brick_concrete3d(ops, *, smoke: bool = False) -> Dict:
                             "-formulation", "bbar")
                 etag += 1
 
-    # Axial compression 5% fc*A = 157.5 kN first (unprofiled preload)
     ops.timeSeries("Constant", 1)
     ops.pattern("Plain", 1, 1)
     ops.load(top_master, 0.0, 0.0, -0.05 * 35.0 * B * D)
@@ -200,39 +253,70 @@ def run_d1b_brick_concrete3d(ops, *, smoke: bool = False) -> Dict:
     ops.loadConst("-time", 0.0)
     ops.wipeAnalysis()
 
-    # Cyclic lateral force -> DisplacementControl on top_master DOF 1 (0 -> +1.5mm -> -1.5mm)
     ops.timeSeries("Linear", 2)
     ops.pattern("Plain", 2, 2)
     ops.load(top_master, 1.0e5, 0.0, 0.0)
 
-    nsteps = 8 if smoke else 16
     ops.constraints("Transformation")
     ops.numberer("RCM")
     ops.system("Pardiso")
-    ops.test("NormDispIncr", 1e-6, 30)
-    ops.algorithm("KrylovNewton")
-    ops.integrator("DisplacementControl", top_master, 1, 0.20 if not smoke else 0.15)
+    ops.test("NormDispIncr", 1e-6, 60)
+    # D1 (1): Pardiso + LadrunoFactorReuse
+    ops.algorithm("KrylovNewton", "-maxDim", 20, "-reuseFactor", 3, "-reuseIter", 8)
+    ops.integrator("DisplacementControl", top_master, 1, 0.08)
     ops.analysis("Static")
 
+    ndof_est = 3 * (nx + 1) * (ny + 1) * nz
     return {
         "kind": "Static",
         "dt": None,
         "nsteps": nsteps,
         "nelm": nx * ny * nz,
+        "ndof_est": ndof_est,
+        "size": size,
         "family": "D1b-Brick-Concrete3D",
-        "setup_fn": None,
     }
 
 
 # --------------------------------------------------------------------------- #
-#  D2: Implicit 3D stdBrick + LadrunoCPML Wave Propagation                    #
+#  D2 & D3 shared CPML + LadrunoBrick domain builder                          #
 # --------------------------------------------------------------------------- #
-def _build_cpml_domain(ops, *, n_int: int, n_pml: int, lumped: bool, explicit_mat: bool) -> Tuple[int, int]:
-    """3D domain centered at x,y in [-L,L], z in [-L,0] with free surface z=0 and PML jacket."""
+def d2_h5drm_params(size: str) -> Dict:
+    sp = SIZE_SPECS["d2_cpml_wave"][size]
+    dx = 0.5
+    n_int, n_pml, nsteps = sp["n_int"], sp["n_pml"], sp["nsteps"]
+    nx = n_int + 2 * n_pml
+    ny = n_int + 2 * n_pml
+    nz = n_int + n_pml
+    dt = 0.0005
+    return {
+        "dx": dx,
+        "n_int": n_int,
+        "n_pml": n_pml,
+        "nx": nx,
+        "ny": ny,
+        "nz": nz,
+        "dt": dt,
+        "nt": nsteps + 4,
+        "x0": -0.5 * nx * dx,
+        "y0": -0.5 * ny * dx,
+        "z0": -nz * dx,
+        "xmin": -0.5 * n_int * dx,
+        "xmax": 0.5 * n_int * dx,
+        "ymin": -0.5 * n_int * dx,
+        "ymax": 0.5 * n_int * dx,
+        "zmin": -n_int * dx,
+        "zmax": 0.0,
+    }
+
+
+def _build_cpml_domain(ops, *, n_int: int, n_pml: int, lumped: bool,
+                       explicit_form: Optional[str]) -> Tuple[int, int, int, int]:
+    """3D domain centered in x,y, free surface z=0, with LadrunoBrick core + LadrunoCPML jacket."""
     dx = 0.5
     nx = n_int + 2 * n_pml
     ny = n_int + 2 * n_pml
-    nz = n_int + n_pml  # free surface at z = 0 (iz = nz)
+    nz = n_int + n_pml
     x0 = -0.5 * nx * dx
     y0 = -0.5 * ny * dx
     z0 = -nz * dx
@@ -241,16 +325,16 @@ def _build_cpml_domain(ops, *, n_int: int, n_pml: int, lumped: bool, explicit_ma
     zs = [z0 + k * dx for k in range(nz + 1)]
     _build_hex_nodes(ops, xs, ys, zs)
 
-    # Outer Dirichlet boundary (bottom z=z0, sides x=x0/x1, y=y0/y1)
+    fixed_nodes = 0
     for iz in range(nz + 1):
         for iy in range(ny + 1):
             for ix in range(nx + 1):
                 if iz == 0 or ix == 0 or ix == nx or iy == 0 or iy == ny:
                     ops.fix(_nid(ix, iy, iz, nx, ny), 1, 1, 1)
+                    fixed_nodes += 1
 
     E, nu, rho = 2.5e8, 0.25, 2000.0
-    if explicit_mat:
-        # Nonlinear J2 core near yield + SSP brick
+    if explicit_form is not None:
         ops.nDMaterial("LadrunoJ2", 1, E / (3.0 * (1.0 - 2.0 * nu)), E / (2.0 * (1.0 + nu)),
                        "-iso", "voce", 5.0e4, 1.0e4, 5.0, 1.0e5, "-rho", rho)
     else:
@@ -275,38 +359,46 @@ def _build_cpml_domain(ops, *, n_int: int, n_pml: int, lumped: bool, explicit_ma
                           iz >= n_pml)
                 conn = _hex_conn(ix, iy, iz, nx, ny)
                 if in_int:
-                    if explicit_mat:
-                        ops.element("LadrunoBrick", etag, *conn, 1, "-formulation", "ssp", "-lumped")
+                    if explicit_form is not None:
+                        ops.element("LadrunoBrick", etag, *conn, 1, "-formulation", explicit_form, "-lumped")
                     else:
-                        ops.element("stdBrick", etag, *conn, 1)
+                        ops.element("LadrunoBrick", etag, *conn, 1, "-formulation", "std")
                 else:
                     ops.element("LadrunoCPML", etag, *conn, *cpml_opts)
                 etag += 1
 
-    # Point Ricker-like vertical surface load at (0,0,0) -> (nx//2, ny//2, nz)
     src_node = _nid(nx // 2, ny // 2, nz, nx, ny)
-    return src_node, etag - 1
+    free_dof = 3 * ((nx + 1) * (ny + 1) * (nz + 1) - fixed_nodes)
+    return src_node, etag - 1, free_dof, nz
 
 
-def run_d2_cpml_wave(ops, *, smoke: bool = False) -> Dict:
+def run_d2_cpml_wave(ops, *, size: str = "S", h5drm_path: Optional[str] = None,
+                     algo: str = "LinearFactorOnce") -> Dict:
+    """D1 (2): LadrunoBrick (-std) interior + LadrunoCPML jacket + H5DRM input + Linear -factorOnce."""
+    if not h5drm_path:
+        raise RuntimeError("d2_cpml_wave requires h5drm_path (parent-generated .h5drm file)")
+    sp = SIZE_SPECS["d2_cpml_wave"][size]
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
-    src_node, nelm = _build_cpml_domain(ops, n_int=4 if smoke else 8, n_pml=2,
-                                        lumped=False, explicit_mat=False)
+    _src, nelm, free_dof, _nz = _build_cpml_domain(
+        ops, n_int=sp["n_int"], n_pml=sp["n_pml"], lumped=False, explicit_form=None
+    )
 
     dt = 0.0005
-    nsteps = 6 if smoke else 30
-    t = [i * dt for i in range(nsteps + 2)]
-    vals = [1.0e6 * math.sin(math.pi * ti / (6.0 * dt)) if ti <= 6.0 * dt else 0.0 for ti in t]
-    ops.timeSeries("Path", 1, "-time", *t, "-values", *vals)
-    ops.pattern("Plain", 1, 1)
-    ops.load(src_node, 0.0, 0.0, -1.0)
+    nsteps = sp["nsteps"]
+    T = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+    X0 = (0.0, 0.0, 0.0)
+    # coordinates in .h5drm are already in model units (meters), crd_scale=1.0
+    ops.pattern("H5DRM", 1, h5drm_path, 1.0, 1.0, 1.0e-4, 1, *T, *X0)
 
     ops.constraints("Transformation")
     ops.numberer("RCM")
     ops.system("Pardiso")
     ops.test("NormDispIncr", 1e-8, 15)
-    ops.algorithm("Newton")
+    if algo == "Newton":
+        ops.algorithm("Newton")
+    else:
+        ops.algorithm("Linear", "-factorOnce")
     ops.integrator("Newmark", 0.5, 0.25)
     ops.analysis("Transient")
     return {
@@ -314,21 +406,24 @@ def run_d2_cpml_wave(ops, *, smoke: bool = False) -> Dict:
         "dt": dt,
         "nsteps": nsteps,
         "nelm": nelm,
+        "ndof_est": free_dof,
+        "size": size,
         "family": "D2-CPML-Implicit",
-        "setup_fn": None,
     }
 
 
 # --------------------------------------------------------------------------- #
-#  D3a & D3b: Explicit Wave + Nonlinear Soil/SSP Brick + CPML                 #
+#  D3a & D3b: Explicit Wave + LadrunoBrick -formulation uri + CPML -lumped    #
 # --------------------------------------------------------------------------- #
-def _setup_explicit_cpml(ops, integrator: str, *, smoke: bool, full_steps: int = 100) -> Dict:
+def _setup_explicit_cpml(ops, deck_key: str, integrator: str, *, size: str) -> Dict:
+    sp = SIZE_SPECS[deck_key][size]
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
-    src_node, nelm = _build_cpml_domain(ops, n_int=6 if smoke else 8, n_pml=2,
-                                        lumped=True, explicit_mat=True)
+    src_node, nelm, free_dof, _nz = _build_cpml_domain(
+        ops, n_int=sp["n_int"], n_pml=sp["n_pml"], lumped=True, explicit_form="uri"
+    )
     dt = 2.0e-4
-    nsteps = 30 if smoke else full_steps
+    nsteps = sp["nsteps"]
     t = [i * dt for i in range(nsteps + 5)]
     vals = [1.0e5 * math.sin(math.pi * ti / (20.0 * dt)) if ti <= 20.0 * dt else 0.0 for ti in t]
     ops.timeSeries("Path", 1, "-time", *t, "-values", *vals)
@@ -347,31 +442,31 @@ def _setup_explicit_cpml(ops, integrator: str, *, smoke: bool, full_steps: int =
         "dt": dt,
         "nsteps": nsteps,
         "nelm": nelm,
+        "ndof_est": free_dof,
+        "size": size,
         "family": f"D3-{integrator}",
-        "setup_fn": None,
     }
 
 
-def run_d3a_explicit_cdl_cpml(ops, *, smoke: bool = False) -> Dict:
-    return _setup_explicit_cpml(ops, "CentralDifferenceLadruno", smoke=smoke, full_steps=100)
+def run_d3a_explicit_cdl_cpml(ops, *, size: str = "S", **_kw) -> Dict:
+    return _setup_explicit_cpml(ops, "d3a_explicit_cdl_cpml", "CentralDifferenceLadruno", size=size)
 
 
-def run_d3b_explicit_bathe_cpml(ops, *, smoke: bool = False) -> Dict:
-    return _setup_explicit_cpml(ops, "ExplicitBathe", smoke=smoke, full_steps=80)
+def run_d3b_explicit_bathe_cpml(ops, *, size: str = "S", **_kw) -> Dict:
+    return _setup_explicit_cpml(ops, "d3b_explicit_bathe_cpml", "ExplicitBathe", size=size)
 
 
 # --------------------------------------------------------------------------- #
 #  D3c: Explicit Consistent-Mass Scaling (CentralDifferenceSMSConsistent)     #
 # --------------------------------------------------------------------------- #
-def run_d3c_explicit_sms_cons(ops, *, smoke: bool = False) -> Dict:
-    """Explicit SMS consistent-mass wave propagation with a thin fine slice to force M_bar."""
+def run_d3c_explicit_sms_cons(ops, *, size: str = "S", **_kw) -> Dict:
+    sp = SIZE_SPECS["d3c_explicit_sms_cons"][size]
+    nx, ny, nz_bulk, nsteps = sp["nx"], sp["ny"], sp["nz_bulk"], sp["nsteps"]
+    dzs = [1.0] * nz_bulk + [0.05] + [1.0] * nz_bulk
+    nz = len(dzs)
+
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
-
-    nx, ny = (4, 4) if smoke else (8, 8)
-    # One thin interior layer (dz = 0.05) flanked by bulk layers (dz = 1.0)
-    dzs = [1.0, 1.0, 1.0, 0.05, 1.0, 1.0, 1.0] if smoke else [1.0, 1.0, 1.0, 1.0, 1.0, 0.05, 1.0, 1.0, 1.0, 1.0, 1.0]
-    nz = len(dzs)
     xs = [1.0 * i for i in range(nx + 1)]
     ys = [1.0 * j for j in range(ny + 1)]
     zs = [0.0]
@@ -392,16 +487,12 @@ def run_d3c_explicit_sms_cons(ops, *, smoke: bool = False) -> Dict:
                 ops.element("LadrunoBrick", etag, *_hex_conn(ix, iy, iz, nx, ny), 1, "-formulation", "bbar")
                 etag += 1
 
-    # Seed small initial velocity on top plane so wave propagates cleanly
-    top_vel_z = -0.1
     for iy in range(ny + 1):
         for ix in range(nx + 1):
-            ops.setNodeVel(_nid(ix, iy, nz, nx, ny), 3, top_vel_z, "-commit")
+            ops.setNodeVel(_nid(ix, iy, nz, nx, ny), 3, -0.1, "-commit")
 
-    dt_target = 0.003   # forces consistent mass scaling on the 0.05 m slice
+    dt_target = 0.003
     dt = 0.0008
-    nsteps = 15 if smoke else 250
-
     ops.constraints("Transformation")
     ops.numberer("RCM")
     ops.system("Pardiso")
@@ -414,24 +505,23 @@ def run_d3c_explicit_sms_cons(ops, *, smoke: bool = False) -> Dict:
         "dt": dt,
         "nsteps": nsteps,
         "nelm": etag - 1,
+        "ndof_est": 3 * (nx + 1) * (ny + 1) * nz,
+        "size": size,
         "family": "D3c-SMS-Consistent",
-        "setup_fn": None,
     }
 
 
 # --------------------------------------------------------------------------- #
 #  D4: Mode-A Implicit MPM Dynamic Cantilever                                  #
 # --------------------------------------------------------------------------- #
-def run_d4_mpm_modeA(ops, *, smoke: bool = False) -> Dict:
-    """2D Mode-A implicit MPM dynamic cantilever (232f cantilever_dyn scaling)."""
+def run_d4_mpm_modeA(ops, *, size: str = "S", **_kw) -> Dict:
+    sp = SIZE_SPECS["d4_mpm_modeA"][size]
     ops.wipe()
     ops.model("basic", "-ndm", 2, "-ndf", 2)
     ops.nDMaterial("ElasticIsotropic", 1, 1.2e8, 0.2, 1000.0)
 
-    h = 0.25 if smoke else 0.10
-    cells_x = 44 if smoke else 110
-    cells_y = 22 if smoke else 55
-    ops.mpm("grid", 232, "-origin", 0.0, -4.0, "-h", h, "-cells", cells_x, cells_y, "-basis", "gimp")
+    ops.mpm("grid", 232, "-origin", 0.0, -4.0, "-h", sp["h"],
+            "-cells", sp["cells_x"], sp["cells_y"], "-basis", "gimp")
     ops.mpm("mode", "implicit")
     ops.mpm("body", 1, "box", 0.0, 0.0, 10.0, 1.0, "-ppc", 2, "-mat", 1, "-rho", 1000.0)
     ops.mpm("fix", "xmin", "xy")
@@ -445,39 +535,33 @@ def run_d4_mpm_modeA(ops, *, smoke: bool = False) -> Dict:
     ops.integrator("Newmark", 0.5, 0.25)
     ops.analysis("Transient")
 
-    # Take 1 warm-up step so domainChanged settles before timing steady steps (if desired), or time all
-    nsteps = 3 if smoke else 12
-    dt = 0.01
     return {
         "kind": "MPM_ModeA",
-        "dt": dt,
-        "nsteps": nsteps,
+        "dt": 0.01,
+        "nsteps": sp["nsteps"],
         "nelm": 0,
+        "ndof_est": 0,
+        "size": size,
         "family": "D4-MPM-ModeA",
-        "setup_fn": None,
     }
 
 
 # --------------------------------------------------------------------------- #
-#  D5: 2CLD12-Representative RC Column (LadrunoForceBeamColumn -monolithic    #
-#      + LadrunoNDFiber + LadrunoMCFTStrip -cyclicDegradation)                #
+#  D5: 2CLD12 RC Column (LadrunoForceBeamColumn -monolithic + MCFTStrip)      #
 # --------------------------------------------------------------------------- #
-def run_d5_mcft_2cld12(ops, *, smoke: bool = False) -> Dict:
-    """2CLD12-representative shear-flexure RC column (N, mm, MPa)."""
+def run_d5_mcft_2cld12(ops, *, size: str = "S", **_kw) -> Dict:
+    sp = SIZE_SPECS["d5_mcft_2cld12"][size]
+    n_strips, nsteps = sp["n_strips"], sp["nsteps"]
+
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 6)
 
-    # Column dimensions (Sezen & Moehle 2CLD12 style: 457x457 mm, H = 2946 mm, 8 bars #9 ~ 645 mm^2)
-    b, h = 457.2, 457.2
-    H = 2946.4
-    n_ele = 4
+    b, h, H, n_ele = 457.2, 457.2, 2946.4, 4
     for i in range(n_ele + 1):
         ops.node(i + 1, 0.0, 0.0, H * i / n_ele)
     ops.fix(1, 1, 1, 1, 1, 1, 1)
 
-    fc = 21.1
-    ec0 = 0.0020
-    # Conc parameters matching test_ladrunoMCFTStrip / Popovics-MCFT (positive compression magnitudes)
+    fc, ec0 = 21.1, 0.0020
     fp_core, ep_core, e20_core = fc * 1.15, 0.0024, 0.018
     fp_cov, ep_cov, e20_cov = fc, ec0, 0.005
     smx, smy = 200.0, 200.0
@@ -491,19 +575,15 @@ def run_d5_mcft_2cld12(ops, *, smoke: bool = False) -> Dict:
     ops.uniaxialMaterial("LadrunoMCFTSteel", 10, 441.0, 645.0)
     ops.nDMaterial("LadrunoUniaxialFiber", 3, 10)
 
-    n_strips = 24 if smoke else 40
     cov = 38.0
     dy = h / n_strips
     ops.section("LadrunoNDFiber", 1, "-shearProfile", "parabolic", "-shearDepth", h, b,
                 "-shearResultant", "modelC", "-noCentroid")
     for s in range(n_strips):
         yc = -0.5 * h + (s + 0.5) * dy
-        in_core = abs(yc) <= (0.5 * h - cov)
-        mat_c = 1 if in_core else 2
-        # Two fibers per strip at z = +/- b/4 so weak-axis bending My is non-singular in 3D
+        mat_c = 1 if abs(yc) <= (0.5 * h - cov) else 2
         for zf in (-0.25 * b, 0.25 * b):
             ops.fiber(yc, zf, 0.5 * b * dy, mat_c)
-    # 8 #9 bars around perimeter (3 top/bottom + 2 mid-depth)
     for yb, zb in ((-175.0, -175.0), (-175.0, 0.0), (-175.0, 175.0),
                    (0.0, -175.0), (0.0, 175.0),
                    (175.0, -175.0), (175.0, 0.0), (175.0, 175.0)):
@@ -516,7 +596,6 @@ def run_d5_mcft_2cld12(ops, *, smoke: bool = False) -> Dict:
                     "-iter", 30, 1e-12, "-monolithic", "-monoAccept", 10e3, 10e6, 1e-2)
 
     top_nd = n_ele + 1
-    # Axial load 0.15 * fc * Ag = 661 kN (unprofiled static step)
     ops.timeSeries("Constant", 1)
     ops.pattern("Plain", 1, 1)
     ops.load(top_nd, 0.0, 0.0, -0.15 * fc * b * h, 0.0, 0.0, 0.0)
@@ -534,12 +613,10 @@ def run_d5_mcft_2cld12(ops, *, smoke: bool = False) -> Dict:
     ops.loadConst("-time", 0.0)
     ops.wipeAnalysis()
 
-    # Cyclic/monotonic lateral push in x with DisplacementControl past flexural & shear cracking
     ops.timeSeries("Linear", 2)
     ops.pattern("Plain", 2, 2)
     ops.load(top_nd, 1.0e5, 0.0, 0.0, 0.0, 0.0, 0.0)
 
-    nsteps = 12 if smoke else 24
     ops.constraints("Plain")
     ops.numberer("Plain")
     ops.system("Pardiso")
@@ -553,8 +630,9 @@ def run_d5_mcft_2cld12(ops, *, smoke: bool = False) -> Dict:
         "dt": None,
         "nsteps": nsteps,
         "nelm": n_ele,
+        "ndof_est": 6 * n_ele,
+        "size": size,
         "family": "D5-MCFT-2CLD12",
-        "setup_fn": None,
     }
 
 
