@@ -264,10 +264,11 @@ def _run_t7_shell_callers():
 
 def _run_brick_formuri_damage():
     vals = []
-    # Concrete3D damage path (triggers damageResponse != 0 in LadrunoBrick::formUri(0))
+    # Concrete3D active-cracking damage path (triggers damageResponse != 0 and
+    # damageScale() < 1 in LadrunoBrick::formUri(0), verifying skipped getTangent())
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
-    ops.nDMaterial("LadrunoConcrete3D", 1, 3.0e10, 0.2, 3.0e7, 3.0e6, 100.0, 10000.0, "-rho", 2400.0)
+    ops.nDMaterial("LadrunoConcrete3D", 1, 3.0e10, 0.2, 3.0e7, 3.0e6, 100.0, 25000.0, "-rho", 2400.0)
     coords = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
               (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
     for i, (x, y, z) in enumerate(coords, 1):
@@ -276,18 +277,46 @@ def _run_brick_formuri_damage():
             ops.fix(i, 1, 1, 1)
     ops.element("LadrunoBrick", 1, 1, 2, 3, 4, 5, 6, 7, 8, 1,
                 "-formulation", "uri", "-lumped", "-hourglass", "stiffness", 0.05)
-    ops.timeSeries("Linear", 1)
+    ops.timeSeries("Constant", 1)
     ops.pattern("Plain", 1, 1)
-    # Strong tension + shear to trigger active cracking/damage on the URI damage path
+    # Strong tension + shear so Concrete3D actively cracks across steps 1..40
     for n in (5, 6, 7, 8):
-        ops.load(n, 2.0e6, 0.0, 4.0e6)
+        ops.load(n, 1.5e6, 0.0, 2.0e6)
     ops.constraints("Plain"); ops.numberer("Plain"); ops.system("Diagonal")
     ops.test("NormDispIncr", 1e-12, 1); ops.algorithm("Linear")
     ops.integrator("CentralDifferenceLadruno"); ops.analysis("Transient")
     for _ in range(40):
         assert ops.analyze(1, 5.0e-5) == 0
+    dmg = ops.eleResponse(1, "material", "1", "damage")
+    assert dmg and max(dmg) > 0.5, f"expected active Concrete3D damage > 0.5, got {dmg}"
     for n in (5, 6, 7, 8):
         vals.extend(ops.nodeDisp(n))
+    return vals
+
+
+def _run_quad_bv_cd_cache():
+    vals = []
+    # Allowlisted ElasticIsotropic on LadrunoQuad with -bulkViscosity (Finding 7b)
+    ops.wipe()
+    ops.model("basic", "-ndm", 2, "-ndf", 2)
+    ops.nDMaterial("ElasticIsotropic", 1, 1.0e7, 0.25, 2.0)
+    for i, (x, y) in enumerate([(0, 0), (1, 0), (1, 1), (0, 1)], 1):
+        ops.node(i, float(x), float(y))
+        if y == 0:
+            ops.fix(i, 1, 1)
+    ops.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-type", "PlaneStrain", "-thick", 1.0,
+                "-formulation", "std", "-bulkViscosity", 0.5, 1.2)
+    ops.timeSeries("Constant", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(3, 200.0, -500.0)
+    ops.load(4, -100.0, -500.0)
+    ops.constraints("Plain"); ops.numberer("Plain"); ops.system("Diagonal")
+    ops.test("NormDispIncr", 1e-12, 1); ops.algorithm("Linear")
+    ops.integrator("ExplicitBathe", 0.54); ops.analysis("Transient")
+    for _ in range(50):
+        assert ops.analyze(1, 5.0e-5) == 0
+        vals.extend(ops.nodeDisp(3))
+        vals.extend(ops.nodeDisp(4))
     return vals
 
 
@@ -377,6 +406,7 @@ CASES = {
     "t7_quad_all": _run_t7_quad_all,
     "t7_shell_callers": _run_t7_shell_callers,
     "brick_formuri_damage": _run_brick_formuri_damage,
+    "quad_bv_cd_cache": _run_quad_bv_cd_cache,
     "rayleigh_alphaM_all": _run_rayleigh_alphaM_all,
 }
 
@@ -395,6 +425,7 @@ CASE_NAMES = [
     "t7_quad_all",
     "t7_shell_callers",
     "brick_formuri_damage",
+    "quad_bv_cd_cache",
     "rayleigh_alphaM_all",
 ]
 

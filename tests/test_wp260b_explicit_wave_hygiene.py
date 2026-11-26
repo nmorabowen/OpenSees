@@ -601,9 +601,13 @@ def test_sms_consistent_rank1_vs_independent_olovsson_oracle():
 
     nfree3 = 36
     M_tilde3 = np.zeros((nfree3, nfree3))
+    mlump3 = np.zeros(nfree3)
+    any_scaled3 = False
     for ix, lx in enumerate([1.0, 0.2, 1.0]):
         me24, dt_e = hex8_ke_me(lx)
         beta = (dt_target3 / dt_e) ** 2 - 1.0 if dt_e < dt_target3 else 0.0
+        if beta > 0.0:
+            any_scaled3 = True
         ns = (
             nid[(ix, 0, 0)], nid[(ix + 1, 0, 0)], nid[(ix + 1, 1, 0)], nid[(ix, 1, 0)],
             nid[(ix, 0, 1)], nid[(ix + 1, 0, 1)], nid[(ix + 1, 1, 1)], nid[(ix, 1, 1)],
@@ -615,6 +619,7 @@ def test_sms_consistent_rank1_vs_independent_olovsson_oracle():
                 ea = 3 * (na - 5) + d if na >= 5 else -1
                 if ea >= 0:
                     M_tilde3[ea, ea] += m_node
+                    mlump3[ea] += m_node
                 if beta > 0.0 and ea >= 0:
                     for b, nb in enumerate(ns):
                         eb = 3 * (nb - 5) + d if nb >= 5 else -1
@@ -633,6 +638,12 @@ def test_sms_consistent_rank1_vs_independent_olovsson_oracle():
             F_ext[3 * (nt - 5) + d] = fv[d]
 
     a_oracle3 = np.linalg.solve(M_tilde3, F_ext)
+    # Non-vacuity: 3D consistent mass scaling must materially change accelerations vs lumped
+    assert any_scaled3, "non-vacuity: expected at least one 3D brick to be scaled"
+    a_lump3 = F_ext / mlump3
+    assert np.linalg.norm(a_oracle3 - a_lump3) / np.linalg.norm(a_oracle3) > 0.01, (
+        "non-vacuity: 3D consistent Olovsson solve must differ from unscaled lumped solve"
+    )
     dt_step3 = 1.0e-4
 
     for kind in ("cdl_sms_cons", "eb_sms_cons"):
@@ -1090,7 +1101,7 @@ def test_bv_cd_cache_excludes_stress_dependent_hs():
 def test_brick_bv_cd_cache_set_parameter_invalidation():
     """Verify LadrunoBrick ElasticIsotropic bvCdCache is 0-ULP identical to uncached
     before and after an element-level updateParameter(E)."""
-    def run(attach_before_steps):
+    def run(attach_before_steps, do_update=True):
         ops.wipe()
         ops.model("basic", "-ndm", 3, "-ndf", 3)
         ops.nDMaterial("ElasticIsotropic", 1, 1.0e7, 0.25, 2.0)
@@ -1122,22 +1133,28 @@ def test_brick_bv_cd_cache_set_parameter_invalidation():
         if not attach_before_steps:
             # Attach mid-run after bvCdCache has been populated for 20 steps!
             ops.parameter(1, "element", 1, "E")
-        ops.updateParameter(1, 4.0e7)
+        if do_update:
+            ops.updateParameter(1, 4.0e7)
         for _ in range(30):
             assert ops.analyze(1, 5e-5) == 0
             out.append(ops.nodeDisp(5, 3))
         return out
 
-    u_pre = run(True)
-    u_mid = run(False)
+    u_pre = run(True, True)
+    u_mid = run(False, True)
+    u_noupd = run(True, False)
     _assert_bit_identical(u_pre, u_mid, "LadrunoBrick bvCdCache mid-run setParameter")
-    assert max(abs(x) for x in u_pre) > 0.0
+    peak = max(abs(x) for x in u_pre)
+    assert peak > 0.0
+    assert max(abs(a - b) for a, b in zip(u_pre, u_noupd)) / peak > 1e-2, (
+        "non-vacuity: updateParameter(E) must materially change LadrunoBrick trajectory"
+    )
 
 
 def test_quad_bv_cd_cache_set_parameter_invalidation():
     """Verify LadrunoQuad ElasticIsotropic bvCdCache is 0-ULP identical to uncached
     before and after a mid-run element-level updateParameter(E)."""
-    def run(attach_before_steps):
+    def run(attach_before_steps, do_update=True):
         ops.wipe()
         ops.model("basic", "-ndm", 2, "-ndf", 2)
         ops.nDMaterial("ElasticIsotropic", 1, 1.0e7, 0.25, 2.0)
@@ -1166,16 +1183,22 @@ def test_quad_bv_cd_cache_set_parameter_invalidation():
             out.append(ops.nodeDisp(3, 2))
         if not attach_before_steps:
             ops.parameter(1, "element", 1, "E")
-        ops.updateParameter(1, 4.0e7)
+        if do_update:
+            ops.updateParameter(1, 4.0e7)
         for _ in range(30):
             assert ops.analyze(1, 5e-5) == 0
             out.append(ops.nodeDisp(3, 2))
         return out
 
-    u_pre = run(True)
-    u_mid = run(False)
+    u_pre = run(True, True)
+    u_mid = run(False, True)
+    u_noupd = run(True, False)
     _assert_bit_identical(u_pre, u_mid, "LadrunoQuad bvCdCache mid-run setParameter")
-    assert max(abs(x) for x in u_pre) > 0.0
+    peak = max(abs(x) for x in u_pre)
+    assert peak > 0.0
+    assert max(abs(a - b) for a, b in zip(u_pre, u_noupd)) / peak > 1e-2, (
+        "non-vacuity: updateParameter(E) must materially change LadrunoQuad trajectory"
+    )
 
 
 @pytest.mark.parametrize("elem_kind", ["brick", "quad"])

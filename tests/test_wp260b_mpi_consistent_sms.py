@@ -308,6 +308,40 @@ def _run_and_compare(tmp_path, integrator_kind, integrator_cmd, do_midrun_remove
     tip_final = abs(ser[35][10])
     assert 1e-4 < tip_final < 1.0, f"unexpected tip disp {tip_final}"
 
+    if do_midrun_remove:
+        # Non-vacuity: verify that removing scaled elements 101/102/103 at step 16
+        # materially changes the post-step-16 trajectory compared to keeping them.
+        ctrl_prefix = (tmp_path / f"sms_{tag}_keepctrl").as_posix()
+        ctrl_tcl = tmp_path / f"ser_{tag}_keepctrl.tcl"
+        ctrl_tcl.write_text(
+            (_TCL_DECK % {
+                "is_mp": 0,
+                "do_midrun_remove": 1,
+                "integrator_cmd": integrator_cmd,
+                "out_prefix": ctrl_prefix,
+            }).replace("if {$do_midrun_remove && $step == 16}", "if {0}"),
+            encoding="utf-8",
+        )
+        p_ctrl = subprocess.run(
+            [SER_EXE, str(ctrl_tcl)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+            encoding="utf-8",
+            errors="replace",
+        )
+        assert p_ctrl.returncode == 0
+        ctrl = _parse_trace(Path(f"{ctrl_prefix}_serial.txt"))
+        ctrl_vec = np.array([ctrl[35][n] for n in range(1, 11)])
+        rem_vec = np.array([ser[35][n] for n in range(1, 11)])
+        rel_change = float(np.linalg.norm(rem_vec - ctrl_vec) / max(float(np.linalg.norm(ctrl_vec)), 1e-30))
+        assert rel_change > 1e-2, (
+            f"non-vacuity: mid-run removal of scaled elements 101/102/103 must materially "
+            f"change post-step-16 trajectory (got rel change {rel_change:.3e})"
+        )
+
 
 @needs_mp
 @pytest.mark.parametrize(
