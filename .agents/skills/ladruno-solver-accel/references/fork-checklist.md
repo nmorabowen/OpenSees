@@ -1,20 +1,35 @@
-# WP-260 Fork Checklist — Registrations, Gates, Builds & Claude Review
+# WP-260 Fork Checklist — Registrations, Gates, Builds & Review
 
 ## 1. Static CI Gates (Run Before Every Push)
 
-From the worktree root:
+The same commands `.github/workflows/ladruno.yml` runs on every PR, drafts included. From the worktree root:
 
 ```bash
-python ci/check_classtags.py
-python ci/check_manifest.py
-python ci/check_ladruno_commands.py
-python ci/check_ledger_fragments.py
-python ci/check_quirk_patterns.py
+pip install ruff==0.16.10 pytest h5py numpy        # versions CI pins
 python ci/check_duplicate_defs.py
-python -m ruff check --no-cache --select F811 ci tests Ladruno_scripts
+ruff check --no-cache --select F811 ci tests Ladruno_scripts
+python ci/check_classtags.py
+python ci/check_ledger_fragments.py
+pytest -q ci/test_ledger.py
+python ci/ledger.py build
+python ci/check_manifest.py
+(cd Ladruno_scripts/ladruno_recorder_tests && pytest -q test_ladruno_harness.py)
+pytest -q -p no:cacheprovider tests/test_mpm_contracts.py
 python Ladruno_scripts/stamp_headers.py --check
-python -m pytest -q ci/test_quirk_*.py ci/test_duplicate_defs.py
+pytest -q ci/test_quirk_*.py ci/test_duplicate_defs.py
+python ci/check_quirk_patterns.py
+pytest -q ci/test_check_viewer_ledger.py
+python ci/check_viewer_ledger.py --base origin/ladruno --head HEAD
 ```
+
+If `ladruno.yml` changes, this list follows it, not the other way round.
+
+### 1b. MKL edits — oneMKL 2024.2.2 floor
+
+Required for any edit under `SRC/system_of_eqn/linearSOE/pardiso/`, a `_PARDISO` or `_LADRUNO_MKL_FEAST` block, or a new MKL routine/macro/`iparm` value (`pardiso_64`, `mkl_rci.h` `dfgmres`, `iparm[1|10|12|23|24|27]`):
+
+- Every symbol must exist in **oneMKL 2024.2.2** (esmeralda, the oldest fork MKL). Zone-A configures without MKL, so only `ci/check_mkl_compat.py` (WP-148) compiles these sources against it. It runs as its own job in `ladruno.yml` on every push, drafts included, on Linux against the 2024.2.2 headers and libraries (`--build-dir build/mkl --self-test`); it cannot run on the Windows box. A green local Windows build proves nothing here: confirm that job is green on the PR before claiming the MKL edit works.
+- Changes inside the WP-132 `-deterministic` (CNR) block of `PARDISOGenLinSolver.cpp` re-prove CNR bit identity; new parallel `iparm` options are refused under `-deterministic` unless proved.
 
 ## 2. Building on Windows (Exactly One Way)
 
@@ -35,6 +50,8 @@ Never edit `LEDGER_implementations.md`, `LEDGER_quirks.md`, or `LEDGER_vanilla_f
 - `Ladruno_implementation/ledger/vanilla/WP-260<x>-<slug>.md` (mark every upstream edit with `// Ladruno ...`)
 - `Ladruno_implementation/ledger/quirks/WP-260<x>-<slug>.md`
 
+A follow-up to a WP-260 quirk edits that quirk's fragment (`#### Follow-up (WP-260<x>)`); if a quirk heading changes, update the matching `Quirks:` pointer in `SKILL.md` (lint rule `pointers` checks it).
+
 ## 4. Registrations (When Adding New Classes or Commands)
 
 - `SRC/classTags.h` (fork band `>= 33000`, right registry)
@@ -44,13 +61,14 @@ Never edit `LEDGER_implementations.md`, `LEDGER_quirks.md`, or `LEDGER_vanilla_f
 - `Ladruno_scripts/stamp_headers.py` (`GLOBS` + `--stamp`)
 - `Ladruno_scripts/banner_features.txt` + `python Ladruno_scripts/patch_banner.py` (for shipped features)
 
-## 5. Warrant Package for Intensive Claude Review
+## 5. Warrant Package Before Ready-Flip
 
-Before requesting final review / flipping Draft PR to Ready:
-1. All static CI gates green.
+1. All static CI gates of §1 green (and §1b for MKL edits).
 2. Local 5-target build green; `ladrunoBuild` SHA matches PR `HEAD`.
 3. `pytest -m zone_a` green (both `OpenSees.exe` and `opensees.pyd` exercised where applicable).
 4. Explicit ADR-68 gate proof (`G-BYTE` MD5/signbit identity, `G-EQUIV` oracle, or `G-OPT` + fail-closed checks; TSan for threaded changes).
-5. Before/after `-perStep` + `-deep` benchmark table pasted in the PR description.
+5. Before/after `profiler start -perStep -deep` table pasted in the PR description.
 6. Zone-A Ubuntu CI dispatched (`gh workflow run ladruno.yml --ref <branch>`) and green (`gh pr checks <pr>`).
-7. `Ladruno_internal/ISSUES.md` §3 `### Handoff` comment posted on the PR and board `#937` refreshed.
+7. Claude adversarial review addressed (fixed, or declined with rationale in the PR).
+8. Family-level PR (per D7): `Ladruno_implementation/reviews/handoff_260<x>.md` written for the owner's ADR-87 D4 run; `reviews/adr260<x>_verdict.md` committed.
+9. `Ladruno_internal/ISSUES.md` §3 `### Handoff` comment posted on the PR and board `#937` refreshed.

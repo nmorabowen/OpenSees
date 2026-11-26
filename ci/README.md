@@ -55,7 +55,7 @@ Named by slug (WP-162): a new rule takes a new slug in `RULES` (`ci/check_quirk_
 |---|---|---|---|---|
 | `rayleigh` | L1 | `// ladruno-lint: rayleigh-ok <reason>` | fork-stamped | Rayleigh forces accumulated into a buffer that is not a function-local vector seeded before the first `getRayleighDampingForces()` call (#562) |
 | `wipe` | L2 | `// ladruno-lint: wipe-ok <reason>` | fork-stamped | a process-wide singleton whose state is not reset on `wipe` |
-| `pointers` | L3 | — | task guides | a `Quirks: "..."` pointer in `.claude/skills/*/SKILL.md` that no longer matches the quirks ledger (WP-115) |
+| `pointers` | L3 | — | task guides | a `Quirks: "..."` pointer in `.claude/skills/*/SKILL.md` or `.agents/skills/*/SKILL.md` that no longer matches the quirks ledger (WP-115, WP-260) |
 | `commit` | L4 | `// ladruno-lint: commit-ok <reason>` | fork-stamped | an Element subclass's `commitState()` that does not chain to `Element::commitState()`, so betaKc's Kc is never refreshed (WP-118) |
 | `double-load` | L5 | `// ladruno-lint: double-ok <reason>` | all element files | an element that subtracts its load vector in both `getResistingForce()` and the `getResistingForceIncInertia()` that calls it (WP-119) |
 | `ground-sign` | L6 | `// ladruno-lint: sign-ok <reason>` | all element files | the ground-motion inertia load reaching the residual with the wrong sign; unreadable signs are skipped (WP-117) |

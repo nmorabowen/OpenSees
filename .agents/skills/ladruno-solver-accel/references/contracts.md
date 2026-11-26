@@ -1,24 +1,28 @@
-# WP-260 Locked Cross-Pillar Contracts, Precision Policy & Tier-3 Traps
+# WP-260 Cross-Pillar Contracts, Precision Policy & Tier-3 Traps
 
-## 1. Six Locked Cross-Pillar C++ Interface Contracts
+Summary of ADR §4–§6. The ADR text is authoritative; contracts freeze when the owner accepts the ADR.
 
-| # | Seam & Files | Exact Signature / Contract | Rules |
+## 1. Six Cross-Pillar C++ Interface Contracts
+
+| # | Seam & Files | Signature / Contract | Rules |
 |---|---|---|---|
-| **1** | **Stress-Only & Unified IMPL-EX Hooks** (`SRC/material/nD/NDMaterial.h`, `FiniteStrainNDMaterial.h`) | `virtual int setTrialStrainStressOnly(const Vector &v);` `virtual int setTrialFStressOnly(const Matrix &F);` `virtual bool ladrunoSupportsStressOnly() const;` Plus unified IMPL-EX: `supportsImplex()`, `setImplexMode(bool enable, double alpha = 1.0)`, `getImplexStressGap(double &gapNorm2, double &refNorm2)`, `getImplexElasticDrift()`. | Default `setTrialStrainStressOnly` forwards to `setTrialStrain`. Ladruno implementations compute stress/state with `doTangent = false` and set `tangentValid_ = false` (reset on commit/revert). If `getTangent()` is called when `!tangentValid_`, materialize `Dtan` lazily on demand (never return stale tangent). |
-| **2** | **Effective Tangent Key** (`SRC/analysis/integrator/IncrementalIntegrator.h`) | `virtual bool getEffectiveTangentKey(double &c1, double &c2, double &c3) const { return false; }` | `LadrunoFactorReuse` compares `(c1, c2, c3)` when true (falling back to `dt` comparison when false). Allows `LadrunoImplicitBathe` ($\gamma_0(\rho_\infty)$) to share 1 LU/AMG factor across both substeps. |
-| **3** | **Commit-vs-Recorder Decoupling** (`SRC/domain/domain/Domain.h/.cpp`) | Ref-counted `int suppressRecorderDepth = 0` + RAII `Domain::ScopedRecorderSuppression` (generalizes `contactAugmenting`). | Commits material/contact state cleanly during composite substeps (`LadrunoImplicitBathe`) and subcycled explicit/IMEX zones without firing recorders or bumping `commitTag`. |
-| **4** | **Fast CSR Scatter & Inexact-Newton Hooks** (`SRC/system_of_eqn/linearSOE/LinearSOE.h`) | `uint64_t patternGeneration_ = 0;` incremented in `setSize()`; `locateEntry(int row, int col) const`, `addAMapped(const double *mColMajor, int nr, const int32_t *map, double fact = 1.0)`, `supportsMappedScatter() const`; `setRelativeTolerance(double eta)`. | Default fallbacks preserve 100% compatibility with un-upgraded SOEs. Map rebuilds automatically when `plan.patternGen != soe.patternGeneration_`. |
-| **5** | **64-Byte SoA `LadrunoGPStore` & `LADRUNO_HD` Kernels** | Pure POD `*Kernel.h` headers compiled `__host__ __device__`; `LadrunoGPStore` holds 64-byte-aligned `eps[6][N]`, `sig[6][N]`, `Dtan[36][N]` (null when `needTangent=false`), optional lazy `statePrevCommit` (for $O(1)$ Substep-2 rollback), `syncToDomain()`, `evalBatchStressOnly(W, eps, state, sig)`, and Pass-1 SIMD predictor + Pass-2 compacted `plasticIdx[]`. | Always retain virtual `NDMaterial*` fallback for non-Ladruno materials. Zero dynamic allocations inside `evalBatch`. |
-| **6** | **Windows Toolchain / OpenMP / ISA Contract** (`CMakeLists.txt`) | Single OpenMP runtime (`libiomp5md`, zero `vcomp140.dll`); `/fp:precise` / `-ffp-contract=off` for `G-BYTE` gates; AVX2 + `mimalloc` + `/GL /LTCG` governed by ADR §8 D2/D4. | Verify with `dumpbin /dependents` on Windows DLL/EXE targets. |
+| **1a** | **Stress-only evaluation** (`SRC/material/nD/NDMaterial.h`, `FiniteStrainNDMaterial.h`) | `virtual int setTrialStrainStressOnly(const Vector&)`, `setTrialFStressOnly(const Matrix&)`, `setTrialFincrStressOnly(const Matrix&)`, `virtual bool ladrunoSupportsStressOnly() const` (default `false`) | Defaults forward to `setTrialStrain` / `setTrialF` / `setTrialFincr`. Covers **every** tangent channel: `getTangent()`, `getSpatialTangentTensor()`, and wrappers reading an inner tangent. The stress-only trial caches what the tangent needs; producing the tangent later is a pure function of that cache (never re-runs the return map from committed state, never returns the previous iteration's tangent). Writes only the instance's own members; only for `ladrunoThreadSafeForm()` materials with one thread per instance during form. `tangentValid_` resets on commit/revert. |
+| **1b** | **IMPL-EX control on the existing API** | Reuse `getImplexError()` + `LadrunoImplexClock`; add `virtual double getImplexError() const` only where missing (ASD materials keep their `const Vector&` accessor plus a differently-named `double` adapter); add `supportsImplex()`, `setImplexMode(bool enable, double alpha = 1.0)` | A material declared with `-implex`/`-implexControl` keeps its own clock; `setImplexMode` on it is a warn-once no-op. Never two extrapolations. `getImplexElasticDrift()` dropped. |
+| **2** | **Effective tangent key** (`SRC/analysis/integrator/IncrementalIntegrator.h`) | `virtual bool getEffectiveTangentKey(double &c1, double &c2, double &c3) const { return false; }` | `LadrunoFactorReuse` keys on `(SOE, integrator, neq, c1, c2, c3)` when true, today's `(SOE, integrator, neq, dt)` when false. `TRBDF2`/`TRBDF3` should implement it. |
+| **3** | **Substep commit without recorders** (`SRC/domain/domain/Domain.h/.cpp`) — gated by D6 | `int suppressRecorderDepth = 0` + RAII `Domain::ScopedRecorderSuppression`; skips only the recorder loop and `commitTag++` | **Separate from `contactAugmenting`** (that flag also drives contact augment-mode commit and gates the ADR-60 re-emit). Per side effect under a substep commit: element/node commit runs; WP-99 refusal latch runs; contact commit runs with substep `dT`, never augment mode; `needsResort` re-emit deferred to the step-final commit; `LadrunoPorousOverlay::onDomainCommit` **skipped** (fluid advances once per full step); recorders/`commitTag` skipped. Rollback: don't commit substep 1 (hold as trial), or keep a step-start snapshot for **all** materials. Two Newton solves per step need a fork-owned substep driver, not the integrator calling the algorithm. |
+| **4** | **Fast CSR scatter & inexact Newton** (`SRC/system_of_eqn/linearSOE/LinearSOE.h`, `LinearSOESolver.h`) | Non-virtual `LinearSOE::setSize(Graph&)` → subclass `doSetSize(Graph&)` → `++patternGeneration_` (NVI); `locateEntry(row,col) const`, `addAMapped(const double*, int nr, const IndexT *map, double fact=1.0)`, `supportsMappedScatter() const`; `LinearSOESolver::setRelativeTolerance(double eta)` | Plans keyed on `(const LinearSOE*, patternGeneration_)`. A subclass still overriding `setSize` directly reports `supportsMappedScatter()==false`. `IndexT` = the SOE's own index type (`int64_t` for ILP64/`pardiso_64`). Default `addAMapped` falls back to `addA`; default `setRelativeTolerance` is ignored. |
+| **5** | **64-byte SoA `LadrunoGPStore`** | 64-byte-aligned `eps[6][N]`, `sig[6][N]`, `Dtan[36][N]` (null when stress-only), optional lazy `statePrevCommit`, `syncToDomain()`, `evalBatchStressOnly(W, eps, state, sig)`, two-pass compacted `plasticIdx[]` | Keep the virtual `NDMaterial*` fallback. Zero allocations inside `evalBatch`. `*Kernel.h` stay plain C++: no allocation, no `opserr`, no statics, no virtual calls. `LADRUNO_HD` (`__host__ __device__`) only if D3 puts GPU in scope. |
+| **6** | **Windows toolchain / OpenMP** (`CMakeLists.txt`) | Single OpenMP runtime (`libiomp5md`, zero `vcomp140.dll`); `/fp:precise` / `-ffp-contract=off` for `G-BYTE`; `mimalloc` + `/GL /LTCG` per D4 | **No global `/arch:AVX2`** (ADR-77 V0). Verify with `dumpbin /dependents` on every Windows DLL/EXE in `dist\`. |
 
 ---
 
 ## 2. Unified Mixed-Precision Policy
 
-- **Allowed & High-ROI (Opt-In `G-OPT` / `G-EQUIV`):**
-  - Implicit direct solvers: FP32 MUMPS/PARDISO factorization (**for PARDISO `iparm[27]=1`, MUST maintain `float*` shadow `A_f`, `b_f`, `x_f`!**) + **FP64 outer GMRES-IR** (Carson–Higham, up to $\kappa \lesssim 10^{11}$ with automatic FP64 fallback).
-  - Explicit dynamics: FP32 element kinematics / elastic / CPML / J2 force kernels + **FP64 nodal state accumulation** (`u += dt * v_half`).
-- **Strictly Forbidden (FP64 Only):**
+- **Allowed (opt-in `G-OPT` / `G-EQUIV`):**
+  - Implicit direct solvers: FP32 MUMPS/PARDISO factorization (**for PARDISO `iparm[27]=1`, keep `float*` shadows `A_f`, `b_f`, `x_f`**) + **FP64 outer GMRES-IR** (Carson–Higham, up to $\kappa \lesssim 10^{11}$ with automatic FP64 fallback).
+  - Explicit dynamics: FP32 element kinematics / elastic / CPML / J2 **force evaluation** + **FP64 nodal state accumulation** (`u += dt * v_half`).
+- **Strictly FP64:**
+  - Any state accumulated over steps: nodal state, **CPML auxiliary memory variables** (recursive convolution), plastic/damage internal variables.
   - `LadrunoSANISAND` (`p' -> p_min`), `LadrunoConcrete3D` softening, `LadrunoHS` corners, and un-accumulated long-duration wave time-stepping.
 
 ---
@@ -32,4 +36,8 @@
 5. Rosenbrock / W-methods over Global IMPL-EX.
 6. Implicit GPU offload before SoA/assembly fixes.
 7. Stock `HHTGeneralizedExplicit` as a diagonal-mass explicit wave integrator (`C` added to LHS).
-8. Standalone `LadrunoJ2` `tang_flag` or closed-form plane-stress J2 (demoted by ADR-68 T1/T2).
+8. Global `/arch:AVX2` (ADR-77 V0: no speed, "do not add the flag") and standalone `LadrunoJ2` `tang_flag` or closed-form plane-stress J2 (ADR-68 T1/T2).
+
+## 4. Closed Unless the Owner Re-Opens
+
+- **Implicit Bathe** (ADR-77 G3, closed with the benchmark on record). Re-opens only via D6's pre-registered shared-factor benchmark clearing ADR-77's ≥1.3× bar.
