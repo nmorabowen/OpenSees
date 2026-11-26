@@ -2,6 +2,8 @@
 
 Before starting any WP, read `SKILL.md`, `references/contracts.md`, `references/fork-checklist.md`, and `Ladruno_implementation/260_ladruno_solver_acceleration_adr.md` (§2.2 open-PR overlaps, §2.3 prior closed lanes). If a brief's **Blocked by** names an open PR or an owner decision, do not start: post a handoff on the `program` issue.
 
+Every brief is subject to the evidence rules of `references/review-protocol.md` §0: an artifact for every claim, named oracles, CI status copied from the tool, a link for every approval, quiet-machine timings, one package per PR with result-changing options default-off, and an owner-accepted amendment **before** touching a file outside **Owned Files**.
+
 **Only the packages the owner picked after `260-w0` may start** (plan §0.5: phase share ≥ 10 %, projected whole-run gain ≥ 1.10×, top 2–3 at a time). The other briefs are kept ready, not scheduled.
 
 ---

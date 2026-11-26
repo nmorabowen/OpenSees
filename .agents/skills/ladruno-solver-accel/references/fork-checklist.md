@@ -67,9 +67,9 @@ A follow-up to a WP-260 quirk edits that quirk's fragment (`#### Follow-up (WP-2
 2. Local 5-target build green; `ladrunoBuild` SHA matches PR `HEAD`.
 3. `pytest -m zone_a` green (both `OpenSees.exe` and `opensees.pyd` exercised where applicable).
 4. Explicit ADR-68 gate proof (`G-BYTE` MD5/signbit identity, `G-EQUIV` oracle, or `G-OPT` + fail-closed checks; TSan for threaded changes).
-5. Before/after profile table pasted in the PR description: the D1 decks the WP was picked on, method of the `260-w0` brief §2 (`1t_deep` for phase shares, `1t_coarse` and `nt_coarse` for wall time and scaling, default thread environment, step 1 dropped, interleaved reps, median and spread), phase speedup `s` and whole-run gain.
+5. Before/after profile table pasted in the PR description, measured on a quiet machine with a load probe per run (`review-protocol.md` §0 rule 5): the D1 decks the WP was picked on, method of the `260-w0` brief §2 (`1t_deep` for phase shares, `1t_coarse` and `nt_coarse` for wall time and scaling, default thread environment, step 1 dropped, interleaved reps, median and spread), phase speedup `s` and whole-run gain.
 6. Zone-A Ubuntu CI dispatched (`gh workflow run ladruno.yml --ref <branch>`) and green (`gh pr checks <pr>`).
-7. `### Review request` posted (`references/review-protocol.md`); Claude's verdict is `ready`, every finding answered by number.
+7. `### Review request` posted with its evidence table (`references/review-protocol.md` §0–§1: every claim has an artifact, every oracle names what it compares against, CI status copied from `gh pr checks`, approvals linked); Claude's verdict is `ready`, every finding answered by number.
 8. The PR states the plan §0.5 numbers it was picked on (p, s, projected G) next to the measured whole-run gain.
 9. Family-level PR (per D7): `Ladruno_implementation/reviews/handoff_260<x>.md` written for the owner's ADR-87 D4 run; `reviews/adr260<x>_verdict.md` committed.
 10. `Ladruno_internal/ISSUES.md` §3 `### Handoff` comment posted on the PR and board `#937` refreshed.
