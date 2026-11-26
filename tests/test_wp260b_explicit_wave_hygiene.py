@@ -502,10 +502,13 @@ def test_sms_consistent_rank1_vs_independent_olovsson_oracle():
     for i, x in enumerate(xs_bar[1:], start=2):
         ops.node(i, float(x), 0.0)
         ops.fix(i, 0, 1)
-        ops.setNodeDisp(i, 1, 1.0e-3 * float(x), "-commit")
     ops.uniaxialMaterial("Elastic", 1, E)
     for i in range(nfree):
         ops.element("Truss", i + 1, i + 1, i + 2, A, 1, "-rho", rho)
+    # Apply initial displacement AFTER element creation so Truss::setDomain uses
+    # the undeformed reference length L.
+    for i, x in enumerate(xs_bar[1:], start=2):
+        ops.setNodeDisp(i, 1, 1.0e-3 * float(x), "-commit")
     ops.constraints("Transformation")
     ops.numberer("Plain")
     ops.system("Diagonal")

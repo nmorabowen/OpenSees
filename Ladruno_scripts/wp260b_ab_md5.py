@@ -186,11 +186,15 @@ def _run_t7_quad_all():
         ops.wipe()
         ops.model("basic", "-ndm", 2, "-ndf", 2)
         ops.nDMaterial("ElasticIsotropic", 1, 1.0e7, 0.25, 2.0)
+        mat_tag = 1
+        if geom == "finite":
+            ops.nDMaterial("LogStrain2D", 2, 1)
+            mat_tag = 2
         for i, (x, y) in enumerate([(0, 0), (1, 0), (1, 1), (0, 1)], 1):
             ops.node(i, float(x), float(y))
             if y == 0:
                 ops.fix(i, 1, 1)
-        ops.element("LadrunoQuad", 1, 1, 2, 3, 4, 1, "-type", "PlaneStrain",
+        ops.element("LadrunoQuad", 1, 1, 2, 3, 4, mat_tag, "-type", "PlaneStrain",
                     "-thick", 1.0, "-formulation", form, "-geom", geom)
         ops.timeSeries("Constant", 1)
         ops.pattern("Plain", 1, 1)
@@ -218,7 +222,7 @@ def _run_t7_shell_callers():
     ops.nDMaterial("ElasticIsotropic", 1, 1.0e7, 0.25, 2.0)
     ops.node(1, 0.0, 0.0); ops.node(2, 1.0, 0.0); ops.node(3, 0.4, 1.0)
     ops.fix(1, 1, 1); ops.fix(2, 1, 1)
-    ops.element("LadrunoCST", 1, 1, 2, 3, 1.0, "PlaneStrain", 1)
+    ops.element("LadrunoCST", 1, 1, 2, 3, 1, "-type", "PlaneStrain", "-thick", 1.0)
     ops.timeSeries("Constant", 1); ops.pattern("Plain", 1, 1); ops.load(3, 200.0, -100.0)
     ops.constraints("Plain"); ops.numberer("Plain"); ops.system("Diagonal")
     ops.test("NormDispIncr", 1e-12, 1); ops.algorithm("Linear")
@@ -233,7 +237,7 @@ def _run_t7_shell_callers():
     for i, (x, y) in enumerate([(0, 0), (1, 0), (0, 1), (0.5, 0), (0.5, 0.5), (0, 0.5)], 1):
         ops.node(i, float(x), float(y))
         if y == 0: ops.fix(i, 1, 1)
-    ops.element("LadrunoLST", 1, 1, 2, 3, 4, 5, 6, 1.0, "PlaneStrain", 1)
+    ops.element("LadrunoLST", 1, 1, 2, 3, 4, 5, 6, 1, "-type", "PlaneStrain", "-thick", 1.0)
     ops.timeSeries("Constant", 1); ops.pattern("Plain", 1, 1); ops.load(3, 200.0, -100.0)
     ops.constraints("Plain"); ops.numberer("Plain"); ops.system("Diagonal")
     ops.test("NormDispIncr", 1e-12, 1); ops.algorithm("Linear")
@@ -263,7 +267,7 @@ def _run_brick_formuri_damage():
     # Concrete3D damage path (triggers damageResponse != 0 in LadrunoBrick::formUri(0))
     ops.wipe()
     ops.model("basic", "-ndm", 3, "-ndf", 3)
-    ops.nDMaterial("LadrunoConcrete3D", 1, 3.0e10, 0.2, 3.0e7, 3.0e6, "-rho", 2400.0)
+    ops.nDMaterial("LadrunoConcrete3D", 1, 3.0e10, 0.2, 3.0e7, 3.0e6, 100.0, 10000.0, "-rho", 2400.0)
     coords = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0),
               (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
     for i, (x, y, z) in enumerate(coords, 1):
