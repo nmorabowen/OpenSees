@@ -947,7 +947,9 @@ const Vector &  LadrunoBrick::getResistingForceIncInertia(void)
 
   if (alphaM != 0.0 && betaK == 0.0 && betaK0 == 0.0 && betaKc == 0.0 && massType == 1) {
     // Ladruno (WP-260b): O(n) diagonal alphaM fast path for lumped mass (skips
-    // Element::getRayleighDampingForces()'s dense 24x24 copy + matvec; 0-ULP G-BYTE).
+    // Element::getRayleighDampingForces()'s dense 24x24 copy + matvec; 0-ULP G-BYTE
+    // on finite inputs; on an already-diverged Inf/NaN velocity it affects only its
+    // own DOF whereas the dense matvec poisons every element DOF via 0*Inf=NaN).
     const Matrix &Ml = this->getMass();
     for (int j = 0; j < 8; j++) {
       const Vector &vj = nodePointers[j]->getTrialVel();
@@ -3800,8 +3802,11 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   // Ladruno (W2-E1): restore bulk-viscosity coeffs
   bulkVisc_b1 = dData(9);
   bulkVisc_b2 = dData(10);
-  for (int i = 0; i < 8; i++) bvCdValid[i] = false;   // Ladruno (WP-260b)
-  bvCdCacheDisabled = false;
+  // Ladruno (WP-260b): invalidate cached c_d values, but do NOT reset
+  // bvCdCacheDisabled here: constructors already initialize it to false for new
+  // brokered elements, whereas an in-place Domain::recvSelf restore keeps live
+  // materials and any attached Parameter pointing at them.
+  for (int i = 0; i < 8; i++) bvCdValid[i] = false;
   hgFloor       = dData(11);        // Ladruno (C3a)
   hgDamageMode  = (int)dData(12);
   hgOmegaShadow = dData(13);

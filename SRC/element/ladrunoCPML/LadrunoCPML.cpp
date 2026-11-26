@@ -1145,7 +1145,9 @@ LadrunoCPML::getResistingForceIncInertia()
   if (alphaM != 0.0 && betaK == 0.0 && betaK0 == 0.0 && betaKc == 0.0 &&
       lumped_ && !biot_.enabled) {
     // Ladruno (WP-260b): O(n) diagonal alphaM fast path for lumped single-phase CPML
-    // (skips Element::getRayleighDampingForces()'s dense 24x24 copy + matvec; G-BYTE).
+    // (skips Element::getRayleighDampingForces()'s dense 24x24 copy + matvec; 0-ULP
+    // G-BYTE on finite inputs; on an already-diverged Inf/NaN velocity it affects
+    // only its own DOF rather than propagating 0*Inf=NaN across the element).
     const Matrix& M = this->getMass();
     for (int a = 0; a < nNodes_; ++a) {
       const Vector& vNode = theNodes_[a]->getTrialVel();

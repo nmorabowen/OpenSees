@@ -128,9 +128,13 @@ static double maxGeneralizedEigenvalue(int n, double *K_data, double *M_data)
         if (mii <= 0.0) mPositive = false;
         if (mii > 0.0)  anyPositive = true;
     }
-    // Ladruno (WP-260b / ADR-67 P1.2'): massless-element short-circuit. When every
-    // lumped diagonal mass entry is <= 0 (e.g. a zeroLength interface/contact spring),
-    // M has no positive inertia so DGGEV rejects every eigenpair (beta == 0) and returns -1.
+    // Ladruno (WP-260b / ADR-67 P1.2'): massless / non-positive-mass short-circuit.
+    // For exact zero mass (e.g. zeroLength interface/contact springs), M has no
+    // inertia so DGGEV yields beta == 0 for every eigenpair and returns -1 (G-BYTE).
+    // If all mdiag <= 0 with some negative (e.g. row-sum lumping) and an indefinite
+    // tangent K, DGGEV could previously return a spurious positive eigenvalue; skipping
+    // an element with no positive lumped inertia is intentional (all callers treat <= 0
+    // as skip).
     if (!anyPositive)
         return -1.0;
 
@@ -291,8 +295,10 @@ double elementLambdaMax(Element *ele, bool useTangent,
                         const double *mdiag, int n,
                         const Matrix *Kadd)
 {
-    // Ladruno (WP-260b / ADR-67 P1.2'): massless-element short-circuit BEFORE
-    // fetching K or allocating LAPACK buffers (byte-identical -1 return).
+    // Ladruno (WP-260b / ADR-67 P1.2'): non-positive-mass short-circuit BEFORE
+    // fetching K or allocating LAPACK buffers (G-BYTE -1.0 for exact zero mass;
+    // intentionally skips all-non-positive mdiag where indefinite K + negative mdiag
+    // could previously produce a spurious positive DGGEV eigenpair).
     bool anyPositive = false;
     for (int i = 0; i < n; ++i) {
         if (mdiag[i] > 0.0) { anyPositive = true; break; }

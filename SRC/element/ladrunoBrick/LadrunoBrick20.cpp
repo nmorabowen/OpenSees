@@ -638,7 +638,9 @@ const Vector &  LadrunoBrick20::getResistingForceIncInertia(void)
 
   if (alphaM != 0.0 && betaK == 0.0 && betaK0 == 0.0 && betaKc == 0.0 && massType == 1) {
     // Ladruno (WP-260b): O(n) diagonal alphaM fast path for HRZ-lumped mass
-    // (skips Element::getRayleighDampingForces()'s dense 60x60 copy + matvec; G-BYTE).
+    // (skips Element::getRayleighDampingForces()'s dense 60x60 copy + matvec; 0-ULP
+    // G-BYTE on finite inputs; on an already-diverged Inf/NaN velocity it affects
+    // only its own DOF rather than propagating 0*Inf=NaN across the element).
     this->refreshMassState();
     if (hasMass) {
       const Matrix &Ml = this->getMass();

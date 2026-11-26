@@ -71,6 +71,7 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <cassert>
 #include <cmath>
 #include <functional>   // Ladruno: parallel consistent PCG (ConsistentParOps callbacks)
 
@@ -821,7 +822,20 @@ consistentPCG(const std::vector<ConsistentBlock> &blocks,
 {
     ConsistentPCGScratch localScratch;
     ConsistentPCGScratch &sc = scratch ? *scratch : localScratch;
-    sc.ensureSize(neq);
+    if (!scratch) {
+        localScratch.ensureSize(neq);
+    } else {
+        // Caller must pre-size scratch via ensureSize(neq) before filling r (which
+        // may alias sc.r); never reallocate sc.r here.
+        assert(&r != &sc.r || sc.r.Size() == neq);
+        assert(sc.Ax.Size() == neq && sc.z.Size() == neq &&
+               sc.p.Size() == neq && sc.Ap.Size() == neq && sc.res.Size() == neq);
+        if (sc.Ax.Size()  != neq) sc.Ax  = Vector(neq);
+        if (sc.z.Size()   != neq) sc.z   = Vector(neq);
+        if (sc.p.Size()   != neq) sc.p   = Vector(neq);
+        if (sc.Ap.Size()  != neq) sc.Ap  = Vector(neq);
+        if (sc.res.Size() != neq) sc.res = Vector(neq);
+    }
     Vector &Ax = sc.Ax, &z = sc.z, &p = sc.p, &Ap = sc.Ap, &res = sc.res;
     // start from a = M_lump^-1 r (already in `a` on entry); residual = r - M_tilde a
     consistentMatVec(blocks, diagMinv, neq, a, Ax);
@@ -935,7 +949,20 @@ consistentParPCG(const std::vector<ConsistentBlock> &blocks, const double *diagM
 {
     ConsistentPCGScratch localScratch;
     ConsistentPCGScratch &sc = scratch ? *scratch : localScratch;
-    sc.ensureSize(neq);
+    if (!scratch) {
+        localScratch.ensureSize(neq);
+    } else {
+        // Caller must pre-size scratch via ensureSize(neq) before filling r (which
+        // may alias sc.r); never reallocate sc.r here.
+        assert(&r != &sc.r || sc.r.Size() == neq);
+        assert(sc.Ax.Size() == neq && sc.z.Size() == neq &&
+               sc.p.Size() == neq && sc.Ap.Size() == neq && sc.res.Size() == neq);
+        if (sc.Ax.Size()  != neq) sc.Ax  = Vector(neq);
+        if (sc.z.Size()   != neq) sc.z   = Vector(neq);
+        if (sc.p.Size()   != neq) sc.p   = Vector(neq);
+        if (sc.Ap.Size()  != neq) sc.Ap  = Vector(neq);
+        if (sc.res.Size() != neq) sc.res = Vector(neq);
+    }
     Vector &Ax = sc.Ax, &z = sc.z, &p = sc.p, &Ap = sc.Ap, &res = sc.res;
     const double *w = ops.w;
 

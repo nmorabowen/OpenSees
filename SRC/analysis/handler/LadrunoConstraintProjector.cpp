@@ -234,6 +234,8 @@ LadrunoConstraintProjector::buildMass(LinearSOE *theSOE)
             // Ladruno (WP-260b): pre-factor SPD LtML = cholL * cholL^T once here so
             // project() solves via O(nRet^2) triangular back-substitution instead of
             // O(nRet^3) dense LU (DGESV) + Matrix copy on every explicit step.
+            // Gate: G-BYTE for nRet == 1 (scalar divide), G-EQUIV for nRet > 1
+            // (Cholesky rounds differently from DGESV at ~1e-15).
             if (g.cholL.noRows() != nRet || g.cholL.noCols() != nRet)
                 g.cholL = Matrix(nRet, nRet);
             g.cholL.Zero();

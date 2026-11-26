@@ -1248,7 +1248,8 @@ const Vector &LadrunoQuad::getResistingForceIncInertia(void)
   if (alphaM != 0.0 && betaK == 0.0 && betaK0 == 0.0 && betaKc == 0.0) {
     // Ladruno (WP-260b): O(n) diagonal alphaM fast path (LadrunoQuad::getMass() is
     // strictly diagonal lumped; skips Element::getRayleighDampingForces()'s dense
-    // 8x8 copy + matvec; 0-ULP G-BYTE).
+    // 8x8 copy + matvec; 0-ULP G-BYTE on finite inputs; on an already-diverged
+    // Inf/NaN velocity it affects only its own DOF rather than every element DOF).
     for (int n = 0; n < 4; n++) {
       const Vector &vn = theNodes[n]->getTrialVel();
       const int c0 = 2 * n;
@@ -1545,8 +1546,10 @@ int LadrunoQuad::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
   betaKc      = data(11);
   bulkVisc_b1 = data(12);   // Ladruno (W2-E1)
   bulkVisc_b2 = data(13);
-  for (int i = 0; i < 4; i++) bvCdValid[i] = false;   // Ladruno (WP-260b)
-  bvCdCacheDisabled = false;
+  // Ladruno (WP-260b): invalidate cached c_d values, but preserve bvCdCacheDisabled
+  // across an in-place recvSelf restore while an attached Parameter stays live
+  // (constructors already initialize bvCdCacheDisabled = false for fresh elements).
+  for (int i = 0; i < 4; i++) bvCdValid[i] = false;
   geom        = static_cast<Geom>((int)data(14));   // Ladruno (ADR 70)
   hgFloor     = data(15);                           // Ladruno (C1)
   hgDamageMode = (int)data(16);
