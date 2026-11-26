@@ -25,8 +25,8 @@ The work-package map below is a **menu, not a schedule**. Every speedup figure i
 1. **`260-w0` first.** Nothing beyond `260-w0` starts until its phase-share table (§`260-w0` brief) is posted on the `program` issue.
 2. **Selection gate.** A work package is scheduled only if, on at least one D1 deck:
    - the phase it targets takes **p ≥ 10 %** of the run (from the 1-thread `-deep` profile), and
-   - its projected whole-run gain **G = 1 / ((1 − p) + p / s) ≥ 1.10×**, where `s` is the WP's own *conservative* phase speedup (the low end of its hypothesis, halved if unmeasured anywhere).
-   The `260-w0` post ranks every Wave-1/2 package by `G` per deck.
+   - its projected whole-run gain **G = 1 / ((1 − p) + p / s) ≥ 1.10×**, where `s` is the WP's own *conservative* phase speedup: the low end of its hypothesis, with the excess over 1× halved if it was never measured, `s = 1 + (s_low − 1) / 2`.
+   `p` counts only the phases the package changes; a whole-step `p` is not allowed. A package whose gain is not a phase speedup (adaptive stepping, allocator/LTO) is "not phase-rankable" and needs its own whole-run benchmark. A package with no number here is "unranked" until its `s` is sourced. The `260-w0` post ranks every Wave-1/2 package by `G` per deck, on decks at production size and production settings (`260-w0` brief §1–§4).
 3. **Pick 2–3 at a time.** The owner schedules the top 2–3 packages by `G` (ties broken by risk: `G-BYTE` before `G-EQUIV` before `G-OPT`). The rest stay on the menu.
 4. **Ride-alongs.** A cheap `G-BYTE` hygiene item (≤ 2 days, e.g. the dead loop in `KrylovAccelerator.cpp`) may ride along with a selected package that already owns the same files, without passing the gate.
 5. **Re-rank after each merge.** Each merged package posts its measured whole-run gain on the D1 decks; `260-w0`'s table is updated and the menu re-ranked before the next pick. A package whose measured `G` lands below half its projection triggers a short "why" note on the `program` issue before the next pick.

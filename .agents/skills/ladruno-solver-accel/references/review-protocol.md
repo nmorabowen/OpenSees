@@ -67,4 +67,9 @@ Post on the draft PR only when the warrant package is green (fork-checklist §5 
 
 ## 4. Program-level review
 
-After `260-w0` and after each merge, Claude reviews the phase-share table and the re-ranked menu (plan §0.5): are the scopes read correctly, is `s` conservative, does the proposed pick follow from the numbers? Findings go on the `program` issue (#1156), not on a PR.
+After `260-w0` and after each merge, Claude reviews the phase-share table and the re-ranked menu (plan §0.5). Findings go on the `program` issue (#1156); script nits go on the `260-w0` PR. The checks follow the `260-w0` brief:
+- **Decks (§1):** each deck is the D1 configuration (or an owner amendment recorded before the run), at production solver settings (factor reuse, `Linear -factorOnce` on a linear deck), and the implicit decks are run at two sizes, with one ≥ 10⁵ DOF.
+- **Runs (§2):** one SHA across all records; `1t_deep`, `1t_coarse` and `nt_coarse` all present; no non-default `OMP_*`/`KMP_*` override; the "threaded?" column agrees with the `ladrunoThreads` announcement; step 1 dropped; spread ≤ 5 % or 5 reps.
+- **Scopes (§3):** `elem_by_type` and `soe.addA` disjoint; residual within ±0.5 %; no unexplained remainder above 5 %.
+- **Ranking (§4):** `p` limited to the phases each package changes; `s` per rule 2 with a source; Wave-3, unranked and not-phase-rankable packages kept out of the pick.
+- **Pick (§5):** does it follow from the numbers?

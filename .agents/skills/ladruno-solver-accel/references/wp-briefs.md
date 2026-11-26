@@ -8,19 +8,77 @@ Before starting any WP, read `SKILL.md`, `references/contracts.md`, `references/
 
 ## `260-w0` — Phase-0 Profiler Baseline (Read/Bench Only)
 - **Branch:** `wp/260w0-phase0-profiles` from `origin/ladruno`.
-- **Blocked by:** D1.
-- **Goal:** measure where the time goes on the owner-approved D1 decks (3D implicit nonlinear solid/soil, implicit `LadrunoCPML` + `H5DRM`, explicit `CDL`/`ExplicitBathe` + `CPML`, Mode-A Implicit MPM, Model C MCFT `2CLD12`) and rank the WP-260 menu by projected whole-run gain. Zero `SRC/` edits; the deck scripts and a small summarizer go under `Ladruno_scripts/wp260_profiles/`.
-- **How to measure (two runs per deck, from one 5-target build whose `ladrunoBuild` SHA is recorded):**
-  1. **Phase shares:** `profiler start -deep -perStep` at **1 thread**. The deep gate cannot be on while a loop is threaded, so shares come from the 1-thread run only.
-  2. **Wall time at production threads:** coarse `profiler start -perStep` at the thread count the deck is normally run with (state it).
-  3. Run each 3 times, interleaved across decks; report the median and the spread.
-- **Read the scopes carefully:** `elem.tangent` times the whole loop **including the `soe.addA` scatter**; element cost is the `elem_by_type` rows. Split assembly into kernel (`elem_by_type`) and scatter (`soe.addA`). Report `soe.symbolic` / `soe.factor` / `soe.trisolve` separately, plus `formUnbalance`, `update`, `commit.elements`, `commit.record`, and `dc.setSize` / `domainChanged` where present.
-- **Deliverable (one comment on the `program` issue + the same tables in `Ladruno_scripts/wp260_profiles/README.md`):**
-  1. *Phase-share table:* per deck, the % of wall time per scope above (1-thread run) and the production-thread wall time.
-  2. *Phase → package map:* `soe.factor`/`soe.symbolic`/`soe.trisolve` → 260a (PARDISO levers), 260g, 260m; `soe.addA`, `dc.setSize` → 260a (MUMPS), 260f; `elem_by_type` (by element/material) → 260c1, 260c2, 260f, 260h, 260k; `update`/`formUnbalance` in explicit decks → 260b, 260l; `commit.record` → recorders (outside WP-260; flag it if it is large).
-  3. *Ranking:* for every Wave-1/2 package and each deck, `p`, the conservative `s` used, and `G = 1 / ((1 − p) + p / s)`; mark which packages pass the gate (`p ≥ 10 %` and `G ≥ 1.10×` on at least one deck).
-  4. *Proposed first pick:* the top 2–3 by `G`, for the owner to confirm.
-- **Done When:** the comment is posted with all four parts, the scripts reproduce it from the recorded SHA, and Claude has reviewed the ranking (review protocol §4).
+- **Blocked by:** D1. The **ranking run** also waits for #1153 (thread-safe soils) and #1154 (thread-safe concretes) to merge. Before they merge, SANISAND and Concrete3D refuse the threaded loops, so no production-thread number for D1a/D1b is real. The scripts and the small decks can be fixed and smoke-tested now.
+- **Goal:** measure where the time goes on the owner-approved D1 decks, at production size and with production settings, and rank the WP-260 menu by projected whole-run gain. Zero `SRC/` edits; the deck scripts and the summarizer go under `Ladruno_scripts/wp260_profiles/`.
+- **Why this brief is strict:** the first sweep (`a7a139a76`, #1158) got the scope arithmetic right but ranked on decks 10–100× below production, on a linear deck that re-factored every iteration, on an "8T" column that ran serial, and on `s` values outside rule 2. The review is on #1156. Each rule below closes one of those holes.
+
+### 1. Decks — the D1 configuration, at two sizes
+Every deck runs as D1 states it and as a user would run it in production. A deviation from D1 needs an owner amendment recorded on the `program` issue **before** the run, not a note after it.
+
+| Deck | D1 item | Required configuration | Sizes |
+|---|---|---|---|
+| D1a | (1) | `LadrunoBrick` + `LadrunoSANISAND`, `Pardiso` **with `LadrunoFactorReuse`**, `Newmark` | S (≈ 360 hex) and L (≥ 8× S elements) |
+| D1b | (1) | `LadrunoBrick` + `LadrunoConcrete3D`, `Pardiso` **with `LadrunoFactorReuse`** | S and L (≥ 8× S) |
+| D2 | (2) | `LadrunoBrick` interior + `LadrunoCPML` jacket + `H5DRM` input. A linear deck runs `algorithm Linear -factorOnce` (`Linear.cpp:67`) after a check that the tangent is constant at fixed `dt`; a nonlinear one runs `LadrunoFactorReuse` | S and **L ≥ 10⁵ DOF** (the solver-share probe) |
+| D3a / D3b | (3) | `CentralDifferenceLadruno` / `ExplicitBathe`, `LadrunoBrick -formulation uri` + `LadrunoCPML -lumped`, `Diagonal` | S and L (≥ 8× S) |
+| D3c | (3) variant | `CentralDifferenceSMSConsistent`, `Pardiso` | S |
+| D4 | (4) | Mode-A `LadrunoMPMImplicit` | S (the MPM program, #1075, owns its scaling) |
+| D5 | (5) | `2CLD12` column, `LadrunoForceBeamColumn -monolithic` + `LadrunoNDFiber` + `LadrunoMCFTStrip` | as tested (a single column: its size is the specimen) |
+
+The size pair turns each share into a trend. Factorization grows about as n² in 3D and element work as n, so the post reports `p` at S and at L, and ranks on L.
+
+### 2. Runs — three modes, one build, the production environment
+From one 5-target build; every record stores its own `ops.ladrunoBuild()` and the summarizer refuses mixed SHAs (the `.pyd` and `OpenSees.exe` must match).
+
+| Mode | Profiler | Threads | Used for |
+|---|---|---|---|
+| `1t_deep` | `-deep -perStep` | 1 | phase shares (the deep gate refuses threaded loops) |
+| `1t_coarse` | `-perStep` | 1 | the serial wall time; deep overhead = `1t_deep / 1t_coarse` |
+| `nt_coarse` | `-perStep` | production count (state it; 8 on the i7-13700KF P-cores) | production wall time; scaling = `1t_coarse / nt_coarse` |
+
+- **Environment:** no `OMP_WAIT_POLICY`, `KMP_BLOCKTIME` or affinity override that the fork does not set by default. Record every `OMP_*`, `KMP_*`, `MKL_*` and `LADRUNO_*` variable, and the effective affinity mask (checked with `GetProcessAffinityMask`), in the manifest.
+- **Threading engaged:** keep each run's stderr. The `ladrunoThreads` announcement says whether the loops threaded or refused; the table shows it per deck. A "production" row that ran serial is labelled so.
+- **Repetitions:** interleave decks and modes; drop step 1 from every `-perStep` series (symbolic factorization, allocation, first-touch); 3 reps, raised to 5 for any deck whose spread exceeds 5 % of the median. Report median and min..max.
+
+### 3. Reading the scopes
+- `elem.tangent` times the whole loop, including the `soe.addA` scatter. Element cost is the `elem_by_type` rows, whose per-element timer wraps only `getTangent` (`IncrementalIntegrator.cpp:119-131`). So `elem_by_type + soe.addA` is a disjoint split. Count the `elem_by_type` rows under `elem.tangent`, `elem.residual` and `elem.update` (`Domain.cpp:2521`).
+- Report `soe.symbolic` / `soe.factor` / `soe.trisolve` / `soe.cgs` separately, plus `formUnbalance`, `update`, `newStep`, `commit.elements`, `commit.record` and `domainChanged` / `dc.setSize`.
+- **MPM:** report `mpm.a.prepare` in its own column. It is MPM host work for the MPM program (#1075), not `domainChanged`.
+- **Accounting check:** print `step_wall − Σ(parts)` per deck. If the parts sum to more than 100.5 %, something is double counted: fail. Never clamp `other` at zero.
+- **Unexplained time:** any remainder (`other`, or a scope's time outside its named children) above 5 % of a deck is resolved from `summarize.py --dump-trees` before that deck is ranked. The first sweep's D1b `update` remainder (28.9 %) is the example.
+
+### 4. The ranking — `p` and `s` by rule, not by choice
+- **`p` is only the phases the package changes,** named per package in the summarizer. A constant `p` (whole step, `p = 1.0`) is not allowed. If the gain cannot be written as a phase share, the package is "not phase-rankable" and needs its own whole-run benchmark: `260d` (adaptive stepping changes the step count) and `260e` (allocator/LTO).
+- **`s` follows plan §0.5 rule 2:** take the low end of the plan's hypothesis. If it was never measured, halve the excess, `s = 1 + (s_low − 1) / 2`. A package with no number in the plan is "unranked" until the post states an `s` with its source (a micro-benchmark, or a cited measurement). The summarizer keeps the table: package, plan hypothesis, `s` used, source.
+
+  | Pkg | Plan hypothesis | `s` (unmeasured) | `p` = |
+  |---|---|---:|---|
+  | `260a` | 1.3–2× PARDISO factor | 1.15 | `soe.factor` on `Pardiso` decks (the `G-OPT` `iparm` levers); `soe.addA` + `dc.setSize` only on a MUMPS deck |
+  | `260b` | 1.4–2.2× explicit | 1.20 | `LadrunoCPML` `elem_by_type` + `commit.elements`; plus `ExplicitBathe` `formTangent` on D3b; consistent-SMS `soe.trisolve` on D3c |
+  | `260c1` | 3–6× finite-strain GP | 2.00 | `LogStrain` material share (needs a finite-strain deck; none in D1 → no `p`) |
+  | `260c2` | 1.5–4× | 1.25 | `LadrunoConcrete3D` / `LadrunoHS` material share |
+  | `260d` | 2–5× adaptive runs | — | not phase-rankable |
+  | `260e` | to be measured | — | not phase-rankable |
+  | `260f`–`260j` | no number | unranked until sourced | `260f`: `soe.addA` + assembly only; element threading that #1147/#1153/#1154 deliver is theirs, not `260f`'s |
+  | `260k`–`260o` | Wave 3 | — | not eligible (rule 6); listed only for context |
+
+- **Per deck:** the post gives the full `p` / `s` / `G` matrix (package × deck), not only each package's peak deck.
+
+### 5. Deliverable
+- One comment on the `program` issue, and the same tables in `Ladruno_scripts/wp260_profiles/RESULTS.md`. `README.md` stays the how-to (dependencies, commands, where outputs go). The summarizer writes `RESULTS.md` and never overwrites `README.md`.
+- The comment has five parts:
+  1. *Phase-share table:* per deck and size, the share of each scope above (from `1t_deep`), the residual, and wall time for the three modes with spread. It also has a "threaded?" column.
+  2. *Size trend:* `p` at S and at L for the solver and element phases.
+  3. *Phase → package map:* `soe.*` → 260a, 260g, 260m; `soe.addA`, `dc.setSize` → 260a (MUMPS), 260f; `elem_by_type` (by element and material) → 260c1, 260c2, 260f, 260h, 260k; explicit `update` / `formUnbalance` / `commit.elements` → 260b, 260l; `mpm.a.prepare` → the MPM program; `commit.record` → recorders (outside WP-260; flag it if ≥ 10 %). Name phases ≥ 10 % that no package targets (for example D5's `LadrunoMCFTStrip` kernel) as gaps.
+  4. *Ranking:* the §4 matrix; mark pass (`p ≥ 10 %` and `G ≥ 1.10×` on at least one deck), not eligible, unranked, and not phase-rankable.
+  5. *Proposed pick:* the top 2–3 passing, eligible packages by `G` (ties: `G-BYTE` before `G-EQUIV` before `G-OPT`), with each pick's blocker.
+- Commit `manifest.json`, `trees.json` (each run's parsed scope tree with its `elem_by_type` rows) and the `--dump-trees` text under `Ladruno_scripts/wp260_profiles/results/<sha9>/`. The `.h5` files are large and stay local; state their path.
+
+### 6. Done When
+- The comment is posted with all five parts.
+- `python Ladruno_scripts/wp260_profiles/summarize.py --from-json Ladruno_scripts/wp260_profiles/results/<sha9>` reproduces it from the committed files alone, without the `.h5` files or a build.
+- Every deck's residual is within ±0.5 %, and no unexplained remainder above 5 % is left.
+- Claude's review protocol §4 verdict on the ranking is `ready`.
 
 ---
 
