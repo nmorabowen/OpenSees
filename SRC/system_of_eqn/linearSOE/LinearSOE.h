@@ -102,6 +102,12 @@ class LinearSOE : public MovableObject
     virtual const double *getScalingDiagonalA(void) const { return 0; }
     virtual int assembleSharedSum(Vector &v) { return 0; }
     virtual double globalReduceSum(double localVal) const { return localVal; }
+    // Ladruno (WP-260b): packed 2-double Allreduce to halve collective latency in
+    // consistent-SMS parallel PCG (entry check + per-iteration dot products).
+    virtual void globalReduceSum2(double a, double b, double &ga, double &gb) const {
+        ga = this->globalReduceSum(a);
+        gb = this->globalReduceSum(b);
+    }
 
     LinearSOESolver *getSolver(void);
     

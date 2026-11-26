@@ -182,6 +182,11 @@ LadrunoCPML::ensureBuffers()
   }
   residInc_.Zero();
 
+  if (cVelForce_.Size() != nDOF_) {
+    cVelForce_.resize(nDOF_);
+  }
+  cVelForce_.Zero();
+
   if (basicForce_.Size() != nDOF_) {
     basicForce_.resize(nDOF_);
   }
@@ -673,7 +678,7 @@ LadrunoCPML::commitState()
 {
   int retVal = this->Element::commitState();
   if (retVal != 0) {
-    opserr << "LadrunoCPML::commitState - failed in base Element::commitState()" << endln;
+    // Ladruno (WP-260b): no opserr from commitState() (ladrunoThreadSafeCommit rule 4).
     return retVal;
   }
   kernel_.commit();
@@ -1079,51 +1084,83 @@ LadrunoCPML::getResistingForce()
 const Vector&
 LadrunoCPML::getResistingForceIncInertia()
 {
-  Vector snap = this->getResistingForce();
+  // Ladruno (WP-260b): write directly into preallocated residInc_ (zero heap allocs;
+  // getRayleighDampingForces touches Mmat_/Kmat_/rayForce_, never residInc_).
+  residInc_ = this->getResistingForce();
 
   if (!valid_ || !kernel_.isValid()) {
-    residInc_ = snap;
     return residInc_;
   }
 
   const double scale = scaleFactor();
   if ((stage_ == 1 && lastDt_ > 0.0) || biot_.enabled) {
     const std::vector<double>& rVel = kernel_.getR_vel();
-    Vector cVelForce(nDOF_);
-    for (int i = 0; i < nDOF_; ++i) {
-      cVelForce(i) = scale * rVel[i];
+    if (cVelForce_.Size() != nDOF_) {
+      cVelForce_.resize(nDOF_);
     }
-    LADRUNO_MUTATE_FORCE(CPML, cVelForce);
-    snap.addVector(1.0, cVelForce, 1.0);
+    for (int i = 0; i < nDOF_; ++i) {
+      cVelForce_(i) = scale * rVel[i];
+    }
+    LADRUNO_MUTATE_FORCE(CPML, cVelForce_);
+    residInc_.addVector(1.0, cVelForce_, 1.0);
   }
 
   if (mat_.rho > 0.0) {
-    if (!biot_.enabled) {
-      LadrunoShell::addNodalInertia(snap,
-                                    this->getMass(),
-                                    theNodes_.data(),
-                                    nNodes_,
-                                    ndm_,
-                                    lumped_,
-                                    raScratch_);
-    } else {
-      raScratch_.Zero();
-      for (int a = 0; a < nNodes_; ++a) {
-        const Vector& accel = theNodes_[a]->getTrialAccel();
-        const int uOff = kernel_.uOffset(a);
-        for (int d = 0; d < ndm_; ++d) {
-          raScratch_(uOff + d) = (d < accel.Size()) ? accel(d) : 0.0;
+    // Ladruno (WP-260b / ADR-68 T7): skip getMass()/addNodalInertia/addMassForce
+    // when every nodal translational trial accel is identically 0.0 (explicit Azero).
+    bool allAccelZero = true;
+    for (int a = 0; a < nNodes_ && allAccelZero; ++a) {
+      const Vector& accel = theNodes_[a]->getTrialAccel();
+      const int nchk = (ndm_ < accel.Size()) ? ndm_ : accel.Size();
+      for (int d = 0; d < nchk; ++d) {
+        if (accel(d) != 0.0) {
+          allAccelZero = false;
+          break;
         }
       }
-      kernel_.addMassForce(stage_ == 0, scale, &raScratch_(0), &snap(0));
+    }
+    if (!allAccelZero) {
+      if (!biot_.enabled) {
+        LadrunoShell::addNodalInertia(residInc_,
+                                      this->getMass(),
+                                      theNodes_.data(),
+                                      nNodes_,
+                                      ndm_,
+                                      lumped_,
+                                      raScratch_);
+      } else {
+        raScratch_.Zero();
+        for (int a = 0; a < nNodes_; ++a) {
+          const Vector& accel = theNodes_[a]->getTrialAccel();
+          const int uOff = kernel_.uOffset(a);
+          for (int d = 0; d < ndm_; ++d) {
+            raScratch_(uOff + d) = (d < accel.Size()) ? accel(d) : 0.0;
+          }
+        }
+        kernel_.addMassForce(stage_ == 0, scale, &raScratch_(0), &residInc_(0));
+      }
     }
   }
 
-  if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
+  if (alphaM != 0.0 && betaK == 0.0 && betaK0 == 0.0 && betaKc == 0.0 &&
+      lumped_ && !biot_.enabled) {
+    // Ladruno (WP-260b): O(n) diagonal alphaM fast path for lumped single-phase CPML
+    // (skips Element::getRayleighDampingForces()'s dense 24x24 copy + matvec; G-BYTE).
+    const Matrix& M = this->getMass();
+    for (int a = 0; a < nNodes_; ++a) {
+      const Vector& vNode = theNodes_[a]->getTrialVel();
+      const int base = a * ndm_;
+      for (int d = 0; d < ndm_; ++d) {
+        const int idx = base + d;
+        residInc_(idx) += (alphaM * M(idx, idx)) * vNode(d);
+      }
+    }
+  } else if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
+    Vector snap = residInc_;
     snap.addVector(1.0, this->getRayleighDampingForces(), 1.0);
+    residInc_ = snap;
   }
 
-  residInc_ = snap;
   return residInc_;
 }
 

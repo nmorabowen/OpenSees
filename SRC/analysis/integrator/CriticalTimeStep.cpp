@@ -122,8 +122,17 @@ static double maxGeneralizedEigenvalue(int n, double *K_data, double *M_data)
     // stay intact for the DGGEV fallback. With RANGE='I' and IL=IU=n we ask
     // only for the largest of the n ascending eigenvalues.
     bool mPositive = true;
-    for (int i = 0; i < n; ++i)
-        if (M_data[i * n + i] <= 0.0) { mPositive = false; break; }
+    bool anyPositive = false;
+    for (int i = 0; i < n; ++i) {
+        const double mii = M_data[i * n + i];
+        if (mii <= 0.0) mPositive = false;
+        if (mii > 0.0)  anyPositive = true;
+    }
+    // Ladruno (WP-260b / ADR-67 P1.2'): massless-element short-circuit. When every
+    // lumped diagonal mass entry is <= 0 (e.g. a zeroLength interface/contact spring),
+    // M has no positive inertia so DGGEV rejects every eigenpair (beta == 0) and returns -1.
+    if (!anyPositive)
+        return -1.0;
 
     if (mPositive) {
         double *A = new double[n * n];
@@ -282,6 +291,15 @@ double elementLambdaMax(Element *ele, bool useTangent,
                         const double *mdiag, int n,
                         const Matrix *Kadd)
 {
+    // Ladruno (WP-260b / ADR-67 P1.2'): massless-element short-circuit BEFORE
+    // fetching K or allocating LAPACK buffers (byte-identical -1 return).
+    bool anyPositive = false;
+    for (int i = 0; i < n; ++i) {
+        if (mdiag[i] > 0.0) { anyPositive = true; break; }
+    }
+    if (!anyPositive)
+        return -1.0;
+
     const Matrix &K = useTangent ? ele->getTangentStiff() : ele->getInitialStiff();
     if (K.noRows() != n) return -1.0;
     // Ladruno (ADR-73 P3): additive augmentation must match the pencil size;

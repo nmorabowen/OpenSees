@@ -177,7 +177,7 @@ CentralDifferenceSMSConsistent::CentralDifferenceSMSConsistent()
                                0, false, false, 0.0, false, 0, CTSLumping::Diagonal),
       dtTarget(0.0), maxAddedMassFrac(0.05), verboseSMS(false),
       lumpingSMS(CTSLumping::Diagonal), useTangentSMS(false),
-      pcgTol(1.0e-10), pcgMaxIt(200), blocks(0),
+      pcgTol(1.0e-10), pcgMaxIt(200), blocks(0), pcgScratch(0),
       warnedLimitations(false), warnedSolver(false), warnedPCG(false)
 {
 }
@@ -194,7 +194,7 @@ CentralDifferenceSMSConsistent::CentralDifferenceSMSConsistent(
                                /*cflRecomputeEvery*/0, lumping_),
       dtTarget(dtTarget_), maxAddedMassFrac(maxAddedMassFrac_), verboseSMS(verboseSMS_),
       lumpingSMS(lumping_), useTangentSMS(cflUseTangent_),
-      pcgTol(pcgTol_), pcgMaxIt(pcgMaxIt_), blocks(0),
+      pcgTol(pcgTol_), pcgMaxIt(pcgMaxIt_), blocks(0), pcgScratch(0),
       warnedLimitations(false), warnedSolver(false), warnedPCG(false)
 {
 }
@@ -207,12 +207,16 @@ CentralDifferenceSMSConsistent::~CentralDifferenceSMSConsistent()
     // a no-op if a newer integrator has since published).
     Ladruno::MassScalingEnergyRegistry::instance().clear(this);
     if (blocks != 0) delete blocks;
+    if (pcgScratch != 0) delete pcgScratch;
 }
 
 int CentralDifferenceSMSConsistent::domainChanged(void)
 {
     // (re)build the scaling blocks from scratch onto the ORIGINAL (un-mutated) masses.
     if (blocks != 0) blocks->clear();
+    // Ladruno (WP-260b / ADR-67 P1.1): invalidate cached MPI multiplicity weights on any
+    // topology/partition/size change.
+    if (pcgScratch != 0) pcgScratch->invalidate();
 
     // base: (re)allocate leap-frog state + compute the pre-scaling dt_cr.
     if (CentralDifferenceLadruno::domainChanged() < 0)
@@ -326,12 +330,15 @@ int CentralDifferenceSMSConsistent::refineAccel(Vector &a)
     // (In a parallel run every rank's domainChanged allocated `blocks`, so this is symmetric.)
     if (blocks == 0)
         return 0;
+    if (pcgScratch == 0)
+        pcgScratch = new Ladruno::ConsistentPCGScratch();
     // Serial OR distributed (MPIDiagonalSOE) consistent solve -> a := M_tilde^-1 r.
     // The helper picks the path at runtime via the LinearSOE base virtuals.
     return Ladruno::applyConsistentRefine(*blocks, this->getLinearSOE(), a,
                                           pcgTol, pcgMaxIt, verboseSMS,
                                           warnedSolver, warnedPCG,
-                                          "CentralDifferenceSMSConsistent");
+                                          "CentralDifferenceSMSConsistent",
+                                          pcgScratch);
 }
 
 int CentralDifferenceSMSConsistent::sendSelf(int cTag, Channel &theChannel)
@@ -376,6 +383,7 @@ int CentralDifferenceSMSConsistent::recvSelf(int cTag, Channel &theChannel,
     pcgTol        = data(5);
     pcgMaxIt      = (int)data(6);
     if (blocks != 0) { blocks->clear(); }
+    if (pcgScratch != 0) { pcgScratch->invalidate(); }
     Ladruno::MassScalingEnergyRegistry::instance().clear(this);   // Ladruno V4
     warnedLimitations = false;
     warnedSolver = false;

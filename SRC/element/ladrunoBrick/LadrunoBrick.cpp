@@ -132,6 +132,7 @@ LadrunoBrick::LadrunoBrick()
    formulation(Formulation::STD),
    hourglassType(Hourglass::PHYSICAL), hourglassCoeff(0.0),
    bulkVisc_b1(0.0), bulkVisc_b2(0.0),        // Ladruno (W2-E1): bulk viscosity off
+   bvCdCacheDisabled(false),                  // Ladruno (WP-260b): bulk-visc c_d cache
    applyLoad(0), load(0), Ki(0),
    massType(0),
    inertiaSkip(true),                          // Ladruno (ADR-68 T7)
@@ -141,7 +142,7 @@ LadrunoBrick::LadrunoBrick()
    sspBnot(0), sspKstab(0), sspVol(0.0),      // Ladruno — ssp (built in setDomain)
    alpha(9), alphaCommit(9), easJ0inv(3, 3), easJ0det(0.0), easDegenerate(false)   // Ladruno — eas state
 {
-  for (int i = 0; i < 8; i++) { hgShadow[i] = 0; hgShadowDmg[i] = 0; }   // Ladruno (C3a)
+  for (int i = 0; i < 8; i++) { hgShadow[i] = 0; hgShadowDmg[i] = 0; bvCdCache[i] = 0.0; bvRhoCache[i] = 0.0; bvCdValid[i] = false; }   // Ladruno (C3a, WP-260b)
   B.Zero();
   alpha.Zero();
   alphaCommit.Zero();
@@ -182,6 +183,7 @@ LadrunoBrick::LadrunoBrick(int tag,
    formulation(form),
    hourglassType(hgType), hourglassCoeff(hgCoeff),
    bulkVisc_b1(b1bv), bulkVisc_b2(b2bv),      // Ladruno (W2-E1): bulk-viscosity coeffs
+   bvCdCacheDisabled(false),                  // Ladruno (WP-260b): bulk-visc c_d cache
    applyLoad(0), load(0), Ki(0),
    massType(matype),
    inertiaSkip(true),                          // Ladruno (ADR-68 T7)
@@ -191,7 +193,7 @@ LadrunoBrick::LadrunoBrick(int tag,
    sspBnot(0), sspKstab(0), sspVol(0.0),      // Ladruno — ssp (built in setDomain)
    alpha(9), alphaCommit(9), easJ0inv(3, 3), easJ0det(0.0), easDegenerate(false)   // Ladruno — eas state
 {
-  for (int i = 0; i < 8; i++) { hgShadow[i] = 0; hgShadowDmg[i] = 0; }   // Ladruno (C3a)
+  for (int i = 0; i < 8; i++) { hgShadow[i] = 0; hgShadowDmg[i] = 0; bvCdCache[i] = 0.0; bvRhoCache[i] = 0.0; bvCdValid[i] = false; }   // Ladruno (C3a, WP-260b)
   alpha.Zero();
   alphaCommit.Zero();
 
@@ -271,6 +273,7 @@ LadrunoBrick::~LadrunoBrick()
 //set domain
 void  LadrunoBrick::setDomain(Domain *theDomain)
 {
+  for (int i = 0; i < 8; i++) bvCdValid[i] = false;   // Ladruno (WP-260b)
   for (int i = 0; i < 8; i++)
     nodePointers[i] = theDomain->getNode(connectedExternalNodes(i));
 
@@ -603,9 +606,11 @@ int  LadrunoBrick::revertToStart(void)
   alphaCommit.Zero();
 
   // Ladruno (ADR 79) — hypo: reset the accumulated feed strain
-  for (int g = 0; g < 8; g++)
+  for (int g = 0; g < 8; g++) {
+    bvCdValid[g] = false;   // Ladruno (WP-260b)
     for (int c = 0; c < 6; c++)
       hypoFeed[g][c] = hypoFeedCommit[g][c] = 0.0;
+  }
 
   return success;
 }
@@ -940,8 +945,20 @@ const Vector &  LadrunoBrick::getResistingForceIncInertia(void)
 
   res = resid;
 
-  if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
+  if (alphaM != 0.0 && betaK == 0.0 && betaK0 == 0.0 && betaKc == 0.0 && massType == 1) {
+    // Ladruno (WP-260b): O(n) diagonal alphaM fast path for lumped mass (skips
+    // Element::getRayleighDampingForces()'s dense 24x24 copy + matvec; 0-ULP G-BYTE).
+    const Matrix &Ml = this->getMass();
+    for (int j = 0; j < 8; j++) {
+      const Vector &vj = nodePointers[j]->getTrialVel();
+      const int c0 = 3 * j;
+      res(c0)     += (alphaM * Ml(c0,     c0))     * vj(0);
+      res(c0 + 1) += (alphaM * Ml(c0 + 1, c0 + 1)) * vj(1);
+      res(c0 + 2) += (alphaM * Ml(c0 + 2, c0 + 2)) * vj(2);
+    }
+  } else if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
     res += this->getRayleighDampingForces();
+  }
 
   if (load != 0) res -= *load;
 
@@ -1472,8 +1489,20 @@ void  LadrunoBrick::formResidAndTangent(int tang_flag)
       if (edotV != 0.0) {
         double rhoBV = materialPointers[i]->getRho();
         if (rhoBV > 0.0) {
-          const Matrix &ddBV = materialPointers[i]->getInitialTangent();
-          double cd = sqrt(fabs(ddBV(0,0)) / rhoBV);        // elastic dilatational speed
+          // Ladruno (WP-260b): cache elastic dilatational speed c_d per GP (guarded by
+          // rho and disabled if setParameter() attaches a material parameter; G-BYTE).
+          double cd;
+          if (!bvCdCacheDisabled && bvCdValid[i] && bvRhoCache[i] == rhoBV) {
+            cd = bvCdCache[i];
+          } else {
+            const Matrix &ddBV = materialPointers[i]->getInitialTangent();
+            cd = sqrt(fabs(ddBV(0,0)) / rhoBV);             // elastic dilatational speed
+            if (!bvCdCacheDisabled) {
+              bvCdCache[i]  = cd;
+              bvRhoCache[i] = rhoBV;
+              bvCdValid[i]  = true;
+            }
+          }
           double cbulk = bulkVisc_b1 * rhoBV * cd * bvLe;   // linear: both signs
           if (edotV < 0.0)                                  // quadratic: compression only
             cbulk += bulkVisc_b2 * bulkVisc_b2 * rhoBV * bvLe * bvLe * (-edotV);
@@ -2267,38 +2296,48 @@ LadrunoBrick::formUri(int tang_flag, bool useInitialTangent)
       bC[i][I] = shpC[i][I];
 
   static Vector bodyForce(numberNodes * ndf);   // external (global-frame) body load
-  stiff.Zero();
+  // Ladruno (WP-260b): skip zeroing the 4.6 KB stiff matrix on residual-only calls (tang_flag==0).
+  if (tang_flag == 1)
+    stiff.Zero();
   if (!useInitialTangent) {
     resid.Zero();
     bodyForce.Zero();
   }
 
-  // material tangent at the centroid (drives K and the hourglass modulus)
+  // Ladruno (WP-260b): avoid copying the 6x6 tangent matrix (or calling getTangent()
+  // at all when damageResponse drives stiffness-hourglass via G0) on residual-only
+  // calls (tang_flag==0 && !useInitialTangent). Bit-identical (G-BYTE).
+  const bool needFullDd = (tang_flag == 1 || useInitialTangent);
   static Matrix dd(nstress, nstress);
-  dd = useInitialTangent ? materialPointers[0]->getInitialTangent()
-                         : materialPointers[0]->getTangent();
+  if (needFullDd) {
+    dd = useInitialTangent ? materialPointers[0]->getInitialTangent()
+                           : materialPointers[0]->getTangent();
+  }
 
-  // hourglass stiffness coefficient (FB "stiffness" form):
+  // hourglass stiffness coefficient (FB "stiffness" form; unused in VISCOUS mode):
   //   kappa = scale * G * vol * sum_iI bC_iI^2 ,  G ~ dd(3,3) (shear row)
-  double bb = 0.0;
-  for (int i = 0; i < 3; i++)
-    for (int I = 0; I < numberNodes; I++)
-      bb += bC[i][I] * bC[i][I];
-  const double Ghg = dd(3, 3);
-  const double scale = (hourglassCoeff > 0.0) ? hourglassCoeff : 0.05;
-  double kappa = scale * Ghg * vol * bb;
-
-  // Ladruno — Tier-A: for a softening material (a "damage" channel is present)
-  // base the STIFFNESS hourglass stiffness on the ELASTIC shear and degrade it
-  // explicitly by a floored damage scale, so a fully-cracked element keeps
-  // residual hourglass control (κ → floor·κ_elastic, not 0). Using the current
-  // secant shear (Ghg) here would let κ → 0 at full damage and defeat the floor.
-  // The VISCOUS flavour adds damping not stiffness, so it is NOT degraded (full
-  // hourglass control in the cracked band is desirable there). Non-softening
-  // materials (no damage channel) keep the existing current-tangent κ unchanged.
-  if (!useInitialTangent && hourglassType == Hourglass::STIFFNESS && damageResponse != 0) {
-    const double G0 = materialPointers[0]->getInitialTangent()(3, 3);
-    kappa = scale * G0 * vol * bb * this->damageScale();
+  double kappa = 0.0;
+  if (hourglassType != Hourglass::VISCOUS) {
+    double bb = 0.0;
+    for (int i = 0; i < 3; i++)
+      for (int I = 0; I < numberNodes; I++)
+        bb += bC[i][I] * bC[i][I];
+    const double scale = (hourglassCoeff > 0.0) ? hourglassCoeff : 0.05;
+    // Ladruno — Tier-A: for a softening material (a "damage" channel is present)
+    // base the STIFFNESS hourglass stiffness on the ELASTIC shear and degrade it
+    // explicitly by a floored damage scale, so a fully-cracked element keeps
+    // residual hourglass control (κ → floor·κ_elastic, not 0). Using the current
+    // secant shear (Ghg) here would let κ → 0 at full damage and defeat the floor.
+    // The VISCOUS flavour adds damping not stiffness, so it is NOT degraded (full
+    // hourglass control in the cracked band is desirable there). Non-softening
+    // materials (no damage channel) keep the existing current-tangent κ unchanged.
+    if (!useInitialTangent && hourglassType == Hourglass::STIFFNESS && damageResponse != 0) {
+      const double G0 = materialPointers[0]->getInitialTangent()(3, 3);
+      kappa = scale * G0 * vol * bb * this->damageScale();
+    } else {
+      const double Ghg = needFullDd ? dd(3, 3) : materialPointers[0]->getTangent()(3, 3);
+      kappa = scale * Ghg * vol * bb;
+    }
   }
 
   double gamma[4][8];
@@ -2367,7 +2406,8 @@ LadrunoBrick::formUri(int tang_flag, bool useInitialTangent)
     if (!useInitialTangent) {
       double rho = materialPointers[0]->getRho();
       if (rho > 0.0) {
-        const double cd = sqrt(dd(0, 0) / rho);
+        const double dd00 = needFullDd ? dd(0, 0) : materialPointers[0]->getTangent()(0, 0);
+        const double cd = sqrt(dd00 / rho);
         const double epsV = (hourglassCoeff > 0.0) ? hourglassCoeff : 0.1;
         const double cVisc = epsV * rho * cd * pow(vol, 2.0 / 3.0);
         // generalized hourglass velocities qdot_ai = sum_J gamma_aJ v_iJ
@@ -3756,6 +3796,8 @@ int  LadrunoBrick::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker
   // Ladruno (W2-E1): restore bulk-viscosity coeffs
   bulkVisc_b1 = dData(9);
   bulkVisc_b2 = dData(10);
+  for (int i = 0; i < 8; i++) bvCdValid[i] = false;   // Ladruno (WP-260b)
+  bvCdCacheDisabled = false;
   hgFloor       = dData(11);        // Ladruno (C3a)
   hgDamageMode  = (int)dData(12);
   hgOmegaShadow = dData(13);
@@ -4423,11 +4465,14 @@ LadrunoBrick::setParameter(const char **argv, int argc, Parameter &param)
 
   // specific material point
   // single-point: every k -> live slot 0; Ladruno (WP-124 C10): not materialState
-  if (LadrunoShell::isMaterialPointToken(argv[0]))
+  if (LadrunoShell::isMaterialPointToken(argv[0])) {
+    bvCdCacheDisabled = true;   // Ladruno (WP-260b): parameter attached -> never serve stale c_d
     return LadrunoShell::forwardToMaterialPoint(materialPointers, 8, this->isSinglePoint(),
                                                 argv, argc, param);
+  }
 
   // all material points
+  bvCdCacheDisabled = true;     // Ladruno (WP-260b)
   return LadrunoShell::forwardToMaterials(materialPointers, 8, argv, argc, param);
 }
 

@@ -53,13 +53,20 @@ namespace Ladruno {
 // (= M_lump^-1 r), replacing it in place with M_tilde^-1 r. Returns 0 always
 // (a non-fatal fallback just leaves `a` as the un-scaled diagonal solve).
 // warnedSolver/warnedPCG are per-integrator latches so the warnings fire once.
+// Ladruno (WP-260b / ADR-67 P1.1): optional reusable `scratch` hoists all per-step
+// Vector allocations (r, Ax, z, p, Ap, res) and caches the MPI multiplicity weight
+// vector w per domainChanged().
 inline int
 applyConsistentRefine(std::vector<ConsistentBlock> &blocks, LinearSOE *theSOE, Vector &a,
                       double pcgTol, int pcgMaxIt, bool verbose,
-                      bool &warnedSolver, bool &warnedPCG, const char *cls)
+                      bool &warnedSolver, bool &warnedPCG, const char *cls,
+                      ConsistentPCGScratch *scratch = 0)
 {
     if (theSOE == 0)
         return 0;
+
+    ConsistentPCGScratch localScratch;
+    ConsistentPCGScratch &sc = scratch ? *scratch : localScratch;
 
     // ---- DISTRIBUTED / MPI path (MPIDiagonalSOE) -------------------------------------
     // All ranks hold the same SOE type, so isDistributedDiagonal() is true on every rank
@@ -74,37 +81,47 @@ applyConsistentRefine(std::vector<ConsistentBlock> &blocks, LinearSOE *theSOE, V
         int neq = theSOE->getNumEqn();
         int    localActive = blocks.empty() ? 0 : 1;
         int    localBad    = (Ainv == 0 || neq != a.Size()) ? 1 : 0;
-        double gActive     = theSOE->globalReduceSum((double)localActive);
-        double gBad        = theSOE->globalReduceSum((double)localBad);
+        // Ladruno (WP-260b): pack (localActive, localBad) into one 2-double Allreduce.
+        double gActive = 0.0, gBad = 0.0;
+        theSOE->globalReduceSum2((double)localActive, (double)localBad, gActive, gBad);
         if (gActive == 0.0)
             return 0;   // nothing scaled anywhere -> every rank returns together
         if (gBad > 0.0)
             return 0;   // some rank cannot apply the solve -> all bail together (no partial run)
 
-        // weight w_i = 1/multiplicity_i (mult = #ranks sharing DOF i). mult is
-        // assembleSharedSum(ones); 1 on purely-local DOFs. Rebuilt each call (one extra
-        // exchange/step, cheap vs the PCG; robust to a re-partition / size change).
-        std::vector<double> w((size_t)(neq > 0 ? neq : 0), 1.0);
-        {
-            Vector ones(neq);
-            for (int i = 0; i < neq; ++i) ones(i) = 1.0;
-            theSOE->assembleSharedSum(ones);
+        sc.ensureSize(neq);
+
+        // Ladruno (WP-260b / ADR-67 P1.1): weight w_i = 1/multiplicity_i (mult = #ranks
+        // sharing DOF i). Cached per (SOE, neq) and invalidated by domainChanged() /
+        // recvSelf() (which run collectively across all ranks), avoiding an extra halo
+        // exchange + heap allocations on every step.
+        if (!sc.wValid || sc.wSOE != (const void *)theSOE || (int)sc.w.size() != neq) {
+            sc.w.assign((size_t)(neq > 0 ? neq : 0), 1.0);
+            if (sc.ones.Size() != neq)
+                sc.ones = Vector(neq);
+            for (int i = 0; i < neq; ++i) sc.ones(i) = 1.0;
+            theSOE->assembleSharedSum(sc.ones);
             for (int i = 0; i < neq; ++i)
-                w[(size_t)i] = (ones(i) != 0.0) ? (1.0 / ones(i)) : 1.0;
+                sc.w[(size_t)i] = (sc.ones(i) != 0.0) ? (1.0 / sc.ones(i)) : 1.0;
+            sc.wSOE = (const void *)theSOE;
+            sc.wValid = true;
         }
 
-        Vector r(neq);
+        Vector &r = sc.r;
         for (int i = 0; i < neq; ++i)
             r(i) = (Ainv[i] != 0.0) ? (a(i) / Ainv[i]) : 0.0;
 
         LinearSOE *soe = theSOE;
         ConsistentParOps ops;
-        ops.w = w.empty() ? 0 : w.data();
+        ops.w = sc.w.empty() ? 0 : sc.w.data();
         ops.assembleShared = [soe](double *v, int n) { Vector vv(v, n); soe->assembleSharedSum(vv); };
         ops.globalSum      = [soe](double s) { return soe->globalReduceSum(s); };
+        ops.globalSum2     = [soe](double x, double y, double &gx, double &gy) {
+            soe->globalReduceSum2(x, y, gx, gy);
+        };
 
         double relResid = 0.0;
-        int iters = consistentParPCG(blocks, Ainv, neq, r, a, ops, pcgTol, pcgMaxIt, &relResid);
+        int iters = consistentParPCG(blocks, Ainv, neq, r, a, ops, pcgTol, pcgMaxIt, &relResid, &sc);
         if (verbose)
             opserr << "  " << cls << ": PCG " << iters << " iters (parallel), rel.resid "
                    << relResid << "\n";
@@ -146,12 +163,13 @@ applyConsistentRefine(std::vector<ConsistentBlock> &blocks, LinearSOE *theSOE, V
     if (Ainv == 0 || neq != a.Size())
         return 0;
 
-    Vector r(neq);
+    sc.ensureSize(neq);
+    Vector &r = sc.r;
     for (int i = 0; i < neq; ++i)
         r(i) = (Ainv[i] != 0.0) ? (a(i) / Ainv[i]) : 0.0;
 
     double relResid = 0.0;
-    int iters = consistentPCG(blocks, Ainv, neq, r, a, pcgTol, pcgMaxIt, &relResid);
+    int iters = consistentPCG(blocks, Ainv, neq, r, a, pcgTol, pcgMaxIt, &relResid, &sc);
     if (verbose)
         opserr << "  " << cls << ": PCG " << iters << " iters, rel.resid " << relResid << "\n";
     // Warn on ANY non-converged exit (see the parallel-path note above): the pAp<=0

@@ -19,6 +19,7 @@
 #include <mpi.h>
 
 #include <map>
+#include <vector>   // Ladruno (WP-260b): preallocated MPI_Request/MPI_Status buffers
 #include <LinearSOE.h>
 #include <Vector.h>
 #include <ID.h>
@@ -62,6 +63,8 @@ class MPIDiagonalSOE : public LinearSOE
     const double *getScalingDiagonalA(void) const { return A; }
     int assembleSharedSum(Vector &v);
     double globalReduceSum(double localVal) const;
+    // Ladruno (WP-260b): packed 2-double MPI_Allreduce for consistent-SMS PCG.
+    void globalReduceSum2(double a, double b, double &ga, double &gb) const;
 
     int setDiagonalSolver(MPIDiagonalSolver &newSolver);    
     
@@ -102,6 +105,9 @@ class MPIDiagonalSOE : public LinearSOE
     std::map<int,int*> myActualNeighborsSharedDOFs;
     std::map<int,double*> myActualNeighborsSharedBs;
     std::map<int,double*> myActualNeighborsBsToSend;
+    // Ladruno (WP-260b): preallocated MPI_Request/MPI_Status scratch for assembleSharedSum
+    std::vector<MPI_Request> sharedSumRequests;
+    std::vector<MPI_Status>  sharedSumStatuses;
     int processID;
     int numProcesses;
     int numChannels;

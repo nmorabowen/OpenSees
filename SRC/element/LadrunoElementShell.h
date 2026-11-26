@@ -168,11 +168,20 @@ inline bool isMaterialPointToken(const char *token)
 inline void addNodalInertia(Vector &f, const Matrix &M, Node **nodes, int nen, int ndf,
                             bool diagOnly, Vector &a)
 {
+  // Ladruno (WP-260b / ADR-68 T7): skip M*a when every nodal trial acceleration is
+  // identically 0.0 (explicit CDL/ExplicitBathe residual pass at Azero).
+  bool allZero = true;
   for (int n = 0; n < nen; n++) {
     const Vector &accel = nodes[n]->getTrialAccel();
-    for (int j = 0; j < ndf; j++)
-      a(n * ndf + j) = accel(j);
+    for (int j = 0; j < ndf; j++) {
+      const double aj = accel(j);
+      a(n * ndf + j) = aj;
+      if (aj != 0.0)
+        allZero = false;
+    }
   }
+  if (allZero)
+    return;
   if (diagOnly) {
     const int nd = nen * ndf;
     for (int i = 0; i < nd; i++)

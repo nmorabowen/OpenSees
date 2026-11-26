@@ -133,6 +133,13 @@ public:
 
   bool isValid() const { return valid_; }
 
+  // Ladruno (WP-260b): LadrunoCPML holds only per-instance buffers and an inline
+  // pure-C++ CPMLElementKernel (zero statics, zero opserr, zero throws, zero shared
+  // node writes on update/form/commit; Rayleigh pools prepared serially by WP-192).
+  bool ladrunoThreadSafeUpdate(void) const override { return true; }
+  bool ladrunoThreadSafeForm(void)   const override { return true; }
+  bool ladrunoThreadSafeCommit(void) const override { return true; }
+
 protected:
   const Vector& getRayleighDampingForces();
 
@@ -198,6 +205,7 @@ private:
   Matrix* Ki_ = nullptr;
   Vector resid_;
   Vector residInc_;
+  Vector cVelForce_;   // Ladruno (WP-260b): preallocated velocity-force scratch
   Vector basicForce_;
   Vector Qload_;
   Vector raScratch_;

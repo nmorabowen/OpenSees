@@ -636,8 +636,24 @@ const Vector &  LadrunoBrick20::getResistingForceIncInertia(void)
 
   res = resid;
 
-  if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
+  if (alphaM != 0.0 && betaK == 0.0 && betaK0 == 0.0 && betaKc == 0.0 && massType == 1) {
+    // Ladruno (WP-260b): O(n) diagonal alphaM fast path for HRZ-lumped mass
+    // (skips Element::getRayleighDampingForces()'s dense 60x60 copy + matvec; G-BYTE).
+    this->refreshMassState();
+    if (hasMass) {
+      const Matrix &Ml = this->getMass();
+      int c = 0;
+      for (int a = 0; a < NEN; a++) {
+        const Vector &va = nodePointers[a]->getTrialVel();
+        for (int p = 0; p < NDF; p++) {
+          res(c) += (alphaM * Ml(c, c)) * va(p);
+          c++;
+        }
+      }
+    }
+  } else if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
     res += this->getRayleighDampingForces();
+  }
 
   if (load != 0) res -= *load;
 
@@ -890,6 +906,18 @@ LadrunoBrick20::formInertiaResidual(void)
   if (!hasMass)
     return;
   if (!cacheUsable("getResistingForceIncInertia"))
+    return;
+
+  // Ladruno (WP-260b / ADR-68 T7): skip inertia pass when every nodal trial accel
+  // is identically 0.0 (explicit CDL/ExplicitBathe residual pass at Azero).
+  bool allAccelZero = true;
+  for (int a = 0; a < NEN && allAccelZero; a++) {
+    const Vector &acc = nodePointers[a]->getTrialAccel();
+    for (int p = 0; p < NDF; p++) {
+      if (acc(p) != 0.0) { allAccelZero = false; break; }
+    }
+  }
+  if (allAccelZero)
     return;
 
   if (massType == 1) {

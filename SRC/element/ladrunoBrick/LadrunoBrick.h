@@ -194,6 +194,14 @@ class LadrunoBrick : public Element {
   double hourglassCoeff;              // uri only
   double bulkVisc_b1;                 // Ladruno (W2-E1): explicit bulk-viscosity coeffs (linear b1, quadratic b2; 0 = off)
   double bulkVisc_b2;
+  // Ladruno (WP-260b): per-GP cached elastic dilatational wave speed c_d for bulk
+  // viscosity (skips getInitialTangent() + sqrt() every GP/step). Invalidated in
+  // setDomain/recvSelf/revertToStart; disabled if setParameter() attaches a material
+  // parameter, and guarded by rho per GP (G-BYTE bit-identical).
+  double bvCdCache[8];
+  double bvRhoCache[8];
+  bool   bvCdValid[8];
+  bool   bvCdCacheDisabled;
 
   // Cumulative viscous-hourglass dissipation (uri + Hourglass::VISCOUS only).
   // The FB viscous hourglass force damps the spurious modes and stores NO energy,
