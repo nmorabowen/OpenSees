@@ -149,7 +149,7 @@ class DOF_Group;
 class FE_Element;
 class Domain;                       // Ladruno (W1-E2): SMS nodal-mass injection target
 class LadrunoConstraintProjector;   // Ladruno (ADR-30 P5)
-namespace Ladruno { struct ConsistentBlock; }   // Ladruno (W1-E2): consistent SMS
+namespace Ladruno { struct ConsistentBlock; struct ConsistentPCGScratch; }   // Ladruno (W1-E2, WP-260b)
 
 // Ladruno (ADR-30 P5): ExplicitBathe is a LadrunoProjectionConsumer, so the
 // LadrunoProjectionHandler can enforce MP/EQ constraints by M-orthogonal accel
@@ -196,6 +196,16 @@ public:
     // to the system of equation object
     int formEleTangent(FE_Element *theEle);
     int formNodTangent(DOF_Group *theDof);
+
+    // Ladruno (WP-260b / ADR-67 P-NEW-1): constant-mass tangent cache (ported from
+    // CentralDifferenceLadruno). The assembled LHS is pure M (getCFactor()==0),
+    // constant between domainChanged / setConstraintProjector / revertToLastStep /
+    // recvSelf events. Escape hatch: -noMassCache.
+    int formTangent(int statFlag);
+
+    // Ladruno (WP-260b / ADR-67 P-NEW-1, P-NEW-2): parser hooks mirroring CDL.
+    void setMassCacheEnabled(bool on) { useMassCache = on; if (!on) massTangentValid = false; }
+    void setCommitSolveState(bool on) { commitSolveState = on; }
 
     // Ladruno (W1-E2, was ExplicitBatheLNVD): assemble the residual and, when -lnvd is
     // active, add the FLAC local non-viscous damping. A pure pass-through to the base
@@ -347,6 +357,7 @@ private:
     // failed/reverted step never publishes (scratch zeroed in newStep).
     double lnvdStepEnergy;    // Ladruno (ADR-69): per-step dissipation scratch
     bool   lnvdInSubStep2;    // Ladruno (ADR-69): which sub-step is forming
+    Vector *lnvdDamped;       // Ladruno (WP-260b): preallocated damped-residual buffer
 
     // Ladruno (W1-E2, -sms / -consistent): selective mass scaling (was ExplicitBatheSMS /
     // ExplicitBatheSMSConsistent). Inert unless useSMS.
@@ -369,6 +380,7 @@ private:
     Domain *appliedDomain;           // the Domain the injection sits on
     // consistent path state (matrix-free PCG)
     std::vector<Ladruno::ConsistentBlock> *blocks;  // per-element M_bar blocks
+    Ladruno::ConsistentPCGScratch *pcgScratch;      // Ladruno (WP-260b / ADR-67 P1.1)
     bool   warnedLimitations;        // one-time SMS limitations warning
     bool   warnedSolver;             // one-time consistent SOE-type warning
     bool   warnedPCG;                // one-time consistent PCG-failure warning
@@ -376,6 +388,15 @@ private:
     // Ladruno (ADR-30 P5): constraint projection (non-owning; owned by the handler).
     LadrunoConstraintProjector *theProjector;  // 0 unless LadrunoProjection is active
     bool massBuilt;                            // has the projector read diag(M) yet?
+
+    // Ladruno (WP-260b / ADR-67 P-NEW-1, P-NEW-2): constant-mass tangent cache
+    // (default ON, opt-out -noMassCache) and optional 3rd-pass skip (-commitSolveState,
+    // default OFF). All transient (NOT serialized; all ctors init to safe defaults).
+    bool useMassCache;
+    bool massTangentValid;
+    bool massCacheNoted;
+    bool commitSolveState;
+    bool commitSolveStateNoted;
 };
 
 #endif

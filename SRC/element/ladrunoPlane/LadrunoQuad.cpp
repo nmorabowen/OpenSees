@@ -89,7 +89,7 @@ LadrunoQuad::LadrunoQuad(int tag, int nd1, int nd2, int nd3, int nd4,
  :Element(tag, ELE_TAG_LadrunoQuad),
   theMaterial(0), connectedExternalNodes(4),
   Q(8), pressureLoad(8), thickness(t), pressure(p), rho(r),
-  formulation(form), geom(g), bulkVisc_b1(b1bv), bulkVisc_b2(b2bv), planeType(1),
+  formulation(form), geom(g), bulkVisc_b1(b1bv), bulkVisc_b2(b2bv), bvCdCacheDisabled(false), planeType(1),
   Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0), hgFloor(kHgFloorDefault), hgDamageMode(1), hgOmegaShadow(0.0),
   alpha(4), alphaCommit(4), easJ0inv(2, 2), easJ0det(0.0), easDegenerate(false), Ki(0)
 {
@@ -129,14 +129,14 @@ LadrunoQuad::LadrunoQuad(int tag, int nd1, int nd2, int nd3, int nd4,
 
   for (int i = 0; i < 4; i++)
     theNodes[i] = 0;
-  for (int i = 0; i < 4; i++) { hgShadow[i] = 0; hgShadowDmg[i] = 0; }   // Ladruno (C1)
+  for (int i = 0; i < 4; i++) { hgShadow[i] = 0; hgShadowDmg[i] = 0; bvCdCache[i] = 0.0; bvRhoCache[i] = 0.0; bvCdValid[i] = false; }   // Ladruno (C1, WP-260b)
 }
 
 LadrunoQuad::LadrunoQuad()
  :Element(0, ELE_TAG_LadrunoQuad),
   theMaterial(0), connectedExternalNodes(4),
   Q(8), pressureLoad(8), thickness(0.0), pressure(0.0), rho(0.0),
-  formulation(Formulation::STD), geom(Geom::LINEAR), bulkVisc_b1(0.0), bulkVisc_b2(0.0), planeType(1),
+  formulation(Formulation::STD), geom(Geom::LINEAR), bulkVisc_b1(0.0), bulkVisc_b2(0.0), bvCdCacheDisabled(false), planeType(1),
   Mmem(3, 8), Kstab(8, 8), J0(0.0), J1(0.0), J2(0.0), damageResponse(0), hgFloor(kHgFloorDefault), hgDamageMode(1), hgOmegaShadow(0.0),
   alpha(4), alphaCommit(4), easJ0inv(2, 2), easJ0det(0.0), easDegenerate(false), Ki(0)
 {
@@ -150,7 +150,7 @@ LadrunoQuad::LadrunoQuad()
   b[0] = b[1] = 0.0;
   for (int i = 0; i < 4; i++)
     theNodes[i] = 0;
-  for (int i = 0; i < 4; i++) { hgShadow[i] = 0; hgShadowDmg[i] = 0; }   // Ladruno (C1)
+  for (int i = 0; i < 4; i++) { hgShadow[i] = 0; hgShadowDmg[i] = 0; bvCdCache[i] = 0.0; bvRhoCache[i] = 0.0; bvCdValid[i] = false; }   // Ladruno (C1, WP-260b)
 }
 
 LadrunoQuad::~LadrunoQuad()
@@ -247,6 +247,7 @@ int LadrunoQuad::getNumDOF(void) { return 8; }
 
 void LadrunoQuad::setDomain(Domain *theDomain)
 {
+  for (int i = 0; i < 4; i++) bvCdValid[i] = false;   // Ladruno (WP-260b)
   if (theDomain == 0) {
     for (int i = 0; i < 4; i++) theNodes[i] = 0;
     return;
@@ -764,8 +765,8 @@ int LadrunoQuad::revertToStart(void)
   }
   for (int i = 0; i < 4; i++)
     retVal += theMaterial[i]->revertToStart();
-  for (int i = 0; i < 4; i++)                     // Ladruno (C1)
-    if (hgShadow[i]) hgShadow[i]->revertToStart();
+  for (int i = 0; i < 4; i++)                     // Ladruno (C1, WP-260b)
+    { bvCdValid[i] = false; if (hgShadow[i]) hgShadow[i]->revertToStart(); }
   hgOmegaShadow = 0.0;
   return retVal;
 }
@@ -1158,8 +1159,24 @@ const Vector &LadrunoQuad::getResistingForce(void)
       if (edotV != 0.0) {
         double rhoBV = theMaterial[i]->getRho();
         if (rhoBV > 0.0) {
-          const Matrix &ddBV = theMaterial[i]->getInitialTangent();
-          double cd = sqrt(fabs(ddBV(0,0)) / rhoBV);        // elastic dilatational speed
+          // Ladruno (WP-260b): cache elastic dilatational speed c_d per GP ONLY for
+          // materials with guaranteed constant getInitialTangent() (excludes stress/
+          // stage-dependent soils such as LadrunoHS, PDMY*, SANISAND, and wrappers),
+          // guarded by rho and disabled on setParameter() (0-ULP G-BYTE).
+          const bool canCacheCd =
+              !bvCdCacheDisabled && LadrunoShell::hasConstantInitialTangent(theMaterial[i]);
+          double cd;
+          if (canCacheCd && bvCdValid[i] && bvRhoCache[i] == rhoBV) {
+            cd = bvCdCache[i];
+          } else {
+            const Matrix &ddBV = theMaterial[i]->getInitialTangent();
+            cd = sqrt(fabs(ddBV(0,0)) / rhoBV);             // elastic dilatational speed
+            if (canCacheCd) {
+              bvCdCache[i]  = cd;
+              bvRhoCache[i] = rhoBV;
+              bvCdValid[i]  = true;
+            }
+          }
           double cbulk = bulkVisc_b1 * rhoBV * cd * bvLe;   // linear: both signs
           if (edotV < 0.0)                                  // quadratic: compression only
             cbulk += bulkVisc_b2 * bulkVisc_b2 * rhoBV * bvLe * bvLe * (-edotV);
@@ -1228,8 +1245,20 @@ const Vector &LadrunoQuad::getResistingForceIncInertia(void)
   LadrunoShell::addNodalInertia(P, Mq, theNodes, 4, 2, true, a);
 
   res = P;
-  if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0)
+  if (alphaM != 0.0 && betaK == 0.0 && betaK0 == 0.0 && betaKc == 0.0) {
+    // Ladruno (WP-260b): O(n) diagonal alphaM fast path (LadrunoQuad::getMass() is
+    // strictly diagonal lumped; skips Element::getRayleighDampingForces()'s dense
+    // 8x8 copy + matvec; 0-ULP G-BYTE on finite inputs; on an already-diverged
+    // Inf/NaN velocity it affects only its own DOF rather than every element DOF).
+    for (int n = 0; n < 4; n++) {
+      const Vector &vn = theNodes[n]->getTrialVel();
+      const int c0 = 2 * n;
+      res(c0)     += (alphaM * Mq(c0,     c0))     * vn(0);
+      res(c0 + 1) += (alphaM * Mq(c0 + 1, c0 + 1)) * vn(1);
+    }
+  } else if (alphaM != 0.0 || betaK != 0.0 || betaK0 != 0.0 || betaKc != 0.0) {
     res += this->getRayleighDampingForces();
+  }
   P = res;
   return P;
 }
@@ -1517,6 +1546,10 @@ int LadrunoQuad::recvSelf(int commitTag, Channel &theChannel, FEM_ObjectBroker &
   betaKc      = data(11);
   bulkVisc_b1 = data(12);   // Ladruno (W2-E1)
   bulkVisc_b2 = data(13);
+  // Ladruno (WP-260b): invalidate cached c_d values, but preserve bvCdCacheDisabled
+  // across an in-place recvSelf restore while an attached Parameter stays live
+  // (constructors already initialize bvCdCacheDisabled = false for fresh elements).
+  for (int i = 0; i < 4; i++) bvCdValid[i] = false;
   geom        = static_cast<Geom>((int)data(14));   // Ladruno (ADR 70)
   hgFloor     = data(15);                           // Ladruno (C1)
   hgDamageMode = (int)data(16);
@@ -1786,10 +1819,13 @@ int LadrunoQuad::setParameter(const char **argv, int argc, Parameter &param)
   // Ladruno (WP-124 C5): under SSP only slot 0 is live (setResponse and
   // LadrunoBrick already map every k there); 'material 2|3|4' edited a dead
   // slot and silently did nothing.
-  if (LadrunoShell::isMaterialPointToken(argv[0]))   // Ladruno (WP-124 C10)
+  if (LadrunoShell::isMaterialPointToken(argv[0])) {   // Ladruno (WP-124 C10)
+    bvCdCacheDisabled = true;   // Ladruno (WP-260b): parameter attached -> never serve stale c_d
     return LadrunoShell::forwardToMaterialPoint(theMaterial, 4, this->isSinglePoint(),
                                                 argv, argc, param);
+  }
 
+  bvCdCacheDisabled = true;     // Ladruno (WP-260b)
   return LadrunoShell::forwardToMaterials(theMaterial, 4, argv, argc, param);
 }
 

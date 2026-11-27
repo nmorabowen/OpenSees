@@ -122,8 +122,21 @@ static double maxGeneralizedEigenvalue(int n, double *K_data, double *M_data)
     // stay intact for the DGGEV fallback. With RANGE='I' and IL=IU=n we ask
     // only for the largest of the n ascending eigenvalues.
     bool mPositive = true;
-    for (int i = 0; i < n; ++i)
-        if (M_data[i * n + i] <= 0.0) { mPositive = false; break; }
+    bool anyPositive = false;
+    for (int i = 0; i < n; ++i) {
+        const double mii = M_data[i * n + i];
+        if (mii <= 0.0) mPositive = false;
+        if (mii > 0.0)  anyPositive = true;
+    }
+    // Ladruno (WP-260b / ADR-67 P1.2'): massless / non-positive-mass short-circuit.
+    // For exact zero mass (e.g. zeroLength interface/contact springs), M has no
+    // inertia so DGGEV yields beta == 0 for every eigenpair and returns -1 (G-BYTE).
+    // If all mdiag <= 0 with some negative (e.g. row-sum lumping) and an indefinite
+    // tangent K, DGGEV could previously return a spurious positive eigenvalue; skipping
+    // an element with no positive lumped inertia is intentional (all callers treat <= 0
+    // as skip).
+    if (!anyPositive)
+        return -1.0;
 
     if (mPositive) {
         double *A = new double[n * n];
@@ -282,6 +295,17 @@ double elementLambdaMax(Element *ele, bool useTangent,
                         const double *mdiag, int n,
                         const Matrix *Kadd)
 {
+    // Ladruno (WP-260b / ADR-67 P1.2'): non-positive-mass short-circuit BEFORE
+    // fetching K or allocating LAPACK buffers (G-BYTE -1.0 for exact zero mass;
+    // intentionally skips all-non-positive mdiag where indefinite K + negative mdiag
+    // could previously produce a spurious positive DGGEV eigenpair).
+    bool anyPositive = false;
+    for (int i = 0; i < n; ++i) {
+        if (mdiag[i] > 0.0) { anyPositive = true; break; }
+    }
+    if (!anyPositive)
+        return -1.0;
+
     const Matrix &K = useTangent ? ele->getTangentStiff() : ele->getInitialStiff();
     if (K.noRows() != n) return -1.0;
     // Ladruno (ADR-73 P3): additive augmentation must match the pencil size;

@@ -129,8 +129,14 @@ MPIDiagonalSOE::assembleSharedSum(Vector &v)
 
   double *vv = &v(0);
   int n = (2*actualNeighbors > 0) ? 2*actualNeighbors : 1;
-  MPI_Request *theRequests = new MPI_Request[n];
-  MPI_Status  *theStatuses = new MPI_Status[n];
+  // Ladruno (WP-260b): reuse preallocated MPI_Request/MPI_Status buffers (zero heap
+  // allocs per consistent-SMS PCG iteration; G-BYTE).
+  if ((int)sharedSumRequests.size() < n) {
+    sharedSumRequests.resize((size_t)n);
+    sharedSumStatuses.resize((size_t)n);
+  }
+  MPI_Request *theRequests = sharedSumRequests.data();
+  MPI_Status  *theStatuses = sharedSumStatuses.data();
   int ct = 0;
 
   for (int i = 0; i < maxNeighbors; i++)
@@ -160,8 +166,6 @@ MPIDiagonalSOE::assembleSharedSum(Vector &v)
     }
   }
 
-  delete [] theRequests;
-  delete [] theStatuses;
   return 0;
 }
 
@@ -172,6 +176,17 @@ MPIDiagonalSOE::globalReduceSum(double localVal) const
   double g = 0.0;
   MPI_Allreduce(&localVal, &g, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
   return g;
+}
+
+// Ladruno (WP-260b): sum two independent scalars in one MPI_Allreduce collective.
+void
+MPIDiagonalSOE::globalReduceSum2(double a, double b, double &ga, double &gb) const
+{
+  double in[2]  = { a, b };
+  double out[2] = { 0.0, 0.0 };
+  MPI_Allreduce(in, out, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  ga = out[0];
+  gb = out[1];
 }
 // Ladruno end ==============================================================
 

@@ -107,9 +107,17 @@ class LadrunoConstraintProjector
         Matrix L;       // (nRet+nCon) x nRet
         Vector delta;   // nCon offsets for the constrained rows (IC check)
         Vector m;       // per-row lumped mass (filled by buildMass)
-        Matrix LtML;    // nRet x nRet, factored-on-demand copy used in project()
+        Matrix LtML;    // nRet x nRet SPD Gram matrix (L^T M L)
+        // Ladruno (WP-260b): pre-factored lower-triangular Cholesky factor L_c
+        // (L_c L_c^T = LtML, built once in buildMass()) + hoisted per-group scratch
+        // so project() runs in O(nRet^2) with zero heap allocations per step.
+        Matrix cholL;
+        bool   cholValid;
+        Vector araw;
+        Vector rhs;
+        Vector ar;
         ID fixedEqn;    // slave eqns force-set to 0 (orphaned by SP-fixed master)
-        Group() : nRet(0) {}
+        Group() : nRet(0), cholValid(false) {}
     };
     std::vector<Group> groups;
     bool massReady;

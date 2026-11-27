@@ -180,6 +180,12 @@ class LadrunoQuad : public Element
     Geom geom;                         // Ladruno (ADR 70): LINEAR / FINITE geometry axis
     double bulkVisc_b1;                 // Ladruno (W2-E1): explicit bulk-viscosity coeffs (0=off)
     double bulkVisc_b2;
+    // Ladruno (WP-260b): per-GP cached elastic dilatational wave speed c_d for bulk
+    // viscosity (guarded by rho; disabled if setParameter attaches a material parameter).
+    double bvCdCache[4];
+    double bvRhoCache[4];
+    bool   bvCdValid[4];
+    bool   bvCdCacheDisabled;
     int planeType;                     // 1 = PlaneStrain, 2 = PlaneStress
 
     // Ladruno WP-107 (ADR-75b L3-1, hazard H2): thread_local. These two are

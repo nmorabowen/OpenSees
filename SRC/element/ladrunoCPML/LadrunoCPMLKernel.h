@@ -1511,6 +1511,7 @@ public:
       if (lumpedChanged) gpStates_[g].setLumpedNodes(lumped_ ? nNodes_ : 0);
     }
     rebuildStaticAndMassMatrices();
+    invalidateTangentCache();
     if (static_mode_ || last_dt_ <= 0.0) {
       K_eff_ = K_0_;
       K_eff_c_ = K_0_;
@@ -1530,6 +1531,7 @@ public:
       gpStates_[g].updateMaterialParams(ndm_, mat_, grading_, geom_, biot_);
     }
     rebuildStaticAndMassMatrices();
+    invalidateTangentCache();
     if (static_mode_ || last_dt_ <= 0.0) {
       K_eff_ = K_0_;
       K_eff_c_ = K_0_;
@@ -1562,6 +1564,15 @@ public:
 
   void addMassForce(bool useM0, double scale, const double* a, double* out) const noexcept {
     if (a == nullptr || out == nullptr || !(mat_.rho > 0.0)) return;
+    // Ladruno (WP-260b / ADR-68 T7): skip M*a when every translational trial accel is 0.0.
+    bool allZero = true;
+    for (int aNode = 0; aNode < nNodes_ && allZero; ++aNode) {
+      const int uBaseA = uOff_[aNode];
+      for (int d = 0; d < ndm_; ++d) {
+        if (a[uBaseA + d] != 0.0) { allZero = false; break; }
+      }
+    }
+    if (allZero) return;
     if (lumped_) {
       const auto& ml = useM0 ? M0_lumped_ : M_lumped_;
       for (int aNode = 0; aNode < nNodes_; ++aNode) {
@@ -1595,10 +1606,7 @@ public:
       for (int g = 0; g < nGP_; ++g) {
         gpStates_[g].revertToLastCommit(ndm_, biot_.enabled);
       }
-      tangent_cache_dt_ = -1.0;
-      K_eff_ = K_0_;
       if (!biot_.enabled) {
-        std::fill(C_eff_.begin(), C_eff_.end(), 0.0);
         std::fill(R_vel_.begin(), R_vel_.end(), 0.0);
         double p_ext = 0.0;
         for (int i = 0; i < nDOF_; ++i) {
@@ -1612,7 +1620,6 @@ public:
         }
         P_ext_ = p_ext;
       } else {
-        C_eff_ = C_0_;
         for (int i = 0; i < nDOF_; ++i) {
           double r_disp_i = 0.0;
           double r_vel_i  = 0.0;
@@ -1637,16 +1644,15 @@ public:
     }
 
     last_dt_ = dt;
-    const bool rebuildTangents = (dt != tangent_cache_dt_);
+    // Ladruno (WP-260b): K_eff_ and C_eff_ depend ONLY on dt (not u/v/a/memory) and are
+    // materialized lazily by ensureTangents() when getK_eff()/getC_eff() is called.
+    // This eliminates wasted 24x24 tangent/damping assembly on every ExplicitBathe
+    // substep (where p*dt != (1-p)*dt) and 9.2 KB/element copies in commit() (G-BYTE).
     const bool isBox = (geom_.mode == CPMLGeomMode::Box);
 
     std::fill(R_int_.begin(), R_int_.end(), 0.0);
     std::fill(R_disp_.begin(), R_disp_.end(), 0.0);
     std::fill(R_vel_.begin(), R_vel_.end(), 0.0);
-    if (rebuildTangents) {
-      std::fill(K_eff_.begin(), K_eff_.end(), 0.0);
-      std::fill(C_eff_.begin(), C_eff_.end(), 0.0);
-    }
 
     // Local nodal displacements u'_a = R * u_a and velocities v'_a = R * v_a
     double u_local[shapes::MAX_NODES][3]{};
@@ -1710,12 +1716,10 @@ public:
 
       // Filter G'_{kl} through F_{jl}(w) for each pair (j, l)
       double G_tilde[3][3][3]{}; // G_tilde[j][l][k] = \widetilde{G}'_{kl}((j, l); t_{n+1})
-      double D_F[3][3]{};
       for (int l = 0; l < ndm_; ++l) {
         double col_l[3] = {G_local[0][l], G_local[1][l], G_local[2][l]};
         for (int j = 0; j < ndm_; ++j) {
           gs.F_jl[j][l].evalTrial(col_l, dt, G_tilde[j][l]);
-          D_F[j][l] = gs.F_jl[j][l].D_t;
         }
       }
 
@@ -1755,52 +1759,6 @@ public:
                 s_p += geom_.R[i][p] * fK_local[i];
               }
               R_disp_[uBaseA + p] += s_p;
-            }
-          }
-        }
-
-        if (rebuildTangents) {
-          for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
-            const int uBaseA = uOff_[nodeA];
-            for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
-              const int uBaseB = uOff_[nodeB];
-              double K_local_ab[3][3]{};
-              for (int i = 0; i < ndm_; ++i) {
-                for (int k = 0; k < ndm_; ++k) {
-                  double s_ik = 0.0;
-                  for (int j = 0; j < ndm_; ++j) {
-                    const double phi_aj = gs.Phi_local[nodeA][j];
-                    for (int l = 0; l < ndm_; ++l) {
-                      s_ik += phi_aj * mat_.C[i][j][k][l] * D_F[j][l] * gs.Phi_local[nodeB][l];
-                    }
-                  }
-                  K_local_ab[i][k] = w_vol * s_ik;
-                }
-              }
-              if (isBox) {
-                for (int i = 0; i < ndm_; ++i) {
-                  const int row = uBaseA + i;
-                  for (int k = 0; k < ndm_; ++k) {
-                    const int col = uBaseB + k;
-                    K_eff_[(size_t)row * nDOF_ + col] += K_local_ab[i][k];
-                  }
-                }
-              } else {
-                for (int p = 0; p < ndm_; ++p) {
-                  for (int q = 0; q < ndm_; ++q) {
-                    double s_pq = 0.0;
-                    for (int i = 0; i < ndm_; ++i) {
-                      const double Rip = geom_.R[i][p];
-                      for (int k = 0; k < ndm_; ++k) {
-                        s_pq += Rip * K_local_ab[i][k] * geom_.R[k][q];
-                      }
-                    }
-                    const int row = uBaseA + p;
-                    const int col = uBaseB + q;
-                    K_eff_[(size_t)row * nDOF_ + col] += s_pq;
-                  }
-                }
-              }
             }
           }
         }
@@ -1845,68 +1803,6 @@ public:
             }
           }
         }
-
-        if (rebuildTangents) {
-          double CB_local[3][3][shapes::MAX_NODES][3]{};
-          for (int i = 0; i < ndm_; ++i) {
-            for (int j = 0; j < ndm_; ++j) {
-              for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
-                for (int m = 0; m < ndm_; ++m) {
-                  double s = 0.0;
-                  for (int k = 0; k < ndm_; ++k) {
-                    for (int l = 0; l < ndm_; ++l) {
-                      s += mat_.C[i][j][k][l] * D_F[j][l] * gs.B_local[k][l][nodeB][m];
-                    }
-                  }
-                  CB_local[i][j][nodeB][m] = s;
-                }
-              }
-            }
-          }
-
-          for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
-            const int uBaseA = uOff_[nodeA];
-            for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
-              const int uBaseB = uOff_[nodeB];
-              double K_local_ab[3][3]{};
-              for (int r = 0; r < ndm_; ++r) {
-                for (int m = 0; m < ndm_; ++m) {
-                  double s_rm = 0.0;
-                  for (int i = 0; i < ndm_; ++i) {
-                    for (int j = 0; j < ndm_; ++j) {
-                      s_rm += gs.B_local[i][j][nodeA][r] * CB_local[i][j][nodeB][m];
-                    }
-                  }
-                  K_local_ab[r][m] = w_vol * s_rm;
-                }
-              }
-              if (isBox) {
-                for (int r = 0; r < ndm_; ++r) {
-                  const int row = uBaseA + r;
-                  for (int m = 0; m < ndm_; ++m) {
-                    const int col = uBaseB + m;
-                    K_eff_[(size_t)row * nDOF_ + col] += K_local_ab[r][m];
-                  }
-                }
-              } else {
-                for (int p = 0; p < ndm_; ++p) {
-                  for (int q = 0; q < ndm_; ++q) {
-                    double s_pq = 0.0;
-                    for (int r = 0; r < ndm_; ++r) {
-                      const double Rrp = geom_.R[r][p];
-                      for (int m = 0; m < ndm_; ++m) {
-                        s_pq += Rrp * K_local_ab[r][m] * geom_.R[m][q];
-                      }
-                    }
-                    const int row = uBaseA + p;
-                    const int col = uBaseB + q;
-                    K_eff_[(size_t)row * nDOF_ + col] += s_pq;
-                  }
-                }
-              }
-            }
-          }
-        }
       }
 
       // ---- 2 & 3. Inertial Velocity & Corner Displacement Parts ---------- //
@@ -1937,16 +1833,6 @@ public:
           if (gs.has_d12)  gs.g2_g1_n[nodeA].evalTrial(u_a, dt, y_g2g1);
           if (gs.has_d012) gs.phi2_g1_g0_n[nodeA].evalTrial(u_a, dt, y_phi2g1g0);
 
-          const double D_vel_a = (gs.has_d[0] ? (k1 * k2) * gs.g_vel_n[0][nodeA].D_t : 0.0)
-                               + (gs.has_d[1] ? (k0 * k2) * gs.g_vel_n[1][nodeA].D_t : 0.0)
-                               + (gs.has_d[2] ? (k0 * k1) * gs.g_vel_n[2][nodeA].D_t : 0.0);
-          double D_disp_a = 0.0;
-          if (cornerCross) {
-            D_disp_a = (gs.has_d01  ? k2 * gs.g1_g0_n[nodeA].D_t : 0.0)
-                     + (gs.has_d02  ? k1 * gs.g2_g0_n[nodeA].D_t : 0.0)
-                     + (gs.has_d12  ? k0 * gs.g2_g1_n[nodeA].D_t : 0.0)
-                     + (gs.has_d012 ? gs.phi2_g1_g0_n[nodeA].D_t : 0.0);
-          }
           const double wA = rho_w * gs.hrz_w[nodeA];
           for (int d = 0; d < ndm_; ++d) {
             const int dof = uBaseA + d;
@@ -1956,10 +1842,6 @@ public:
             if (cornerCross) {
               R_disp_[dof] += wA * (k2 * y_g1g0[d] + k1 * y_g2g0[d]
                                   + k0 * y_g2g1[d] + y_phi2g1g0[d]);
-            }
-            if (rebuildTangents) {
-              C_eff_[(size_t)dof * nDOF_ + dof] += wA * D_vel_a;
-              K_eff_[(size_t)dof * nDOF_ + dof] += wA * D_disp_a;
             }
           }
         }
@@ -1991,9 +1873,6 @@ public:
                    + (k0 * k2) * gv_out[1][d]
                    + (k0 * k1) * gv_out[2][d];
         }
-        const double D_vel_g = (gs.has_d[0] ? (k1 * k2) * gs.g_vel[0].D_t : 0.0)
-                             + (gs.has_d[1] ? (k0 * k2) * gs.g_vel[1].D_t : 0.0)
-                             + (gs.has_d[2] ? (k0 * k1) * gs.g_vel[2].D_t : 0.0);
 
         double y_g1g0[3]{}, y_g2g0[3]{}, y_g2g1[3]{}, y_phi2g1g0[3]{};
         if (gs.has_d01)  gs.g1_g0.evalTrial(u_gp, dt, y_g1g0);
@@ -2002,7 +1881,6 @@ public:
         if (gs.has_d012) gs.phi2_g1_g0.evalTrial(u_gp, dt, y_phi2g1g0);
 
         double A_disp[3] = {0.0, 0.0, 0.0};
-        double D_disp_g = 0.0;
         if (!LADRUNO_CPML_MUT_ACTIVE(CPML_NO_CORNER_CROSS) &&
             (gs.has_d01 || gs.has_d02 || gs.has_d12)) {
           for (int d = 0; d < ndm_; ++d) {
@@ -2011,10 +1889,6 @@ public:
                       + k0 * y_g2g1[d]
                       + y_phi2g1g0[d];
           }
-          D_disp_g = (gs.has_d01  ? k2 * gs.g1_g0.D_t : 0.0)
-                   + (gs.has_d02  ? k1 * gs.g2_g0.D_t : 0.0)
-                   + (gs.has_d12  ? k0 * gs.g2_g1.D_t : 0.0)
-                   + (gs.has_d012 ? gs.phi2_g1_g0.D_t : 0.0);
         }
 
         const double rho_w = mat_.rho * w_vol;
@@ -2025,20 +1899,6 @@ public:
             const int dof = uBaseA + d;
             R_vel_[dof]  += rho_w * Na * A_vel[d];
             R_disp_[dof] += rho_w * Na * A_disp[d];
-          }
-          if (rebuildTangents) {
-            for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
-              const int uBaseB = uOff_[nodeB];
-              const double Nab = rho_w * Na * gs.N[nodeB];
-              const double c_ab = Nab * D_vel_g;
-              const double k_ab = Nab * D_disp_g;
-              for (int d = 0; d < ndm_; ++d) {
-                const int row = uBaseA + d;
-                const int col = uBaseB + d;
-                C_eff_[(size_t)row * nDOF_ + col] += c_ab;
-                K_eff_[(size_t)row * nDOF_ + col] += k_ab;
-              }
-            }
           }
         }
       }
@@ -2055,11 +1915,9 @@ public:
           g_p_local[l] = s;
         }
         double g_tilde_p[3][3]{};
-        double D_Fp[3][3]{};
         for (int l = 0; l < ndm_; ++l) {
           for (int j = 0; j < ndm_; ++j) {
             g_tilde_p[j][l] = gs.F_p[j][l].evalTrial(g_p_local[l], dt);
-            D_Fp[j][l]      = gs.F_p[j][l].D_t;
           }
         }
         for (int b = 0; b < nP_; ++b) {
@@ -2073,19 +1931,6 @@ public:
             fp_H_b += gs.PhiP_local[b][j] * flux_j;
           }
           R_disp_[pRow] += w_vol * fp_H_b;
-
-          if (rebuildTangents) {
-            for (int c = 0; c < nP_; ++c) {
-              const int pCol = pOff_[c];
-              double h_bc = 0.0;
-              for (int j = 0; j < ndm_; ++j) {
-                for (int l = 0; l < ndm_; ++l) {
-                  h_bc += gs.PhiP_local[b][j] * kbar_local_[j][l] * D_Fp[j][l] * gs.PhiP_local[c][l];
-                }
-              }
-              K_eff_[(size_t)pRow * nDOF_ + pCol] += w_vol * h_bc;
-            }
-          }
         }
 
         // (ii) Coupling filters E_j^{(p)} (on u-rows) & E_j^{(\dot{u})} (on p-rows)
@@ -2094,11 +1939,9 @@ public:
           p_g += gs.Np[b] * u[pOff_[b]];
         }
         double p_tilde[3] = {0.0, 0.0, 0.0};
-        double D_E[3]     = {0.0, 0.0, 0.0};
         double eps_dot_tilde_sum = 0.0;
         for (int j = 0; j < ndm_; ++j) {
           p_tilde[j] = gs.E_p[j].evalTrial(p_g, dt);
-          D_E[j]     = gs.E_p[j].D_t;
 
           double eps_dot_jj = 0.0;
           for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
@@ -2111,38 +1954,21 @@ public:
         for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
           const int uBaseA = uOff_[nodeA];
           double f_up_local[3] = {0.0, 0.0, 0.0};
-          double q_local[3]    = {0.0, 0.0, 0.0};
           for (int j = 0; j < ndm_; ++j) {
             const double phi_aj = gs.Phi_tilde_local[nodeA][j];
             f_up_local[j] = -alpha_w * phi_aj * p_tilde[j];
-            if (rebuildTangents) {
-              q_local[j]  =  alpha_w * phi_aj * D_E[j];
-            }
           }
           for (int d = 0; d < ndm_; ++d) {
             double f_up_global_d = 0.0;
-            double q_global_d    = 0.0;
             if (isBox) {
               f_up_global_d = f_up_local[d];
-              q_global_d    = q_local[d];
             } else {
               for (int j = 0; j < ndm_; ++j) {
                 f_up_global_d += geom_.R[j][d] * f_up_local[j];
-                if (rebuildTangents) {
-                  q_global_d  += geom_.R[j][d] * q_local[j];
-                }
               }
             }
             const int uRow = uBaseA + d;
             R_disp_[uRow] += f_up_global_d;
-            if (rebuildTangents) {
-              for (int b = 0; b < nP_; ++b) {
-                const int pCol = pOff_[b];
-                const double q_adb = q_global_d * gs.Np[b];
-                K_eff_[(size_t)uRow * nDOF_ + pCol] -= q_adb;
-                C_eff_[(size_t)pCol * nDOF_ + uRow] += q_adb;
-              }
-            }
           }
         }
 
@@ -2156,22 +1982,15 @@ public:
           p_dot_g += gs.Np[c] * v[pOff_[c]];
         }
         const double p_dot_tilde = gs.J_s.evalTrial(p_dot_g, dt);
-        const double D_Js        = gs.J_s.D_t;
         const double invQ_w      = w_vol * biot_.oneOverQbar();
         for (int b = 0; b < nP_; ++b) {
           const int pRow = pOff_[b];
           R_vel_[pRow] += invQ_w * gs.Np[b] * p_dot_tilde;
-          if (rebuildTangents) {
-            for (int c = 0; c < nP_; ++c) {
-              const int pCol = pOff_[c];
-              C_eff_[(size_t)pRow * nDOF_ + pCol] += invQ_w * D_Js * gs.Np[b] * gs.Np[c];
-            }
-          }
         }
       }
     }
 
-    // Add unstretched McGann stabilization H_tilde to R_vel_ and C_eff_ in -up mode
+    // Add unstretched McGann stabilization H_tilde to R_vel_ in -up mode
     if (biot_.enabled) {
       for (int b = 0; b < nP_; ++b) {
         const int pRow = pOff_[b];
@@ -2180,16 +1999,9 @@ public:
           const int pCol = pOff_[c];
           const double h_bc = H_tilde_[(size_t)b * nP_ + c];
           f_stab_b += h_bc * v[pCol];
-          if (rebuildTangents) {
-            C_eff_[(size_t)pRow * nDOF_ + pCol] += h_bc;
-          }
         }
         R_vel_[pRow] += f_stab_b;
       }
-    }
-
-    if (rebuildTangents) {
-      tangent_cache_dt_ = dt;
     }
 
     // ---- 4. Acceleration Part f_acc = M_eff * a -------------------------- //
@@ -2206,6 +2018,282 @@ public:
     P_ext_ = p_ext;
   }
 
+  // Ladruno (WP-260b): lazy materialization of K_eff_ and C_eff_ as a pure function of dt.
+  // Bit-identical (0-ULP G-BYTE) to the former inline setTrial() assembly, but only runs
+  // when getK_eff()/getC_eff()/getK_T_dyn()/packState() actually reads the tangent/damping.
+  void materializeTangentsForDt(double dt, std::vector<double>& Kout, std::vector<double>& Cout) const {
+    if (static_mode_ || !(dt > 0.0)) {
+      Kout = K_0_;
+      if (!biot_.enabled) {
+        std::fill(Cout.begin(), Cout.end(), 0.0);
+      } else {
+        Cout = C_0_;
+      }
+      return;
+    }
+
+    const bool isBox = (geom_.mode == CPMLGeomMode::Box);
+    const bool useBbar = biot_.enabled && (biot_.formulation == 1);
+    std::fill(Kout.begin(), Kout.end(), 0.0);
+    std::fill(Cout.begin(), Cout.end(), 0.0);
+
+    for (int g = 0; g < nGP_; ++g) {
+      const auto& gs = gpStates_[g];
+      const double w_vol = gs.w_vol;
+
+      double D_F[3][3]{};
+      for (int l = 0; l < ndm_; ++l) {
+        for (int j = 0; j < ndm_; ++j) {
+          D_F[j][l] = gs.F_jl[j][l].instantaneousMultiplier(dt);
+        }
+      }
+
+      if (!useBbar) {
+        for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
+          const int uBaseA = uOff_[nodeA];
+          for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
+            const int uBaseB = uOff_[nodeB];
+            double K_local_ab[3][3]{};
+            for (int i = 0; i < ndm_; ++i) {
+              for (int k = 0; k < ndm_; ++k) {
+                double s_ik = 0.0;
+                for (int j = 0; j < ndm_; ++j) {
+                  const double phi_aj = gs.Phi_local[nodeA][j];
+                  for (int l = 0; l < ndm_; ++l) {
+                    s_ik += phi_aj * mat_.C[i][j][k][l] * D_F[j][l] * gs.Phi_local[nodeB][l];
+                  }
+                }
+                K_local_ab[i][k] = w_vol * s_ik;
+              }
+            }
+            if (isBox) {
+              for (int i = 0; i < ndm_; ++i) {
+                const int row = uBaseA + i;
+                for (int k = 0; k < ndm_; ++k) {
+                  const int col = uBaseB + k;
+                  Kout[(size_t)row * nDOF_ + col] += K_local_ab[i][k];
+                }
+              }
+            } else {
+              for (int p = 0; p < ndm_; ++p) {
+                for (int q = 0; q < ndm_; ++q) {
+                  double s_pq = 0.0;
+                  for (int i = 0; i < ndm_; ++i) {
+                    const double Rip = geom_.R[i][p];
+                    for (int k = 0; k < ndm_; ++k) {
+                      s_pq += Rip * K_local_ab[i][k] * geom_.R[k][q];
+                    }
+                  }
+                  const int row = uBaseA + p;
+                  const int col = uBaseB + q;
+                  Kout[(size_t)row * nDOF_ + col] += s_pq;
+                }
+              }
+            }
+          }
+        }
+      } else {
+        double CB_local[3][3][shapes::MAX_NODES][3]{};
+        for (int i = 0; i < ndm_; ++i) {
+          for (int j = 0; j < ndm_; ++j) {
+            for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
+              for (int m = 0; m < ndm_; ++m) {
+                double s = 0.0;
+                for (int k = 0; k < ndm_; ++k) {
+                  for (int l = 0; l < ndm_; ++l) {
+                    s += mat_.C[i][j][k][l] * D_F[j][l] * gs.B_local[k][l][nodeB][m];
+                  }
+                }
+                CB_local[i][j][nodeB][m] = s;
+              }
+            }
+          }
+        }
+        for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
+          const int uBaseA = uOff_[nodeA];
+          for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
+            const int uBaseB = uOff_[nodeB];
+            double K_local_ab[3][3]{};
+            for (int r = 0; r < ndm_; ++r) {
+              for (int m = 0; m < ndm_; ++m) {
+                double s_rm = 0.0;
+                for (int i = 0; i < ndm_; ++i) {
+                  for (int j = 0; j < ndm_; ++j) {
+                    s_rm += gs.B_local[i][j][nodeA][r] * CB_local[i][j][nodeB][m];
+                  }
+                }
+                K_local_ab[r][m] = w_vol * s_rm;
+              }
+            }
+            if (isBox) {
+              for (int r = 0; r < ndm_; ++r) {
+                const int row = uBaseA + r;
+                for (int m = 0; m < ndm_; ++m) {
+                  const int col = uBaseB + m;
+                  Kout[(size_t)row * nDOF_ + col] += K_local_ab[r][m];
+                }
+              }
+            } else {
+              for (int p = 0; p < ndm_; ++p) {
+                for (int q = 0; q < ndm_; ++q) {
+                  double s_pq = 0.0;
+                  for (int r = 0; r < ndm_; ++r) {
+                    const double Rrp = geom_.R[r][p];
+                    for (int m = 0; m < ndm_; ++m) {
+                      s_pq += Rrp * K_local_ab[r][m] * geom_.R[m][q];
+                    }
+                  }
+                  const int row = uBaseA + p;
+                  const int col = uBaseB + q;
+                  Kout[(size_t)row * nDOF_ + col] += s_pq;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (gs.has_any_d && lumped_ && gs.nLumpNodes == nNodes_) {
+        const double k0 = gs.kappa[0];
+        const double k1 = gs.kappa[1];
+        const double k2 = gs.kappa[2];
+        const bool cornerCross = !LADRUNO_CPML_MUT_ACTIVE(CPML_NO_CORNER_CROSS) &&
+                                 (gs.has_d01 || gs.has_d02 || gs.has_d12);
+        const double rho_w = mat_.rho * w_vol;
+        for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
+          const int uBaseA = uOff_[nodeA];
+          const double D_vel_a = (gs.has_d[0] ? (k1 * k2) * gs.g_vel_n[0][nodeA].instantaneousMultiplier(dt) : 0.0)
+                               + (gs.has_d[1] ? (k0 * k2) * gs.g_vel_n[1][nodeA].instantaneousMultiplier(dt) : 0.0)
+                               + (gs.has_d[2] ? (k0 * k1) * gs.g_vel_n[2][nodeA].instantaneousMultiplier(dt) : 0.0);
+          double D_disp_a = 0.0;
+          if (cornerCross) {
+            D_disp_a = (gs.has_d01  ? k2 * gs.g1_g0_n[nodeA].instantaneousMultiplier(dt) : 0.0)
+                     + (gs.has_d02  ? k1 * gs.g2_g0_n[nodeA].instantaneousMultiplier(dt) : 0.0)
+                     + (gs.has_d12  ? k0 * gs.g2_g1_n[nodeA].instantaneousMultiplier(dt) : 0.0)
+                     + (gs.has_d012 ? gs.phi2_g1_g0_n[nodeA].instantaneousMultiplier(dt) : 0.0);
+          }
+          const double wA = rho_w * gs.hrz_w[nodeA];
+          for (int d = 0; d < ndm_; ++d) {
+            const int dof = uBaseA + d;
+            Cout[(size_t)dof * nDOF_ + dof] += wA * D_vel_a;
+            Kout[(size_t)dof * nDOF_ + dof] += wA * D_disp_a;
+          }
+        }
+      } else if (gs.has_any_d) {
+        const double k0 = gs.kappa[0];
+        const double k1 = gs.kappa[1];
+        const double k2 = gs.kappa[2];
+        const double D_vel_g = (gs.has_d[0] ? (k1 * k2) * gs.g_vel[0].instantaneousMultiplier(dt) : 0.0)
+                             + (gs.has_d[1] ? (k0 * k2) * gs.g_vel[1].instantaneousMultiplier(dt) : 0.0)
+                             + (gs.has_d[2] ? (k0 * k1) * gs.g_vel[2].instantaneousMultiplier(dt) : 0.0);
+        double D_disp_g = 0.0;
+        if (!LADRUNO_CPML_MUT_ACTIVE(CPML_NO_CORNER_CROSS) &&
+            (gs.has_d01 || gs.has_d02 || gs.has_d12)) {
+          D_disp_g = (gs.has_d01  ? k2 * gs.g1_g0.instantaneousMultiplier(dt) : 0.0)
+                   + (gs.has_d02  ? k1 * gs.g2_g0.instantaneousMultiplier(dt) : 0.0)
+                   + (gs.has_d12  ? k0 * gs.g2_g1.instantaneousMultiplier(dt) : 0.0)
+                   + (gs.has_d012 ? gs.phi2_g1_g0.instantaneousMultiplier(dt) : 0.0);
+        }
+        const double rho_w = mat_.rho * w_vol;
+        for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
+          const double Na = gs.N[nodeA];
+          const int uBaseA = uOff_[nodeA];
+          for (int nodeB = 0; nodeB < nNodes_; ++nodeB) {
+            const int uBaseB = uOff_[nodeB];
+            const double Nab = rho_w * Na * gs.N[nodeB];
+            const double c_ab = Nab * D_vel_g;
+            const double k_ab = Nab * D_disp_g;
+            for (int d = 0; d < ndm_; ++d) {
+              const int row = uBaseA + d;
+              const int col = uBaseB + d;
+              Cout[(size_t)row * nDOF_ + col] += c_ab;
+              Kout[(size_t)row * nDOF_ + col] += k_ab;
+            }
+          }
+        }
+      }
+
+      if (biot_.enabled) {
+        double D_Fp[3][3]{};
+        for (int l = 0; l < ndm_; ++l) {
+          for (int j = 0; j < ndm_; ++j) {
+            D_Fp[j][l] = gs.F_p[j][l].instantaneousMultiplier(dt);
+          }
+        }
+        for (int b = 0; b < nP_; ++b) {
+          const int pRow = pOff_[b];
+          for (int c = 0; c < nP_; ++c) {
+            const int pCol = pOff_[c];
+            double h_bc = 0.0;
+            for (int j = 0; j < ndm_; ++j) {
+              for (int l = 0; l < ndm_; ++l) {
+                h_bc += gs.PhiP_local[b][j] * kbar_local_[j][l] * D_Fp[j][l] * gs.PhiP_local[c][l];
+              }
+            }
+            Kout[(size_t)pRow * nDOF_ + pCol] += w_vol * h_bc;
+          }
+        }
+
+        double D_E[3] = {0.0, 0.0, 0.0};
+        for (int j = 0; j < ndm_; ++j) {
+          D_E[j] = gs.E_p[j].instantaneousMultiplier(dt);
+        }
+        const double alpha_w = w_vol * biot_.biotAlpha;
+        for (int nodeA = 0; nodeA < nNodes_; ++nodeA) {
+          const int uBaseA = uOff_[nodeA];
+          double q_local[3] = {0.0, 0.0, 0.0};
+          for (int j = 0; j < ndm_; ++j) {
+            q_local[j] = alpha_w * gs.Phi_tilde_local[nodeA][j] * D_E[j];
+          }
+          for (int d = 0; d < ndm_; ++d) {
+            double q_global_d = 0.0;
+            if (isBox) {
+              q_global_d = q_local[d];
+            } else {
+              for (int j = 0; j < ndm_; ++j) {
+                q_global_d += geom_.R[j][d] * q_local[j];
+              }
+            }
+            const int uRow = uBaseA + d;
+            for (int b = 0; b < nP_; ++b) {
+              const int pCol = pOff_[b];
+              const double q_adb = q_global_d * gs.Np[b];
+              Kout[(size_t)uRow * nDOF_ + pCol] -= q_adb;
+              Cout[(size_t)pCol * nDOF_ + uRow] += q_adb;
+            }
+          }
+        }
+
+        const double D_Js   = gs.J_s.instantaneousMultiplier(dt);
+        const double invQ_w = w_vol * biot_.oneOverQbar();
+        for (int b = 0; b < nP_; ++b) {
+          const int pRow = pOff_[b];
+          for (int c = 0; c < nP_; ++c) {
+            const int pCol = pOff_[c];
+            Cout[(size_t)pRow * nDOF_ + pCol] += invQ_w * D_Js * gs.Np[b] * gs.Np[c];
+          }
+        }
+      }
+    }
+
+    if (biot_.enabled) {
+      for (int b = 0; b < nP_; ++b) {
+        const int pRow = pOff_[b];
+        for (int c = 0; c < nP_; ++c) {
+          const int pCol = pOff_[c];
+          Cout[(size_t)pRow * nDOF_ + pCol] += H_tilde_[(size_t)b * nP_ + c];
+        }
+      }
+    }
+  }
+
+  void ensureTangents() const {
+    const double targetDt = (static_mode_ || !(last_dt_ > 0.0)) ? 0.0 : last_dt_;
+    if (tangent_cache_dt_ == targetDt) return;
+    materializeTangentsForDt(targetDt, K_eff_, C_eff_);
+    tangent_cache_dt_ = targetDt;
+  }
+
   void commit() {
     for (int g = 0; g < nGP_; ++g) {
       gpStates_[g].commit(ndm_, biot_.enabled);
@@ -2213,11 +2301,11 @@ public:
     R_int_c_ = R_int_;
     R_disp_c_ = R_disp_;
     R_vel_c_ = R_vel_;
-    K_eff_c_ = K_eff_;
-    C_eff_c_ = C_eff_;
+    // Ladruno (WP-260b): K_eff_ and C_eff_ are pure functions of dt materialized lazily
+    // by ensureTangents() — skip the 9.2 KB/element K_eff_c_/C_eff_c_ copies on every
+    // explicit step commit (was 19.6% of D3a; 0-ULP G-BYTE).
     P_ext_c_ = P_ext_;
     last_dt_c_ = last_dt_;
-    tangent_cache_dt_c_ = tangent_cache_dt_;
   }
 
   void revertToLastCommit() {
@@ -2227,11 +2315,8 @@ public:
     R_int_ = R_int_c_;
     R_disp_ = R_disp_c_;
     R_vel_ = R_vel_c_;
-    K_eff_ = K_eff_c_;
-    C_eff_ = C_eff_c_;
     P_ext_ = P_ext_c_;
     last_dt_ = last_dt_c_;
-    tangent_cache_dt_ = (!static_mode_ && last_dt_c_ > 0.0) ? tangent_cache_dt_c_ : -1.0;
   }
 
   void revertToStart() {
@@ -2326,8 +2411,8 @@ public:
   const std::vector<double>& getR_int() const { return R_int_; }
   const std::vector<double>& getR_disp() const { return R_disp_; }
   const std::vector<double>& getR_vel() const { return R_vel_; }
-  const std::vector<double>& getK_eff() const { return K_eff_; }
-  const std::vector<double>& getC_eff() const { return C_eff_; }
+  const std::vector<double>& getK_eff() const { ensureTangents(); return K_eff_; }
+  const std::vector<double>& getC_eff() const { ensureTangents(); return C_eff_; }
   const std::vector<double>& getM_eff() const { return M_eff_; }
   const std::vector<double>& getK0() const { return K_0_; }
   const std::vector<double>& getC0() const { return C_0_; }
@@ -2345,9 +2430,11 @@ public:
     std::copy(R_vel_.begin(), R_vel_.end(), out);
   }
   void getK_eff(double* out) const {
+    ensureTangents();
     std::copy(K_eff_.begin(), K_eff_.end(), out);
   }
   void getC_eff(double* out) const {
+    ensureTangents();
     std::copy(C_eff_.begin(), C_eff_.end(), out);
   }
   void getM_eff(double* out) const {
@@ -2364,6 +2451,7 @@ public:
   }
 
   void getK_T_dyn(double c1, double c2, double c3, double* out) const {
+    ensureTangents();
     const size_t n2 = (size_t)nDOF_ * nDOF_;
     for (size_t i = 0; i < n2; ++i) {
       out[i] = c1 * K_eff_[i] + c2 * C_eff_[i] + c3 * M_eff_[i];
@@ -2389,6 +2477,12 @@ public:
   }
 
   void packState(double* buf) const {
+    ensureTangents();
+    const double targetDtC = (static_mode_ || !(last_dt_c_ > 0.0)) ? 0.0 : last_dt_c_;
+    if (tangent_cache_dt_c_ != targetDtC) {
+      materializeTangentsForDt(targetDtC, K_eff_c_, C_eff_c_);
+      tangent_cache_dt_c_ = targetDtC;
+    }
     double* ptr = buf;
     for (int g = 0; g < nGP_; ++g) {
       gpStates_[g].packState(ndm_, ptr, biot_.enabled);
@@ -2685,11 +2779,11 @@ private:
   std::vector<double> R_int_{}, R_int_c_{};
   std::vector<double> R_disp_{}, R_disp_c_{};
   std::vector<double> R_vel_{}, R_vel_c_{};
-  std::vector<double> K_eff_{}, K_eff_c_{};
-  std::vector<double> C_eff_{}, C_eff_c_{};
+  mutable std::vector<double> K_eff_{}, K_eff_c_{};
+  mutable std::vector<double> C_eff_{}, C_eff_c_{};
   double P_ext_ = 0.0, P_ext_c_ = 0.0;
   double last_dt_ = 0.0, last_dt_c_ = 0.0;
-  double tangent_cache_dt_ = -1.0, tangent_cache_dt_c_ = -1.0;
+  mutable double tangent_cache_dt_ = -1.0, tangent_cache_dt_c_ = -1.0;
   std::vector<double> pendingState_{};
   bool hadPendingStateUnpacked_ = false;
 };
