@@ -617,6 +617,14 @@ inline int ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
       // unknowns x = (th_i, th_j, gam_s / Lc); H = -dG/dx is symmetric
       const double ab = a + b;
       double lastGn = 0.0, lastScale = 0.0;
+      // Rotation resolution: Steel01 (like most uniaxial laws) ignores a strain
+      // change below DBL_EPSILON in ABSOLUTE terms and returns the committed
+      // stress, so M(th) jumps by ~k0 * 2.2e-16 there. For eps < v < ~(1 + k0/a)
+      // eps (the first steps of a record) the hinge equation then has no root
+      // at all. Residuals below kRes * 1e-14 rad are that dead zone, not a
+      // failure (a real 2-cycle misses by ~My).
+      const double kRes = fabs(a) + fabs(b) + (hi ? fabs(k0i_raw) : 0.0) + (hj ? fabs(k0j_raw) : 0.0)
+                        + (hs ? fabs(ks0_raw) * Lc * Lc : 0.0);
       auto evalAxis = [&](const double x[6], double G[6], double H[6][6]) -> bool {
         for (int r = 0; r < 3; r++)
           for (int c = 0; c < 3; c++) H[r][c] = 0.0;
@@ -666,13 +674,13 @@ inline int ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
                         + fabs(kti * ti) + fabs(ktj * tj) + (hs ? Lc * Lc * fabs(kts * gs / Lc) : 0.0);
         lastGn = gn;
         lastScale = rf + sc;
-        return gn <= 1.0e-10 * rf + 1.0e-12 + 1.0e-12 * sc;
+        return gn <= 1.0e-10 * rf + 1.0e-12 + 1.0e-12 * sc + kRes * 1.0e-14;
       };
       double x[6] = { th_i0, th_j0, hs ? gam_s0 / Lc : 0.0, 0.0, 0.0, 0.0 };
       converged = ladrunoIMKSafeguardedSolve(3, x, evalAxis, ktFloor);
       // budget exhausted: accept only a residual that is already negligible
       // (a noise-limited material law), otherwise report the failure
-      if (!converged && lastGn <= 1.0e-8 * lastScale) converged = true;
+      if (!converged && lastGn <= 1.0e-8 * lastScale + kRes * 1.0e-12) converged = true;
       th_i = hi ? x[0] : 0.0;
       th_j = hj ? x[1] : 0.0;
       gam_s = hs ? x[2] * Lc : 0.0;
@@ -1197,7 +1205,18 @@ inline int ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
       const double abz = az + bz;
       const double aby = ay + by;
       double lastGn = 0.0, lastScale = 0.0;
-      auto evalBi =[&](const double x[6], double Gv[6], double H[6][6]) -> bool {
+      // rotation resolution (see ladrunoIMKSolveAxis): initial stiffnesses
+      double kRes = fabs(az) + fabs(bz) + fabs(ay) + fabs(by)
+                  + (hsY ? fabs(ks0Y_raw) * Lc * Lc : 0.0) + (hsZ ? fabs(ks0Z_raw) * Lc * Lc : 0.0);
+      if (hI) {
+        const Matrix &K0 = biI->getInitialTangent();
+        kRes += fabs(fPMI) * (fabs(K0(0, 0)) + fabs(K0(0, 1)) + fabs(K0(1, 0)) + fabs(K0(1, 1)));
+      }
+      if (hJ) {
+        const Matrix &K0 = biJ->getInitialTangent();
+        kRes += fabs(fPMJ) * (fabs(K0(0, 0)) + fabs(K0(0, 1)) + fabs(K0(1, 0)) + fabs(K0(1, 1)));
+      }
+      auto evalBi = [&](const double x[6], double Gv[6], double H[6][6]) -> bool {
         for (int r = 0; r < 6; r++)
           for (int c = 0; c < 6; c++) H[r][c] = 0.0;
         const double t[4] = { hI ? x[0] : 0.0, hJ ? x[1] : 0.0,
@@ -1290,12 +1309,12 @@ inline int ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
                         + (hsY ? Lc * fabs(ktsY * gY) : 0.0) + (hsZ ? Lc * fabs(ktsZ * gZ) : 0.0);
         lastGn = gn;
         lastScale = rf + sc;
-        return gn <= 1.0e-10 * rf + 1.0e-12 + 1.0e-12 * sc;
+        return gn <= 1.0e-10 * rf + 1.0e-12 + 1.0e-12 * sc + kRes * 1.0e-14;
       };
       double x[6] = { th0[0], th0[1], th0[2], th0[3],
                       hsY ? gamSY0 / Lc : 0.0, hsZ ? gamSZ0 / Lc : 0.0 };
       converged = ladrunoIMKSafeguardedSolve(6, x, evalBi, ktFloor);
-      if (!converged && lastGn <= 1.0e-8 * lastScale) converged = true;
+      if (!converged && lastGn <= 1.0e-8 * lastScale + kRes * 1.0e-12) converged = true;
       th[0] = hI ? x[0] : 0.0;  th[1] = hJ ? x[1] : 0.0;
       th[2] = hI ? x[2] : 0.0;  th[3] = hJ ? x[3] : 0.0;
       gamSY = hsY ? x[4] * Lc : 0.0;

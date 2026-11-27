@@ -44,6 +44,14 @@ status: "fixed-by WP-261"
   of large terms. The old loop silently accepted those states. Failing `update()` there
   would reject good steps. The fallback adds a round-off floor `1e-12 × Σ|terms|` and
   reports failure only above `1e-8 × (|q| + |M| + Σ|terms|)`.
+- **Second trap: Steel01's absolute dead zone.** `Steel01::setTrialStrain` ignores
+  |Δε| ≤ `DBL_EPSILON` (absolute, not relative) and returns the committed stress. So near a
+  committed point, M(θ) jumps by k0·2.2e-16. For ε < v < (1 + k0/a)·ε, the first steps of
+  every ground motion, the hinge equation has **no root**. The first WP-261 build reported that
+  as a failure and rejected step 0 of 13 of 26 frame9 runs. The fallback now also accepts
+  residuals below `k_ref × 1e-14 rad` (tight) / `k_ref × 1e-12 rad` (reporting), with k_ref =
+  a + b + the hinges' initial stiffnesses. A real 2-cycle misses by ~My, ten orders above. Any
+  law with an absolute strain threshold behaves the same way.
 - **Gates:** `tests/test_ladrunoIMK_safe_solve_cpp.py` (g++ harness: the plain loop fails the
   unloading case and 555 of 4000 sweep cases. The fallback solves all of them to round-off against
   Steel01 region enumeration, and returns false on a no-root law with its last evaluation at x).

@@ -32,6 +32,7 @@ struct Pair {
   double a, b, v[2];
   Clip h[2];
   int nEval;
+  double kRes() const { return a + b + h[0].k0 + h[1].k0; }
   double lastX[2];
   // residual G = q - M, H = -dG/dth, tight test of ladrunoIMKSolveAxis
   bool operator()(const double x[6], double G[6], double H[6][6]) {
@@ -48,7 +49,7 @@ struct Pair {
     const double rf = fabs(qi) + fabs(qj) + fabs(M[0]) + fabs(M[1]);
     const double sc = (a + b) * (fabs(v[0]) + fabs(v[1]) + fabs(x[0]) + fabs(x[1]))
                     + fabs(kt[0] * x[0]) + fabs(kt[1] * x[1]);
-    return gn <= 1.0e-10 * rf + 1.0e-12 + 1.0e-12 * sc;
+    return gn <= 1.0e-10 * rf + 1.0e-12 + 1.0e-12 * sc + kRes() * 1.0e-14;
   }
 };
 
@@ -209,6 +210,22 @@ int main()
     printf("sweep_safe_max_err %.3e\n", maxErr);
     printf("sweep_safe_max_evals %d\n", maxEval);
     printf("sweep_cases %d\n", nCases);
+  }
+
+  // --- 2b. Steel01's absolute DBL_EPSILON dead zone ------------------------
+  // a virgin hinge pair at v ~ 50 eps: M(th) = 0 for |th| <= eps, then k0 th,
+  // so the hinge equation has no root. The residual left (~k0 eps) is the
+  // law's resolution, not a failure: the solve must accept it.
+  {
+    Pair p; p.a = a; p.b = b;
+    const double vn[2] = { 0.0, 0.0 };
+    commitMonotonic(p, k0, My, bb, vn);
+    p.v[0] = 0.0; p.v[1] = 50.0 * DBL_EPSILON;
+    double x[6] = { 0, 0, 0, 0, 0, 0 };
+    p.nEval = 0;
+    const bool ok = ladrunoIMKSafeguardedSolve(2, x, p, 1.0e-8 * a);
+    printf("deadzone_converged %d\n", ok ? 1 : 0);
+    printf("deadzone_evals %d\n", p.nEval);
   }
 
   // --- 3. no root: the solve reports failure, consistently ------------------

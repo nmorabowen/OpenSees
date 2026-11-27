@@ -167,3 +167,17 @@ def test_unloading_step_is_the_reported_two_cycle_case():
     _, M_x = _exact(clips, np.array([0.0, 0.018]))
     M = np.array(ops.eleResponse(1, "hingeMoment")[:2])
     assert np.abs(M - M_x).max() <= 1e-9 * _My, f"hinge moments {M} vs exact {M_x}"
+
+
+@pytest.mark.parametrize("ndm", [2, 3])
+def test_tiny_first_step_in_steel01_dead_zone_does_not_fail(ndm):
+    """Steel01 ignores a strain change below DBL_EPSILON (absolute), so near
+    zero M(th) jumps by k0 * eps and, for eps < v < (1 + k0/a) eps, the hinge
+    equation has no root. The first steps of a ground motion sit there. The
+    residual is the law's resolution (~k0 * 2e-16), so the step must pass,
+    as it did before WP-261, and not be rejected as an unconverged hinge."""
+    dof = _build(ndm)
+    for dphi in (1.0e-14, 1.0e-14, -3.0e-14, 1.0e-3):
+        ops.integrator("DisplacementControl", 2, dof, dphi)
+        ops.analysis("Static")
+        assert ops.analyze(1) == 0, f"step dphi {dphi} rejected"

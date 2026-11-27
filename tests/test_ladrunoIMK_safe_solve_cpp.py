@@ -11,6 +11,8 @@ Steel01-clip hinges in series with the elastic interior of the test element:
   * the safeguarded solve converges there and on a 4000-case sweep of loading
     and unloading steps, and matches the exact solution found by enumerating
     the Steel01 regions to round-off;
+  * Steel01's absolute DBL_EPSILON dead zone (no root at v ~ 50 eps) is
+    accepted through the rotation-resolution floor, not reported;
   * on a law with no root (an upward moment jump) it returns false, with its
     last evaluation at the returned point: the contract that lets
     ``update()`` fail with the materials still consistent with the rotations.
@@ -72,6 +74,13 @@ def test_safeguarded_sweep(out):
     assert out["sweep_cases"] == 4000
     assert out["sweep_safe_max_err"] < 1e-10
     assert out["sweep_safe_max_evals"] <= 100
+
+
+def test_steel01_dead_zone_is_not_a_failure(out):
+    # Steel01 ignores |d strain| <= DBL_EPSILON (absolute): at v ~ 50 eps the
+    # hinge equation has no root, and the k0 * eps residual must be accepted
+    assert out["deadzone_converged"] == 1
+    assert out["deadzone_evals"] <= 50
 
 
 def test_no_root_reports_failure_consistently(out):
