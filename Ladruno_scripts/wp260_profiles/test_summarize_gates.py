@@ -212,3 +212,53 @@ def test_coverage_gaps_does_not_subtract_non_elem_phases(tmp_path):
     txt = _run_summarize(snap, tmp_path / "d3a_gap.md")
     assert "`d3a_explicit_cdl_cpml[smoke]` uncovered `elem_kernel`" in txt
     assert "dominant `LadrunoBrick`" in txt
+
+
+def _row_for(txt: str, deck_label: str) -> str:
+    prefix = f"| `{deck_label}` |"
+    for ln in txt.splitlines():
+        if ln.startswith(prefix):
+            return ln
+    raise AssertionError(f"Row for {deck_label} not found")
+
+
+def test_refuses_single_missing_load_before(tmp_path):
+    def mut(m, _t):
+        for r in m["records"]:
+            if r["deck"] == "d1b_brick_concrete3d":
+                r["cpu_load_before_pct"] = None
+                break
+
+    snap = _make_clean_snap(tmp_path, QUIET_SNAP, mut)
+    txt = _run_summarize(snap, tmp_path / "out.md")
+    assert "cpu_load_before=missing on 1/9 records" in txt
+    assert _row_for(txt, "d1b_brick_concrete3d[smoke]").endswith("| NO |")
+    assert _row_for(txt, "d3a_explicit_cdl_cpml[smoke]").endswith("| YES |")
+
+
+def test_refuses_single_missing_load_after(tmp_path):
+    def mut(m, _t):
+        for r in m["records"]:
+            if r["deck"] == "d1b_brick_concrete3d":
+                r["cpu_load_after_pct"] = None
+                break
+
+    snap = _make_clean_snap(tmp_path, QUIET_SNAP, mut)
+    txt = _run_summarize(snap, tmp_path / "out.md")
+    assert "cpu_load_after=missing on 1/9 records" in txt
+    assert _row_for(txt, "d1b_brick_concrete3d[smoke]").endswith("| NO |")
+    assert _row_for(txt, "d3a_explicit_cdl_cpml[smoke]").endswith("| YES |")
+
+
+def test_refuses_mixed_missing_load_during_ext(tmp_path):
+    def mut(m, _t):
+        d1b = [r for r in m["records"] if r["deck"] == "d1b_brick_concrete3d"]
+        assert len(d1b) == 9
+        for r in d1b[:8]:
+            r["cpu_load_during_ext_pct"] = None
+
+    snap = _make_clean_snap(tmp_path, QUIET_SNAP, mut)
+    txt = _run_summarize(snap, tmp_path / "out.md")
+    assert "cpu_load_during_ext=missing on 8/9 records" in txt
+    assert _row_for(txt, "d1b_brick_concrete3d[smoke]").endswith("| NO |")
+    assert _row_for(txt, "d3a_explicit_cdl_cpml[smoke]").endswith("| YES |")

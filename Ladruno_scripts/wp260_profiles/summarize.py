@@ -17,8 +17,9 @@ Accounting & sanity rules (`wp-briefs.md` §2, §3, §6):
       * `|residual| > 0.5%`;
       * any unresolved remainder (`upd_other`, `newStep_other`, `unbal_other`, `dc_other`,
         `tan_other`, `ls_other`, `commit_other`) > 5.0%; or
-      * host CPU load (`cpu_load_before_pct`, `cpu_load_after_pct`, or `cpu_load_during_ext_pct`
-        when present) is missing or exceeds `--max-load` (default 10.0%).
+      * host CPU load (`cpu_load_before_pct` or `cpu_load_after_pct` missing on any record,
+        `cpu_load_during_ext_pct` present on only a subset of records, or any present probe
+        exceeding `--max-load`, default 10.0%).
 """
 from __future__ import annotations
 
@@ -565,25 +566,31 @@ def main() -> int:
                 reasons.append(f"unresolved {fn}={100 * med_sh[fn]:.1f}%>5%")
 
         all_recs = r1d + r1c + rnc
+        n_recs = len(all_recs)
         before_loads = [r["cpu_load_before_pct"] for r in all_recs if r.get("cpu_load_before_pct") is not None]
         after_loads = [r["cpu_load_after_pct"] for r in all_recs if r.get("cpu_load_after_pct") is not None]
         during_loads = [r["cpu_load_during_ext_pct"] for r in all_recs if r.get("cpu_load_during_ext_pct") is not None]
+        miss_before = n_recs - len(before_loads)
+        miss_after = n_recs - len(after_loads)
+        miss_during = n_recs - len(during_loads)
         max_before = max(before_loads) if before_loads else None
         max_after = max(after_loads) if after_loads else None
         max_during = max(during_loads) if during_loads else None
         present_maxes = [v for v in (max_before, max_after, max_during) if v is not None]
         max_load = max(present_maxes) if present_maxes else None
 
-        if not before_loads:
-            reasons.append("cpu_load_before=missing")
-        elif max_before > args.max_load:
+        if miss_before > 0:
+            reasons.append(f"cpu_load_before=missing on {miss_before}/{n_recs} records")
+        if max_before is not None and max_before > args.max_load:
             reasons.append(f"cpu_load_before={max_before:.1f}%>{args.max_load:.1f}%")
 
-        if not after_loads:
-            reasons.append("cpu_load_after=missing")
-        elif max_after > args.max_load:
+        if miss_after > 0:
+            reasons.append(f"cpu_load_after=missing on {miss_after}/{n_recs} records")
+        if max_after is not None and max_after > args.max_load:
             reasons.append(f"cpu_load_after={max_after:.1f}%>{args.max_load:.1f}%")
 
+        if during_loads and miss_during > 0:
+            reasons.append(f"cpu_load_during_ext=missing on {miss_during}/{n_recs} records")
         if during_loads and max_during is not None and max_during > args.max_load:
             reasons.append(f"cpu_load_during_ext={max_during:.1f}%>{args.max_load:.1f}%")
 
