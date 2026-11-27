@@ -50,6 +50,11 @@
 #include <Vector.h>
 #include <Matrix.h>
 #include <math.h>
+#include <atomic>
+#include <OPS_Globals.h>
+#include <LadrunoThreads.h>   // WP-261: LadrunoOutputGuard (threaded update, WP-107 rule 4)
+#include <stdlib.h>
+#include "LadrunoIMKSafeSolve.h"   // Ladruno (WP-261): safeguarded local hinge solve
 
 inline bool ladrunoIMKMatIsImplex(UniaxialMaterial *m)
 {
@@ -384,11 +389,50 @@ inline void ladrunoIMKInitBlock(UniaxialMaterial *mi, UniaxialMaterial *mj,
   }
 }
 
+// Ladruno (WP-261): diagnostic switch LADRUNO_IMK_HINGE_FALLBACK_ONLY=1 skips the
+// plain local Newton so EVERY hinge solve goes through the safeguarded fallback.
+// Read once per process. It exists so the whole IMK test battery (biaxial,
+// shear hinges, single hinges, end zones, IMPL-EX) can exercise the fallback's
+// production residual/Jacobian code against its own oracles
+// (tests/test_ladrunoIMK_fallback_only.py). Unset, nothing changes.
+inline bool ladrunoIMKFallbackOnly()
+{
+  static const bool on = [] {
+    const char *e = getenv("LADRUNO_IMK_HINGE_FALLBACK_ONLY");
+    return e != 0 && e[0] == '1';
+  }();
+  return on;
+}
+
+// Ladruno (WP-261): one warning line per unconverged local hinge solve, capped
+// process-wide so a failing line search cannot flood the log. The global step
+// is failed through the update() return code; this only says why.
+inline void ladrunoIMKWarnLocalFailure(const char *cls, int tag)
+{
+  static std::atomic<int> count(0);
+  const int n = count.fetch_add(1);
+  if (n < 10) {
+    LadrunoOutputGuard guard;   // opserr is one shared stream under threaded update
+    opserr << "WARNING " << cls << "::update - element " << tag
+           << ": local hinge solve did not converge; update() fails so the step is rejected\n";
+    if (n == 9)
+      opserr << "WARNING " << cls << "::update - further local hinge warnings suppressed\n";
+  }
+}
+
 // Per-axis internal state determination: solves the internal Newton for the
 // two hinge rotations (+ optional series shear hinge deformation gammaS) of one
 // bending axis, returns the basic forces (qi, qj at the two ends) and the
 // condensed 2x2 tangent block k2.
-inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
+//
+// Ladruno (WP-261): returns 0 when the local solve converged and -1 when it
+// did not. The plain Newton below runs first, unchanged, so every state it
+// solves is bit-identical to before; only when it exits unconverged does the
+// safeguarded solve (ladrunoIMKSafeguardedSolve) restart from the warm start.
+// On -1 the materials, hinge moments and q are still consistent with the
+// returned rotations (the hinge law holds; only hinge equilibrium q = M does
+// not), and the element's update() must fail so the global step is rejected.
+inline int ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
                                 double vi, double vj, double L, double EI,
                                 double &thi, double &thj,
                                 double &qi, double &qj, double k2[2][2],
@@ -407,8 +451,10 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
                                 double dGammaSpPrev = 0.0,
                                 double *gammaSpOut = 0,
                                 double dLogPM = 0.0,
-                                double *dq_dN = 0)
+                                double *dq_dN = 0,
+                                int *nFallbackEvals = 0)   // WP-261: material calls in the fallback (0 = not used)
 {
+  if (nFallbackEvals != 0) *nFallbackEvals = 0;
   const bool hasEZ = (dI > 0.0 || dJ > 0.0) && (dI + dJ < L);
   const double Lc = hasEZ ? (L - dI - dJ) : L;
   const double T00 = hasEZ ? (L - dJ) / Lc : 1.0;
@@ -467,6 +513,7 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
   double gam_s = (hs && gammaSInOut != 0) ? *gammaSInOut : 0.0;
 
   double Mi = 0.0, Mj = 0.0, Vs = 0.0, kti = 0.0, ktj = 0.0, kts = 0.0;
+  bool converged = true;   // Ladruno (WP-261)
 
   if (hi || hj || hs) {
     // FB-10: when element-level -implex (useImplex) is active, disable any
@@ -480,7 +527,9 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
       if (matImplexS) ladrunoIMKMatSetImplex(mShear, false);
     }
 
-    const int maxIter = 50;
+    const double th_i0 = th_i, th_j0 = th_j, gam_s0 = gam_s;   // WP-261 restart point
+    converged = false;
+    const int maxIter = ladrunoIMKFallbackOnly() ? 0 : 50;   // WP-261 diagnostic switch
     double damp = 1.0;
     double gnormPrev = 1.0e300;
     for (int it = 0; it < maxIter; it++) {
@@ -518,8 +567,10 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
       const double gnorm = sqrt(gi * gi + gj * gj + gs_mom * gs_mom);
       const double ref = fabs(qi_) + fabs(qj_) + fabs(Mi) + fabs(Mj)
                        + (hs ? Lc * fabs(Vs) : 0.0) + fabs(q0ic) + fabs(q0jc);
-      if (gnorm <= 1.0e-10 * ref + 1.0e-12)
+      if (gnorm <= 1.0e-10 * ref + 1.0e-12) {
+        converged = true;   // WP-261: materials are at (th_i, th_j, gam_s)
         break;
+      }
 
       if (gnorm > gnormPrev) damp *= 0.5;
       else                   damp = (damp * 1.5 < 1.0) ? damp * 1.5 : 1.0;
@@ -575,6 +626,87 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
         const double dgam_rot = (gs_mom + ab * (dthi + dthj)) / Ds;
         gam_s += damp * (dgam_rot * Lc);
       }
+    }
+
+    // WP-261: the plain Newton exited unconverged (typically the unloading
+    // 2-cycle). Its last update moved (th_i, th_j, gam_s) AFTER the materials
+    // were evaluated, so the materials, Mi/Mj and q disagree here. Restart
+    // from the warm start with the safeguarded solve; its last material call
+    // is at the returned point, so everything below is consistent with it.
+    if (!converged) {
+      // unknowns x = (th_i, th_j, gam_s / Lc); H = -dG/dx is symmetric
+      const double ab = a + b;
+      double lastGn = 0.0, lastScale = 0.0;
+      // Rotation resolution: Steel01 (like most uniaxial laws) ignores a strain
+      // change below DBL_EPSILON in ABSOLUTE terms and returns the committed
+      // stress, so M(th) jumps by ~k0 * 2.2e-16 there. For eps < v < ~(1 + k0/a)
+      // eps (the first steps of a record) the hinge equation then has no root
+      // at all. Residuals below kRes * 1e-14 rad are that dead zone, not a
+      // failure (a real 2-cycle misses by ~My).
+      const double kRes = fabs(a) + fabs(b) + (hi ? fabs(k0i_raw) : 0.0) + (hj ? fabs(k0j_raw) : 0.0)
+                        + (hs ? fabs(ks0_raw) * Lc * Lc : 0.0);
+      int nEv = 0;
+      auto evalAxis = [&](const double x[6], double G[6], double H[6][6]) -> bool {
+        nEv++;
+        for (int r = 0; r < 3; r++)
+          for (int c = 0; c < 3; c++) H[r][c] = 0.0;
+        const double ti = hi ? x[0] : 0.0;
+        const double tj = hj ? x[1] : 0.0;
+        const double gs = hs ? x[2] * Lc : 0.0;
+        if (hi) {
+          mi->setTrialStrain(ti);
+          Mi = fPMi * mi->getStress();
+          kti = fPMi * mi->getTangent();
+        }
+        if (hj) {
+          mj->setTrialStrain(tj);
+          Mj = fPMj * mj->getStress();
+          ktj = fPMj * mj->getTangent();
+        }
+        if (hs) {
+          mShear->setTrialStrain(gs);
+          Vs = mShear->getStress();
+          kts = mShear->getTangent();
+        }
+        const double gr = hs ? (gs / Lc - gam_rot0) : 0.0;
+        const double ve_i = vic - ti + gr;
+        const double ve_j = vjc - tj + gr;
+        const double qi_ = a * ve_i + b * ve_j + q0ic;
+        const double qj_ = b * ve_i + a * ve_j + q0jc;
+        G[0] = hi ? (qi_ - Mi) : 0.0;
+        G[1] = hj ? (qj_ - Mj) : 0.0;
+        G[2] = hs ? (-(qi_ + qj_) - Lc * Vs) : 0.0;
+        const double ki = (fabs(kti) < ktFloor) ? (kti < 0 ? -ktFloor : ktFloor) : kti;
+        const double kj = (fabs(ktj) < ktFloor) ? (ktj < 0 ? -ktFloor : ktFloor) : ktj;
+        const double ksr = kts * Lc * Lc;
+        const double ks = (fabs(ksr) < ktFloor) ? (ksr < 0 ? -ktFloor : ktFloor) : ksr;
+        H[0][0] = hi ? (a + ki) : 1.0;
+        H[1][1] = hj ? (a + kj) : 1.0;
+        H[2][2] = hs ? (2.0 * ab + ks) : 1.0;
+        if (hi && hj) H[0][1] = H[1][0] = b;
+        if (hs && hi) H[0][2] = H[2][0] = -ab;
+        if (hs && hj) H[1][2] = H[2][1] = -ab;
+        const double gn = sqrt(G[0] * G[0] + G[1] * G[1] + G[2] * G[2]);
+        const double rf = fabs(qi_) + fabs(qj_) + fabs(Mi) + fabs(Mj)
+                        + (hs ? Lc * fabs(Vs) : 0.0) + fabs(q0ic) + fabs(q0jc);
+        // round-off scale of the terms G is the difference of: with a plastic
+        // rotation and M ~ 0 (an unloaded hinge) |q| + |M| alone is below the
+        // round-off of q = a (v - th), and the plain test above can never pass
+        const double sc = (fabs(a) + fabs(b)) * (fabs(vic) + fabs(vjc) + fabs(ti) + fabs(tj) + 2.0 * fabs(gr))
+                        + fabs(kti * ti) + fabs(ktj * tj) + (hs ? Lc * Lc * fabs(kts * gs / Lc) : 0.0);
+        lastGn = gn;
+        lastScale = rf + sc;
+        return gn <= 1.0e-10 * rf + 1.0e-12 + 1.0e-12 * sc + kRes * 1.0e-14;
+      };
+      double x[6] = { th_i0, th_j0, hs ? gam_s0 / Lc : 0.0, 0.0, 0.0, 0.0 };
+      converged = ladrunoIMKSafeguardedSolve(3, x, evalAxis, ktFloor);
+      // budget exhausted: accept only a residual that is already negligible
+      // (a noise-limited material law), otherwise report the failure
+      if (!converged && lastGn <= 1.0e-8 * lastScale + kRes * 1.0e-12) converged = true;
+      if (nFallbackEvals != 0) *nFallbackEvals = nEv;
+      th_i = hi ? x[0] : 0.0;
+      th_j = hj ? x[1] : 0.0;
+      gam_s = hs ? x[2] * Lc : 0.0;
     }
   }
 
@@ -634,7 +766,7 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
       dq_dN[1] = T01 * dqic_dN + T11 * dqjc_dN;
     }
     ladrunoIMKInitBlock(mi, mj, L, EI, k2, GAv, fPM, dI, dJ, mShear);
-    return;
+    return converged ? 0 : -1;
   }
 
   if (implexErrOut != 0) {
@@ -722,6 +854,7 @@ inline void ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
     k2[0][0] = kc[0][0];  k2[0][1] = kc[0][1];
     k2[1][0] = kc[1][0];  k2[1][1] = kc[1][1];
   }
+  return converged ? 0 : -1;
 }
 
 // Initial 4x4 bending tangent block for 3D coupled biaxial NDMaterial hinges
@@ -823,7 +956,7 @@ inline void ladrunoIMKInitBiaxial(NDMaterial *biI, NDMaterial *biJ,
 
 // Coupled 4x4 internal state determination for 3D biaxial NDMaterial hinges
 // at ends I and J (with optional series shear hinges mShearY, mShearZ).
-inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
+inline int ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
                                    const double v4[4], double L,
                                    double EIz, double EIy,
                                    double th4[4], double q4[4], double k4[4][4],
@@ -848,8 +981,10 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
                                    double *gammaSpYOut = 0,
                                    double *gammaSpZOut = 0,
                                    double dLogPM = 0.0,
-                                   double *dq4_dN = 0)
+                                   double *dq4_dN = 0,
+                                   int *nFallbackEvals = 0)   // WP-261 (see ladrunoIMKSolveAxis)
 {
+  if (nFallbackEvals != 0) *nFallbackEvals = 0;
   const bool hasEZ = (dI > 0.0 || dJ > 0.0) && (dI + dJ < L);
   const double Lc = hasEZ ? (L - dI - dJ) : L;
   const double T00 = hasEZ ? (L - dJ) / Lc : 1.0;
@@ -932,6 +1067,7 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
   double KJ[2][2] = {{0.0, 0.0}, {0.0, 0.0}};
   double VsY = 0.0, VsZ = 0.0, ktsY = 0.0, ktsZ = 0.0;
   Vector eps2(2);
+  bool converged = true;   // Ladruno (WP-261)
 
   if (hI || hJ || hsY || hsZ) {
     if (useImplex) {
@@ -941,7 +1077,10 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
       if (matImplexSZ) ladrunoIMKMatSetImplex(mShearZ, false);
     }
 
-    const int maxIter = 50;
+    const double th0[4] = { th[0], th[1], th[2], th[3] };   // WP-261 restart point
+    const double gamSY0 = gamSY, gamSZ0 = gamSZ;
+    converged = false;
+    const int maxIter = ladrunoIMKFallbackOnly() ? 0 : 50;   // WP-261 diagnostic switch
     double damp = 1.0;
     double gnormPrev = 1.0e300;
     for (int it = 0; it < maxIter; it++) {
@@ -1003,8 +1142,10 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
                        + fabs(M[0]) + fabs(M[1]) + fabs(M[2]) + fabs(M[3])
                        + (hsY ? Lc * fabs(VsY) : 0.0) + (hsZ ? Lc * fabs(VsZ) : 0.0)
                        + fabs(q0c[0]) + fabs(q0c[1]) + fabs(q0c[2]) + fabs(q0c[3]);
-      if (gnorm <= 1.0e-10 * ref + 1.0e-12)
+      if (gnorm <= 1.0e-10 * ref + 1.0e-12) {
+        converged = true;   // WP-261: materials are at (th, gamSY, gamSZ)
         break;
+      }
 
       if (gnorm > gnormPrev) damp *= 0.5;
       else                   damp = (damp * 1.5 < 1.0) ? damp * 1.5 : 1.0;
@@ -1081,6 +1222,131 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
         const double dgamRotZ = (gsZ_mom + aby * (dth[2] + dth[3])) / DsZ;
         gamSZ += damp * (dgamRotZ * Lc);
       }
+    }
+
+    // WP-261: unconverged plain Newton -> safeguarded restart from the warm
+    // start (see ladrunoIMKSolveAxis). x = (th[0..3], gamSY/Lc, gamSZ/Lc).
+    if (!converged) {
+      const double abz = az + bz;
+      const double aby = ay + by;
+      double lastGn = 0.0, lastScale = 0.0;
+      // rotation resolution (see ladrunoIMKSolveAxis): initial stiffnesses
+      double kRes = fabs(az) + fabs(bz) + fabs(ay) + fabs(by)
+                  + (hsY ? fabs(ks0Y_raw) * Lc * Lc : 0.0) + (hsZ ? fabs(ks0Z_raw) * Lc * Lc : 0.0);
+      if (hI) {
+        const Matrix &K0 = biI->getInitialTangent();
+        kRes += fabs(fPMI) * (fabs(K0(0, 0)) + fabs(K0(0, 1)) + fabs(K0(1, 0)) + fabs(K0(1, 1)));
+      }
+      if (hJ) {
+        const Matrix &K0 = biJ->getInitialTangent();
+        kRes += fabs(fPMJ) * (fabs(K0(0, 0)) + fabs(K0(0, 1)) + fabs(K0(1, 0)) + fabs(K0(1, 1)));
+      }
+      int nEv = 0;
+      auto evalBi = [&](const double x[6], double Gv[6], double H[6][6]) -> bool {
+        nEv++;
+        for (int r = 0; r < 6; r++)
+          for (int c = 0; c < 6; c++) H[r][c] = 0.0;
+        const double t[4] = { hI ? x[0] : 0.0, hJ ? x[1] : 0.0,
+                              hI ? x[2] : 0.0, hJ ? x[3] : 0.0 };
+        const double gY = hsY ? x[4] * Lc : 0.0;
+        const double gZ = hsZ ? x[5] * Lc : 0.0;
+        if (hI) {
+          eps2(0) = t[0]; eps2(1) = t[2];
+          biI->setTrialStrain(eps2);
+          const Vector &sig = biI->getStress();
+          const Matrix &kt  = biI->getTangent();
+          M[0] = fPMI * sig(0); M[2] = fPMI * sig(1);
+          KI[0][0] = fPMI * kt(0, 0); KI[0][1] = fPMI * kt(0, 1);
+          KI[1][0] = fPMI * kt(1, 0); KI[1][1] = fPMI * kt(1, 1);
+        }
+        if (hJ) {
+          eps2(0) = t[1]; eps2(1) = t[3];
+          biJ->setTrialStrain(eps2);
+          const Vector &sig = biJ->getStress();
+          const Matrix &kt  = biJ->getTangent();
+          M[1] = fPMJ * sig(0); M[3] = fPMJ * sig(1);
+          KJ[0][0] = fPMJ * kt(0, 0); KJ[0][1] = fPMJ * kt(0, 1);
+          KJ[1][0] = fPMJ * kt(1, 0); KJ[1][1] = fPMJ * kt(1, 1);
+        }
+        if (hsY) {
+          mShearY->setTrialStrain(gY);
+          VsY = mShearY->getStress();
+          ktsY = mShearY->getTangent();
+        }
+        if (hsZ) {
+          mShearZ->setTrialStrain(gZ);
+          VsZ = mShearZ->getStress();
+          ktsZ = mShearZ->getTangent();
+        }
+        const double grY = hsY ? (gY / Lc - gamRot0Y) : 0.0;
+        const double grZ = hsZ ? (gZ / Lc - gamRot0Z) : 0.0;
+        const double e0 = vc[0] - t[0] + grY, e1 = vc[1] - t[1] + grY;
+        const double e2 = vc[2] - t[2] + grZ, e3 = vc[3] - t[3] + grZ;
+        const double qq[4] = { az * e0 + bz * e1 + q0c[0], bz * e0 + az * e1 + q0c[1],
+                               ay * e2 + by * e3 + q0c[2], by * e2 + ay * e3 + q0c[3] };
+        Gv[0] = hI ? (qq[0] - M[0]) : 0.0;
+        Gv[1] = hJ ? (qq[1] - M[1]) : 0.0;
+        Gv[2] = hI ? (qq[2] - M[2]) : 0.0;
+        Gv[3] = hJ ? (qq[3] - M[3]) : 0.0;
+        Gv[4] = hsY ? (-(qq[0] + qq[1]) - Lc * VsY) : 0.0;
+        Gv[5] = hsZ ? (-(qq[2] + qq[3]) - Lc * VsZ) : 0.0;
+        // H = -dG/dx (bending block + hinge tangents + shear coupling)
+        if (hI) {
+          H[0][0] = az + KI[0][0]; H[0][2] = KI[0][1];
+          H[2][0] = KI[1][0];      H[2][2] = ay + KI[1][1];
+        } else {
+          H[0][0] = 1.0; H[2][2] = 1.0;
+        }
+        if (hJ) {
+          H[1][1] = az + KJ[0][0]; H[1][3] = KJ[0][1];
+          H[3][1] = KJ[1][0];      H[3][3] = ay + KJ[1][1];
+        } else {
+          H[1][1] = 1.0; H[3][3] = 1.0;
+        }
+        if (hI && hJ) { H[0][1] = H[1][0] = bz; H[2][3] = H[3][2] = by; }
+        if (hsY) {
+          const double ksr = ktsY * Lc * Lc;
+          const double ks = (fabs(ksr) < ktFloor) ? (ksr < 0 ? -ktFloor : ktFloor) : ksr;
+          H[4][4] = 2.0 * abz + ks;
+          if (hI) H[0][4] = H[4][0] = -abz;
+          if (hJ) H[1][4] = H[4][1] = -abz;
+        } else {
+          H[4][4] = 1.0;
+        }
+        if (hsZ) {
+          const double ksr = ktsZ * Lc * Lc;
+          const double ks = (fabs(ksr) < ktFloor) ? (ksr < 0 ? -ktFloor : ktFloor) : ksr;
+          H[5][5] = 2.0 * aby + ks;
+          if (hI) H[2][5] = H[5][2] = -aby;
+          if (hJ) H[3][5] = H[5][3] = -aby;
+        } else {
+          H[5][5] = 1.0;
+        }
+        const double gn = sqrt(Gv[0] * Gv[0] + Gv[1] * Gv[1] + Gv[2] * Gv[2] + Gv[3] * Gv[3]
+                               + Gv[4] * Gv[4] + Gv[5] * Gv[5]);
+        const double rf = fabs(qq[0]) + fabs(qq[1]) + fabs(qq[2]) + fabs(qq[3])
+                        + fabs(M[0]) + fabs(M[1]) + fabs(M[2]) + fabs(M[3])
+                        + (hsY ? Lc * fabs(VsY) : 0.0) + (hsZ ? Lc * fabs(VsZ) : 0.0)
+                        + fabs(q0c[0]) + fabs(q0c[1]) + fabs(q0c[2]) + fabs(q0c[3]);
+        // round-off scale of the terms G is the difference of (see SolveAxis)
+        const double sc = (fabs(az) + fabs(bz)) * (fabs(vc[0]) + fabs(vc[1]) + fabs(t[0]) + fabs(t[1]) + 2.0 * fabs(grY))
+                        + (fabs(ay) + fabs(by)) * (fabs(vc[2]) + fabs(vc[3]) + fabs(t[2]) + fabs(t[3]) + 2.0 * fabs(grZ))
+                        + fabs(KI[0][0] * t[0]) + fabs(KI[0][1] * t[2]) + fabs(KI[1][0] * t[0]) + fabs(KI[1][1] * t[2])
+                        + fabs(KJ[0][0] * t[1]) + fabs(KJ[0][1] * t[3]) + fabs(KJ[1][0] * t[1]) + fabs(KJ[1][1] * t[3])
+                        + (hsY ? Lc * fabs(ktsY * gY) : 0.0) + (hsZ ? Lc * fabs(ktsZ * gZ) : 0.0);
+        lastGn = gn;
+        lastScale = rf + sc;
+        return gn <= 1.0e-10 * rf + 1.0e-12 + 1.0e-12 * sc + kRes * 1.0e-14;
+      };
+      double x[6] = { th0[0], th0[1], th0[2], th0[3],
+                      hsY ? gamSY0 / Lc : 0.0, hsZ ? gamSZ0 / Lc : 0.0 };
+      converged = ladrunoIMKSafeguardedSolve(6, x, evalBi, ktFloor);
+      if (!converged && lastGn <= 1.0e-8 * lastScale + kRes * 1.0e-12) converged = true;
+      if (nFallbackEvals != 0) *nFallbackEvals = nEv;
+      th[0] = hI ? x[0] : 0.0;  th[1] = hJ ? x[1] : 0.0;
+      th[2] = hI ? x[2] : 0.0;  th[3] = hJ ? x[3] : 0.0;
+      gamSY = hsY ? x[4] * Lc : 0.0;
+      gamSZ = hsZ ? x[5] * Lc : 0.0;
     }
   }
 
@@ -1179,7 +1445,7 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
       dq4_dN[3] = T01 * dqc_dN[2] + T11 * dqc_dN[3];
     }
     ladrunoIMKInitBiaxial(biI, biJ, L, EIz, EIy, k4, GAvy, GAvz, fPM, dI, dJ, mShearY, mShearZ);
-    return;
+    return converged ? 0 : -1;
   }
 
   if (implexErrOut != 0) {
@@ -1326,6 +1592,7 @@ inline void ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
       for (int j = 0; j < 4; j++)
         k4[i][j] = Kc[i][j];
   }
+  return converged ? 0 : -1;
 }
 
 // ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ target_sources(OPS_Element
     LadrunoIMKBeam.h
     LadrunoIMKBeam2d.h
     LadrunoIMKHinge.h
+    LadrunoIMKSafeSolve.h
 )
 
 target_include_directories(OPS_Element PUBLIC ${CMAKE_CURRENT_LIST_DIR})
