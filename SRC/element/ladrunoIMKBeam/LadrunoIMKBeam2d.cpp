@@ -368,6 +368,7 @@ int LadrunoIMKBeam2d::update(void)
   // strong-axis bending: basic dofs 1,2 ; materials 0,1 ; EI = E*Iz
   double qi, qj;
   double dq_dN[2] = { 0.0, 0.0 };
+  const int rcZ =
   ladrunoIMKSolveAxis(theMat[0], theMat[1], v(1), v(2), L, E * Iz,
                       thetaH[0], thetaH[1], qi, qj, k2, q0[1], q0[2],
                       GAvy, fPM, dI, dJ, useImplex,
@@ -376,6 +377,12 @@ int LadrunoIMKBeam2d::update(void)
                       dtScale, &thetaHp[0], &thetaHp[1],
                       theShearMat, &gammaS, gammaSpCommit, dGammaSpPrev, &gammaSp,
                       dLogPM, dq_dN);
+  // Ladruno (WP-261): an unconverged local hinge solve fails the update so the
+  // global step is rejected instead of committing an unequilibrated hinge.
+  if (rcZ < 0) {
+    ladrunoIMKWarnLocalFailure("LadrunoIMKBeam2d", this->getTag());
+    ok = -1;
+  }
   q(1) = qi;  q(2) = qj;
   kb(1, 0) = EAoverL * dq_dN[0];
   kb(2, 0) = EAoverL * dq_dN[1];

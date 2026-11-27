@@ -435,6 +435,7 @@ int LadrunoIMKBeam::update(void)
     double q4[4] = { 0.0, 0.0, 0.0, 0.0 };
     double dq4_dN[4] = { 0.0, 0.0, 0.0, 0.0 };
     double k4[4][4];
+    const int rcB =
     ladrunoIMKSolveBiaxial(theBiaxialMat[0], theBiaxialMat[1],
                            v4, L, E * Iz, E * Iy,
                            thetaH, q4, k4, q0_4,
@@ -447,6 +448,11 @@ int LadrunoIMKBeam::update(void)
                            dGammaSpPrev[0], dGammaSpPrev[1],
                            &gammaSp[0], &gammaSp[1],
                            dLogPM, dq4_dN);
+    // Ladruno (WP-261): unconverged local hinge solve -> fail the update
+    if (rcB < 0) {
+      ladrunoIMKWarnLocalFailure("LadrunoIMKBeam", this->getTag());
+      ok = -1;
+    }
     for (int i = 0; i < 4; i++) {
       q(1 + i) = q4[i];
       kb(1 + i, 0) = EAoverL * dq4_dN[i];
@@ -463,6 +469,7 @@ int LadrunoIMKBeam::update(void)
   double qi, qj;
   double errZ = 0.0, errY = 0.0;
   double dqZ_dN[2] = { 0.0, 0.0 }, dqY_dN[2] = { 0.0, 0.0 };
+  const int rcZ =
   ladrunoIMKSolveAxis(theMat[0], theMat[1], v(1), v(2), L, E * Iz,
                       thetaH[0], thetaH[1], qi, qj, k2, q0[1], q0[2],
                       GAvy, fPM, dI, dJ, useImplex,
@@ -479,6 +486,7 @@ int LadrunoIMKBeam::update(void)
   kb(2, 1) = k2[1][0];  kb(2, 2) = k2[1][1];
 
   // weak-axis bending: basic dofs 3,4 ; materials 2,3 ; EI = E*Iy
+  const int rcY =
   ladrunoIMKSolveAxis(theMat[2], theMat[3], v(3), v(4), L, E * Iy,
                       thetaH[2], thetaH[3], qi, qj, k2, q0[3], q0[4],
                       GAvz, fPM, dI, dJ, useImplex,
@@ -496,6 +504,11 @@ int LadrunoIMKBeam::update(void)
   kb(4, 3) = k2[1][0];  kb(4, 4) = k2[1][1];
   q0Dirty = false;
 
+  // Ladruno (WP-261): unconverged local hinge solve on either axis -> fail
+  if (rcZ < 0 || rcY < 0) {
+    ladrunoIMKWarnLocalFailure("LadrunoIMKBeam", this->getTag());
+    ok = -1;
+  }
   return ok;
 }
 
