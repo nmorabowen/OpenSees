@@ -142,6 +142,11 @@ def test_unloading_from_plastic_converges_and_matches_oracle(ndm):
             c.thn, c.Mn = t, m
 
     assert reversals >= 3
+    # WP-261 diagnostics: the unloading steps went through the fallback (the
+    # plain loop alone cannot solve them) and none was left unconverged
+    n_fb, n_ev, n_bad = ops.eleResponse(1, "hingeSolveStats")
+    assert n_fb >= 1 and n_ev >= n_fb, (n_fb, n_ev)
+    assert n_bad == 0
     assert max_iters <= 8, f"global Newton needed {max_iters} iterations"
     # the protocol really did reverse-yield both hinges
     assert min(c.Mn for c in clips) < 0.0
@@ -181,3 +186,4 @@ def test_tiny_first_step_in_steel01_dead_zone_does_not_fail(ndm):
         ops.integrator("DisplacementControl", 2, dof, dphi)
         ops.analysis("Static")
         assert ops.analyze(1) == 0, f"step dphi {dphi} rejected"
+    assert ops.eleResponse(1, "hingeSolveStats")[2] == 0

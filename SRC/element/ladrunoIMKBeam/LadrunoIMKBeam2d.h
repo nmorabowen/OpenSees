@@ -125,6 +125,15 @@ class LadrunoIMKBeam2d : public Element
   double dI, dJ;
   bool useImplex;
   double implexErr;
+  // WP-261 diagnostics, since creation or revertToStart (not serialized):
+  // [0] local hinge solves that needed the safeguarded fallback,
+  // [1] material calls spent in it, [2] solves reported unconverged
+  double hingeSolveStats[3] = { 0.0, 0.0, 0.0 };
+  void countHingeSolve(int rc, int nFallbackEvals)
+  {
+    if (nFallbackEvals > 0) { hingeSolveStats[0] += 1.0; hingeSolveStats[1] += nFallbackEvals; }
+    if (rc < 0) hingeSolveStats[2] += 1.0;
+  }
 
   // --- hinge materials: [0]=Mz@i, [1]=Mz@j ---
   //     a NULL entry means that end is elastic (no hinge).

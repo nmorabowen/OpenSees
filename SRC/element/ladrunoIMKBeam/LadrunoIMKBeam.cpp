@@ -368,6 +368,7 @@ int LadrunoIMKBeam::revertToStart(void)
   }
   dtime_n_commit = 0.0;
   implexErr = 0.0;
+  hingeSolveStats[0] = hingeSolveStats[1] = hingeSolveStats[2] = 0.0;   // WP-261
   ok += theCoordTransf->revertToStart();
   if (this->getDomain() != 0 && theNodes[0] != 0 && theNodes[1] != 0)
     ok += this->update();
@@ -435,6 +436,7 @@ int LadrunoIMKBeam::update(void)
     double q4[4] = { 0.0, 0.0, 0.0, 0.0 };
     double dq4_dN[4] = { 0.0, 0.0, 0.0, 0.0 };
     double k4[4][4];
+    int nFbB = 0;
     const int rcB =
     ladrunoIMKSolveBiaxial(theBiaxialMat[0], theBiaxialMat[1],
                            v4, L, E * Iz, E * Iy,
@@ -447,7 +449,8 @@ int LadrunoIMKBeam::update(void)
                            gammaSpCommit[0], gammaSpCommit[1],
                            dGammaSpPrev[0], dGammaSpPrev[1],
                            &gammaSp[0], &gammaSp[1],
-                           dLogPM, dq4_dN);
+                           dLogPM, dq4_dN, &nFbB);
+    countHingeSolve(rcB, nFbB);
     // Ladruno (WP-261): unconverged local hinge solve -> fail the update
     if (rcB < 0) {
       ladrunoIMKWarnLocalFailure("LadrunoIMKBeam", this->getTag());
@@ -469,6 +472,7 @@ int LadrunoIMKBeam::update(void)
   double qi, qj;
   double errZ = 0.0, errY = 0.0;
   double dqZ_dN[2] = { 0.0, 0.0 }, dqY_dN[2] = { 0.0, 0.0 };
+  int nFbZ = 0, nFbY = 0;
   const int rcZ =
   ladrunoIMKSolveAxis(theMat[0], theMat[1], v(1), v(2), L, E * Iz,
                       thetaH[0], thetaH[1], qi, qj, k2, q0[1], q0[2],
@@ -478,7 +482,8 @@ int LadrunoIMKBeam::update(void)
                       dtScale, &thetaHp[0], &thetaHp[1],
                       theShearMat[0], &gammaS[0],
                       gammaSpCommit[0], dGammaSpPrev[0], &gammaSp[0],
-                      dLogPM, dqZ_dN);
+                      dLogPM, dqZ_dN, &nFbZ);
+  countHingeSolve(rcZ, nFbZ);
   q(1) = qi;  q(2) = qj;
   kb(1, 0) = EAoverL * dqZ_dN[0];
   kb(2, 0) = EAoverL * dqZ_dN[1];
@@ -495,7 +500,8 @@ int LadrunoIMKBeam::update(void)
                       dtScale, &thetaHp[2], &thetaHp[3],
                       theShearMat[1], &gammaS[1],
                       gammaSpCommit[1], dGammaSpPrev[1], &gammaSp[1],
-                      dLogPM, dqY_dN);
+                      dLogPM, dqY_dN, &nFbY);
+  countHingeSolve(rcY, nFbY);
   implexErr = errZ + errY;
   q(3) = qi;  q(4) = qj;
   kb(3, 0) = EAoverL * dqY_dN[0];
@@ -1543,6 +1549,13 @@ Response *LadrunoIMKBeam::setResponse(const char **argv, int argc, OPS_Stream &s
     theResponse = new ElementResponse(this, LadrunoHingeStatus::responseID,
                                       Vector(LadrunoHingeStatus::numColumns));
 
+  } else if (LadrunoResp::is(argv[0], "hingeSolveStats")) {
+    // WP-261: [fallback solves, fallback material calls, unconverged solves]
+    s.tag("ResponseType", "nFallback");
+    s.tag("ResponseType", "nFallbackEvals");
+    s.tag("ResponseType", "nUnconverged");
+    theResponse = new ElementResponse(this, 40, Vector(3));
+
   } else if (LadrunoResp::is(argv[0], "hingeSummary")) {
     s.tag("ResponseType", "thetaZ_i");
     s.tag("ResponseType", "Mz_i");
@@ -1878,6 +1891,11 @@ int LadrunoIMKBeam::getResponse(int responseID, Information &info)
   }
   case 32:
     return info.setDouble(implexErr);
+  case 40: {   // WP-261 hingeSolveStats
+    static thread_local Vector st(3);
+    for (int i = 0; i < 3; i++) st(i) = hingeSolveStats[i];
+    return info.setVector(st);
+  }
   case 33: {
     int cnt = 0;
     for (int i = 0; i < 4; i++)

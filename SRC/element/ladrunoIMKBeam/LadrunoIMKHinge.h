@@ -433,8 +433,10 @@ inline int ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
                                 double dGammaSpPrev = 0.0,
                                 double *gammaSpOut = 0,
                                 double dLogPM = 0.0,
-                                double *dq_dN = 0)
+                                double *dq_dN = 0,
+                                int *nFallbackEvals = 0)   // WP-261: material calls in the fallback (0 = not used)
 {
+  if (nFallbackEvals != 0) *nFallbackEvals = 0;
   const bool hasEZ = (dI > 0.0 || dJ > 0.0) && (dI + dJ < L);
   const double Lc = hasEZ ? (L - dI - dJ) : L;
   const double T00 = hasEZ ? (L - dJ) / Lc : 1.0;
@@ -625,7 +627,9 @@ inline int ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
       // failure (a real 2-cycle misses by ~My).
       const double kRes = fabs(a) + fabs(b) + (hi ? fabs(k0i_raw) : 0.0) + (hj ? fabs(k0j_raw) : 0.0)
                         + (hs ? fabs(ks0_raw) * Lc * Lc : 0.0);
+      int nEv = 0;
       auto evalAxis = [&](const double x[6], double G[6], double H[6][6]) -> bool {
+        nEv++;
         for (int r = 0; r < 3; r++)
           for (int c = 0; c < 3; c++) H[r][c] = 0.0;
         const double ti = hi ? x[0] : 0.0;
@@ -681,6 +685,7 @@ inline int ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
       // budget exhausted: accept only a residual that is already negligible
       // (a noise-limited material law), otherwise report the failure
       if (!converged && lastGn <= 1.0e-8 * lastScale + kRes * 1.0e-12) converged = true;
+      if (nFallbackEvals != 0) *nFallbackEvals = nEv;
       th_i = hi ? x[0] : 0.0;
       th_j = hj ? x[1] : 0.0;
       gam_s = hs ? x[2] * Lc : 0.0;
@@ -958,8 +963,10 @@ inline int ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
                                    double *gammaSpYOut = 0,
                                    double *gammaSpZOut = 0,
                                    double dLogPM = 0.0,
-                                   double *dq4_dN = 0)
+                                   double *dq4_dN = 0,
+                                   int *nFallbackEvals = 0)   // WP-261 (see ladrunoIMKSolveAxis)
 {
+  if (nFallbackEvals != 0) *nFallbackEvals = 0;
   const bool hasEZ = (dI > 0.0 || dJ > 0.0) && (dI + dJ < L);
   const double Lc = hasEZ ? (L - dI - dJ) : L;
   const double T00 = hasEZ ? (L - dJ) / Lc : 1.0;
@@ -1216,7 +1223,9 @@ inline int ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
         const Matrix &K0 = biJ->getInitialTangent();
         kRes += fabs(fPMJ) * (fabs(K0(0, 0)) + fabs(K0(0, 1)) + fabs(K0(1, 0)) + fabs(K0(1, 1)));
       }
+      int nEv = 0;
       auto evalBi = [&](const double x[6], double Gv[6], double H[6][6]) -> bool {
+        nEv++;
         for (int r = 0; r < 6; r++)
           for (int c = 0; c < 6; c++) H[r][c] = 0.0;
         const double t[4] = { hI ? x[0] : 0.0, hJ ? x[1] : 0.0,
@@ -1315,6 +1324,7 @@ inline int ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
                       hsY ? gamSY0 / Lc : 0.0, hsZ ? gamSZ0 / Lc : 0.0 };
       converged = ladrunoIMKSafeguardedSolve(6, x, evalBi, ktFloor);
       if (!converged && lastGn <= 1.0e-8 * lastScale + kRes * 1.0e-12) converged = true;
+      if (nFallbackEvals != 0) *nFallbackEvals = nEv;
       th[0] = hI ? x[0] : 0.0;  th[1] = hJ ? x[1] : 0.0;
       th[2] = hI ? x[2] : 0.0;  th[3] = hJ ? x[3] : 0.0;
       gamSY = hsY ? x[4] * Lc : 0.0;
