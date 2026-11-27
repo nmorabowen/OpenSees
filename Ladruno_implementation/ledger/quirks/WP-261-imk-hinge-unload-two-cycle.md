@@ -38,8 +38,22 @@ status: "fixed-by WP-261"
   fallback uses only material trial calls, so it is law-agnostic (UniaxialMaterial and the biaxial
   NDMaterial path). Its last material call is at the returned point. If it still fails,
   `update()` returns −1 with a capped warning, so `Domain::update` → integrator → algorithm
-  rejects the step (`ladrunoKeepWorstCode`; every Newton and line-search `update()` check is
-  `< 0`). The materials, moments and q stay consistent with the returned θ.
+  rejects the step (`ladrunoKeepWorstCode`; the Newton-family algorithms check `update() < 0`).
+  The materials, moments and q stay consistent with the returned θ. **Not** every caller
+  checked: `NewtonLineSearch` ignored the return of `theLineSearch->search()`, and the
+  Bisection / RegulaFalsi no-bracket reset ignored its own `update()`, so a failure inside a
+  line search was swallowed and the convergence test ran on the failed trial. WP-261 fixes
+  all three (vanilla fragment WP-261). Still unchecked, by design: the elements' own lazy
+  `update()` inside `getTangentStiff` / `getResistingForce` (q0 refresh). `Domain::update`
+  runs the same solve again and reports it.
+- **Explicit and IMPL-EX runs now stop on a failure:** `CentralDifferenceLadruno`,
+  `ExplicitBathe` and the dynamic-relaxation integrators abort on `updateDomain() < 0` with no
+  retry. One unconverged hinge used to be committed silently and now ends such a run. That is
+  intended (no silent commits); expect it only with laws that break the fallback.
+- **Diagnostics:** `eleResponse(tag, "hingeSolveStats")` → [fallback solves, fallback material
+  calls, unconverged solves]. `LADRUNO_IMK_HINGE_FALLBACK_ONLY=1` skips the plain loop
+  process-wide (test switch, read once). The failure warning is capped at 10 lines per process
+  and serialized with `LadrunoOutputGuard` under threaded update.
 - **Tolerance trap found on the way:** the plain test `|g| ≤ 1e-10 (|q| + |M|) + 1e-12` is below
   round-off whenever a hinge holds a plastic rotation at M ≈ 0. q = a(v − θ) is a difference
   of large terms. The old loop silently accepted those states. Failing `update()` there

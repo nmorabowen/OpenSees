@@ -52,6 +52,8 @@
 #include <math.h>
 #include <atomic>
 #include <OPS_Globals.h>
+#include <LadrunoThreads.h>   // WP-261: LadrunoOutputGuard (threaded update, WP-107 rule 4)
+#include <stdlib.h>
 #include "LadrunoIMKSafeSolve.h"   // Ladruno (WP-261): safeguarded local hinge solve
 
 inline bool ladrunoIMKMatIsImplex(UniaxialMaterial *m)
@@ -387,6 +389,21 @@ inline void ladrunoIMKInitBlock(UniaxialMaterial *mi, UniaxialMaterial *mj,
   }
 }
 
+// Ladruno (WP-261): diagnostic switch LADRUNO_IMK_HINGE_FALLBACK_ONLY=1 skips the
+// plain local Newton so EVERY hinge solve goes through the safeguarded fallback.
+// Read once per process. It exists so the whole IMK test battery (biaxial,
+// shear hinges, single hinges, end zones, IMPL-EX) can exercise the fallback's
+// production residual/Jacobian code against its own oracles
+// (tests/test_ladrunoIMK_fallback_only.py). Unset, nothing changes.
+inline bool ladrunoIMKFallbackOnly()
+{
+  static const bool on = [] {
+    const char *e = getenv("LADRUNO_IMK_HINGE_FALLBACK_ONLY");
+    return e != 0 && e[0] == '1';
+  }();
+  return on;
+}
+
 // Ladruno (WP-261): one warning line per unconverged local hinge solve, capped
 // process-wide so a failing line search cannot flood the log. The global step
 // is failed through the update() return code; this only says why.
@@ -395,6 +412,7 @@ inline void ladrunoIMKWarnLocalFailure(const char *cls, int tag)
   static std::atomic<int> count(0);
   const int n = count.fetch_add(1);
   if (n < 10) {
+    LadrunoOutputGuard guard;   // opserr is one shared stream under threaded update
     opserr << "WARNING " << cls << "::update - element " << tag
            << ": local hinge solve did not converge; update() fails so the step is rejected\n";
     if (n == 9)
@@ -511,7 +529,7 @@ inline int ladrunoIMKSolveAxis(UniaxialMaterial *mi, UniaxialMaterial *mj,
 
     const double th_i0 = th_i, th_j0 = th_j, gam_s0 = gam_s;   // WP-261 restart point
     converged = false;
-    const int maxIter = 50;
+    const int maxIter = ladrunoIMKFallbackOnly() ? 0 : 50;   // WP-261 diagnostic switch
     double damp = 1.0;
     double gnormPrev = 1.0e300;
     for (int it = 0; it < maxIter; it++) {
@@ -1062,7 +1080,7 @@ inline int ladrunoIMKSolveBiaxial(NDMaterial *biI, NDMaterial *biJ,
     const double th0[4] = { th[0], th[1], th[2], th[3] };   // WP-261 restart point
     const double gamSY0 = gamSY, gamSZ0 = gamSZ;
     converged = false;
-    const int maxIter = 50;
+    const int maxIter = ladrunoIMKFallbackOnly() ? 0 : 50;   // WP-261 diagnostic switch
     double damp = 1.0;
     double gnormPrev = 1.0e300;
     for (int it = 0; it < maxIter; it++) {

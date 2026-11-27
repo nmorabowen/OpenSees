@@ -7,7 +7,10 @@
 // python driver (tests/test_ladrunoIMK_safe_solve_cpp.py) asserts on them.
 //
 //   plain_*   the plain local Newton of ladrunoIMKSolveAxis (50 iterations,
-//             residual damping), transcribed: it must FAIL on the unloading case
+//             residual damping), transcribed approximately (plain 2x2 inverse,
+//             unsigned tangent floor): it must FAIL on the unloading case.
+//             The production residual/Jacobian lambdas are exercised by
+//             tests/test_ladrunoIMK_fallback_only.py instead
 //   safe_*    the safeguarded solve: converges, matches region enumeration
 //   noroot_*  a law with an upward moment jump has no root: the solve must
 //             return false, with its last evaluation at the returned point

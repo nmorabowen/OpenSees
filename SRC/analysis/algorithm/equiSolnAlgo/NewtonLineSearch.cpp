@@ -180,8 +180,13 @@ NewtonLineSearch::solveCurrentStep(void)
 	  //new value of s 
 	  double s = - ( dx0 ^ Resid ) ;
 	  
-	  if (theLineSearch != 0)
-	    theLineSearch->search(s0, s, *theSOE, *theIntegrator);
+	  // Ladruno (WP-261): a failed Integrator update / formUnbalance inside the
+	  // line search (e.g. an element whose local solve did not converge) fails the
+	  // step; upstream ignored the return and tested the failed trial state.
+	  if (theLineSearch != 0 && theLineSearch->search(s0, s, *theSOE, *theIntegrator) < 0) {
+	    opserr << "WARNING NewtonLineSearch::solveCurrentStep() - the LineSearch failed\n";
+	    return -4;
+	  }
 	}
 
 	this->record(0);

@@ -111,9 +111,22 @@ inline bool ladrunoIMKSafeguardedSolve(int n, double x[6], Eval &ev, double pivo
     double h0 = 0.0;
     for (int i = 0; i < n; i++) h0 += G[i] * d[i];
     if (!(h0 > 0.0)) {                 // not a descent direction: steepest descent
+      // d = alpha G with alpha in rotation per moment: the Cauchy step
+      // G.G / G.H.G when that curvature is positive, else 1 / max|H_ii|. An
+      // unscaled d = G would add moments to rotations (a first trial at
+      // ~1e4 rad in N.m units, or a crawl in small units).
+      double gg = 0.0, gHg = 0.0, hmax = 0.0;
+      for (int i = 0; i < n; i++) {
+        gg += G[i] * G[i];
+        if (fabs(H[i][i]) > hmax) hmax = fabs(H[i][i]);
+        for (int j = 0; j < n; j++) gHg += G[i] * H[i][j] * G[j];
+      }
+      if (!(gg > 0.0)) break;          // G == 0 or NaN: nothing more to do
+      double alpha = (gHg > 0.0) ? gg / gHg : ((hmax > 0.0) ? 1.0 / hmax : 1.0);
+      if (!(alpha > 0.0) || !(alpha < 1.0e300)) alpha = (hmax > 0.0) ? 1.0 / hmax : 1.0;
       h0 = 0.0;
-      for (int i = 0; i < n; i++) { d[i] = G[i]; h0 += G[i] * G[i]; }
-      if (!(h0 > 0.0)) break;          // G == 0 or NaN: nothing more to do
+      for (int i = 0; i < n; i++) { d[i] = alpha * G[i]; h0 += G[i] * d[i]; }
+      if (!(h0 > 0.0)) break;
     }
     // full Newton step
     for (int i = 0; i < n; i++) xt[i] = x[i] + d[i];
