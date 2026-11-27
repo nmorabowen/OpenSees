@@ -1,6 +1,7 @@
 ---
 wp: WP-261
 title: "LadrunoIMKBeam local hinge Newton 2-cycles on unloading and committed the unconverged iterate silently"
+pr: "#1168"
 date: 2026-11-26
 status: "fixed-by WP-261"
 ---
