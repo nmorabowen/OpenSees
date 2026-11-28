@@ -39,3 +39,22 @@ date: 2026-10-14
   OpenSeesMP + MUMPS is not run-to-run reproducible (WP-188 quirk), so compare threaded vs
   serial on a serial Pardiso deck with `MKL_NUM_THREADS=1` (or UmfPack), every node every
   step at 17 digits.
+
+#### Follow-up (WP-239)
+
+- **Trap 5 — a conversion that missed one static.** ASDSteel1D's WP-192 pass made its
+  `Globals` scratch `thread_local` but left three function-scope arrays two hundred lines
+  further down (`U_iterative`, `U_iterative_el`, `Rnorm_iterative`, the `-buckling -implex`
+  implicit-correction history) plain `static`. With 96 zeroLength springs at 4 threads the
+  response digest differed on EVERY run and never matched serial. The same class also kept
+  Trap 4's unguarded `GlobalParameters` read-modify-write that ASDConcrete1D/3D had fixed.
+- **Trap 6 — a shared latch guarding a `thread_local`.** The shell sections' `array` became
+  `static thread_local ID`, but `getType()` still filled it behind a process-wide
+  `static bool initialized`: the first calling thread's copy was filled, every other
+  thread's stayed all zeros. Drop the latch (eight stores) or make the flag `thread_local`.
+- **Now a lint rule.** `thread-static` (`ci/check_quirk_patterns.py`) flags any plain
+  function-scope `static` in a `SRC/material/` class whose `ladrunoThreadSafeUpdate`/`Form`
+  is not just `return false;`. On the pre-WP-239 tree it reports exactly these two incidents
+  (5 lines). Class-scope static members are still not scanned (e.g. the
+  `ManzariDafaliasPlaneStrain` `mSigma_M`/`mTangent` returns, harmless only while that
+  family refuses).

@@ -45,6 +45,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <atomic>   // Ladruno WP-258
 #include <unordered_map>
 
 using namespace LadrunoHSKernel;
@@ -58,18 +59,35 @@ namespace {
 // instances of a tag, guarded by an immortal mutex) allows every other element's
 // Gauss point to lazily run applyStageTransition() via syncStageFromRegistry().
 std::mutex& ladrunoHSTagMutex() {
+  // ladruno-lint: thread-ok immortal registry object, written only on the main thread under ladrunoHSTagMutex; worker threads read it through the WP-258 generation fast path
   static auto* s_mutex = new std::mutex();
   return *s_mutex;
 }
 
 std::unordered_map<int, int>& ladrunoHSTagStageMap() {
+  // ladruno-lint: thread-ok immortal registry object, written only on the main thread under ladrunoHSTagMutex; worker threads read it through the WP-258 generation fast path
   static auto* s_map = new std::unordered_map<int, int>();
   return *s_map;
 }
 
 std::unordered_map<int, int>& ladrunoHSTagRefCountMap() {
+  // ladruno-lint: thread-ok immortal registry object, written only on the main thread under ladrunoHSTagMutex; worker threads read it through the WP-258 generation fast path
   static auto* s_refs = new std::unordered_map<int, int>();
   return *s_refs;
+}
+
+// Ladruno WP-258: generation of the tag registry. Every writer of the two maps
+// bumps it while holding ladrunoHSTagMutex(); syncStageFromRegistry() skips the
+// lock when nothing was written since this instance's last sync. Invariant: if
+// the generation is unchanged since an instance synced, its stage_ already
+// equals the registry's entry (every other writer of stage_ -- the constructor,
+// recvSelf, updateParameter -- also writes the map and bumps). So the lazy
+// transition runs at exactly the same calls as before (serial bit-identity),
+// and a threaded loop -- where no writer runs -- reads one shared atomic instead
+// of taking a process-wide mutex 3-25 times per Gauss point (WP-192 trap 4).
+std::atomic<unsigned long long>& ladrunoHSTagGen() {
+  static std::atomic<unsigned long long> s_gen(1);
+  return s_gen;
 }
 
 static void* parseLadrunoHSCommon(bool presetSmallStrain) {
@@ -312,6 +330,7 @@ static void* parseLadrunoHSCommon(bool presetSmallStrain) {
 
   {
     std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
+    ladrunoHSTagGen().fetch_add(1, std::memory_order_release);   // Ladruno WP-258
     ladrunoHSTagStageMap()[tag] = stage;
   }
   return new LadrunoHS(tag, p, rho, LadrunoHS::DIM_3D, stage, implex, hasSig0, sig0Comp);
@@ -344,7 +363,8 @@ LadrunoHS::LadrunoHS()
     regime_trial_(REGIME_ELASTIC),
     cEps22_comp_(0.0),
     refused_(false),
-    registered_in_tag_map_(false) {
+    registered_in_tag_map_(false),
+    stageGenSeen_(0) {   // Ladruno WP-258: 0 is never a generation -> first call syncs
   params_.finalize();
   for (int i = 0; i < 6; ++i) {
     sig0_comp_[i]      = 0.0;
@@ -377,7 +397,8 @@ LadrunoHS::LadrunoHS(int tag,
     regime_trial_(REGIME_ELASTIC),
     cEps22_comp_(0.0),
     refused_(false),
-    registered_in_tag_map_(true) {
+    registered_in_tag_map_(true),
+    stageGenSeen_(0) {   // Ladruno WP-258: 0 is never a generation -> first call syncs
   params_.finalize();
   for (int i = 0; i < 6; ++i) {
     sig0_comp_[i]      = (hasSig0 && sig0Comp != nullptr) ? sig0Comp[i] : 0.0;
@@ -391,6 +412,7 @@ LadrunoHS::LadrunoHS(int tag,
   }
   {
     std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
+    ladrunoHSTagGen().fetch_add(1, std::memory_order_release);   // Ladruno WP-258
     ladrunoHSTagStageMap()[this->getTag()] = stage_;
     ladrunoHSTagRefCountMap()[this->getTag()] += 1;
   }
@@ -401,6 +423,7 @@ LadrunoHS::~LadrunoHS() {
   if (registered_in_tag_map_) {
     int t = this->getTag();
     std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
+    ladrunoHSTagGen().fetch_add(1, std::memory_order_release);   // Ladruno WP-258
     auto& refs = ladrunoHSTagRefCountMap();
     auto it = refs.find(t);
     if (it != refs.end()) {
@@ -501,6 +524,10 @@ void LadrunoHS::buildInitialTangent6x6(double Kt[6][6]) const {
 //  Constitutive Integration (Stage 0 Elastic / Stage 1 HS / IMPL-EX)
 // ===========================================================================
 void LadrunoHS::syncStageFromRegistry(void) {
+  // Ladruno WP-258: nothing written since this instance last synced -> its
+  // stage_ is current; skip the process-wide lock (see ladrunoHSTagGen()).
+  if (ladrunoHSTagGen().load(std::memory_order_acquire) == stageGenSeen_)
+    return;
   int regStage = stage_;
   {
     std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
@@ -508,6 +535,7 @@ void LadrunoHS::syncStageFromRegistry(void) {
     if (it != ladrunoHSTagStageMap().end()) {
       regStage = it->second;
     }
+    stageGenSeen_ = ladrunoHSTagGen().load(std::memory_order_relaxed);   // Ladruno WP-258
   }
   if (regStage != stage_) {
     this->applyStageTransition(regStage);
@@ -1069,6 +1097,7 @@ int LadrunoHS::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&) {
   if (registered_in_tag_map_) {
     int oldTag = this->getTag();
     std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
+    ladrunoHSTagGen().fetch_add(1, std::memory_order_release);   // Ladruno WP-258
     auto& refs = ladrunoHSTagRefCountMap();
     auto it = refs.find(oldTag);
     if (it != refs.end()) {
@@ -1153,6 +1182,7 @@ int LadrunoHS::recvSelf(int commitTag, Channel& theChannel, FEM_ObjectBroker&) {
   regime_trial_ = regime_n_;
   {
     std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
+    ladrunoHSTagGen().fetch_add(1, std::memory_order_release);   // Ladruno WP-258
     ladrunoHSTagRefCountMap()[this->getTag()] += 1;
     ladrunoHSTagStageMap()[this->getTag()] = stage_;
   }
@@ -1227,6 +1257,7 @@ int LadrunoHS::updateParameter(int parameterID, Information& info) {
       int newStage = (parameterID == 1) ? info.theInt : static_cast<int>(info.theDouble);
       {
         std::lock_guard<std::mutex> lock(ladrunoHSTagMutex());
+        ladrunoHSTagGen().fetch_add(1, std::memory_order_release);   // Ladruno WP-258
         ladrunoHSTagStageMap()[this->getTag()] = newStage;
       }
       this->applyStageTransition(newStage);

@@ -47,8 +47,9 @@
 
 #include "LadrunoSANISAND3D.h"
 
-Vector LadrunoSANISAND3D::mEpsilon_M(6);
-Vector LadrunoSANISAND3D::mSigma_M(6);
+// Ladruno WP-258: thread_local (one buffer per thread; the serial path is unchanged)
+thread_local Vector LadrunoSANISAND3D::mEpsilon_M(6);
+thread_local Vector LadrunoSANISAND3D::mSigma_M(6);
 
 // full constructor
 LadrunoSANISAND3D::LadrunoSANISAND3D(int tag, double G0, double nu, double e_init, double Mc, double c, double lambda_c, double e0, double ksi,

@@ -24,11 +24,12 @@
 
 #include "ManzariDafaliasPlaneStrain.h"
 
-Vector ManzariDafaliasPlaneStrain::mEpsilon_M(3);
-Vector ManzariDafaliasPlaneStrain::mSigma_M(3);
-Vector ManzariDafaliasPlaneStrain::rSigma(4);
-Matrix ManzariDafaliasPlaneStrain::mTangent(3,3);
-Matrix ManzariDafaliasPlaneStrain::mTangent_init(3,3);
+// Ladruno WP-258: thread_local (one buffer per thread; the serial path is unchanged)
+thread_local Vector ManzariDafaliasPlaneStrain::mEpsilon_M(3);
+thread_local Vector ManzariDafaliasPlaneStrain::mSigma_M(3);
+thread_local Vector ManzariDafaliasPlaneStrain::rSigma(4);
+thread_local Matrix ManzariDafaliasPlaneStrain::mTangent(3,3);
+thread_local Matrix ManzariDafaliasPlaneStrain::mTangent_init(3,3);
 
 // full constructor
 ManzariDafaliasPlaneStrain::ManzariDafaliasPlaneStrain(int tag, double G0, double nu, double e_init, double Mc, double c, double lambda_c, double e0, double ksi,

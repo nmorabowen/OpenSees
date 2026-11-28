@@ -43,6 +43,9 @@
 #include <sstream>
 #include <iomanip>
 #include <array>
+#include <mutex>
+#include <vector>
+#include <LadrunoThreads.h>   // Ladruno WP-239
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -1551,9 +1554,14 @@ namespace {
 			double Unorm = -1.0;
 
 			//for implicit correction convergence
-			static std::array<Vector, 10> U_iterative = { Vector(7), Vector(7), Vector(7), Vector(7), Vector(7), Vector(7), Vector(7), Vector(7), Vector(7), Vector(7)};
-			static std::array<Vector, 10> U_iterative_el = { Vector(10), Vector(10), Vector(10), Vector(10), Vector(10), Vector(10), Vector(10), Vector(10), Vector(10), Vector(10) };
-			static std::array<double, 10> Rnorm_iterative = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+			// Ladruno WP-239: thread_local, like the Globals scratch above. This
+			// history is written and read back within ONE call (slot iter is
+			// written before slot 9 triggers the min-search), so per-thread
+			// storage is bit-identical serially; as a plain static, two points
+			// committing on different WP-192 threads picked each other's iterate.
+			static thread_local std::array<Vector, 10> U_iterative = { Vector(7), Vector(7), Vector(7), Vector(7), Vector(7), Vector(7), Vector(7), Vector(7), Vector(7), Vector(7)};
+			static thread_local std::array<Vector, 10> U_iterative_el = { Vector(10), Vector(10), Vector(10), Vector(10), Vector(10), Vector(10), Vector(10), Vector(10), Vector(10), Vector(10) };
+			static thread_local std::array<double, 10> Rnorm_iterative = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
 	
 			// newton loop for this step
 			for (int iter = 0; iter < params.max_iter; ++iter) {
@@ -1779,7 +1787,51 @@ namespace {
 			avg_error = x;
 			avg_counter = 0;
 		}
+		// Ladruno WP-239: fold in a per-thread partial (see ladrunoFlushImplexError).
+		inline void ladrunoMerge(double maxe, double sum, int count) {
+			if (maxe > max_error) max_error = maxe;
+			avg_error += sum;
+			avg_counter += count;
+		}
 	};
+
+	// Ladruno WP-239: the WP-192 per-thread IMPL-EX partials of ASDConcrete1D,
+	// which this class missed. commitState runs in the threaded commit loop
+	// (ladrunoThreadSafeForm is !slip), and its read-modify-write of the
+	// process-wide max/average was a data race. Nothing reads GlobalParameters
+	// yet; a future reader must call ladrunoFlushImplexError() first.
+	struct LadrunoImplexPartial { double maxe = 0.0; double sum = 0.0; int count = 0; };
+	std::mutex& ladrunoImplexMutex() { static std::mutex m; return m; }
+	// ladruno-lint: thread-ok the partials registry is only touched under ladrunoImplexMutex
+	std::vector<LadrunoImplexPartial*>& ladrunoImplexPartials() { static std::vector<LadrunoImplexPartial*> v; return v; }
+	LadrunoImplexPartial& ladrunoImplexTL() {
+		thread_local LadrunoImplexPartial* p = nullptr;
+		if (p == nullptr) {
+			p = new LadrunoImplexPartial();
+			std::lock_guard<std::mutex> g(ladrunoImplexMutex());
+			ladrunoImplexPartials().push_back(p);
+		}
+		return *p;
+	}
+	[[maybe_unused]] void ladrunoFlushImplexError() {
+		std::lock_guard<std::mutex> g(ladrunoImplexMutex());
+		for (LadrunoImplexPartial* q : ladrunoImplexPartials()) {
+			if (q->count > 0 || q->maxe > 0.0)
+				GlobalParameters::instance().ladrunoMerge(q->maxe, q->sum, q->count);
+			q->maxe = 0.0; q->sum = 0.0; q->count = 0;
+		}
+	}
+	void ladrunoRecordImplexError(double e) {
+		if (ladruno_inThreadedRegion()) {
+			LadrunoImplexPartial& p = ladrunoImplexTL();
+			if (e > p.maxe) p.maxe = e;
+			p.sum += e;
+			++p.count;
+		} else {
+			GlobalParameters::instance().setMaxError(std::max(e, GlobalParameters::instance().getMaxError()));
+			GlobalParameters::instance().accumulateAverageError(e);
+		}
+	}
 
 }
 
@@ -2323,8 +2375,7 @@ int ASDSteel1DMaterial::commitState(void)
 			double implex_error_u = norm_dU / params.radius;
 			double implex_error_N = (sigma_expl - sigma_impl) / params.sy;
 			implex_error = std::max(implex_error_u, implex_error_N);
-			GlobalParameters::instance().setMaxError(std::max(implex_error, GlobalParameters::instance().getMaxError()));
-			GlobalParameters::instance().accumulateAverageError(implex_error);
+			ladrunoRecordImplexError(implex_error);   // Ladruno WP-239
 			if (retval < 0) return retval;
 		}
 		else {
@@ -2334,8 +2385,7 @@ int ASDSteel1DMaterial::commitState(void)
 			int retval = pdata->steel_comp.compute(params, false, 1.0, strain, sigma_macro, tangent_macro);
 			double sigma_impl = sigma_macro;
 			implex_error = std::abs(sigma_expl - sigma_impl) / params.sy;
-			GlobalParameters::instance().setMaxError(std::max(implex_error, GlobalParameters::instance().getMaxError()));
-			GlobalParameters::instance().accumulateAverageError(implex_error);
+			ladrunoRecordImplexError(implex_error);   // Ladruno WP-239
 			if (retval < 0) return retval;
 		}
 

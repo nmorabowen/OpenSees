@@ -174,6 +174,40 @@ bodies are seen whole).
                 kernel (#1101). Append `*cxx_runtime_flags()` to the compile
                 command. Comments and docstrings are ignored; no waiver.
 
+  thread-static  (no alias; WP-239) A function-scope `static` in a MATERIAL
+                class that opts into the WP-107/WP-192 threaded element loops
+                (a `ladrunoThreadSafeUpdate`/`ladrunoThreadSafeForm` definition
+                in its .h/.cpp whose body is anything but `return false;`). A
+                plain function-scope static is one object for every instance on
+                every thread: ASDSteel1D's implicit-correction Newton history
+                (`static std::array<Vector,10> U_iterative`) let two points
+                committing on different threads pick each other's iterate, and
+                the shell sections' `static bool initialized` latch filled only
+                the first thread's `thread_local` ID. Make it `thread_local`,
+                per-instance or stack-backed. Exempt: `const`/`constexpr`,
+                `thread_local`, `std::atomic`/`std::mutex`/`std::once_flag`, and
+                functions that never run on a worker (OPS_* parsers,
+                send/recvSelf, set/getResponse, Print, set/updateParameter,
+                getCopy, *Sensitivity*, constructors, destructors, instance).
+                Class-scope static members are `thread-class-static`'s. Waive
+                (the statement's lines or the line above):
+                    // ladruno-lint: thread-ok <reason>
+
+  thread-class-static  (no alias; WP-258) A CLASS-scope static data member
+                (`static Vector stress;` in a class body) in a material
+                header whose class opts into the threaded loops, the same
+                opt-in test as thread-static. The OpenSees idiom of returning a
+                reference to a class-static buffer from getStress/getTangent
+                makes two instances on two threads fill one buffer:
+                DruckerPragerPlaneStrain's strain/stress/tangent and the
+                ManzariDafalias 3D/PlaneStrain wrappers' mSigma_M/mTangent.
+                Make it `static thread_local` (bit-identical serially) or a
+                member. Exempt: const/constexpr/inline, thread_local,
+                std::atomic/mutex/once_flag. A class-wide flag written only on
+                the main thread (ManzariDafalias::mElastFlag) or a buffer that is
+                constant after construction is waived with a reason:
+                    // ladruno-lint: thread-class-ok <reason>
+
 A waiver needs a reason of at least 12 characters, and a waiver that no longer
 suppresses anything is itself a finding (stale).
 
@@ -195,7 +229,7 @@ STAMP = "LADRUNO-HEADER-START"
 MIN_REASON = 12
 SUFFIXES = (".cpp", ".h", ".hpp", ".cc", ".cxx")
 
-WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok|sequence-ok|decl-ok|revert-ok|unknown-ok)\b(.*)$")
+WAIVER = re.compile(r"//\s*ladruno-lint:\s*(rayleigh-ok|wipe-ok|commit-ok|double-ok|sign-ok|sequence-ok|decl-ok|revert-ok|unknown-ok|thread-ok|thread-class-ok)\b(.*)$")
 RAYLEIGH = re.compile(r"(?:\bthis\s*->\s*)?\bgetRayleighDampingForces\s*\(\s*\)")
 SINGLETON = re.compile(r"\bstatic\s+([A-Za-z_]\w*)\s*&\s*instance\s*\(")
 RESET_CALL = re.compile(r"\b([A-Za-z_]\w*)::instance\s*\(\s*\)\s*(?:\.|->)\s*reset\w*\s*\(")
@@ -1454,6 +1488,172 @@ def check_gxx_static(root, rel):
     return findings
 
 # --------------------------------------------------------------------------
+# thread-static (WP-239)
+# --------------------------------------------------------------------------
+THREAD_OPTIN = re.compile(r"(?:^|::)ladrunoThreadSafe(?:Update|Form)$")
+THREAD_SKIP = re.compile(r"(?:^|::)(?:OPS_\w*|sendSelf|recvSelf|setResponse|getResponse|Print|setParameter|"
+                         r"updateParameter|activateParameter|getCopy|instance|\w*Sensitivity\w*|~\w+)$")
+THREAD_STATIC = re.compile(r"^static\b(?!\s+(?:const|constexpr)\b)(?!\s+std::(?:atomic|mutex|once_flag)\b)")
+
+
+def _opts_into_threads(cl):
+    """True when cleaned lines define a ladrunoThreadSafeUpdate/Form whose body is not just `return false;`."""
+    for f in functions(cl):
+        if THREAD_OPTIN.search(f.name):
+            body = [strip_prefix(t) for t, *_ in statements(cl, f)]
+            if body != ["return false"]:
+                return True
+    return False
+
+
+# Framework bases: a material that opts in does not make NDMaterial & co. threaded code.
+THREAD_FRAMEWORK = {"NDMaterial", "UniaxialMaterial", "SectionForceDeformation", "Material",
+                    "TaggedObject", "MovableObject", "PlaneStressMaterial", "PlateFiberMaterial"}
+CLASS_DECL = re.compile(r"\bclass\s+([A-Za-z_]\w*)\s*(?:final\s*)?:\s*(?:public|protected|private)\s+([A-Za-z_]\w*)")
+
+
+_THREAD_FILES_CACHE = {}
+
+
+def _thread_material_files(root):
+    """Files whose code runs on a worker for a material that opts into the threaded loops (WP-258).
+
+    The opt-in is inherited, so the files that SPELL `ladrunoThreadSafe*` are not enough: the
+    ManzariDafalias 3D / PlaneStrain wrappers inherit the base's answer, and DruckerPrager's
+    plastic_integrator lives in a base whose leaves opt in. Taken: the opting classes (an opt-in
+    DEFINITION whose body is not `return false`), their descendants (unless a descendant defines a
+    `return false` opt-in), their bases up to the framework classes, and every file under
+    SRC/material that defines a method of one of those classes."""
+    key = str(root)
+    if key in _THREAD_FILES_CACHE:
+        return _THREAD_FILES_CACHE[key]
+    mat = root / "SRC" / "material"
+    decl, parent, optin, refuse, raws = {}, {}, set(), set(), {}
+    for path in sorted(mat.rglob("*")):
+        if path.suffix not in SUFFIXES or not path.is_file():
+            continue
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        raws[path] = raw
+        if path.suffix in (".h", ".hpp") and "class" in raw:
+            for m in CLASS_DECL.finditer(" ".join(raw.split())):
+                decl.setdefault(m.group(1), path)
+                parent.setdefault(m.group(1), m.group(2))
+        if "ladrunoThreadSafe" in raw:
+            cl = clean(raw)
+            for f in functions(cl):
+                if THREAD_OPTIN.search(f.name) and "::" in f.name:
+                    body = [strip_prefix(t) for t, *_ in statements(cl, f)]
+                    (refuse if body == ["return false"] else optin).add(f.name.split("::")[-2])
+    optin -= refuse
+    cls = set(optin)
+    changed = True
+    while changed:                                # descendants
+        changed = False
+        for c, b in parent.items():
+            if b in cls and c not in cls and c not in refuse:
+                cls.add(c)
+                changed = True
+    for c in list(optin):                         # bases, up to the framework
+        b = parent.get(c)
+        while b and b not in THREAD_FRAMEWORK and b not in cls:
+            cls.add(b)
+            b = parent.get(b)
+    files = {decl[c] for c in cls if c in decl}
+    if cls:
+        # a DEFINITION: at column 0, after optional return-type tokens (a qualified call or a
+        # mention inside a body is indented, so another class's file is not pulled in)
+        meth = re.compile(r"^(?:[A-Za-z_][\w:<>,*&]*[ \t]+)*(?:" + "|".join(sorted(map(re.escape, cls)))
+                          + r")[ \t]*::[ \t]*~?[A-Za-z_]\w*[ \t]*\(", re.M)
+        for path, raw in raws.items():
+            if path.suffix not in (".h", ".hpp") and meth.search(raw):
+                files.add(path)
+    _THREAD_FILES_CACHE[key] = files
+    return files
+
+
+def check_thread_static(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    stems = {p.with_suffix("") for p in _thread_material_files(root)}
+    for stem in sorted(stems):
+        for path in (stem.with_suffix(sfx) for sfx in sorted(SUFFIXES)):
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            raw, cl = text.splitlines(), clean(text)
+            for f in functions(cl):
+                parts = f.name.split("::")
+                if THREAD_SKIP.search(f.name) or (len(parts) >= 2 and parts[-1] == parts[-2]):
+                    continue
+                for stmt, a, b in statements(cl, f):
+                    body = strip_prefix(stmt)
+                    if not THREAD_STATIC.match(body) or re.search(r"\bthread_local\b", body):
+                        continue
+                    wl, reason = waiver_at(raw, b, "thread-ok", above=b - a + 1)
+                    if wl is not None:
+                        used.add((str(path), wl))
+                        if len(reason) >= MIN_REASON:
+                            continue
+                        findings.append(f"thread-static {rel(path)}:{a + 1}: thread-ok waiver reason too short")
+                        continue
+                    decl = " ".join(body.split())[:70]
+                    findings.append(
+                        f"thread-static {rel(path)}:{a + 1}: {f.name} has a plain function-scope static "
+                        f"('{decl}') in a material that opts into the threaded element loops -- one object "
+                        "for every instance on every thread (ASDSteel1D U_iterative, WP-239). Make it "
+                        "thread_local, per-instance or stack-backed, or waive with "
+                        "'// ladruno-lint: thread-ok <reason>'")
+    return findings
+
+
+# --------------------------------------------------------------------------
+# thread-class-static (WP-258)
+# --------------------------------------------------------------------------
+THREAD_CLASS_STATIC = re.compile(
+    r"^\s*static\s+(?!(?:const|constexpr|thread_local|inline)\b)(?!std::(?:atomic|mutex|once_flag)\b)"
+    r"[A-Za-z_][^;(){}=]*?[\s*&](?P<name>[A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*;")
+
+
+def check_thread_class_static(root, rel, used_waivers=None):
+    findings = []
+    used = set() if used_waivers is None else used_waivers
+    stems = {p.with_suffix("") for p in _thread_material_files(root)}
+    for stem in sorted(stems):
+        for path in (stem.with_suffix(sfx) for sfx in (".h", ".hpp")):
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            raw, cl = text.splitlines(), clean(text)
+            in_func = set()
+            for f in functions(cl):
+                in_func.update(range(f.open, f.end + 1))
+            for li, line in enumerate(cl):
+                if li in in_func:
+                    continue
+                m = THREAD_CLASS_STATIC.match(line)
+                if not m or re.search(r"\bthread_local\b", line):
+                    continue
+                wl, reason = waiver_at(raw, li, "thread-class-ok", above=1)
+                if wl is not None:
+                    used.add((str(path), wl))
+                    if len(reason) >= MIN_REASON:
+                        continue
+                    findings.append(f"thread-class-static {rel(path)}:{li + 1}: thread-class-ok waiver "
+                                    "reason too short")
+                    continue
+                findings.append(
+                    f"thread-class-static {rel(path)}:{li + 1}: class-scope static '{m.group('name')}' "
+                    "in a material that opts into the threaded loops -- one buffer for every instance "
+                    "on every thread (DruckerPragerPlaneStrain::stress, WP-258). Make it "
+                    "'static thread_local' or a member, or waive with "
+                    "'// ladruno-lint: thread-class-ok <reason>'")
+    return findings
+
+
+# --------------------------------------------------------------------------
 # the rule registry (WP-162). One entry per rule, named by slug. `alias` is the
 # pre-WP-162 L-number, accepted by --only for one release.
 # --------------------------------------------------------------------------
@@ -1503,6 +1703,12 @@ _RULE_LIST = [
     Rule("gxx-static", None, check_gxx_static, None, "tests",
          "a test that builds a g++ harness without `cxx_runtime_flags()` / `-static`: on Windows the "
          "exe loads Git for Windows' older libstdc++-6.dll and segfaults (WP-199, #1101)"),
+    Rule("thread-static", None, check_thread_static, "thread-ok", "threaded materials",
+         "a plain function-scope `static` in a material that opts into the WP-107/WP-192 threaded "
+         "element loops: one object shared by every instance on every thread (WP-239)"),
+    Rule("thread-class-static", None, check_thread_class_static, "thread-class-ok", "threaded materials",
+         "a class-scope static data member in a material that opts into the threaded loops: the "
+         "getStress/getTangent class-static return buffer, shared by every thread (WP-258)"),
 ]
 RULES = {r.slug: r for r in _RULE_LIST}
 ALIASES = {r.alias: r.slug for r in _RULE_LIST if r.alias}

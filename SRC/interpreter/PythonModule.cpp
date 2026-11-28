@@ -683,6 +683,7 @@ initopensees(void)
 "        • mpm — anti-locking: cell-centre F-bar on the step increment, modes F and A (WP-232j)\n"
 "        • mpm — soil particles: LadrunoSANISAND and LadrunoHS, one stage walk in both modes (WP-232k)\n"
 "        • mpm — two-phase saturated u-p particles: route E (mode A) and route S (mode F) (WP-232l)\n"
+"        • mpm — mode F on ladrunoThreads, bit-identical to 1 thread; soil models thread the transfer loops (WP-253)\n"
 "        • testNDMaterial — nD material tester: views, mixed strain/stress control, explicit commit (WP-248)\n"
 "\n";
         // FEATURES-END

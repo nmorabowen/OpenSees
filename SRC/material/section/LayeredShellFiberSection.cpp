@@ -241,18 +241,17 @@ int LayeredShellFiberSection::getOrder( ) const
 //send back order of strainResultant in vector form
 const ID& LayeredShellFiberSection::getType( ) 
 {
-    static bool initialized = false;
-    if (!initialized) {
-        array(0) = SECTION_RESPONSE_FXX;
-        array(1) = SECTION_RESPONSE_FYY;
-        array(2) = SECTION_RESPONSE_FXY;
-        array(3) = SECTION_RESPONSE_MXX;
-        array(4) = SECTION_RESPONSE_MYY;
-        array(5) = SECTION_RESPONSE_MXY;
-        array(6) = SECTION_RESPONSE_VXZ;
-        array(7) = SECTION_RESPONSE_VYZ;
-        initialized = true;
-    }
+    // Ladruno WP-239: `array` is static thread_local (WP-192), so a process-wide
+    // `static bool initialized` latch filled only the FIRST calling thread's copy;
+    // every other thread got an all-zero ID. Eight stores: fill it every call.
+    array(0) = SECTION_RESPONSE_FXX;
+    array(1) = SECTION_RESPONSE_FYY;
+    array(2) = SECTION_RESPONSE_FXY;
+    array(3) = SECTION_RESPONSE_MXX;
+    array(4) = SECTION_RESPONSE_MYY;
+    array(5) = SECTION_RESPONSE_MXY;
+    array(6) = SECTION_RESPONSE_VXZ;
+    array(7) = SECTION_RESPONSE_VYZ;
     return array;
 }
 

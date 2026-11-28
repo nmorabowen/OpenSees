@@ -27,6 +27,7 @@
 #include <StandardStream.h>
 #include <Python.h>
 #include <sstream>
+#include <cstdio>   // Ladruno WP-258: fputs to stderr off the GIL
 
 class PythonStream : public StandardStream {
 public:
@@ -65,13 +66,28 @@ template<class T>void PythonStream::err_out(T err)
 {
   std::stringstream ss;
   ss << err;
-  msg = ss.str();
+  // Ladruno WP-258: a LOCAL string (the `msg` member was one buffer shared by
+  // every thread that prints), and no call into CPython from a thread that does
+  // not hold the GIL. An opserr from an OpenMP worker of a threaded element or
+  // particle loop reached PySys_FormatStderr with no Python thread state and
+  // dereferenced null -- the WP-107 "ManzariDafalias IntScheme 1 segfaults on a
+  // worker" (it faulted at the first plastic-branch warning; the elastic branch
+  // never prints). Taking the GIL there would deadlock: the main thread holds it
+  // for the whole parallel region. Such a thread writes to the C stderr instead
+  // (the same fd 2 that sys.stderr wraps in a normal session); the thread that
+  // holds the GIL -- every serial print -- keeps the Python path unchanged.
+  const std::string text = ss.str();
+  if (!PyGILState_Check()) {
+    fputs(text.c_str(), stderr);
+    fflush(stderr);
+    return;
+  }
   // Ladruno: the already-formatted message must be passed as a %s ARGUMENT, not as
   // the format string itself. Any literal '%' in an opserr message (e.g. "50% of
   // model mass", "exceeds -maxAddedMass cap 5%") was otherwise consumed as a bogus
   // printf conversion by PySys_FormatStderr and silently dropped/garbled under
   // openseespy (the Tcl StandardStream path was unaffected). Classic format-string bug.
-  PySys_FormatStderr("%s", msg.c_str());
+  PySys_FormatStderr("%s", text.c_str());
 }
 
 

@@ -195,7 +195,7 @@ limit that bounds its reuse, in its own words where it has them.
 | W11 | Recorders run inside `Domain::commit`, last; element `commitState()` return codes are dropped | G2P must precede recorders, and a G2P inside `commitState()` cannot fail the step | `Domain.cpp:2294-2423` |
 | W12 | `updateMaterialStage` and `parameter … material` reach materials only via `Domain::getElements()`; `MaterialStageParameter` stops at the first element that answers | mode-A particles are elements and are reached; mode-F particles only through the host's `parameter … pattern` target; `updateMaterialStage` stays blind to mode F — and none of the v1 materials answers it (`DruckerPrager.cpp:1063-1064` returns −1; its switch is `materialState`, `:1045`) | `MaterialStageParameter.cpp:60-81`; `MatParameter.cpp` (element walk) |
 | W13 | LadrunoRecorder's `GLOBAL_GP_COORDS` is a mesh-bound layout | a particle dataset is a new output, on both sides | `LadrunoRecorder.cpp` (review §14.2 F13) |
-| W14 | The WP-107 thread allowlist contains no soil model | `ManzariDafalias` refuses unconditionally (`:1235`); `LadrunoSANISAND` delegates (`:2758`); the allowlisted nD materials are `ElasticIsotropic` (3D, PlaneStrain2D) and `ASDConcrete3D` | allowlist on `origin/ladruno` |
+| W14 | The WP-107 thread allowlist contains no soil model. **Lifted by WP-258 (#1153, 2026-11-25)**: `DruckerPrager` (3D, PlaneStrain), `ManzariDafalias` / `LadrunoSANISAND` (IntScheme 1, 2, 129; with or without `-implex`) and `LadrunoHS` / HSSmall answer `ladrunoThreadSafeUpdate` and `ladrunoThreadSafeForm`, so mode F threads their particle material calls. Still serial: ManzariDafalias IntScheme 45 and 0/3–9, the RO family, NorSand, PDMY, PM4Sand | before WP-258, `ManzariDafalias` refused unconditionally (`:1235`) and `LadrunoSANISAND` delegated (`:2758`); the refusal's cause was `opserr` from a worker under openseespy (`258_thread_safe_soil_materials.md` §2.4) | allowlist on `origin/ladruno` |
 | W15 | `FE_Element` exits the process on an element with no DOFs, and `PlainHandler` builds an `FE_Element` for every Domain element, active or not | no zero-node element may sit in a Domain: the first analysis set up there kills the process. The explicit host is a `LoadPattern`, never an element | `FE_Element.cpp:126-129`; `PlainHandler.cpp:291-327` (other handlers unverified) |
 | W16 | `StaticAnalysis` exposes only `analyze(numSteps, flush)` — no `analyzeStep`, `getModel` or `checkDomainChange` — and has no sub-levels | quasi-static mode calls `analyze(1, false)` and flushes recorders itself | `StaticAnalysis.h:66`; `StaticAnalysis.cpp:128-236` |
 | W17 | A material's commit refusal cannot be undone: `Domain::commit` sees it after sibling points committed and aborts the analysis ("INCONSISTENT … aborted") | a refusal at particles aborts the run in both modes — no retry; no v1 material declares one (only `LadrunoConcrete3D`, `LadrunoHS`, `LadrunoSANISAND` do) | `Domain.cpp:2343-2355`; `LadrunoMaterialStatus.h:162-165` |
@@ -456,11 +456,11 @@ The plane-strain embedding is new work (the shipped lane is 3D-only).
 |---|---|---|---|---|---|---|---|
 | `ElasticIsotropic` | ThreeDimensional, PlaneStrain | yes | none | 232c | allowlisted (3D, PlaneStrain2D) | no | **admitted** |
 | `LadrunoJ2` | 232c | yes | none | 232c | not allowlisted → serial | only under `-autoRegularization` (`LadrunoJ2.cpp:352-356`), which the driver refuses at particles; with the global at 0 it falls back to its reference length | **admitted** |
-| `DruckerPrager` (UW, post-`31322a47a`) | ThreeDimensional, PlaneStrain (`DruckerPrager3D`, `DruckerPragerPlaneStrain`) | gated in the `-geom hypo` lane (ADR-79 §8–9) | `materialState` (`DruckerPrager.cpp:1045`, response 5); `updateMaterialStage` returns −1 (`:1063-1064`) | 232c | not allowlisted → serial | no | **admitted** |
+| `DruckerPrager` (UW, post-`31322a47a`) | ThreeDimensional, PlaneStrain (`DruckerPrager3D`, `DruckerPragerPlaneStrain`) | gated in the `-geom hypo` lane (ADR-79 §8–9) | `materialState` (`DruckerPrager.cpp:1045`, response 5); `updateMaterialStage` returns −1 (`:1063-1064`) | 232c | allowlisted (WP-258) | no | **admitted** |
 | `J2Plasticity` | — | — | none | yes (`J2Plasticity.h:137-139`) | not allowlisted | no | not in v1 (`LadrunoJ2` covers J2) |
 | concrete and steel length consumers | — | — | — | — | — | yes, through the global | not in v1 |
-| `LadrunoSANISAND` (IntScheme 1/2/129, `-implex`) | ThreeDimensional, PlaneStrain | gated in 232k (S1) | `mpm stage` walk, ids 1 and 5, `Elastic2Plastic` reset at every particle | class-wide `mElastFlag` (`ManzariDafalias.h:557`), guarded at `mpm analyze`, re-asserted on restart | not allowlisted → serial (W14) | no | **admitted (232k)**; mode F only on B-spline bases (K0) |
-| `LadrunoHS` / `HSSmall` | ThreeDimensional, PlaneStrain | gated in 232k (S1) | `mpm stage` walk, ids 1 and 13 | per-tag stage registry (`LadrunoHS.cpp:54-73`), shared by FE and MPM instances of a tag | not allowlisted → serial (W14) | no | **admitted (232k)**; `-sig0`/`-sig03` refused |
+| `LadrunoSANISAND` (IntScheme 1/2/129, `-implex`) | ThreeDimensional, PlaneStrain | gated in 232k (S1) | `mpm stage` walk, ids 1 and 5, `Elastic2Plastic` reset at every particle | class-wide `mElastFlag` (`ManzariDafalias.h:557`), guarded at `mpm analyze`, re-asserted on restart | allowlisted for IntScheme 1/2/129 and `-implex` (WP-258) | no | **admitted (232k)**; mode F only on B-spline bases (K0) |
+| `LadrunoHS` / `HSSmall` | ThreeDimensional, PlaneStrain | gated in 232k (S1) | `mpm stage` walk, ids 1 and 13 | per-tag stage registry (`LadrunoHS.cpp:54-73`), shared by FE and MPM instances of a tag | allowlisted (WP-258) | no | **admitted (232k)**; `-sig0`/`-sig03` refused |
 | NorSand, PDMY, PM4Sand | — | — | — | — | not allowlisted | no | later phase; NorSand after #896 |
 
 **Parameters and stages.** Mode A: particles are elements, so the stock element walks
@@ -1250,6 +1250,19 @@ ADR-88).
   2026-11-23). #1110 narrowed: `mpm traction` is a grid-face, GIMP-only load; on S2 it gives
   0.108 (HS) and 0.033 (SANISAND) against 0.03, with no gated number changed. Done: #1103 item 2
   (restart pack v1) and #1106 items 2, 4, 5. Results: `249_mpm_hardening.md`.
+- **2026-11-24** — WP-253 (#1147, MPM performance and #1097; not a §9 phase). Mode F's transfer
+  loops thread on `ladrunoThreads`, bit-identical to 1 thread (node-centric gather); materials
+  that are not Form-safe keep their serial calls. 3D `gimp` elastic 10⁵: S(8) = 5.00 (target 4.0).
+  Miss for the owner: 2D DruckerPrager S(8) 1.27–1.31 against 1.4 (serial material, 61–65 % of
+  the step). #1096/#1098 do not dominate; no #1095 crash. Regression check `mpm_bench/regress.py`.
+  Results: `253_mpm_performance.md`.
+- **2026-11-25** — WP-258 (#1153, thread-safe soil materials; not a §9 phase). W14 lifted:
+  DruckerPrager, ManzariDafalias / LadrunoSANISAND (IntScheme 1, 2, 129, `-implex`) and
+  LadrunoHS / HSSmall join the WP-107 allowlist (Update and Form), so mode F threads their
+  particle material calls. Every threaded result is bit-identical to 1 thread, FE and mode F,
+  at 2/4/8 threads, including shuffled orders. The WP-107 ManzariDafalias worker segfault was
+  `opserr` → `PythonStream` → CPython from a thread with no Python thread state (fixed in
+  `PythonStream.h`). Absorbs WP-239 (#1129). Results: `258_thread_safe_soil_materials.md`.
 
 ---
 
