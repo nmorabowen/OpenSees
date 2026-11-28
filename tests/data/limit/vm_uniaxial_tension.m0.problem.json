@@ -1,0 +1,88 @@
+{
+ "arrays": "vm_uniaxial_tension.m0.problem.npz",
+ "boundary_sets": [
+  {
+   "kind": "symmetry",
+   "name": "x0"
+  },
+  {
+   "kind": "symmetry",
+   "name": "y0"
+  },
+  {
+   "kind": "symmetry",
+   "name": "z0"
+  },
+  {
+   "kind": "traction",
+   "name": "x1"
+  },
+  {
+   "kind": "free",
+   "name": "y1"
+  },
+  {
+   "kind": "free",
+   "name": "z1"
+  }
+ ],
+ "conventions": {
+  "facets": "opposite_vertex_outward",
+  "footing_resultant": "footing_on_soil",
+  "sign": "tension_positive",
+  "strain_rate_shear": "engineering",
+  "stress_shear": "tensor",
+  "tet10": "vtk",
+  "voigt": [
+   "xx",
+   "yy",
+   "zz",
+   "xy",
+   "yz",
+   "zx"
+  ]
+ },
+ "domain": {
+  "exterior_load_free": true,
+  "ground": null,
+  "symmetry_sets": [],
+  "target": "box",
+  "truncation_sets": []
+ },
+ "footings": [],
+ "format": "ladruno-limit-problem",
+ "format_version": 0,
+ "length_scale": 1.0,
+ "name": "vm_uniaxial_tension:1x1x1",
+ "problem_sha256": "1c6263b45146b9d2b64d3446083b8093f4db62b03662004fbfa23ec054067f44",
+ "queries": [
+  {
+   "F0": [],
+   "F1": [],
+   "form": "ray",
+   "id": "q",
+   "restrained": []
+  }
+ ],
+ "regions": [
+  {
+   "b0": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "b1": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "criterion": "von_mises",
+   "k": 1.0,
+   "name": "soil"
+  }
+ ],
+ "units": {
+  "force": "kN",
+  "length": "m"
+ }
+}

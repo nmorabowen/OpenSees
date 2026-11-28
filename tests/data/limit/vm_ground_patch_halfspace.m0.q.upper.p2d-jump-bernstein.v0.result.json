@@ -1,0 +1,23 @@
+{
+ "arrays": "vm_ground_patch_halfspace.m0.q.upper.p2d-jump-bernstein.v0.result.npz",
+ "bound": "upper",
+ "format": "ladruno-limit-result",
+ "format_version": 0,
+ "formulation": "upper.p2d-jump-bernstein.v0",
+ "objective": 6.328427124746191,
+ "problem_sha256": "1eb426a796a8811d70e5bf9067db02ed2dab5aeb8d58c086145cd3fa7ca0e32b",
+ "producer": {
+  "name": "analytic-fixture",
+  "version": "0"
+ },
+ "query_id": "q",
+ "result_sha256": "db7fcde59b7ec0242536c5e227b3b544f8a5f0a6fc928512271650cb129844ba",
+ "solver": {
+  "name": "none",
+  "settings": {},
+  "version": "0"
+ },
+ "solver_status": "solved",
+ "value": 12.656854249492383,
+ "wall_time_s": null
+}

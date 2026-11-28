@@ -1,0 +1,97 @@
+{
+ "arrays": "vm_ground_patch_halfspace.m0.problem.npz",
+ "boundary_sets": [
+  {
+   "kind": "fixed",
+   "name": "xmin"
+  },
+  {
+   "kind": "fixed",
+   "name": "xmax"
+  },
+  {
+   "kind": "fixed",
+   "name": "ymin"
+  },
+  {
+   "kind": "fixed",
+   "name": "ymax"
+  },
+  {
+   "kind": "fixed",
+   "name": "base"
+  },
+  {
+   "kind": "traction",
+   "name": "ground"
+  }
+ ],
+ "conventions": {
+  "facets": "opposite_vertex_outward",
+  "footing_resultant": "footing_on_soil",
+  "sign": "tension_positive",
+  "strain_rate_shear": "engineering",
+  "stress_shear": "tensor",
+  "tet10": "vtk",
+  "voigt": [
+   "xx",
+   "yy",
+   "zz",
+   "xy",
+   "yz",
+   "zx"
+  ]
+ },
+ "domain": {
+  "exterior_load_free": true,
+  "ground": {
+   "axis": "z",
+   "coordinate": 0.0
+  },
+  "symmetry_sets": [],
+  "target": "halfspace",
+  "truncation_sets": [
+   "xmin",
+   "xmax",
+   "ymin",
+   "ymax",
+   "base"
+  ]
+ },
+ "footings": [],
+ "format": "ladruno-limit-problem",
+ "format_version": 0,
+ "length_scale": 2.0,
+ "name": "vm_ground_patch_halfspace:2x2x1",
+ "problem_sha256": "1eb426a796a8811d70e5bf9067db02ed2dab5aeb8d58c086145cd3fa7ca0e32b",
+ "queries": [
+  {
+   "F0": [],
+   "F1": [],
+   "form": "ray",
+   "id": "q",
+   "restrained": []
+  }
+ ],
+ "regions": [
+  {
+   "b0": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "b1": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "criterion": "von_mises",
+   "k": 1.0,
+   "name": "soil"
+  }
+ ],
+ "units": {
+  "force": "kN",
+  "length": "m"
+ }
+}
