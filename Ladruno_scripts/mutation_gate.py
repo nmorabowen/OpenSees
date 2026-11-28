@@ -54,14 +54,35 @@ TESTS = REPO / "tests"
 # so they look like "tests that ignore the physics" when they are nothing of
 # the kind. (Caught during WP-2: the first CONTINUUM glob pulled in
 # LadrunoBrick20 tests before that element had its gates.)
+# --- IDENT (WP-265) -----------------------------------------------------------
+# Until WP-265 every family's IDENT floor was 0.0. Not because the suites cannot see
+# an identity tangent -- a static read of CONTINUUM / SHELLMOD / CPML predicts that
+# 0.39-0.45 / 0.52-0.57 / 0.70-0.75 of their tests die under it (stiff static Newton
+# diverges with K = I; eigen, printA, criticalTimeStep and testIter reads see it) --
+# but because IDENT was never MEASURED: ladruno_mutation.yml builds only ZERO and
+# SCALE, and the floor was declared from the header's guess that "Newton usually
+# still converges". Each gated family's IDENT suite is now its ordinary suite PLUS a
+# tangent-vs-FD gate at a nonlinear state (`paths_by_mode`), so the score always has
+# tests whose only job is the tangent. The new gate files stay OUT of ZERO/SCALE on
+# purpose: there K and the FD of the force are mutated consistently (0 = d0, 1.5K =
+# d(1.5f)), so they would only add survivors.
+# The IDENT floors below are PROVISIONAL (set under the predicted lower bounds, so the
+# first measurement can only RAISE them, as the ratchet rule demands). Replace each
+# with the measured score, rounded down, and record the run here.
+# Families with no LADRUNO_MUTATE_* call sites (UP, CONTACT, EXPLICIT, SANISAND) keep
+# IDENT 0.0: no mutant can change their results (cmd_run refuses them). EXPLICIT has
+# no tangent at all, so IDENT is inapplicable to it even once gated.
 FAMILIES = {
     # 3D hex continuum lane: LadrunoBrick (std/bbar/URI/physical/SSP/EAS,
     # -geom finite + hypo) and LadrunoBrick20. Both are gated.
     "CONTINUUM": {
         "paths": ["test_ladrunoBrick*.py", "test_brick_inertia_skip.py"],
+        # WP-265: + the small-strain formulations' K-vs-FD gate at a plastic state.
+        "paths_by_mode": {"IDENT": ["test_ladrunoBrick*.py", "test_brick_inertia_skip.py",
+                                    "test_continuum_tangent_gate.py"]},
         # ZERO deletes the internal force outright: a suite that checks
         # equilibrium, reactions or displacements must overwhelmingly notice.
-        "min_score": {"ZERO": 0.60, "SCALE": 0.40, "IDENT": 0.0},
+        "min_score": {"ZERO": 0.60, "SCALE": 0.40, "IDENT": 0.30},   # IDENT provisional (WP-265)
     },
     # ADR 91 shell stiffness-modifier decorator. Gated at the SECTION accessors
     # (getStressResultant / getSectionTangent / getInitialTangent), not at an
@@ -76,7 +97,10 @@ FAMILIES = {
     # does assemble a patch, IS killed. Gated.
     "SHELLMOD": {
         "paths": ["test_ladrunoShellModifier*.py"],
-        "min_score": {"ZERO": 0.60, "SCALE": 0.30, "IDENT": 0.0},
+        # WP-265: + ShellMITC4-on-LadrunoShellModifier K-vs-FD gate at a plastic state.
+        "paths_by_mode": {"IDENT": ["test_ladrunoShellModifier*.py",
+                                    "test_shellmod_tangent_gate.py"]},
+        "min_score": {"ZERO": 0.60, "SCALE": 0.30, "IDENT": 0.40},   # IDENT provisional (WP-265)
     },
     "CPML": {
         "paths": [
@@ -85,7 +109,11 @@ FAMILIES = {
             "test_ladruno_cpml_ecosystem.py",
             "test_ladruno_cpml_up.py",
         ],
-        "min_score": {"ZERO": 0.60, "SCALE": 0.40, "IDENT": 0.0},
+        # WP-265: no new file. The suite already carries K-vs-FD gates
+        # (waveguide test_group1_opensees_finite_difference_tangent x18, cpml_up
+        # test_up_gate0_oracle_14_cases_and_fd_tangent) and printA / 'stiff' /
+        # 'damping' oracle reads, so its own paths are the IDENT suite.
+        "min_score": {"ZERO": 0.60, "SCALE": 0.40, "IDENT": 0.55},   # IDENT provisional (WP-265)
     },
     # WP-232 explicit MPM engine. It has no Element accessor, so the gates sit
     # in the engine step (LadrunoMPMCore.h): ZERO drops the P2G internal force,
@@ -164,7 +192,10 @@ FAMILIES = {
         # "paths_by_mode" replaces "paths" for the named mode. Floors are unchanged.
         "paths_by_mode": {"IDENT": ["test_ladruno_mpm_twophase_oracle.py",
                                     "test_ladruno_mpm_twophase_fe_identity.py"]},
-        "min_score": {"ZERO": 0.46, "SCALE": 0.38, "IDENT": 0.0},
+        # WP-265: IDENT floor from the one measurement there is, 14/14 = 1.0 on
+        # dist/mut_MPM_IDENT built from d77caf8fd (232l_mpm_two_phase.md, T11), held
+        # below it until a re-measurement on the current tree confirms it.
+        "min_score": {"ZERO": 0.46, "SCALE": 0.38, "IDENT": 0.90},
     },
     # --- WP-3 lanes: gates NOT yet inserted in these families' elements. -----
     # Registering the paths here is deliberate (it documents the intended
