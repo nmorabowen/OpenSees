@@ -224,7 +224,9 @@ inline void plasticResidual(const Params& p, const T s_tr[6], const T alpha_n[][
 // returnMapT<T>: the return map for any scalar T (double, or a Dual to get
 // derivatives). Every input and output is T so a caller can seed any of them;
 // the material parameters stay double (a parameter-sensitivity extension would
-// template Params as well).
+// template Params as well). Inputs are taken by const reference: a caller must
+// NOT pass the same object as an input and an output (e.g. ebarP_n and ebarP) --
+// the double wrappers below copy, so production callers are safe.
 template <class T>
 inline int returnMapT(const Params& p,
                       const T strain6[6],

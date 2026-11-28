@@ -12,7 +12,7 @@ under IMPL-EX (D~ frozen), where the tangent must be (1 - D~) Dtan_eff.
 
 Asserts, at every step of every path:
 
-  * the analytic Dtan equals the dual tangent to round-off (<= 1e-12 relative
+  * the analytic Dtan equals the dual tangent to round-off (<= 1e-13 relative
     to max|Dtan|; measured ~1e-16, worst 2.8e-14 on the strong-Voce path,
     including the damaged tangent up to D = 0.85). The
     finite-difference gate this complements (test_ladrunoJ2_kernel_cpp.py)
@@ -46,7 +46,9 @@ SCENARIOS = {"elastic_iso", "single_af_cyclic", "chaboche3_3d", "kin_linear_cycl
              # IMPL-EX: D~ frozen at the committed damage => (1-D~) Dtan_eff identity
              "lemaitre_implex_3d"}
 DAMAGED = {s for s in SCENARIOS if s.startswith("lemaitre_")}
-TAN_TOL = 1e-12   # relative to max|Dtan|
+TAN_TOL = 1e-13   # relative to max|Dtan|. Measured worst 2.8e-14 WITH the IFT step
+                  # (voce_strong_3d); WITHOUT it 7.5e-13 -- so this tolerance is what
+                  # gates the IFT step (WP-262 review finding 2; 1e-12 let it through).
 SYM_FLOOR = 1e-6  # the symmetrized mutant must miss by at least this much
 
 
@@ -58,7 +60,11 @@ def dual_run():
     src = os.path.join(_HERE, "ladrunoj2_dual_check.cpp")
     with tempfile.TemporaryDirectory() as td:
         exe = os.path.join(td, "lj2d.exe")
-        cc = subprocess.run([gpp, "-O2", "-std=c++17", "-Wall", "-I", _SRC_ND, src, "-o", exe,
+        # -ffp-contract=off: the bit-identity leg compares the Dual value part with
+        # the double run; FMA contraction (e.g. -march=haswell) may fuse the two
+        # paths differently (WP-262 review finding 5).
+        cc = subprocess.run([gpp, "-O2", "-std=c++17", "-Wall", "-ffp-contract=off",
+                             "-I", _SRC_ND, src, "-o", exe,
                              *cxx_runtime_flags()],
                             stdin=subprocess.DEVNULL, capture_output=True, text=True)
         assert cc.returncode == 0, f"g++ failed:\n{cc.stderr}"

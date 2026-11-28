@@ -257,14 +257,18 @@ int LadrunoUniaxialJ2::setTrialStrain(double strain, double)
   // WP-262: the return map lives in the templated kernel
   // (LadrunoUniaxialJ2Kernel.h); this is its double instantiation, which performs
   // exactly the operations of the former in-class code (bit-identity gate:
-  // tests/ladruno_uniaxialj2_dual_check.cpp). The crack-band scale is read from
-  // the active element only where the damage law uses it (plastic + damage).
+  // tests/ladruno_uniaxialj2_dual_check.cpp). The crack-band scale lch/lch_ref is
+  // read from the active element only when the regularization is on (it is 1
+  // otherwise, exactly as before), and LATCHED: the DDM pass replays this return
+  // map outside Domain::update, where ops_TheActiveElement no longer names this
+  // material's element (WP-262 review finding 1).
   ladruno_uniaxial_j2::ParamsT<double> p;
   fillKernelParams(p, E, sig0, Qinf, bIso, Hiso, nBack, Ckin, gKin,
                    dmgOn, dmgR, dmgS, dmgPD, dmgDc, dmgImplex, 1.0);
   ladruno_uniaxial_j2::StateT<double> C, Tr;
   committedState(C, CplasticStrain, Cebarp, CdGamma, Cwp, CD, CX, nBack);
-  if (dmgOn) p.lchScale = this->lchScaleFromElement();
+  if (dmgOn && dmgLchRef > 0.0) p.lchScale = this->lchScaleFromElement();
+  lchScaleTrial = p.lchScale;
 
   double resid = 0.0;
   int status = ladruno_uniaxial_j2::returnMap(p, Tstrain, C, CdD, Tr, Tstress, Ttangent, &resid);
@@ -374,6 +378,7 @@ UniaxialMaterial* LadrunoUniaxialJ2::getCopy(void)
   theCopy->Ttangent = Ttangent;
   theCopy->parameterID = parameterID;
   theCopy->SHV = SHV;                            // WP-262: history sensitivities
+  theCopy->lchScaleTrial = lchScaleTrial;
 
   return theCopy;
 }
@@ -525,7 +530,9 @@ int LadrunoUniaxialJ2::sensitivityPass(int gradIndex, double strainGradient,
   ladruno_uniaxial_j2::ParamsT<D1> p;
   fillKernelParams(p, E, sig0, Qinf, bIso, Hiso, nBack, Ckin, gKin,
                    dmgOn, dmgR, dmgS, dmgPD, dmgDc, dmgImplex, 1.0);
-  if (dmgOn) p.lchScale = this->lchScaleFromElement();
+  // the scale setTrialStrain used for THIS trial state: never re-read the active
+  // element here (outside Domain::update it is the last element updated)
+  p.lchScale = lchScaleTrial;
   switch (parameterID) {
     case 1: p.E.d[0]    = 1.0; break;
     case 2: p.sig0.d[0] = 1.0; break;

@@ -39,9 +39,19 @@ status: "open"
 - **Still stubbed** (they return 0): every other fork uniaxial (`LadrunoCohesiveHinge`,
   `LadrunoBondSlip`, `LadrunoRebarBuckling`, …) and every fork nD material. Not
   differentiated in `LadrunoUniaxialJ2`: the damage constants and `lchRef`.
-  `SHV` is not sent by `sendSelf`, so DDM across OpenSeesSP/MP repartitioning is
-  unsupported. Before trusting a DDM run, check that every material in the path
-  implements the sensitivity methods.
+  `SHV` is not sent by `sendSelf`, so DDM across OpenSeesSP/MP repartitioning or a
+  `database` save/restore is unsupported. Before trusting a DDM run, check that every
+  material in the path implements the sensitivity methods.
+- **`sensitivityAlgorithm -computeByCommand` is wrong for path-dependent materials**
+  (measured error 1.0 for Steel01 and for `LadrunoUniaxialJ2` alike). It computes
+  the sensitivities after `commit`, when the trial and committed states already
+  coincide. Path-dependent DDM needs `-computeAtEachStep`.
+- **A second trap found by the WP-262 review: the active element is stale in the
+  DDM pass.** `ops_TheActiveElement` is set only inside `Domain::update`. Any
+  sensitivity method that re-reads it (for a crack-band `lch`, say) gets the LAST
+  element updated. Latch whatever the trial state used. `LadrunoUniaxialJ2`
+  latches `lchScaleTrial`, with a truss-chain regression in
+  `tests/test_ladrunoUniaxialJ2_ddm_fiber.py`.
 
 #### Follow-up (WP-267)
 
