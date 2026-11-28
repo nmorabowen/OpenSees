@@ -1,5 +1,7 @@
 # WP-260 Wave 0 (`260-w0`) — SMOKE / PRE-#1153/#1154 VERIFICATION
 
+> **Partial (D9): nothing can be picked from this table.** Present: none. Missing: `d1a_brick_sanisand[S]`, `d1a_brick_sanisand[L]`, `d1b_brick_concrete3d[S]`, `d1b_brick_concrete3d[L]`, `d2_cpml_wave[S]`, `d2_cpml_wave[L]`, `d3a_explicit_cdl_cpml[S]`, `d3a_explicit_cdl_cpml[L]`, `d3b_explicit_bathe_cpml[S]`, `d3b_explicit_bathe_cpml[L]`, `d3c_explicit_sms_cons[S]`, `d4_mpm_modeA[S]`, `d5_mcft_2cld12[S]`.
+
 - **Binary SHA (verified `OpenSees.exe` == all `opensees.pyd` records):** `7e91aaf1c48870baaa9720fbbd6d5ceca669da72`
 - **Environment (`OMP_*`/`KMP_*`/`MKL_*`/`LADRUNO_*`):** `{"LADRUNO_OPENSEESPY_ALIAS": "1", "LADRUNO_OPENSEES_QUIET": "1"}`
 - **Affinity arg:** `none` | **Production threads:** `8`
@@ -62,4 +64,4 @@ _Only one size present in this run (smoke/partial run); full S vs L table prints
 
 ## 5. Proposed Pick
 
-- No eligible package cleared both `p >= 10%` and `G >= 1.10x` on rankable decks in this run.
+- No pick: partial table (D9). Missing: `d1a_brick_sanisand[S]`, `d1a_brick_sanisand[L]`, `d1b_brick_concrete3d[S]`, `d1b_brick_concrete3d[L]`, `d2_cpml_wave[S]`, `d2_cpml_wave[L]`, `d3a_explicit_cdl_cpml[S]`, `d3a_explicit_cdl_cpml[L]`, `d3b_explicit_bathe_cpml[S]`, `d3b_explicit_bathe_cpml[L]`, `d3c_explicit_sms_cons[S]`, `d4_mpm_modeA[S]`, `d5_mcft_2cld12[S]`.

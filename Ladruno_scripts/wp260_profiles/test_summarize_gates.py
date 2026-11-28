@@ -262,3 +262,118 @@ def test_refuses_mixed_missing_load_during_ext(tmp_path):
     assert "cpu_load_during_ext=missing on 8/9 records" in txt
     assert _row_for(txt, "d1b_brick_concrete3d[smoke]").endswith("| NO |")
     assert _row_for(txt, "d3a_explicit_cdl_cpml[smoke]").endswith("| YES |")
+
+
+def _make_sized_snap(tmp_path: Path, pairs: List[tuple], *, smoke_flag: bool = False) -> Path:
+    """Build a synthetic clean-load snapshot from `SMOKE_SNAP` for the given `(deck, size)` pairs."""
+    dst = tmp_path / "sized_snap"
+    dst.mkdir(parents=True, exist_ok=True)
+    src_m = json.loads((SMOKE_SNAP / "manifest.json").read_text(encoding="utf-8"))
+    src_t = json.loads((SMOKE_SNAP / "trees.json").read_text(encoding="utf-8"))
+
+    by_deck = {}
+    for r in src_m["records"]:
+        if r.get("ok"):
+            by_deck.setdefault(r["deck"], []).append(r)
+
+    new_records = []
+    new_trees = {}
+    for deck, sz in pairs:
+        base_recs = by_deck[deck]
+        # Ensure 1t_deep >= 1t_coarse so deep_ovh >= 1.0 on synthetic clones
+        c_walls = [r.get("steady_wall_s", r["wall_s"]) for r in base_recs if r["mode"] == "1t_coarse"]
+        min_deep = max(c_walls) * 1.02 if c_walls else 1.0
+        for r in base_recs:
+            rc = copy.deepcopy(r)
+            old_id = rc["run_id"]
+            new_id = f"{deck}_{sz}_{rc['mode']}_r{rc['rep']}"
+            rc["size"] = sz
+            rc["run_id"] = new_id
+            rc["cpu_load_before_pct"] = 2.0
+            rc["cpu_load_after_pct"] = 2.0
+            rc["cpu_load_during_ext_pct"] = 1.0
+            if rc["mode"] == "1t_deep" and rc.get("steady_wall_s", rc["wall_s"]) < min_deep:
+                rc["steady_wall_s"] = min_deep
+                rc["wall_s"] = min_deep
+            new_records.append(rc)
+            new_trees[new_id] = copy.deepcopy(src_t[old_id])
+
+    out_m = copy.deepcopy(src_m)
+    out_m["smoke"] = smoke_flag
+    out_m["records"] = new_records
+    (dst / "manifest.json").write_text(json.dumps(out_m), encoding="utf-8")
+    (dst / "trees.json").write_text(json.dumps(new_trees), encoding="utf-8")
+    return dst
+
+
+def test_partial_d9_d2_d3_only_suppresses_pick_keeps_sec4_pass(tmp_path):
+    """F1 (a): D2+D3-only input where >=1 package passes §4 gets the Partial (D9) banner,
+    prints no pick lines in §5, and keeps `PASS` on its §4 row."""
+    d2_d3_pairs = [
+        ("d2_cpml_wave", "S"),
+        ("d2_cpml_wave", "L"),
+        ("d3a_explicit_cdl_cpml", "S"),
+        ("d3a_explicit_cdl_cpml", "L"),
+        ("d3b_explicit_bathe_cpml", "S"),
+        ("d3b_explicit_bathe_cpml", "L"),
+        ("d3c_explicit_sms_cons", "S"),
+    ]
+    snap = _make_sized_snap(tmp_path / "d9", d2_d3_pairs)
+    txt = _run_summarize(snap, tmp_path / "d9.md")
+
+    expected_present = (
+        "`d2_cpml_wave[S]`, `d2_cpml_wave[L]`, `d3a_explicit_cdl_cpml[S]`, "
+        "`d3a_explicit_cdl_cpml[L]`, `d3b_explicit_bathe_cpml[S]`, "
+        "`d3b_explicit_bathe_cpml[L]`, `d3c_explicit_sms_cons[S]`"
+    )
+    expected_missing = (
+        "`d1a_brick_sanisand[S]`, `d1a_brick_sanisand[L]`, `d1b_brick_concrete3d[S]`, "
+        "`d1b_brick_concrete3d[L]`, `d4_mpm_modeA[S]`, `d5_mcft_2cld12[S]`"
+    )
+    expected_banner = (
+        f"> **Partial (D9): nothing can be picked from this table.** "
+        f"Present: {expected_present}. Missing: {expected_missing}."
+    )
+    assert expected_banner in txt
+    assert _row_for(txt, "260b").endswith("| PASS |")
+
+    sec5 = txt.split("## 5. Proposed Pick\n", 1)[1].strip()
+    assert sec5 == f"- No pick: partial table (D9). Missing: {expected_missing}."
+    assert "Immediate unblocked picks" not in txt
+    assert "All passing eligible packages" not in txt
+
+
+def test_complete_d1_input_prints_proposed_pick(tmp_path):
+    """F1 (b): Complete 13-pair D1 input with a passing package prints its §5 pick normally."""
+    sys.path.insert(0, str(HERE))
+    import summarize as smod
+
+    snap = _make_sized_snap(tmp_path / "full", list(smod.EXPECTED_D1_DECK_SIZES))
+    txt = _run_summarize(snap, tmp_path / "full.md")
+
+    assert "Partial (D9)" not in txt
+    assert "No pick: partial table (D9)" not in txt
+    assert _row_for(txt, "260b").endswith("| PASS |")
+    assert "**Immediate unblocked picks (eligible now):**" in txt
+    assert "**All passing eligible packages (with blockers):**" in txt
+    assert "- **`260b`**" in txt
+
+
+def test_smoke_only_input_is_partial(tmp_path):
+    """F1 (c): Smoke-only input never counts `smoke` records as present and is marked partial."""
+    sys.path.insert(0, str(HERE))
+    import summarize as smod
+
+    clean_smoke = _make_clean_snap(tmp_path / "clean_smoke", SMOKE_SNAP)
+    txt = _run_summarize(clean_smoke, tmp_path / "clean_smoke.md")
+
+    all_missing = ", ".join(f"`{d}[{s}]`" for d, s in smod.EXPECTED_D1_DECK_SIZES)
+    assert (
+        f"> **Partial (D9): nothing can be picked from this table.** "
+        f"Present: none. Missing: {all_missing}."
+    ) in txt
+    assert _row_for(txt, "260b").endswith("| PASS |")
+    sec5 = txt.split("## 5. Proposed Pick\n", 1)[1].strip()
+    assert sec5 == f"- No pick: partial table (D9). Missing: {all_missing}."
+    assert "Immediate unblocked picks" not in txt
+    assert "All passing eligible packages" not in txt

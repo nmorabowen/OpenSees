@@ -41,7 +41,7 @@ SIZE_SPECS: Dict[str, Dict[str, Dict]] = {
     "d2_cpml_wave": {
         "smoke": {"n_int": 6, "n_pml": 2, "nsteps": 6},        # 10x10x8 = 800 hex
         "S": {"n_int": 10, "n_pml": 2, "nsteps": 16},          # 14x14x12 = 2,352 hex
-        "L": {"n_int": 30, "n_pml": 3, "nsteps": 8},           # 36x36x33 = 42,768 hex (~134k free DOF >= 1e5)
+        "L": {"n_int": 30, "n_pml": 3, "nsteps": 8},           # 36x36x33 = 42,768 hex (121,275 free DOF >= 1e5)
     },
     "d3a_explicit_cdl_cpml": {
         "smoke": {"n_int": 6, "n_pml": 2, "nsteps": 20},

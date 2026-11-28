@@ -44,6 +44,24 @@ TAG_NAMES = {
 
 CALL_CHECK_SCOPES = ("formUnbalance", "linearSolve", "formTangent", "update")
 
+# Expected complete D1 baseline (`wp-briefs.md` §1 table): 13 `(deck, size)` pairs.
+# `smoke` records never count as present.
+EXPECTED_D1_DECK_SIZES: Tuple[Tuple[str, str], ...] = (
+    ("d1a_brick_sanisand", "S"),
+    ("d1a_brick_sanisand", "L"),
+    ("d1b_brick_concrete3d", "S"),
+    ("d1b_brick_concrete3d", "L"),
+    ("d2_cpml_wave", "S"),
+    ("d2_cpml_wave", "L"),
+    ("d3a_explicit_cdl_cpml", "S"),
+    ("d3a_explicit_cdl_cpml", "L"),
+    ("d3b_explicit_bathe_cpml", "S"),
+    ("d3b_explicit_bathe_cpml", "L"),
+    ("d3c_explicit_sms_cons", "S"),
+    ("d4_mpm_modeA", "S"),
+    ("d5_mcft_2cld12", "S"),
+)
+
 
 # --------------------------------------------------------------------------- #
 #  Exact Brief §4 Package Table (Plan hypothesis, rule-2 s, source, p(deck))  #
@@ -671,9 +689,22 @@ def main() -> int:
     if during_all:
         probe_parts.append(f"during_ext: `{_fmt_load_stats(during_all)}`")
 
+    present_d1_set = {(r["deck"], r["size"]) for r in rows if r["size"] != "smoke"}
+    present_d1_pairs = [p for p in EXPECTED_D1_DECK_SIZES if p in present_d1_set]
+    missing_d1_pairs = [p for p in EXPECTED_D1_DECK_SIZES if p not in present_d1_set]
+    is_partial = len(missing_d1_pairs) > 0
+    present_d1_str = ", ".join(f"`{d}[{s}]`" for d, s in present_d1_pairs) if present_d1_pairs else "none"
+    missing_d1_str = ", ".join(f"`{d}[{s}]`" for d, s in missing_d1_pairs)
+
     md: List[str] = []
     md.append(f"# WP-260 Wave 0 (`260-w0`) — {mode_tag}")
     md.append("")
+    if is_partial:
+        md.append(
+            f"> **Partial (D9): nothing can be picked from this table.** "
+            f"Present: {present_d1_str}. Missing: {missing_d1_str}."
+        )
+        md.append("")
     md.append(f"- **Binary SHA (verified `OpenSees.exe` == all `opensees.pyd` records):** `{exe_build}`")
     md.append(f"- **Environment (`OMP_*`/`KMP_*`/`MKL_*`/`LADRUNO_*`):** `{json.dumps(manifest.get('parent_env', {}))}`")
     md.append(f"- **Affinity arg:** `{manifest.get('affinity_arg', 'none')}` | **Production threads:** `{manifest.get('production_threads', 8)}`")
@@ -808,22 +839,25 @@ def main() -> int:
     tier_rank = {"G-BYTE": 0, "G-BYTE+G-OPT": 1, "G-BYTE/G-EQUIV": 2, "G-EQUIV/G-OPT": 3, "G-OPT": 4}
     md.append("## 5. Proposed Pick")
     md.append("")
-    passing = sorted(
-        [m for m in matrix_rows if m["passes"]],
-        key=lambda m: (-round(m["best_G"], 4), tier_rank.get(m["tier"], 9)),
-    )
-    if passing:
-        unblocked = [m for m in passing if m["blocker"] == "Unblocked"]
-        if unblocked:
-            md.append("**Immediate unblocked picks (eligible now):**")
-            for m in unblocked[:3]:
-                md.append(f"- **`{m['pkg']}`** ({m['tier']}, blocker: {m['blocker']}): peak on `{m['best_lbl']}`, `p = {100 * m['best_p']:.1f}%`, rule-2 `s = {m['s']:.2f}x` -> **`G = {m['best_G']:.2f}x`**.")
-        md.append("")
-        md.append("**All passing eligible packages (with blockers):**")
-        for m in passing[:3]:
-            md.append(f"- **`{m['pkg']}`** ({m['tier']}, blocker: {m['blocker']}): peak on `{m['best_lbl']}`, `p = {100 * m['best_p']:.1f}%`, rule-2 `s = {m['s']:.2f}x` -> **`G = {m['best_G']:.2f}x`**.")
+    if is_partial:
+        md.append(f"- No pick: partial table (D9). Missing: {missing_d1_str}.")
     else:
-        md.append("- No eligible package cleared both `p >= 10%` and `G >= 1.10x` on rankable decks in this run.")
+        passing = sorted(
+            [m for m in matrix_rows if m["passes"]],
+            key=lambda m: (-round(m["best_G"], 4), tier_rank.get(m["tier"], 9)),
+        )
+        if passing:
+            unblocked = [m for m in passing if m["blocker"] == "Unblocked"]
+            if unblocked:
+                md.append("**Immediate unblocked picks (eligible now):**")
+                for m in unblocked[:3]:
+                    md.append(f"- **`{m['pkg']}`** ({m['tier']}, blocker: {m['blocker']}): peak on `{m['best_lbl']}`, `p = {100 * m['best_p']:.1f}%`, rule-2 `s = {m['s']:.2f}x` -> **`G = {m['best_G']:.2f}x`**.")
+            md.append("")
+            md.append("**All passing eligible packages (with blockers):**")
+            for m in passing[:3]:
+                md.append(f"- **`{m['pkg']}`** ({m['tier']}, blocker: {m['blocker']}): peak on `{m['best_lbl']}`, `p = {100 * m['best_p']:.1f}%`, rule-2 `s = {m['s']:.2f}x` -> **`G = {m['best_G']:.2f}x`**.")
+        else:
+            md.append("- No eligible package cleared both `p >= 10%` and `G >= 1.10x` on rankable decks in this run.")
 
     text = "\n".join(md) + "\n"
     args.out_results.write_text(text, encoding="utf-8")
