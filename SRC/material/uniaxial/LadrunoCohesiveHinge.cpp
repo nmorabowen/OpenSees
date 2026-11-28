@@ -189,7 +189,8 @@ LadrunoCohesiveHinge::LadrunoCohesiveHinge(int tag, double mc, double gf,
     kappa0(0.0), aExp(0.0), kappaf(0.0),
     CkappaMax(0.0), CkappaMax_old(0.0), Cstrain(0.0), Cstress(0.0), Cwork(0.0),
     dtime_n_commit(0.0), implexCommittedSteps(0),
-    Tstrain(0.0), Tstress(0.0), Ttangent(0.0), TkappaMax(0.0), Twork(0.0)
+    Tstrain(0.0), Tstress(0.0), Ttangent(0.0), TkappaMax(0.0), Twork(0.0),
+    parameterID(0)
 {
   computeDerived();
   Ttangent = Kpen;
@@ -202,7 +203,8 @@ LadrunoCohesiveHinge::LadrunoCohesiveHinge()
     kappa0(0.0), aExp(0.0), kappaf(0.0),
     CkappaMax(0.0), CkappaMax_old(0.0), Cstrain(0.0), Cstress(0.0), Cwork(0.0),
     dtime_n_commit(0.0), implexCommittedSteps(0),
-    Tstrain(0.0), Tstress(0.0), Ttangent(0.0), TkappaMax(0.0), Twork(0.0)
+    Tstrain(0.0), Tstress(0.0), Ttangent(0.0), TkappaMax(0.0), Twork(0.0),
+    parameterID(0)
 {
   // parameters arrive via recvSelf -> computeDerived
 }
@@ -213,31 +215,11 @@ LadrunoCohesiveHinge::~LadrunoCohesiveHinge()
 
 double LadrunoCohesiveHinge::getPMMultiplier(void) const
 {
-  if (P0 <= 0.0) return 1.0;
-  // 4-parameter C^1 piecewise-parabolic RC balance-point law (-pmBal)
-  if (Pbal > 0.0 && P0 > Pbal && P0t > 0.0) {
-    double f = 0.0;
-    if (P_axial >= 0.0 && P_axial <= P0t) {
-      f = 1.0 - P_axial / P0t;
-    } else if (P_axial < 0.0 && P_axial >= -Pbal) {
-      double u = (P_axial + Pbal) / Pbal;
-      f = 1.0 + (muBal - 1.0) * (1.0 - u * u);
-    } else if (P_axial < -Pbal && P_axial >= -P0) {
-      double denom = P0 - Pbal;
-      double u = (P_axial + Pbal) / denom;
-      f = muBal * (1.0 - u * u);
-    }
-    if (f < 0.05) f = 0.05;
-    else if (f > 3.0) f = 3.0;
-    return f;
-  }
-  // OpenSees beam basic axial force q(0): positive in tension, negative in compression.
-  // Parabolic P-M scaling: f(n) = clamp(1 - alphaPM * n - (1 - alphaPM) * n^2, 0.05, 2.5)
-  double n = P_axial / P0;
-  double f = 1.0 - alphaPM * n - (1.0 - alphaPM) * n * n;
-  if (f < 0.05) f = 0.05;
-  else if (f > 2.5) f = 2.5;
-  return f;
+  // WP-267: the law lives in LadrunoCohesiveHingeKernel.h (pmMultiplier); this is
+  // its double instantiation (bit-identity gate: tests/ladruno_cohesivehinge_dual_check.cpp).
+  ladruno_cohesive_hinge::ParamsT<double> p;
+  fillKernelParams(p);
+  return ladruno_cohesive_hinge::pmMultiplier(p);
 }
 
 double LadrunoCohesiveHinge::getPMDerivative(void) const
@@ -273,30 +255,27 @@ double LadrunoCohesiveHinge::getPMDerivative(void) const
 // ===========================================================================
 void LadrunoCohesiveHinge::computeDerived(void)
 {
-  if (Mc <= 0.0 || Gf <= 0.0) { kappa0 = aExp = kappaf = 0.0; return; }
-
-  const double KpenFloor = Mc*Mc / (2.0*Gf);   // pre-peak energy == Gf at the floor
-
-  // default penalty (!userKpen or Kpen<=0): penaltyRatio multiples above the floor
-  if (!userKpen || Kpen <= 0.0) {
-    double r = (penaltyRatio > 1.0) ? penaltyRatio : 1000.0;
-    Kpen = r * KpenFloor;
-  }
-
-  // guarded floor: Kpen must exceed the floor or the softening branch is non-physical
-  if (Kpen <= KpenFloor) {
-    double rSafe = (penaltyRatio > 1.0) ? penaltyRatio : 1000.0;
-    double KpenSafe = rSafe * KpenFloor;
+  // WP-267: LadrunoCohesiveHingeKernel.h::computeDerived (double instantiation)
+  ladruno_cohesive_hinge::ParamsT<double> p;
+  fillKernelParams(p);
+  double KpenIn = 0.0, KpenFloor = 0.0, KpenSafe = 0.0;
+  if (ladruno_cohesive_hinge::computeDerived(p, &KpenIn, &KpenFloor, &KpenSafe))
     opserr << "WARNING LadrunoCohesiveHinge tag " << this->getTag()
-           << ": penalty Kpen=" << Kpen << " <= floor Mc^2/(2Gf)=" << KpenFloor
+           << ": penalty Kpen=" << KpenIn << " <= floor Mc^2/(2Gf)=" << KpenFloor
            << " (pre-peak energy would exceed Gf); clamping to " << KpenSafe << "\n";
-    Kpen = KpenSafe;
-  }
+  Kpen   = p.Kpen;
+  kappa0 = p.kappa0;
+  aExp   = p.aExp;
+  kappaf = p.kappaf;
+}
 
-  kappa0 = Mc / Kpen;                       // jump at activation
-  double Esoft = Gf - Mc*Mc/(2.0*Kpen);     // energy left for the softening branch (>0 by floor)
-  aExp   = Mc / Esoft;                       // exp: area Mc/aExp == Esoft
-  kappaf = 2.0*Esoft / Mc;                   // lin: area Mc*kappaf/2 == Esoft
+void LadrunoCohesiveHinge::fillKernelParams(ladruno_cohesive_hinge::ParamsT<double>& p) const
+{
+  p.Mc = Mc; p.Gf = Gf; p.Kpen = Kpen; p.userKpen = userKpen;
+  p.shape = shape; p.penaltyRatio = penaltyRatio;
+  p.P0 = P0; p.alphaPM = alphaPM; p.P0t = P0t; p.Pbal = Pbal; p.muBal = muBal;
+  p.P_axial = P_axial;
+  p.kappa0 = kappa0; p.aExp = aExp; p.kappaf = kappaf;
 }
 
 // ===========================================================================
@@ -304,28 +283,9 @@ void LadrunoCohesiveHinge::computeDerived(void)
 // ===========================================================================
 void LadrunoCohesiveHinge::envelope(double km, double& Menv, double& dMenv) const
 {
-  if (km <= kappa0) {                        // pre-peak penalty (hinge closed)
-    Menv  = Kpen * km;
-    dMenv = Kpen;
-  }
-  else if (shape == LINEAR) {
-    double d = km - kappa0;
-    if (d >= kappaf) {                       // fully broken: zero residual moment
-      Menv = 0.0; dMenv = 0.0;
-    } else {
-      Menv  = Mc * (1.0 - d/kappaf);
-      dMenv = -Mc/kappaf;
-    }
-  } else {                                   // EXP
-    double e = exp(-aExp * (km - kappa0));
-    Menv  =  Mc * e;
-    dMenv = -aExp * Mc * e;
-  }
-  if (P0 > 0.0) {
-    double f = getPMMultiplier();
-    Menv  *= f;
-    dMenv *= f;
-  }
+  ladruno_cohesive_hinge::ParamsT<double> p;
+  fillKernelParams(p);
+  ladruno_cohesive_hinge::envelope(p, km, Menv, dMenv);
 }
 
 // ===========================================================================
@@ -334,51 +294,23 @@ void LadrunoCohesiveHinge::envelope(double km, double& Menv, double& dMenv) cons
 int LadrunoCohesiveHinge::setTrialStrain(double strain, double)
 {
   Tstrain = strain;
-  double akappa = fabs(strain);
 
-  // irreversible damage driver: max |jump| ever seen
-  bool loading = (akappa >= CkappaMax);
-  TkappaMax = loading ? akappa : CkappaMax;
-
-  if (implex) {
-    // Oliver et al. (2008) IMPL-EX step extrapolation of the damage driver:
-    // extrapolate kappaMax from the previous committed increment and evaluate the
-    // secant stiffness explicitly so the step tangent is strictly positive-definite
-    // and constant across global Newton iterations. The step ratio comes from
-    // LadrunoImplexClock (WP-217): frozen per step, never the live ops_Dt, which
-    // under DisplacementControl is the iterate's load-factor increment.
-    double time_factor = (implexCommittedSteps == 0) ? 0.0 : implexClock.factor(dtime_n_commit);
-    double dKappaMax_n = CkappaMax - CkappaMax_old;
-    double kappaMax_tilde = CkappaMax + time_factor * dKappaMax_n;
-    if (kappaMax_tilde < CkappaMax) kappaMax_tilde = CkappaMax;
-
-    double Menv_tilde = 0.0, dMenv_tilde = 0.0;
-    envelope(kappaMax_tilde, Menv_tilde, dMenv_tilde);
-    double fpm = (P0 > 0.0) ? getPMMultiplier() : 1.0;
-    double KpenEff = Kpen * fpm;
-    double Ksec_tilde = (kappaMax_tilde > 0.0) ? (Menv_tilde / kappaMax_tilde) : KpenEff;
-    double Kfloor = 1.0e-6 * KpenEff;
-    if (Ksec_tilde < Kfloor) Ksec_tilde = Kfloor;
-
-    Tstress  = Ksec_tilde * strain;
-    Ttangent = Ksec_tilde;
-    Twork    = Cwork + 0.5*(Cstress + Tstress)*(Tstrain - Cstrain);
-    return 0;
-  }
-
-  double Menv, dMenv;
-  envelope(TkappaMax, Menv, dMenv);
-
-  // secant-to-origin (isotropic damage); Ksec = Menv(kappaMax)/kappaMax
-  double KpenEff = (P0 > 0.0) ? (Kpen * getPMMultiplier()) : Kpen;
-  double Ksec = (TkappaMax > 0.0) ? (Menv / TkappaMax) : KpenEff;
-
-  Tstress = Ksec * strain;                   // sign carried by `strain`
-
-  if (loading && akappa > 0.0)
-    Ttangent = dMenv;                        // consistent envelope slope (may be < 0)
-  else
-    Ttangent = Ksec;                         // unload/reload secant (>= 0)
+  // WP-267: the trial state lives in the templated kernel
+  // (LadrunoCohesiveHingeKernel.h::trialState); this is its double instantiation,
+  // which performs exactly the operations of the former in-class code.
+  // IMPL-EX (Oliver et al. 2008): the step ratio comes from LadrunoImplexClock
+  // (WP-217): frozen per step, never the live ops_Dt, which under
+  // DisplacementControl is the iterate's load-factor increment.
+  ladruno_cohesive_hinge::ParamsT<double> p;
+  fillKernelParams(p);
+  ladruno_cohesive_hinge::StateT<double> C;
+  C.kappaMax = CkappaMax;
+  C.kappaMaxOld = CkappaMax_old;
+  double time_factor = 0.0;
+  if (implex)
+    time_factor = (implexCommittedSteps == 0) ? 0.0 : implexClock.factor(dtime_n_commit);
+  ladruno_cohesive_hinge::trialState(p, implex, time_factor, strain, C,
+                                     TkappaMax, Tstress, Ttangent);
 
   // path work int M d[[theta]] (trapezoidal from the committed anchor; exact for the
   // piecewise-linear LINEAR envelope, and the standard accumulation for EXP)
@@ -423,6 +355,7 @@ int LadrunoCohesiveHinge::revertToLastCommit(void)
 
 int LadrunoCohesiveHinge::revertToStart(void)
 {
+  SHV.clear();                                   // WP-267: history sensitivities
   CkappaMax = 0.0; CkappaMax_old = 0.0;
   Cstrain = 0.0; Cstress = 0.0; Cwork = 0.0;
   dtime_n_commit = 0.0; implexCommittedSteps = 0; implexClock.reopen();
@@ -455,6 +388,8 @@ UniaxialMaterial* LadrunoCohesiveHinge::getCopy(void)
   theCopy->Tstress              = Tstress;
   theCopy->Ttangent             = Ttangent;
   theCopy->Twork                = Twork;
+  theCopy->parameterID          = parameterID;   // WP-267: DDM
+  theCopy->SHV                  = SHV;
   return theCopy;
 }
 
@@ -650,14 +585,14 @@ int LadrunoCohesiveHinge::getResponse(int responseID, Information& matInfo)
 int LadrunoCohesiveHinge::setParameter(const char** argv, int argc, Parameter& param)
 {
   if (argc < 1) return -1;
-  if (strcmp(argv[0], "Mc") == 0)      return param.addObject(1, this);
-  if (strcmp(argv[0], "Gf") == 0)      return param.addObject(2, this);
-  if (strcmp(argv[0], "Kpen") == 0)    return param.addObject(3, this);
-  if (strcmp(argv[0], "P0") == 0)      return param.addObject(4, this);
-  if (strcmp(argv[0], "alphaPM") == 0) return param.addObject(5, this);
-  if (strcmp(argv[0], "P0t") == 0)     return param.addObject(6, this);
-  if (strcmp(argv[0], "Pbal") == 0)    return param.addObject(7, this);
-  if (strcmp(argv[0], "muBal") == 0)   return param.addObject(8, this);
+  if (strcmp(argv[0], "Mc") == 0)      { param.setValue(Mc);      return param.addObject(1, this); }
+  if (strcmp(argv[0], "Gf") == 0)      { param.setValue(Gf);      return param.addObject(2, this); }
+  if (strcmp(argv[0], "Kpen") == 0)    { param.setValue(Kpen);    return param.addObject(3, this); }
+  if (strcmp(argv[0], "P0") == 0)      { param.setValue(P0);      return param.addObject(4, this); }
+  if (strcmp(argv[0], "alphaPM") == 0) { param.setValue(alphaPM); return param.addObject(5, this); }
+  if (strcmp(argv[0], "P0t") == 0)     { param.setValue(P0t);     return param.addObject(6, this); }
+  if (strcmp(argv[0], "Pbal") == 0)    { param.setValue(Pbal);    return param.addObject(7, this); }
+  if (strcmp(argv[0], "muBal") == 0)   { param.setValue(muBal);   return param.addObject(8, this); }
   return -1;
 }
 
@@ -676,3 +611,114 @@ int LadrunoCohesiveHinge::updateParameter(int parameterID, Information& info)
   }
 }
 
+int LadrunoCohesiveHinge::activateParameter(int paramID)
+{
+  parameterID = paramID;
+  return 0;
+}
+
+// ===========================================================================
+//  WP-267: DDM sensitivities by dual numbers (the WP-262 LadrunoUniaxialJ2 recipe)
+//
+//  OpenSees DDM contract (computeSensitivities BEFORE commit):
+//  getStressSensitivity(g) is dM/dtheta at the CURRENT trial jump held fixed,
+//  given the committed history and its stored sensitivities;
+//  commitSensitivity(d jump/d theta, g, n) advances the history sensitivities
+//  with the converged jump derivative. Both are one Dual<1> pass of the kernel.
+//
+//  The seed is the active parameter (parameterID: 1 Mc, 2 Gf, 3 Kpen, 4 P0,
+//  5 alphaPM, 6 P0t, 7 Pbal, 8 muBal). The derived constants (kappa0, aExp,
+//  kappaf and a default Kpen = penaltyRatio Mc^2/(2Gf)) are re-derived in Dual,
+//  exactly as updateParameter re-derives them, so the result is the derivative
+//  of what updateParameter + the run would do. Seeding Kpen marks it user-set,
+//  as updateParameter(3) does. The history kappaMax and kappaMax_old (IMPL-EX
+//  extrapolation) carry their stored sensitivities. Not differentiated: P_axial
+//  (the parent beam's axial force: its sensitivity is the element's business).
+// ===========================================================================
+void LadrunoCohesiveHinge::seededParams(ladruno_cohesive_hinge::ParamsT<ladruno_dual::Dual<1> >& p) const
+{
+  ladruno_cohesive_hinge::ParamsT<double> pd;
+  fillKernelParams(pd);
+  p.Mc = pd.Mc; p.Gf = pd.Gf; p.Kpen = pd.Kpen; p.userKpen = pd.userKpen;
+  p.shape = pd.shape; p.penaltyRatio = pd.penaltyRatio;
+  p.P0 = pd.P0; p.alphaPM = pd.alphaPM; p.P0t = pd.P0t; p.Pbal = pd.Pbal; p.muBal = pd.muBal;
+  p.P_axial = pd.P_axial;
+  p.kappa0 = pd.kappa0; p.aExp = pd.aExp; p.kappaf = pd.kappaf;
+  switch (parameterID) {
+    case 1: p.Mc.d[0]      = 1.0; break;
+    case 2: p.Gf.d[0]      = 1.0; break;
+    case 3: p.Kpen.d[0]    = 1.0; p.userKpen = true; break;
+    case 4: p.P0.d[0]      = 1.0; break;
+    case 5: p.alphaPM.d[0] = 1.0; break;
+    case 6: p.P0t.d[0]     = 1.0; break;
+    case 7: p.Pbal.d[0]    = 1.0; break;
+    case 8: p.muBal.d[0]   = 1.0; break;
+    default: break;                        // not this material's parameter
+  }
+  ladruno_cohesive_hinge::computeDerived(p);   // values unchanged; derivatives of the derived constants
+}
+
+void LadrunoCohesiveHinge::sensitivityPass(int gradIndex, double strainGradient,
+                                           double& dStress, double& dTangent, double* dTrialState)
+{
+  typedef ladruno_dual::Dual<1> D1;
+  ladruno_cohesive_hinge::ParamsT<D1> p;
+  seededParams(p);
+
+  ladruno_cohesive_hinge::StateT<D1> C;
+  C.kappaMax = CkappaMax;
+  C.kappaMaxOld = CkappaMax_old;
+  const size_t base = (size_t)gradIndex * SHV_N;
+  if (gradIndex >= 0 && SHV.size() >= base + SHV_N) {
+    C.kappaMax.d[0]    = SHV[base];
+    C.kappaMaxOld.d[0] = SHV[base + 1];
+  }
+
+  double time_factor = 0.0;
+  if (implex)
+    time_factor = (implexCommittedSteps == 0) ? 0.0 : implexClock.factor(dtime_n_commit);
+
+  D1 strain(Tstrain);
+  strain.d[0] = strainGradient;
+  D1 kmax, stress, tangent;
+  ladruno_cohesive_hinge::trialState(p, implex, time_factor, strain, C, kmax, stress, tangent);
+
+  dStress  = stress.d[0];
+  dTangent = tangent.d[0];
+  if (dTrialState) {
+    dTrialState[0] = kmax.d[0];            // commitState: CkappaMax     = TkappaMax
+    dTrialState[1] = C.kappaMax.d[0];      //              CkappaMax_old = CkappaMax
+  }
+}
+
+double LadrunoCohesiveHinge::getStressSensitivity(int gradIndex, bool)
+{
+  double dS = 0.0, dT = 0.0;
+  this->sensitivityPass(gradIndex, 0.0, dS, dT, 0);
+  return dS;
+}
+
+double LadrunoCohesiveHinge::getTangentSensitivity(int gradIndex)
+{
+  double dS = 0.0, dT = 0.0;
+  this->sensitivityPass(gradIndex, 0.0, dS, dT, 0);
+  return dT;
+}
+
+double LadrunoCohesiveHinge::getInitialTangentSensitivity(int)
+{
+  ladruno_cohesive_hinge::ParamsT<ladruno_dual::Dual<1> > p;
+  seededParams(p);
+  return ladruno_cohesive_hinge::initialTangent(p).d[0];
+}
+
+int LadrunoCohesiveHinge::commitSensitivity(double strainGradient, int gradIndex, int numGrads)
+{
+  if (gradIndex < 0 || numGrads <= gradIndex) return -1;
+  if (SHV.size() < (size_t)numGrads * SHV_N) SHV.resize((size_t)numGrads * SHV_N, 0.0);
+  double dTr[SHV_N];
+  double dS = 0.0, dT = 0.0;
+  this->sensitivityPass(gradIndex, strainGradient, dS, dT, dTr);
+  for (int i = 0; i < SHV_N; i++) SHV[(size_t)gradIndex * SHV_N + i] = dTr[i];
+  return 0;
+}
