@@ -74,6 +74,20 @@
 // caller (element) owns the diagnostic. Geometry guards (det > 0) ARE
 // enforced here — a non-positive det(F_mid) or det(F_1) is a collapsed /
 // inverted configuration and must fail loudly at the call site.
+//
+// SCALAR TYPE (WP-266): det3 / inv3 / frob3 / dispGradient / polar3 /
+// hypoIncrement / bond6 / pushStress6 are written ONCE as `template <class T>`.
+// Every existing caller passes double arrays, deduces T = double and runs the
+// same expressions in the same order as before (bit-identical; proven by
+// tests/ladruno_up_hypo_dual_check.cpp against a verbatim copy of the pre-WP
+// functions). T = ladruno_dual::Dual<N> (SRC/material/nD/LadrunoDual.h) pushes
+// forward-mode derivatives through the same code: the LadrunoUP hypo
+// element-Jacobian oracle seeds the 24 nodal displacements. Math calls stay
+// unqualified (sqrt) so argument-dependent lookup picks the Dual overload;
+// every branch compares a value (Dual comparisons read the value part). This
+// header does NOT include LadrunoDual.h — it stays dependency-free.
+// hypoIncrementFromF*, pushStressPlaneStrain, pushTangent6 and
+// pushTangentPlaneStrain stay double-only.
 
 #ifndef LadrunoHypoKernel_h
 #define LadrunoHypoKernel_h
@@ -86,17 +100,19 @@ namespace ladruno_hypo {
 //  3×3 helpers (row-major)                                                    //
 // --------------------------------------------------------------------------- //
 
-inline double det3(const double A[9])
+template <class T>
+inline T det3(const T A[9])
 {
   return A[0]*(A[4]*A[8]-A[5]*A[7]) - A[1]*(A[3]*A[8]-A[5]*A[6])
        + A[2]*(A[3]*A[7]-A[4]*A[6]);
 }
 
 // Ai = A⁻¹ via adjugate/det. Returns det(A); Ai zero-filled if det underflows.
-inline double inv3(const double A[9], double Ai[9])
+template <class T>
+inline T inv3(const T A[9], T Ai[9])
 {
-  double det = det3(A);
-  double id = (det != 0.0) ? 1.0 / det : 0.0;
+  T det = det3(A);
+  T id = (det != 0.0) ? T(1.0 / det) : T(0.0);
   Ai[0] =  (A[4]*A[8]-A[5]*A[7])*id;  Ai[1] = -(A[1]*A[8]-A[2]*A[7])*id;
   Ai[2] =  (A[1]*A[5]-A[2]*A[4])*id;  Ai[3] = -(A[3]*A[8]-A[5]*A[6])*id;
   Ai[4] =  (A[0]*A[8]-A[2]*A[6])*id;  Ai[5] = -(A[0]*A[5]-A[2]*A[3])*id;
@@ -105,14 +121,16 @@ inline double inv3(const double A[9], double Ai[9])
   return det;
 }
 
-inline double frob3(const double A[9])
+template <class T>
+inline T frob3(const T A[9])
 {
-  double s = 0.0; for (int i = 0; i < 9; i++) s += A[i]*A[i]; return sqrt(s);
+  T s = 0.0; for (int i = 0; i < 9; i++) s += A[i]*A[i]; return sqrt(s);
 }
 
 // Displacement gradient H = Σ_a u_a ⊗ ∂N_a/∂X  (H[3i+J] = Σ u_a[i]·dNdX[a][J]).
-inline void dispGradient(int nNodes, const double *dNdX, const double *u,
-                         double H[9])
+template <class T>
+inline void dispGradient(int nNodes, const double *dNdX, const T *u,
+                         T H[9])
 {
   for (int i = 0; i < 9; i++) H[i] = 0.0;
   for (int a = 0; a < nNodes; a++)
@@ -126,27 +144,38 @@ inline void dispGradient(int nNodes, const double *dNdX, const double *u,
 // (the SolidTransformationCorot algorithm — one source of truth for the
 // numerics; duplicated here because the kernel must stay OpenSees-free).
 // Returns false if det(F) ≤ 0 (collapsed / inverted).
-inline bool polar3(const double F[9], double R[9])
+//
+// T = Dual (WP-266): the iteration is differentiated as executed. The fixed
+// points form the rotation manifold, so this is not a local Newton with an
+// IFT shortcut; the derivative of the iterate converges with the iterate
+// (quadratically, one iterate behind), and the stop test below fires only once
+// the value step is below 1e-15, i.e. after the derivative has settled too.
+// tests/ladruno_up_hypo_dual_check.cpp checks dR against the closed-form polar
+// derivative dR = R·W(ω), (tr U·I − U)·ω = 2·axial(skew(Rᵀ dF)), to round-off.
+// Every branch (det, inv, g > 0, the stop test) compares a value, so a Dual
+// run takes exactly the iterations the double run takes.
+template <class T>
+inline bool polar3(const T F[9], T R[9])
 {
-  double X[9]; for (int i = 0; i < 9; i++) X[i] = F[i];
+  T X[9]; for (int i = 0; i < 9; i++) X[i] = F[i];
   if (det3(X) <= 0.0) return false;
 
   const int    maxIter = 50;
   const double tol     = 1.0e-15;
-  double Xinv[9], Xnew[9];
+  T Xinv[9], Xnew[9];
 
   for (int it = 0; it < maxIter; it++) {
     if (inv3(X, Xinv) == 0.0) return false;
-    double g = sqrt(frob3(Xinv) / frob3(X));
+    T g = sqrt(frob3(Xinv) / frob3(X));
     if (!(g > 0.0)) g = 1.0;
-    double diff = 0.0;
+    T diff = 0.0;
     for (int i = 0; i < 3; i++)
       for (int j = 0; j < 3; j++) {
-        double xn = 0.5 * (g * X[3*i+j] + (1.0/g) * Xinv[3*j+i]);  // X⁻ᵀ
+        T xn = 0.5 * (g * X[3*i+j] + (1.0/g) * Xinv[3*j+i]);  // X⁻ᵀ
         Xnew[3*i+j] = xn;
       }
     for (int i = 0; i < 9; i++) {
-      double d = Xnew[i] - X[i];
+      T d = Xnew[i] - X[i];
       diff += d*d;
       X[i] = Xnew[i];
     }
@@ -171,16 +200,18 @@ inline bool polar3(const double F[9], double R[9])
 //
 // Returns false when det(F_mid) ≤ 0, det(F_1) ≤ 0, or a polar fails — a
 // collapsed/inverted trial or midpoint configuration the element must reject.
+template <class T>
 inline bool hypoIncrement(int nNodes, const double *dNdX,
-                          const double *un, const double *u1,
-                          double depsMat6[6], double R1[9], double &J1)
+                          const double *un, const T *u1,
+                          T depsMat6[6], T R1[9], T &J1)
 {
   // F_n, F_1, F_mid (as displacement gradients + I)
-  double Hn[9], H1[9];
+  double Hn[9];
+  T H1[9];
   dispGradient(nNodes, dNdX, un, Hn);
   dispGradient(nNodes, dNdX, u1, H1);
 
-  double F1[9], Fmid[9];
+  T F1[9], Fmid[9];
   for (int i = 0; i < 9; i++) {
     F1[i]   = H1[i];
     Fmid[i] = 0.5 * (Hn[i] + H1[i]);
@@ -188,47 +219,48 @@ inline bool hypoIncrement(int nNodes, const double *dNdX,
   F1[0] += 1.0; F1[4] += 1.0; F1[8] += 1.0;
   Fmid[0] += 1.0; Fmid[4] += 1.0; Fmid[8] += 1.0;
 
-  double FmidInv[9];
+  T FmidInv[9];
   if (inv3(Fmid, FmidInv) <= 0.0) return false;   // midpoint collapsed/inverted
 
   // Incremental displacement gradient on the midpoint configuration:
   //   G_ij = Σ_a Δu_a[i] · ∂N_a/∂x̄_j ,  ∂N_a/∂x̄_j = Σ_K dNdX[a][K]·FmidInv[K][j]
-  double G[9] = {0,0,0, 0,0,0, 0,0,0};
+  T G[9];
+  for (int i = 0; i < 9; i++) G[i] = 0.0;
   for (int a = 0; a < nNodes; a++) {
-    double gax[3];
+    T gax[3];
     for (int j = 0; j < 3; j++) {
-      double s = 0.0;
+      T s = 0.0;
       for (int K = 0; K < 3; K++)
         s += dNdX[a*3 + K] * FmidInv[3*K + j];
       gax[j] = s;
     }
     for (int i = 0; i < 3; i++) {
-      double du = u1[a*3 + i] - un[a*3 + i];
+      T du = u1[a*3 + i] - un[a*3 + i];
       for (int j = 0; j < 3; j++)
         G[3*i + j] += du * gax[j];
     }
   }
 
   // Objective spatial increment Δε_sp = sym(G) (tensor components).
-  double e[9];
+  T e[9];
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++)
       e[3*i+j] = 0.5 * (G[3*i+j] + G[3*j+i]);
 
   // De-rotate into the unrotated material frame: Δε_mat = R_midᵀ·Δε_sp·R_mid.
-  double Rmid[9];
+  T Rmid[9];
   if (!polar3(Fmid, Rmid)) return false;
-  double tmp[9];                                   // tmp = Δε_sp · R_mid
+  T tmp[9];                                        // tmp = Δε_sp · R_mid
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++) {
-      double s = 0.0;
+      T s = 0.0;
       for (int k = 0; k < 3; k++) s += e[3*i+k] * Rmid[3*k+j];
       tmp[3*i+j] = s;
     }
-  double em[9];                                    // em = R_midᵀ · tmp
+  T em[9];                                         // em = R_midᵀ · tmp
   for (int i = 0; i < 3; i++)
     for (int j = 0; j < 3; j++) {
-      double s = 0.0;
+      T s = 0.0;
       for (int k = 0; k < 3; k++) s += Rmid[3*k+i] * tmp[3*k+j];
       em[3*i+j] = s;
     }
@@ -362,7 +394,8 @@ inline int hypoIncrementFromFPlaneStrain(const double Fn[4], const double F1[4],
 // The same M push-forwards the ENGINEERING-shear-convention 6×6 tangent as
 //   D' = M D Mᵀ  (energy-consistent: strain transforms by M⁻ᵀ, and D maps
 //   eng-strain → stress).
-inline void bond6(const double R[9], double M[36])
+template <class T>
+inline void bond6(const T R[9], T M[36])
 {
   // index pairs for the Voigt slots: (0,0)(1,1)(2,2)(0,1)(1,2)(2,0)
   const int vi[6] = {0, 1, 2, 0, 1, 2};
@@ -373,7 +406,7 @@ inline void bond6(const double R[9], double M[36])
       const int p = vi[c], q = vj[c];
       // σ'_ij = R_ip R_jq σ_pq ; off-diagonal source slots carry both (p,q)
       // and (q,p) of the symmetric tensor.
-      double m = R[3*i+p] * R[3*j+q];
+      T m = R[3*i+p] * R[3*j+q];
       if (p != q)
         m += R[3*i+q] * R[3*j+p];
       M[6*r + c] = m;
@@ -383,12 +416,13 @@ inline void bond6(const double R[9], double M[36])
 
 // σ_out = R σ Rᵀ in Voigt (both plain-tensor stress vectors). sOut may NOT
 // alias sMat.
-inline void pushStress6(const double R[9], const double sMat[6], double sOut[6])
+template <class T>
+inline void pushStress6(const T R[9], const T sMat[6], T sOut[6])
 {
-  double M[36];
+  T M[36];
   bond6(R, M);
   for (int r = 0; r < 6; r++) {
-    double s = 0.0;
+    T s = 0.0;
     for (int c = 0; c < 6; c++) s += M[6*r+c] * sMat[c];
     sOut[r] = s;
   }

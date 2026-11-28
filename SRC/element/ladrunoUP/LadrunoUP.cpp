@@ -43,6 +43,7 @@
 #include <SolidTransformation.h>        // ADR 78 — geometry-method seam
 #include <SolidTransformationLinear.h>  // ADR 78 — identity method / safe fallback
 #include <LadrunoHypoKernel.h>          // ADR 79 P2 — hypo objective increment
+#include <LadrunoUPHypoKernel.h>        // Ladruno (WP-266): hypo per-GP residual, templated on T
 #include <Node.h>
 #include <NDMaterial.h>
 #include <Matrix.h>
@@ -951,9 +952,17 @@ int LadrunoUP::updateHypo(void)
   int ret = 0;
   for (int gp = 0; gp < nGP_; gp++) {
     const double *dNdX = &dNuAll_[gp * nNodes_ * 3];   // reference gradients
+    const double *dNpRef = &dNpAll_[gp * nP_ * 3];
+    double *gU = &hypoDNuX_[gp * nNodes_ * 3];
+    double *gP = &hypoDNpX_[gp * nP_ * 3];
 
-    double deps[6], R1[9], J1;
-    if (!ladruno_hypo::hypoIncrement(nNodes_, dNdX, un, u1, deps, R1, J1)) {
+    // WP-266: the per-GP kinematics (HW objective increment, R1, J1, tr(Δε),
+    // dv, spatial gradients via F_trial⁻¹) is LadrunoUPHypoKernel.h's
+    // gpKinematics<double> — the same operations, so bit-identical.
+    double deps[6], R1[9], J1, trDeps, dvCur;
+    if (!ladruno_up_hypo::gpKinematics(nNodes_, nP_, dNdX, dNpRef, dv_[gp],
+                                       un, u1, deps, R1, J1, trDeps, dvCur,
+                                       gU, gP)) {
       opserr << "LadrunoUP::updateHypo - collapsed/inverted trial or midpoint "
                 "configuration at GP " << gp << " (element " << this->getTag()
              << ", det <= 0)\n";
@@ -969,78 +978,24 @@ int LadrunoUP::updateHypo(void)
     for (int c = 0; c < 9; c++)
       hypoR_[gp * 9 + c] = R1[c];
     hypoJ_[gp] = J1;
-    hypoTrDeps_[gp] = deps[0] + deps[1] + deps[2];     // tr is frame-invariant
-    double dvCur = J1 * dv_[gp];
+    hypoTrDeps_[gp] = trDeps;
     hypoDvCur_[gp] = dvCur;
 
-    // spatial gradients via F_trial⁻¹ (solid + pressure shape sets)
-    double H1[9], F1[9], Fi[9];
-    ladruno_hypo::dispGradient(nNodes_, dNdX, u1, H1);
-    for (int c = 0; c < 9; c++) F1[c] = H1[c];
-    F1[0] += 1.0; F1[4] += 1.0; F1[8] += 1.0;
-    ladruno_hypo::inv3(F1, Fi);
-    double *gU = &hypoDNuX_[gp * nNodes_ * 3];
-    for (int a = 0; a < nNodes_; a++)
-      for (int j = 0; j < 3; j++) {
-        double s = 0.0;
-        for (int K = 0; K < 3; K++)
-          s += dNdX[a * 3 + K] * Fi[3 * K + j];
-        gU[a * 3 + j] = s;
-      }
-    const double *dNpRef = &dNpAll_[gp * nP_ * 3];
-    double *gP = &hypoDNpX_[gp * nP_ * 3];
-    for (int bb = 0; bb < nP_; bb++)
-      for (int j = 0; j < 3; j++) {
-        double s = 0.0;
-        for (int K = 0; K < 3; K++)
-          s += dNpRef[bb * 3 + K] * Fi[3 * K + j];
-        gP[bb * 3 + j] = s;
-      }
-
-    // porosity-evolved storage coefficient + spatial permeability
-    double n = this->hypoPorosity(gp);
-    hypoInvQbar_[gp] = (Kf_ > 0.0)
-        ? ladruno_up::oneOverQbar(n, Kf_, biotAlpha_, Ks_) : 0.0;
-    double kc = 1.0;
-    if (kozenyCarman_) {
-      // Kozeny–Carman scaling normalized to 1 at n = n₀; floored so a heavily
-      // compacted GP degrades to near-impermeable without singularizing H.
-      double n0 = poro_;
-      kc = (n * n * n / ((1.0 - n) * (1.0 - n)))
-         * ((1.0 - n0) * (1.0 - n0) / (n0 * n0 * n0));
-      if (kc < 1.0e-6) kc = 1.0e-6;
-    }
-    // k_sp = kc · R · diag(k̄) · Rᵀ — permeability axes are skeleton-attached
-    // (the ADR 78 §3.4 physics), expressed spatially for the current-config H.
+    // porosity-evolved storage coefficient 1/Q̄(n(J)) + spatial permeability
+    // k_sp = kc(n)·R·diag(k̄)·Rᵀ (Kozeny–Carman when -kozenyCarman; axes
+    // skeleton-attached, the ADR 78 §3.4 physics) — kernel gpPoroPerm.
     double ksp[9];
-    for (int i = 0; i < 3; i++)
-      for (int j = 0; j < 3; j++) {
-        double s = 0.0;
-        for (int m = 0; m < 3; m++)
-          s += R1[3 * i + m] * kbar_[m] * R1[3 * j + m];
-        ksp[3 * i + j] = kc * s;
-      }
+    ladruno_up_hypo::gpPoroPerm(J1, R1, poro_, Kf_, biotAlpha_, Ks_, kbar_,
+                                kozenyCarman_, hypoInvQbar_[gp], ksp);
     for (int c = 0; c < 9; c++)
       hypoKsp_[gp * 9 + c] = ksp[c];
 
     // current-config blocks: Q (into the QrotBlk_ slot), H, S
     const double *Np = &NpAll_[gp * nP_];
-    for (int a = 0; a < nNodes_; a++)
-      for (int i = 0; i < 3; i++) {
-        int row = a * 3 + i;
-        double g = gU[row] * biotAlpha_ * dvCur;
-        for (int bb = 0; bb < nP_; bb++)
-          QrotBlk_[row * nP_ + bb] += g * Np[bb];
-      }
-    for (int bb = 0; bb < nP_; bb++)
-      for (int cc = 0; cc < nP_; cc++) {
-        double s = 0.0;
-        for (int i = 0; i < 3; i++)
-          for (int j = 0; j < 3; j++)
-            s += gP[bb * 3 + i] * ksp[3 * i + j] * gP[cc * 3 + j];
-        HcurBlk_[bb * nP_ + cc] += s * dvCur;
-        ScurBlk_[bb * nP_ + cc] += Np[bb] * hypoInvQbar_[gp] * Np[cc] * dvCur;
-      }
+    ladruno_up_hypo::addQcur(nNodes_, nP_, gU, Np, biotAlpha_, dvCur,
+                             QrotBlk_.data());
+    ladruno_up_hypo::addHScur(nP_, gP, ksp, Np, hypoInvQbar_[gp], dvCur,
+                              HcurBlk_.data(), ScurBlk_.data());
   }
   return ret;
 }
@@ -1051,10 +1006,7 @@ int LadrunoUP::updateHypo(void)
 // finite on extreme (but not yet inverted) states.
 double LadrunoUP::hypoPorosity(int gp) const
 {
-  double n = 1.0 - (1.0 - poro_) / hypoJ_[gp];
-  if (n < 1.0e-6)        n = 1.0e-6;
-  else if (n > 1.0 - 1.0e-6) n = 1.0 - 1.0e-6;
-  return n;
+  return ladruno_up_hypo::porosity(hypoJ_[gp], poro_);   // WP-266: one copy
 }
 
 // hypo u-row internal force: ∫ Bᵀ(σ_sp − αp·m) dv on the current configuration,
@@ -1068,34 +1020,18 @@ void LadrunoUP::buildCoreForceHypo(Vector &fu)
   for (int bb = 0; bb < nP_; bb++)
     pScratch_(bb) = theNodes_[carrierNodes_[bb]]->getTrialDisp()(ndm_);
 
+  // WP-266: the per-GP force is LadrunoUPHypoKernel.h's addForceUHypo<double>
+  // (accumulates straight into fu's contiguous storage; same operations).
+  double *fuData = &fu(0);
+  const double *pNodal = &pScratch_(0);
   for (int gp = 0; gp < nGP_; gp++) {
     const Vector &sMatV = theMaterials_[gp]->getStress();
-    double sMat[6], sSp[6];
+    double sMat[6];
     for (int c = 0; c < 6; c++) sMat[c] = sMatV(c);
-    ladruno_hypo::pushStress6(&hypoR_[gp * 9], sMat, sSp);
-
-    double p = 0.0;
-    const double *Np = &NpAll_[gp * nP_];
-    for (int bb = 0; bb < nP_; bb++)
-      p += Np[bb] * pScratch_(bb);
-
-    double sig[3][3];
-    sig[0][0] = sSp[0] - biotAlpha_ * p;
-    sig[1][1] = sSp[1] - biotAlpha_ * p;
-    sig[2][2] = sSp[2] - biotAlpha_ * p;
-    sig[0][1] = sig[1][0] = sSp[3];
-    sig[1][2] = sig[2][1] = sSp[4];
-    sig[2][0] = sig[0][2] = sSp[5];
-
-    const double *gU = &hypoDNuX_[gp * nNodes_ * 3];
-    double dvCur = hypoDvCur_[gp];
-    for (int a = 0; a < nNodes_; a++)
-      for (int i = 0; i < 3; i++) {
-        double s = 0.0;
-        for (int j = 0; j < 3; j++)
-          s += sig[i][j] * gU[a * 3 + j];
-        fu(a * 3 + i) += s * dvCur;
-      }
+    double p = ladruno_up_hypo::gpPressure(nP_, &NpAll_[gp * nP_], pNodal);
+    ladruno_up_hypo::addForceUHypo(nNodes_, &hypoR_[gp * 9], sMat, p,
+                                   &hypoDNuX_[gp * nNodes_ * 3], hypoDvCur_[gp],
+                                   biotAlpha_, fuData);
   }
 }
 
@@ -1107,77 +1043,29 @@ void LadrunoUP::buildCoreForceHypo(Vector &fu)
 // exact, tangent dominant-term" policy); Ks stays symmetric.
 void LadrunoUP::buildSolidKHypo(Matrix &Ks)
 {
-  Ks.Zero();
+  // WP-266: the per-GP body is LadrunoUPHypoKernel.h's addSolidKHypoGP,
+  // accumulated in a row-major buffer in the same order, then copied (bit-
+  // identical to the in-place Matrix accumulation it replaces).
+  const int nU = nNodes_ * 3;
+  double ksBuf[UP_MAX_NODES * 3 * UP_MAX_NODES * 3];
+  for (int k = 0; k < nU * nU; k++) ksBuf[k] = 0.0;
   for (int gp = 0; gp < nGP_; gp++) {
     const Matrix &Dm = theMaterials_[gp]->getTangent();
-    double Dmat[36], Dcur[36];
+    double Dmat[36];
     for (int r = 0; r < 6; r++)
       for (int c = 0; c < 6; c++)
         Dmat[6 * r + c] = Dm(r, c);
-    ladruno_hypo::pushTangent6(&hypoR_[gp * 9], Dmat, Dcur);
-
-    const double *gU = &hypoDNuX_[gp * nNodes_ * 3];
-    double dvCur = hypoDvCur_[gp];
-
-    double Ba[6][3], Bb[6][3], DB[6][3];
-    for (int a = 0; a < nNodes_; a++) {
-      for (int r = 0; r < 6; r++)
-        for (int c = 0; c < 3; c++) Ba[r][c] = 0.0;
-      Ba[0][0] = gU[a*3+0]; Ba[1][1] = gU[a*3+1]; Ba[2][2] = gU[a*3+2];
-      Ba[3][0] = gU[a*3+1]; Ba[3][1] = gU[a*3+0];
-      Ba[4][1] = gU[a*3+2]; Ba[4][2] = gU[a*3+1];
-      Ba[5][0] = gU[a*3+2]; Ba[5][2] = gU[a*3+0];
-
-      for (int bn = 0; bn < nNodes_; bn++) {
-        for (int r = 0; r < 6; r++)
-          for (int c = 0; c < 3; c++) Bb[r][c] = 0.0;
-        Bb[0][0] = gU[bn*3+0]; Bb[1][1] = gU[bn*3+1]; Bb[2][2] = gU[bn*3+2];
-        Bb[3][0] = gU[bn*3+1]; Bb[3][1] = gU[bn*3+0];
-        Bb[4][1] = gU[bn*3+2]; Bb[4][2] = gU[bn*3+1];
-        Bb[5][0] = gU[bn*3+2]; Bb[5][2] = gU[bn*3+0];
-
-        for (int r = 0; r < 6; r++)
-          for (int c = 0; c < 3; c++) {
-            double s = 0.0;
-            for (int q = 0; q < 6; q++)
-              s += Dcur[6 * r + q] * Bb[q][c];
-            DB[r][c] = s;
-          }
-        for (int i = 0; i < 3; i++)
-          for (int k = 0; k < 3; k++) {
-            double s = 0.0;
-            for (int r = 0; r < 6; r++)
-              s += Ba[r][i] * DB[r][k];
-            Ks(3 * a + i, 3 * bn + k) += s * dvCur;
-          }
-      }
-    }
-
-    // geometric / initial-stress term from the TOTAL stress
     const Vector &sMatV = theMaterials_[gp]->getStress();
-    double sMat[6], sSp[6];
+    double sMat[6];
     for (int c = 0; c < 6; c++) sMat[c] = sMatV(c);
-    ladruno_hypo::pushStress6(&hypoR_[gp * 9], sMat, sSp);
     double p = this->gpPressure(gp);
-    double sig[3][3];
-    sig[0][0] = sSp[0] - biotAlpha_ * p;
-    sig[1][1] = sSp[1] - biotAlpha_ * p;
-    sig[2][2] = sSp[2] - biotAlpha_ * p;
-    sig[0][1] = sig[1][0] = sSp[3];
-    sig[1][2] = sig[2][1] = sSp[4];
-    sig[2][0] = sig[0][2] = sSp[5];
-
-    for (int a = 0; a < nNodes_; a++)
-      for (int bn = 0; bn < nNodes_; bn++) {
-        double s = 0.0;
-        for (int j = 0; j < 3; j++)
-          for (int l = 0; l < 3; l++)
-            s += gU[a * 3 + j] * sig[j][l] * gU[bn * 3 + l];
-        s *= dvCur;
-        for (int i = 0; i < 3; i++)
-          Ks(3 * a + i, 3 * bn + i) += s;
-      }
+    ladruno_up_hypo::addSolidKHypoGP(nNodes_, &hypoR_[gp * 9], Dmat, sMat, p,
+                                     biotAlpha_, &hypoDNuX_[gp * nNodes_ * 3],
+                                     hypoDvCur_[gp], ksBuf, nU);
   }
+  for (int i = 0; i < nU; i++)
+    for (int j = 0; j < nU; j++)
+      Ks(i, j) = ksBuf[i * nU + j];
 }
 
 // ===========================================================================
@@ -1650,15 +1538,10 @@ const Vector &LadrunoUP::getResistingForce(void)
         // hypo: SPATIAL gradients + spatial full-tensor permeability, current
         // dv — everything already global-frame, no pull-back (the corot Rᵀ
         // exists because corot assembles in the material frame; hypo does not).
-        const double *gP = &hypoDNpX_[gp * nP_ * 3];
-        const double *ksp = &hypoKsp_[gp * 9];
-        for (int bb = 0; bb < nP_; bb++) {
-          double s = 0.0;
-          for (int i = 0; i < 3; i++)
-            for (int j = 0; j < 3; j++)
-              s += gP[bb * 3 + i] * ksp[3 * i + j] * rhoF_ * drive[j];
-          fseep[bb] += s * hypoDvCur_[gp];
-        }
+        // WP-266: LadrunoUPHypoKernel.h addFseepCur<double>.
+        ladruno_up_hypo::addFseepCur(nP_, &hypoDNpX_[gp * nP_ * 3],
+                                     &hypoKsp_[gp * 9], rhoF_, drive,
+                                     hypoDvCur_[gp], fseep);
       } else {
         ladruno_up::addFseep(&dNpAll_[gp * nP_ * ndm_], nP_, ndm_, kbar_,
                              rhoF_, drive, dv_[gp], fseep);
@@ -2337,12 +2220,8 @@ int LadrunoUP::getResponse(int responseID, Information &eleInfo)
       double J = hypoJ_[gp];
       double n = hypoActive_ ? this->hypoPorosity(gp) : poro_;
       double kc = 1.0;
-      if (hypoActive_ && kozenyCarman_) {
-        double n0 = poro_;
-        kc = (n * n * n / ((1.0 - n) * (1.0 - n)))
-           * ((1.0 - n0) * (1.0 - n0) / (n0 * n0 * n0));
-        if (kc < 1.0e-6) kc = 1.0e-6;
-      }
+      if (hypoActive_ && kozenyCarman_)
+        kc = ladruno_up_hypo::kozenyCarmanScale(n, poro_);   // WP-266: one copy
       hs(gp * 3 + 0) = J;
       hs(gp * 3 + 1) = n;
       hs(gp * 3 + 2) = kc;
