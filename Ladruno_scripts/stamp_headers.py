@@ -93,6 +93,7 @@ GLOBS = [
     "SRC/material/uniaxial/LadrunoUniaxialJ2Kernel.h",   # WP-262: templated uniaxial J2 return map
     "SRC/material/uniaxial/LadrunoUniaxialJ2.*",
     "SRC/material/uniaxial/LadrunoRebarBuckling.*",
+    "SRC/material/uniaxial/LadrunoRebarBucklingKernel.h",   # WP-264: templated GA buckling factor
     "SRC/material/uniaxial/LadrunoBondSlip.*",
     "SRC/material/nD/LogStrainNDMaterial.*", "SRC/material/nD/LogStrainKernel.h",
     "SRC/material/nD/FiniteStrainNDMaterial.h",

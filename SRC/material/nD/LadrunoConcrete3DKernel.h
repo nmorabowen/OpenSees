@@ -78,6 +78,14 @@
 #define LadrunoConcrete3DKernel_h
 
 #include <cmath>
+#include "LadrunoDual.h"   // WP-264: the damage-driver gradients by dual numbers (OpenSees-free, header-only)
+
+// WP-264: the driver-gradient path of damagedTangent. 0 (the default) = the dual gradient through the principal values
+// (dscalarDsigDual, exact, no step); 1 = the pre-WP-264 per-Voigt-slot central FD (dscalarDsig), kept selectable for
+// one WP so the replay comparison can be made. The hydrostatic axis keeps its dedicated one-sided FD either way.
+#ifndef LADRUNO_C3D_DRIVER_GRAD_FD
+#define LADRUNO_C3D_DRIVER_GRAD_FD 0
+#endif
 
 namespace Ladruno {
 namespace Concrete3D {
@@ -239,25 +247,44 @@ static const double NESTED_LOWER_DQH2 = 1.0;
 // Stress invariants. sig = {s00,s11,s22,s01,s12,s02} TENSOR components.
 // Returns xi (=I1/sqrt3), rho (=sqrt(2 J2)), theta (Lode angle in [0,pi/3]).
 // ---------------------------------------------------------------------------
-inline void invariants(const double sig[6], double& xi, double& rho, double& theta)
+// WP-264: templated on the scalar T (double, or a ladruno_dual::Dual for the damage-driver gradients). The Lode angle
+// stays a double (theta = acos(value(c3))/3): it is never differentiated, because d theta is singular on the meridians
+// (c3 = +-1, every repeated principal pair). The derivative leaves through c3 = cos 3 theta instead, which is smooth
+// off the hydrostatic axis; lodeRT carries it with the closed-form dr/d(cos 3 theta). The double instantiation performs
+// exactly the operations of the pre-WP-264 invariants() (tests/_testbed/concrete3d_dual_check.cpp proves it bit for bit).
+// The |c3| <= 1 clamp is a round-off guard for acos, not a kink: c3 is smooth and reaches +-1 at the meridians with a
+// ZERO gradient. So a clamped Dual keeps its derivative (only the value is clamped); clamping the whole Dual would drop
+// a real derivative wherever round-off pushes c3 past +-1 next to a meridian (measured up to 5e-6 of the gradient).
+inline void clampValueKeepDerivative(double& x, double v) { x = v; }
+template <int N, class S>
+inline void clampValueKeepDerivative(ladruno_dual::Dual<N, S>& x, double v) { clampValueKeepDerivative(x.v, v); }
+template <class T>
+inline void invariantsT(const T sig[6], T& xi, T& rho, T& c3, double& theta)
 {
-    const double I1 = sig[0] + sig[1] + sig[2];
-    const double p = I1 / 3.0;
-    const double d0 = sig[0] - p, d1 = sig[1] - p, d2 = sig[2] - p;
-    const double s01 = sig[3], s12 = sig[4], s02 = sig[5];
-    const double J2 = 0.5 * (d0 * d0 + d1 * d1 + d2 * d2) + s01 * s01 + s12 * s12 + s02 * s02;
-    const double J3 = d0 * (d1 * d2 - s12 * s12)
-                    - s01 * (s01 * d2 - s12 * s02)
-                    + s02 * (s01 * s12 - d1 * s02);
+    using std::sqrt; using std::pow;
+    const T I1 = sig[0] + sig[1] + sig[2];
+    const T p = I1 / 3.0;
+    const T d0 = sig[0] - p, d1 = sig[1] - p, d2 = sig[2] - p;
+    const T s01 = sig[3], s12 = sig[4], s02 = sig[5];
+    const T J2 = 0.5 * (d0 * d0 + d1 * d1 + d2 * d2) + s01 * s01 + s12 * s12 + s02 * s02;
+    const T J3 = d0 * (d1 * d2 - s12 * s12)
+               - s01 * (s01 * d2 - s12 * s02)
+               + s02 * (s01 * s12 - d1 * s02);
     xi = I1 / SQRT3;
-    rho = (J2 > 0.0) ? std::sqrt(2.0 * J2) : 0.0;
+    rho = (J2 > 0.0) ? T(sqrt(2.0 * J2)) : T(0.0);
     if (J2 <= 1.0e-300) {
         theta = 0.0;
+        c3 = T(1.0);
     } else {
-        double c3 = (3.0 * SQRT3 / 2.0) * J3 / std::pow(J2, 1.5);
-        if (c3 > 1.0) c3 = 1.0; else if (c3 < -1.0) c3 = -1.0;
-        theta = std::acos(c3) / 3.0;
+        c3 = (3.0 * SQRT3 / 2.0) * J3 / pow(J2, 1.5);
+        if (c3 > 1.0) clampValueKeepDerivative(c3, 1.0); else if (c3 < -1.0) clampValueKeepDerivative(c3, -1.0);
+        theta = std::acos(ladruno_dual::value(c3)) / 3.0;
     }
+}
+inline void invariants(const double sig[6], double& xi, double& rho, double& theta)
+{
+    double c3;
+    invariantsT(sig, xi, rho, c3, theta);
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +319,20 @@ inline double drDcos3thetaRegularized(double cosTheta, double e)
     const double b = 2.0 * k * c + m * s;
     const double bracket = (4.0 * k * c * c - m * m) * (k / (s + m) - m / (2.0 * c + 1.0)) + 4.0 * k * m * c;
     return (2.0 * k / (3.0 * s * b * b)) * bracket;
+}
+
+// WP-264: r(theta(c3), e) for the templated drivers. On double it is lodeR(theta, e), the value the pre-WP-264 code
+// used. On a Dual the value is the same lodeR(theta, e) and the derivative is dr/dc3 * dc3 with the closed form above:
+// finite on both meridians, where dr/dtheta = 0 cancels the 1/sin 3 theta of dtheta/dc3 (a dual pushed through acos
+// would read 0 * inf there, i.e. at every uniaxial and equal-biaxial state).
+inline double lodeRT(double /*c3*/, double theta, double e) { return lodeR(theta, e); }
+template <int N>
+inline ladruno_dual::Dual<N> lodeRT(const ladruno_dual::Dual<N>& c3, double theta, double e)
+{
+    ladruno_dual::Dual<N> r(lodeR(theta, e));
+    const double k = drDcos3thetaRegularized(std::cos(theta), e);
+    for (int i = 0; i < N; ++i) r.d[i] = k * c3.d[i];
+    return r;
 }
 
 // The Lode factor of the hardening law R4 (Grassl Eq.32: kp' = ||d eps_p|| / xh * (2 cos theta)^2), regularized
@@ -457,30 +498,45 @@ inline double eccentricityFromKupfer(double fc, double ft, double targetFccRatio
 //                                safeguarded so a non-monotone F never clamp-stalls to 0 (PR #261)
 // sig_pr = 3 EFFECTIVE principal stresses (the damage drivers are frame-invariant).
 // ===========================================================================
-inline double equivStrainGeneral(const double sig_pr[3], const Params& mp)
+// WP-264: the four damage drivers are templated on T (double entry points unchanged: same names, signatures and
+// operations). Each depends on sig_bar only through a SYMMETRIC function of its principal values, which is what lets
+// dscalarDsigDual differentiate them by Dual<3> in the principal values and lift by the spectral chain rule.
+template <class T>
+inline T equivStrainGeneralT(const T sig_pr[3], const Params& mp)
 {
+    using std::sqrt;
     const double eps0 = mp.ft / mp.E;
-    const double sv[6] = { sig_pr[0], sig_pr[1], sig_pr[2], 0.0, 0.0, 0.0 };
-    double xi, rho, theta; invariants(sv, xi, rho, theta);
-    const double sigV = xi / SQRT3;
-    const double A = rho * lodeR(theta, mp.e) / (SQRT6 * mp.fc) + sigV / mp.fc;
-    double rad = (eps0 * eps0 * mp.m0 * mp.m0 / 4.0) * A * A
-               + 3.0 * eps0 * eps0 * rho * rho / (2.0 * mp.fc * mp.fc);
-    if (rad < 0.0) rad = 0.0;
-    return (eps0 * mp.m0 / 2.0) * A + std::sqrt(rad);
+    const T sv[6] = { sig_pr[0], sig_pr[1], sig_pr[2], T(0.0), T(0.0), T(0.0) };
+    T xi, rho, c3; double theta; invariantsT(sv, xi, rho, c3, theta);
+    const T sigV = xi / SQRT3;
+    const T A = rho * lodeRT(c3, theta, mp.e) / (SQRT6 * mp.fc) + sigV / mp.fc;
+    T rad = (eps0 * eps0 * mp.m0 * mp.m0 / 4.0) * A * A
+          + 3.0 * eps0 * eps0 * rho * rho / (2.0 * mp.fc * mp.fc);
+    if (rad < 0.0) rad = T(0.0);
+    if constexpr (ladruno_dual::is_dual<T>::value) {
+        // the cone VERTEX (rad == 0: sig_pr == 0, or eps_tilde_c's argument when every tensile principal is cracked,
+        // e.g. plane-stress tension): sqrt' is infinite and 0 * inf = NaN. The vertex is a kink in every direction;
+        // keep the linear part's derivative and drop the even sqrt term's (one of the subgradients, finite). Same
+        // value as the double path, bit for bit (c A + 0.0).
+        if (!(rad > 0.0)) return (eps0 * mp.m0 / 2.0) * A + T(0.0);
+    }
+    return (eps0 * mp.m0 / 2.0) * A + sqrt(rad);
 }
+inline double equivStrainGeneral(const double sig_pr[3], const Params& mp) { return equivStrainGeneralT(sig_pr, mp); }
 
-inline double alphaCompression(const double sig_pr[3])
+template <class T>
+inline T alphaCompressionT(const T sig_pr[3])
 {
-    double nrm2 = 0.0, num = 0.0;
+    T nrm2 = 0.0, num = 0.0;
     for (int i = 0; i < 3; ++i) {
         nrm2 += sig_pr[i] * sig_pr[i];
-        const double spc = sig_pr[i] < 0.0 ? sig_pr[i] : 0.0;   // negative part
+        const T spc = sig_pr[i] < 0.0 ? sig_pr[i] : T(0.0);   // negative part
         num += spc * sig_pr[i];
     }
-    if (nrm2 <= 1.0e-300) return 0.0;
+    if (nrm2 <= 1.0e-300) return T(0.0);
     return num / nrm2;
 }
+inline double alphaCompression(const double sig_pr[3]) { return alphaCompressionT(sig_pr); }
 
 inline void voigtToMat(const double v[6], double M[3][3]);   // fwd decl (defined below; used by 'proj')
 
@@ -520,11 +576,13 @@ inline double tensileDamageWeight(const Params& mp, double ac, const double depl
 // as crushing history: the strut softened at ~0.2 fc in PV20 (tau 1.76 -> 0.03 MPa vs 4.26 in the test).
 // phi_a = 1 (sigma_bar_a <= TC_DEAD ft) .. 0 (sigma_bar_a >= TC_BAND ft), linear between (oracle _tc_phi)
 static const double TC_DEAD = 1.0e-3, TC_BAND = 0.05;
-inline double tcPhi(const Params& mp, double s)
+template <class T>
+inline T tcPhiT(const Params& mp, const T& s)
 {
-    const double v = 1.0 - (s - TC_DEAD * mp.ft) / ((TC_BAND - TC_DEAD) * mp.ft);
-    return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v);
+    const T v = 1.0 - (s - TC_DEAD * mp.ft) / ((TC_BAND - TC_DEAD) * mp.ft);
+    return v < 0.0 ? T(0.0) : (v > 1.0 ? T(1.0) : v);
 }
+inline double tcPhi(const Params& mp, double s) { return tcPhiT(mp, s); }
 inline double compressiveDamageWeight(const Params& mp, const double depl6[6],
                                       const double w_stress[3], const double V[3][3])
 {
@@ -547,29 +605,40 @@ inline double compressiveDamageWeight(const Params& mp, const double depl6[6],
     return std::sqrt(p2) / std::sqrt(nrm2);
 }
 
+template <class T>
+inline void damageDriversT(const T sig_pr[3], const Params& mp, T& et, T& ac, T& xs)
+{
+    et = equivStrainGeneralT(sig_pr, mp);
+    ac = alphaCompressionT(sig_pr);
+    const T sv[6] = { sig_pr[0], sig_pr[1], sig_pr[2], T(0.0), T(0.0), T(0.0) };
+    T xi, rho, c3; double theta; invariantsT(sv, xi, rho, c3, theta);
+    const T sigV = xi / SQRT3;
+    const T Rs = (sigV <= 0.0 && rho > 1.0e-12) ? T(-SQRT6 * sigV / rho) : T(0.0);   // Eq.57
+    xs = 1.0 + (mp.As - 1.0) * Rs;                                                   // Eq.56
+}
 inline void damageDrivers(const double sig_pr[3], const Params& mp, double& et, double& ac, double& xs)
 {
-    et = equivStrainGeneral(sig_pr, mp);
-    ac = alphaCompression(sig_pr);
-    const double sv[6] = { sig_pr[0], sig_pr[1], sig_pr[2], 0.0, 0.0, 0.0 };
-    double xi, rho, theta; invariants(sv, xi, rho, theta);
-    const double sigV = xi / SQRT3;
-    const double Rs = (sigV <= 0.0 && rho > 1.0e-12) ? (-SQRT6 * sigV / rho) : 0.0;   // Eq.57
-    xs = 1.0 + (mp.As - 1.0) * Rs;                                                     // Eq.56
+    damageDriversT(sig_pr, mp, et, ac, xs);
 }
 
 // PV20 -tcTemper proj (mirror the oracle compressive_equiv_strain): the equivalent strain feeding the CDPM2
 // compressive history (Eq.47) is eps_tilde of the COMPRESSIVE part (tensile principals scaled by tcPhi -> zeroed on
 // a crack); `et` (the full eps_tilde) otherwise and whenever no effective principal is > TC_DEAD ft. Stops the hardened crack stress (qh2 ft, qh2 ~ 3 across a crack)
 // from pushing kappa_dc past eps0 while the strut is at ~0.2 fc.
-inline double compressiveEquivStrain(const Params& mp, const double w_stress[3], double et)
+template <class T>
+inline T compressiveEquivStrainT(const Params& mp, const T w_stress[3], const T& et)
 {
     if (mp.tcTemper != 2) return et;
-    double mx = w_stress[0]; for (int a = 1; a < 3; ++a) if (w_stress[a] > mx) mx = w_stress[a];
+    double mx = ladruno_dual::value(w_stress[0]);
+    for (int a = 1; a < 3; ++a) if (ladruno_dual::value(w_stress[a]) > mx) mx = ladruno_dual::value(w_stress[a]);
     if (mx <= TC_DEAD * mp.ft) return et;
-    double wc[3];
-    for (int a = 0; a < 3; ++a) wc[a] = w_stress[a] < 0.0 ? w_stress[a] : tcPhi(mp, w_stress[a]) * w_stress[a];
-    return equivStrainGeneral(wc, mp);
+    T wc[3];
+    for (int a = 0; a < 3; ++a) wc[a] = w_stress[a] < 0.0 ? w_stress[a] : T(tcPhiT(mp, w_stress[a]) * w_stress[a]);
+    return equivStrainGeneralT(wc, mp);
+}
+inline double compressiveEquivStrain(const Params& mp, const double w_stress[3], double et)
+{
+    return compressiveEquivStrainT(mp, w_stress, et);
 }
 
 inline double solveOmegaBracketed(double kd1, double kd2, double sig_eff, double f, double eps_f)
@@ -2209,16 +2278,52 @@ inline bool invert6(const double A[6][6], double Inv[6][6])
 
 // Scalar damage-driver as a function of the full effective stress (eigendecompose -> principals).
 //   which 0 = equiv strain (Eq.37), 1 = softening ductility xs (Eq.56-57), 2 = alpha_c (Eq.46).
+//   which 3 = eps_tilde_c (PV20 tcTemper). WP-264: the principal-value form is templated (scalarDriverOfPrincipals).
+template <class T>
+inline T scalarDriverOfPrincipals(int which, const T w[3], const Params& mp)
+{
+    if (which == 0) return equivStrainGeneralT(w, mp);
+    if (which == 1) { T et, ac, xs; damageDriversT(w, mp, et, ac, xs); return xs; }
+    if (which == 3) return compressiveEquivStrainT(mp, w, equivStrainGeneralT(w, mp));   // PV20 tcTemper
+    return alphaCompressionT(w);
+}
 inline double scalarDriver(int which, const double sig6[6], const Params& mp)
 {
     double A[3][3], w[3], V[3][3]; voigtToMat(sig6, A); eig3sym(A, w, V);
-    if (which == 0) return equivStrainGeneral(w, mp);
-    if (which == 1) { double et, ac, xs; damageDrivers(w, mp, et, ac, xs); return xs; }
-    if (which == 3) return compressiveEquivStrain(mp, w, equivStrainGeneral(w, mp));   // PV20 tcTemper
-    return alphaCompression(w);
+    return scalarDriverOfPrincipals(which, w, mp);
 }
 
-// Isolated micro-FD gradient d(scalarDriver)/d(sig) per Voigt component (oracle _dscalar_dsig).
+// WP-264: d(scalarDriver)/d(sig6[k]) per Voigt component, EXACT (no step), off the hydrostatic axis. It replaces the
+// per-slot central FD dscalarDsig below (12 driver calls and 12 eigendecompositions per gradient) in damagedTangent.
+// Every driver is f(w), a SYMMETRIC function of the principal values w of sig_bar (MW invariants, sum_a phi(w_a)), so
+// its gradient is the spectral chain rule  df/dsig = sum_a (df/dw_a) v_a (x) v_a, with df/dw_a from ONE pass of a Dual<3>
+// seeded on w. No dual goes through eig3sym (rule 6: an eigenvector derivative is undefined at a repeated eigenvalue).
+// At a repeated pair w_a == w_b the symmetric f has df/dw_a == df/dw_b (to round-off), so the pair's term is
+// f_a (E_a + E_b) = f_a P_ab, the eigenspace projector, whichever basis eig3sym returned for it; near a repeated pair the
+// eigenvector error ~ eps |sig| / (w_a - w_b) multiplies f_a - f_b ~ f'' (w_a - w_b): bounded. The Lode angle is
+// differentiated through cos 3 theta (lodeRT), so the meridians (uniaxial, equal-biaxial) carry no 0 * inf.
+// Per component, a shear slot moves both symmetric entries: g[k] = 2 sum_a f_a V[i][a] V[j][a] for k = (i, j), i != j.
+// w, V: the eig3sym of sig_bar the caller already holds (damagedTangent's).
+inline void dscalarDsigDual(int which, const double w[3], const double V[3][3], const Params& mp, double g[6])
+{
+    typedef ladruno_dual::Dual<3> D3;
+    const D3 wd[3] = { D3::variable(w[0], 0), D3::variable(w[1], 1), D3::variable(w[2], 2) };
+    const D3 f = scalarDriverOfPrincipals(which, wd, mp);
+    static const int I6[6] = {0, 1, 2, 0, 1, 0}, J6[6] = {0, 1, 2, 1, 2, 2};
+    for (int k = 0; k < 6; ++k) {
+        double v = 0.0;
+        for (int a = 0; a < 3; ++a) v += f.d[a] * V[I6[k]][a] * V[J6[k]][a];
+        g[k] = (k < 3) ? v : 2.0 * v;
+    }
+}
+
+// WP-264: which driver-gradient path damagedTangent takes off the hydrostatic axis: false = dscalarDsigDual (the
+// default), true = the pre-WP-264 FD dscalarDsig. The default is the compile-time LADRUNO_C3D_DRIVER_GRAD_FD; no
+// production code path sets it. The testbeds flip it per thread to compare the two tangents on the same build.
+inline bool& driverGradFD() { static thread_local bool fd = (LADRUNO_C3D_DRIVER_GRAD_FD != 0); return fd; }
+
+// Isolated micro-FD gradient d(scalarDriver)/d(sig) per Voigt component (oracle _dscalar_dsig). WP-264: off the axis
+// damagedTangent takes dscalarDsigDual instead; this FD stays as the selectable reference (driverGradFD) and the oracle.
 // These are PER-COMPONENT grads of a scalar-of-stress => NO [1,1,1,2,2,2] tensor weight
 // (unlike the eigenprojection / ||Deps_p|| gradients below, which DO carry it — LEDGER quirk).
 // h is the caller's step, DRIVER_FD_REL * driverStressScale (below): it has no default, because an absolute step
@@ -2390,8 +2495,8 @@ inline void tensileDamageWeightGrad(const Params& mp, const double depl6[6], con
 // same drivers as damagedUpdate (self-contained, exactly as the oracle does), so the ω used here is
 // byte-identical to the update's. FD-verified == the P2d numerical reference ~1e-10.
 // Voigt-WEIGHT quirk (LEDGER): the TENSOR gradients (eigenprojection Emax/Emin, ||Deps_p||) carry
-// the [1,1,1,2,2,2] double-contraction weight W6 BEFORE Ceff^T; the per-component micro-FD scalar
-// grads (det/dxs/dac) do NOT (already per-component).
+// the [1,1,1,2,2,2] double-contraction weight W6 BEFORE Ceff^T; the per-component scalar grads
+// (det/dxs/dac: dscalarDsigDual, or the micro-FD) do NOT (already per-component).
 // ---------------------------------------------------------------------------
 // The deterministic piece count returnMap uses at a committed state `in` and increment d (returnMapPieces): for a
 // TENSION-DEAD point (returnMap re-bases `in` on the trial: eps = new strain, sigEff = sig_tr) the return map runs on
@@ -2529,7 +2634,7 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
 
     // (C3c, cost) dω_t/dε and dω_c/dε are NON-zero only for an interior damage 0<ω<1 (see the IFT
     // branches below: a clamped or inactive ω is insensitive). Everything from here to the assembly
-    // feeds ONLY dwt/dwc -- three micro-FD scalar gradients (36 eigendecompositions), the dnorm
+    // feeds ONLY dwt/dwc -- three scalar driver gradients (dual since WP-264; 36 eigendecompositions as FDs), the dnorm
     // gradient, and under loading two more composite FDs through the return map. Skipping it when
     // neither ω is interior (every ELASTIC point) leaves dwt = dwc = 0, i.e. the SAME assembly
     // arithmetic and a bit-identical tangent. Re-applied on the damage-drive kernel: the interior test
@@ -2552,7 +2657,13 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
     { double xi_a, rho_a, th_a; const double sva[6] = {w[0], w[1], w[2], 0.0, 0.0, 0.0}; invariants(sva, xi_a, rho_a, th_a);
       onAxis = rho_a <= AXIS_RHO_REL * sDrv; }
     const double hDrv = DRIVER_FD_REL * sDrv;
-    auto driverGrad = [&](int which, double g[6]) { if (onAxis) dscalarDsigAxis(which, sig_eff, mp, g, hDrv); else dscalarDsig(which, sig_eff, mp, g, hDrv); };
+    // WP-264: off the axis the gradient is the exact dual one (dscalarDsigDual, on this w and V); the FD is selectable.
+    const bool drvFD = driverGradFD();
+    auto driverGrad = [&](int which, double g[6]) {
+        if (onAxis) dscalarDsigAxis(which, sig_eff, mp, g, hDrv);
+        else if (drvFD) dscalarDsig(which, sig_eff, mp, g, hDrv);
+        else dscalarDsigDual(which, w, V, mp, g);
+    };
     double g_et[6], g_xs[6], g_ac[6], det_deps[6], dxs_deps[6], dac_deps[6];
     driverGrad(0, g_et);   CeffT(g_et, det_deps);
     driverGrad(1, g_xs);   CeffT(g_xs, dxs_deps);
@@ -2560,7 +2671,7 @@ inline void damagedTangent(const Params& mp, const State& in, const double sig_e
 
     // drive gradients. P2i: the TENSILE drive is E*et, so d(Dt)/dε = E * det_deps (the equiv-strain
     // gradient already assembled above), NOT the extreme-principal eigenprojection. det_deps is a
-    // per-Voigt-component micro-FD grad ⇒ it carries NO W6 weight (the W6 quirk applies to the tensor
+    // per-Voigt-component driver grad ⇒ it carries NO W6 weight (the W6 quirk applies to the tensor
     // eigenprojection only). The COMPRESSIVE drive stays the extreme principal: dDc/dε = -Ceff^T (W6 . Emin).
     // (P2g) each is frozen (zero) on unload so the -sig(x)d(omega) rank-update vanishes ⇒ SPD secant.
     double dDt_deps[6], dDc_deps[6];
