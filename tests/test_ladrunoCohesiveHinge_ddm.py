@@ -91,8 +91,10 @@ def _run(kind, vals, sens_param=None):
 def _check(kind, base, par, rel_h=1.0e-6):
     _, ddm = _run(kind, base, par)
     h = rel_h * abs(base[par])
-    vp = dict(base); vp[par] += h
-    vm = dict(base); vm[par] -= h
+    vp = dict(base)
+    vp[par] += h
+    vm = dict(base)
+    vm[par] -= h
     up, _ = _run(kind, vp)
     um, _ = _run(kind, vm)
     fd = (up - um) / (2.0 * h)
