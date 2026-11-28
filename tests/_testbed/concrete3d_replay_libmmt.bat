@@ -71,7 +71,7 @@ exit /b 0
 :build_replay
 REM %1 = libm tag; LINKLIBS = the link libraries (empty for the UCRT); INCROOT = the kernel header's root (default the repo)
 if "%INCROOT%"=="" set "INCROOT=%REPO%"
-cl %CLFLAGS% /DC3D_REPLAY_LIBM=\"%~1\" /I"%INCROOT%" /Fo:"%OUT%\replay_%~1.obj" /Fe:"%OUT%\concrete3d_replay_%~1.exe" tests\_testbed\concrete3d_replay.cpp %LINKLIBS% >"%OUT%\build_replay_%~1.log" 2>&1
+cl %CLFLAGS% /DC3D_REPLAY_LIBM=\"%~1\" /I"%INCROOT%" /I"%REPO%\SRC\material\nD" /Fo:"%OUT%\replay_%~1.obj" /Fe:"%OUT%\concrete3d_replay_%~1.exe" tests\_testbed\concrete3d_replay.cpp %LINKLIBS% >"%OUT%\build_replay_%~1.log" 2>&1
 if errorlevel 1 (type "%OUT%\build_replay_%~1.log" & exit /b 2)
 echo built against the kernel header under %INCROOT%, blob %HAVE%
 exit /b 0

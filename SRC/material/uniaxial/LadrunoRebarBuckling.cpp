@@ -38,6 +38,7 @@
 // Written: N. Mora-Bowen (Ladruno), 2026.
 
 #include <LadrunoRebarBuckling.h>
+#include <LadrunoRebarBucklingKernel.h>   // WP-264: the GA factor, templated (dfactor/deps by Dual<1>)
 #include <UniaxialMaterial.h>
 #include <Vector.h>
 #include <ID.h>
@@ -368,16 +369,8 @@ void LadrunoRebarBuckling::applyBucklingDM(double eps, double sBare, double kBar
 // ===========================================================================
 double LadrunoRebarBuckling::gaFactor(double eps, double e_cross) const
 {
-  const double C = 9.42477796076938;               // 3*pi (upstream constant)
-  double denom = e_cross - eps;                     // > 0 in the buckled region
-  if (denom < 1.0e-300) denom = 1.0e-300;
-  const double fs_buck = sqrt(32.0 / denom) / (C * lsr);
-  double betaLoc = 1.0;
-  const double gamaLoc = 0.1, Dft = 0.25;
-  const double stress_diff = fabs(fs_buck - 1.0);
-  if (stress_diff <= Dft) betaLoc = 1.0 - gamaLoc * (Dft - stress_diff) / Dft;
-  const double m = (fs_buck < 1.0) ? fs_buck : 1.0;
-  return m * betaLoc * (1.0 - gaReduction) + gaReduction;
+  // WP-264: the closed form lives in LadrunoRebarBucklingKernel.h, templated on the scalar (same operations)
+  return ladruno_rebar_buckling::gaFactorT(eps, e_cross, lsr, gaReduction);
 }
 
 void LadrunoRebarBuckling::applyBucklingGA(double eps, double sBare, double kBare,
@@ -401,17 +394,12 @@ void LadrunoRebarBuckling::applyBucklingGA(double eps, double sBare, double kBar
   // Consistent tangent dsigma/deps = rho*k_bare + (dsigma/dfactor)*dfactor/deps,
   //   rho = dsigma/dsBare = (factor+ff)/(1+ff),
   //   dsigma/dfactor = -(fsup*ff - sBare)/(1+ff),
-  //   dfactor/deps from a central FD of the closed-form scalar factor (cheap, no
-  // material probe). More accurate than ReinforcingSteel's Buckled_mod_Gomes,
-  // which FDs the whole stress with sBare frozen then adds k_bare (i.e. uses
-  // k_bare in place of rho*k_bare).
+  //   dfactor/deps EXACT, by one Dual<1> pass through the closed-form factor (WP-264; it replaces a central FD,
+  // h = 1e-8, of the same factor). More accurate than ReinforcingSteel's Buckled_mod_Gomes, which FDs the whole
+  // stress with sBare frozen then adds k_bare (i.e. uses k_bare in place of rho*k_bare).
   const double rho = (factor + ff) / (1.0 + ff);
   const double dSig_dFactor = -(fsup * ff - sBare) / (1.0 + ff);
-  const double h = 1.0e-8;
-  double epsm = eps - h, epsp = eps + h;
-  if (epsp >= e_cross) epsp = eps;                 // stay inside the buckled region
-  const double dfac = (this->gaFactor(epsp, e_cross) - this->gaFactor(epsm, e_cross))
-                      / (epsp - epsm);
+  const double dfac = ladruno_rebar_buckling::gaFactorDeriv(eps, e_cross, lsr, gaReduction);
   tan = rho * kBare + dSig_dFactor * dfac;
 }
 

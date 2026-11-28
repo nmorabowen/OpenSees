@@ -48,7 +48,8 @@ echo "libm tag $tag (from: $ldd1)"
 
 # build <exe> <include root>: the testbed against <root>/SRC/material/nD/LadrunoConcrete3DKernel.h
 # (-pthread: `contract` runs its rows on worker threads)
-build() { g++ -std=c++17 -O2 -pthread -DC3D_REPLAY_LIBM="\"$tag\"" -I "$2" "$here/concrete3d_replay.cpp" -o "$1"; }
+# The second -I: the kernel header includes "LadrunoDual.h" (WP-264), which a mutant root (one header copied) lacks.
+build() { g++ -std=c++17 -O2 -pthread -DC3D_REPLAY_LIBM="\"$tag\"" -I "$2" -I "$repo/SRC/material/nD" "$here/concrete3d_replay.cpp" -o "$1"; }
 exe="$out/concrete3d_replay"
 
 if [ "$contract" = 1 ]; then
