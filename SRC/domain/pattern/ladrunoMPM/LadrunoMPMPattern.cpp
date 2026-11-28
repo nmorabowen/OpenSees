@@ -51,10 +51,13 @@
 #include <Ladruno_mutation.h>
 #include <LadrunoMaterialStatus.h>
 #include <profiler/ProfilerMacros.h>
+#include <LadrunoThreads.h>         // WP-253: mode F threads (ladruno_loopThreads, ladruno_parallelFor)
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
+#include <optional>             // WP-253: the phase timer
 #include <set>
 #include <utility>
 
@@ -82,12 +85,14 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
 
   int setTrialStrain(int p, const double *e, double *s) override
   {
+    if (ladruno_inThreadedRegion()) return setTrialStrainThreaded(p, e, s);   // WP-253
     NDMaterial *mat = mats[p];
     OPS_PROFILE_ELEMPTR_SCOPE((*matTmr), mat);   // WP-232g
     const int nv = mat->getOrder();
     Vector &eps = (nv == 6) ? eps6 : eps3;
     for (int k = 0; k < nv; k++) eps(k) = e[k];
-    const int res = mat->setTrialStrain(eps);
+    int res = mat->setTrialStrain(eps);
+    if (debugFails(failTrial, p)) res = -1;        // WP-253 test hook (`mpm debug failTrial`)
     if (res < 0 && trialFail < 0) trialFail = p;   // WP-232k (D14): named by the host
     const Vector &sig = mat->getStress();
     for (int k = 0; k < nv; k++) s[k] = sig(k);
@@ -95,11 +100,13 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
   }
   int commitState(int p) override
   {
+    if (ladruno_inThreadedRegion()) return commitStateThreaded(p);            // WP-253
     OPS_PROFILE_ELEMPTR_SCOPE((*matTmr), mats[p]);   // WP-232g
     // WP-232k (D13): the commit loop is serial, so the first particle whose commit
     // raised the WP-99 count is the first refusing one -- named in the abort message.
     const int before = ladrunoPendingCommitRefusals();
     const int r = mats[p]->commitState();
+    if (debugFails(failCommit, p)) ladrunoNoteCommitRefusal();   // WP-253 test hook
     if (firstRefuser < 0 && ladrunoPendingCommitRefusals() > before) firstRefuser = p;
     return r;
   }
@@ -121,6 +128,7 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
   // 1e-3 mCe) would overestimate the stable Δt by up to 31x.
   double normalModulus(int p) override
   {
+    if (ladruno_inThreadedRegion()) ops_TheActiveElement = 0;   // WP-253: W9 on a worker
     const Matrix &D = mats[p]->getInitialTangent();
     const int nNormal = (D.noRows() == 6) ? 3 : 2;
     double M = 0.0;
@@ -128,12 +136,117 @@ class LadrunoMPMPattern::Mats : public ladruno_mpm::MaterialPoints
     return M;
   }
 
+  // ---- WP-253: the calls the threaded mode-F step makes on worker threads -----------------
+  // Reached only when every particle material answers ladrunoThreadSafeUpdate() AND
+  // ladrunoThreadSafeForm() (the host's matThreaded check): setTrialStrain is the Update
+  // contract; getStress, commitState and getInitialTangent are the Form contract (Material.h,
+  // WP-107 / WP-192). Nothing shared is written here: the strain goes through a stack buffer
+  // (eps3 / eps6 are one pair for the whole host), the D14 / D13 names and the profiler walls
+  // are kept per particle and folded by afterParallel() on the calling thread, and
+  // ops_TheActiveElement (thread_local) is set to 0 on the worker (W9).
+  void prepareParallel(int N)
+  {
+    pw.assign((size_t)N, 0);
+    refused.assign((size_t)N, 0);
+  }
+  void afterParallel() override
+  {
+#ifndef OPS_PROFILE_DISABLE
+    if (matTmr->engaged() && anyWall.load(std::memory_order_relaxed)) {
+      // the deep scope's elem_by_type rows: one count per call, as the serial ElemScope; the
+      // walls are summed THREAD time (each call timed on its own thread), not wall time
+      for (size_t p = 0; p < pw.size(); p++)
+        if (pw[p] != 0) {
+          const int tag = mats[p]->getClassTag();
+          matTmr->addElem(tag, pw[p], ops_profiler::isForceBasedClassTag(tag));
+          pw[p] = 0;
+        }
+    }
+#endif
+    anyWall.store(false, std::memory_order_relaxed);
+    if (ladrunoPendingCommitRefusals() > 0)            // D13 under threads: the lowest refuser
+      for (size_t p = 0; p < refused.size(); p++)
+        if (refused[p]) {
+          if (firstRefuser < 0 || (int)p < firstRefuser) firstRefuser = (int)p;
+          refused[p] = 0;
+        }
+  }
+
  private:
+  int setTrialStrainThreaded(int p, const double *e, double *s)
+  {
+    ops_TheActiveElement = 0;
+    NDMaterial *mat = mats[p];
+    const bool timed = matTmr->engaged() && p < (int)pw.size();
+    const int64_t t0 = timed ? ::PerfClock::wall_ns() : 0;
+    const int nv = mat->getOrder();
+    double buf[6];
+    for (int k = 0; k < nv; k++) buf[k] = e[k];
+    Vector eps(buf, nv);
+    int res = mat->setTrialStrain(eps);
+    if (debugFails(failTrial, p)) res = -1;        // WP-253 test hook
+    const Vector &sig = mat->getStress();
+    for (int k = 0; k < nv; k++) s[k] = sig(k);
+    if (timed) addWall(p, t0);
+    return (res < 0) ? -1 : 0;
+  }
+  int commitStateThreaded(int p)
+  {
+    ops_TheActiveElement = 0;
+    const bool timed = matTmr->engaged() && p < (int)pw.size();
+    const int64_t t0 = timed ? ::PerfClock::wall_ns() : 0;
+    // this thread's own tally (LadrunoMaterialStatus.h, WP-253): the process-wide count is
+    // shared by every thread, so only the per-thread one says THIS commit refused
+    const int before = ladrunoThreadCommitRefusals();
+    const int r = mats[p]->commitState();
+    if (debugFails(failCommit, p)) ladrunoNoteCommitRefusal();   // WP-253 test hook
+    if (ladrunoThreadCommitRefusals() > before && p < (int)refused.size()) refused[p] = 1;
+    if (timed) addWall(p, t0);
+    return r;
+  }
+  void addWall(int p, int64_t t0)
+  {
+    const int64_t t1 = ::PerfClock::wall_ns();
+    pw[p] += (t1 >= t0) ? (uint64_t)(t1 - t0) : 0;
+    anyWall.store(true, std::memory_order_relaxed);
+  }
+
   std::vector<NDMaterial *> &mats;
   Vector eps3, eps6;
   ops_profiler::ScopedTimerOpt idleTmr;      // WP-232g: never engaged (a null name)
   ops_profiler::ScopedTimerOpt *matTmr;      // WP-232g: idleTmr, or the host's deep scope
+  std::vector<uint64_t> pw;                  // WP-253: per particle, this loop's material wall
+  std::vector<char>     refused;             // WP-253: per particle, refused at this commit
+ public:
+  // WP-253 test hooks (`mpm debug failTrial | failCommit`): per particle index, 1 = fail
+  std::vector<char>     failTrial, failCommit;
+ private:
+  static bool debugFails(const std::vector<char> &f, int p)
+  {
+    return !f.empty() && p < (int)f.size() && f[p] != 0;
+  }
+  std::atomic<bool>     anyWall{false};      // WP-253: some pw[] is nonzero
 };
+
+#ifndef OPS_PROFILE_DISABLE
+// ---------------------------------------------------------------------------
+// WP-253 (253_mpm_performance.md §2): the core's phase hook (ladruno_mpm::PhaseHook)
+// implemented with the profiler. Installed only while the coarse profiler is on, around
+// eng.advance, so each phase is a coarse scope opened under the cursor the host left at
+// `mpm.advance` (with -deep on, under the deep `mpm.f.material`, which spans the advance).
+// One phase is open at a time (PhaseRun), opened and closed on the calling thread.
+// ---------------------------------------------------------------------------
+namespace {
+struct MPMPhaseTimer {
+  std::optional<ops_profiler::ScopedTimer> open;
+  static void enter(int ph, void *ctx)
+  {
+    static_cast<MPMPhaseTimer *>(ctx)->open.emplace(ladruno_mpm::phaseName(ph));
+  }
+  static void leave(int, void *ctx) { static_cast<MPMPhaseTimer *>(ctx)->open.reset(); }
+};
+}
+#endif
 
 // ---------------------------------------------------------------------------
 LadrunoMPMPattern::LadrunoMPMPattern(int tag)
@@ -868,13 +981,78 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
     haveSnapshot = true;
   }
 
+  // WP-253 (253_mpm_performance.md §5): mode F's threads come from the one knob
+  // (`ladrunoThreads`, ladruno_loopThreads); route S and mode A stay serial. The material calls
+  // run threaded only when EVERY particle material allows setTrialStrain (Update) and
+  // getStress / commitState / getInitialTangent (Form) on different instances at once;
+  // otherwise only the transfer loops thread. The engine is put back to serial on every exit.
+  struct EngineThreads {
+    ladruno_mpm::Engine &e;
+    ~EngineThreads()
+    {
+      e.nThreads = 1; e.parFor = nullptr; e.matThreaded = false;
+      e.quietBegin = nullptr; e.quietEnd = nullptr;
+    }
+  } engineThreads{eng};
+  // W9 for the whole analyze (WP-253 critic of record): a threaded dt_crit or commit also runs
+  // material calls on the master, and those zero ITS thread_local ops_TheActiveElement, so the
+  // caller's value is saved once here, restored at every exit, and zeroed at every step's start.
+  struct ActiveElementGuard {
+    Element *saved;
+    ~ActiveElementGuard() { ops_TheActiveElement = saved; }
+  } activeElementGuard{ops_TheActiveElement};
+  const int nRequested = ladruno_getNumThreads();
+  if (routeS && nRequested > 1 && !threadsSerialWarned) {      // the WP-107 rule: say it once
+    opserr << "WARNING mpm analyze -- ladrunoThreads " << nRequested << " requested; route S"
+              " (two-phase, plate, traction) runs SERIAL: WP-253 threads the single-phase mode-F"
+              " step only\n";
+    threadsSerialWarned = true;
+  }
+  if (!routeS) {
+    const char *why = 0;
+    const int nThr = ladruno_loopThreads(&why);
+    if (nThr <= 1 && why != 0 && !threadsSerialWarned) {
+      opserr << "WARNING mpm analyze -- ladrunoThreads " << nRequested << " requested; mode F"
+                " runs SERIAL: " << why << "\n";
+      threadsSerialWarned = true;
+    }
+    if (nThr > 1) {
+      bool safe = true;
+      for (size_t p = 0; p < mats.size() && safe; p++)
+        safe = mats[p] != 0 && mats[p]->ladrunoThreadSafeUpdate() && mats[p]->ladrunoThreadSafeForm();
+      eng.nThreads = nThr;
+      eng.parFor = &ladruno_parallelFor;
+      // the split path (serial materials) lets the pool's workers sleep through its serial
+      // material and commit loops (libiomp's KMP_BLOCKTIME spin otherwise takes their core)
+      eng.quietBegin = &ladruno_ompQuietBegin;
+      eng.quietEnd = &ladruno_ompQuietEnd;
+      eng.matThreaded = safe;
+      adapter->prepareParallel(eng.P.size());
+    }
+  }
+
   // ONE exit path (c2 review 7): whatever stops the loop, the accepted steps
   // not yet written are written and the file is flushed.
+  // WP-253 (critic of record, 6): on the split path (serial materials) the pool's workers also
+  // sleep from the admissibility region's fork to the advance, where dt_crit (serial there), the
+  // prescribed velocities and applyLoad run on one thread; ended before the advance's first fork.
+  struct HostQuiet {
+    int tok;
+    bool on;
+    explicit HostQuiet(bool want) : tok(-1), on(want) { if (on) tok = ladruno_ompQuietBegin(); }
+    ~HostQuiet() { end(); }
+    void end() { if (on) { ladruno_ompQuietEnd(tok); on = false; } }
+  };
+  const bool splitPath = eng.nThreads > 1 && eng.parFor != nullptr && !eng.matThreaded;
   int rc = 0;
   for (int s = 0; s < nSteps && rc == 0; s++) {
     OPS_PROFILE_SCOPE("step");
+    ops_TheActiveElement = 0;                          // W9 (activeElementGuard restores)
+    HostQuiet hostQuiet(splitPath);
     // ---- 1. admissibility and the critical time step ----------------------
-    const int bad = eng.firstInadmissible();
+    int bad;
+    { OPS_PROFILE_SCOPE("mpm.f.admissible");          // WP-253 §2
+      bad = eng.firstInadmissible(); }
     if (bad >= 0) {
       opserr << "ERROR mpm analyze -- particle " << std::to_string((long long)eng.P.id[bad]).c_str()
              << " is not admissible (its centre left the grid, or lp is out of (0, h/2]);"
@@ -951,7 +1129,11 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
         break;
       }
     }
-    const double dtc = routeS ? std::numeric_limits<double>::infinity() : eng.criticalTimeStep(*adapter);
+    double dtc = std::numeric_limits<double>::infinity();
+    if (!routeS) {
+      OPS_PROFILE_SCOPE("mpm.f.dtcrit");              // WP-253 §2
+      dtc = eng.criticalTimeStep(*adapter);
+    }
     if (dt > eng.par.safety * dtc) {
       opserr << "ERROR mpm analyze -- dt = " << dt << " exceeds s * dt_crit = "
              << eng.par.safety << " * " << dtc << " = " << eng.par.safety * dtc
@@ -986,8 +1168,8 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
     dom->applyLoad(t0 + dt);
     inStep = false;
     // ---- 3-7. the core, with no active element (W9) ----------------------
-    Element *saved = ops_TheActiveElement;
-    ops_TheActiveElement = 0;
+    hostQuiet.end();             // the advance's regions keep the previous wait (its own spans)
+    ops_TheActiveElement = 0;    // Domain work above may have set it; activeElementGuard restores
     int res;
     { OPS_PROFILE_SCOPE("mpm.advance");
 #ifndef OPS_PROFILE_DISABLE
@@ -1009,13 +1191,25 @@ LadrunoMPMPattern::analyze(int nSteps, double dt)
           }
         }
       } else {
+#ifndef OPS_PROFILE_DISABLE
+        // WP-253 §2: mode F's sub-loop scopes, only while the coarse profiler runs
+        MPMPhaseTimer phTimer;
+        struct Unhook {             // the hook never outlives phTimer, whatever ends advance
+          ladruno_mpm::Engine &e;
+          ~Unhook() { e.phaseHook = ladruno_mpm::PhaseHook(); }
+        } unhook{eng};
+        if (ops_profiler::theProfiler().enabled())
+          eng.phaseHook = {&MPMPhaseTimer::enter, &MPMPhaseTimer::leave, &phTimer};
+#endif
         res = eng.advance(dt, lambda, *adapter, err);
+        // WP-253: a threaded material loop names its lowest failing particle through the
+        // engine (the adapter's own D14 name is set only by a serial call)
+        if (adapter->trialFail < 0 && eng.lastMatFail >= 0) adapter->trialFail = eng.lastMatFail;
       }
 #ifndef OPS_PROFILE_DISABLE
       adapter->setTimer(0);
 #endif
     }
-    ops_TheActiveElement = saved;
     eng.presc.clear();          // WP-232k (D18): per step; nothing else (affineCheck) sees it
     if (res == -1) {
       dom->revertToLastCommit();
@@ -1387,6 +1581,37 @@ void
 LadrunoMPMPattern::injectStaleRefusal(void)
 {
   ladrunoCommitRefusalCounter().fetch_add(1);
+}
+
+int
+LadrunoMPMPattern::setDebugFailIds(bool commit, const std::vector<long long> &ids, std::string &err)
+{
+  std::vector<char> &f = commit ? adapter->failCommit : adapter->failTrial;
+  if (ids.empty()) {                 // `off`
+    f.clear();
+    return 0;
+  }
+  std::vector<char> next((size_t)eng.P.size(), 0);
+  for (long long id : ids) {
+    int p = -1;
+    for (int q = 0; q < eng.P.size() && p < 0; q++)
+      if ((long long)eng.P.id[q] == id) p = q;
+    if (p < 0) {
+      err = "no particle with id " + std::to_string(id);
+      return -1;
+    }
+    next[p] = 1;
+  }
+  f.swap(next);
+  return 0;
+}
+
+int
+LadrunoMPMPattern::quietSpanAvailable(void) const
+{
+  const int tok = ladruno_ompQuietBegin();
+  ladruno_ompQuietEnd(tok);
+  return tok >= 0 ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------

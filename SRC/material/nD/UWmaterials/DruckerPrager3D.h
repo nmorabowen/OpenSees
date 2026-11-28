@@ -71,6 +71,14 @@ class DruckerPrager3D : public DruckerPrager {
   const Matrix& getTangent( ) ;
   const Matrix& getInitialTangent( ) ;
 
+  // Ladruno WP-258: re-entrant on DIFFERENT instances (WP-107 / WP-192 contract,
+  // Material.h). plastic_integrator() works on per-instance members and stack
+  // temporaries, its Matrix::Invert uses the per-thread work area inside a
+  // threaded region, and its two diagnostics go through LadrunoOutputGuard.
+  // Audit: Ladruno_implementation/258_thread_safe_soil_materials.md section 2.1.
+  bool ladrunoThreadSafeUpdate(void) const { return true; }
+  bool ladrunoThreadSafeForm(void) const { return true; }
+
   private :
 
 

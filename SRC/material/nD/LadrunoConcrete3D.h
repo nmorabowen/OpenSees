@@ -108,6 +108,15 @@ class LadrunoConcrete3D : public NDMaterial {
   const char* getType(void) const;          // dim-dependent (see .cpp)
   int getOrder(void) const { return ncomp; }
 
+  // Ladruno WP-259 (Ladruno_implementation/259_thread_safe_concretes.md §2.1, §4): every worker-path
+  // method touches only this instance, the pure kernel, thread_local ops_TheActiveElement and read-only
+  // ops_Dt; the one process-wide warning budget is atomic and every worker print is guarded. Admitted
+  // for every option on the views a threaded host requests and the determinism gate runs
+  // (ThreeDimensional, PlaneStrain, PlaneStress, PlateFiber); AxiSymmetric and BeamFiber stay serial
+  // (no threaded host requests them, so they are not gated).
+  bool ladrunoThreadSafeUpdate(void) const { return dim != DIM_AXISYM && dim != DIM_BEAMFIBER; }
+  bool ladrunoThreadSafeForm(void) const { return this->ladrunoThreadSafeUpdate(); }
+
   double getRho(void) { return rho; }
 
   int sendSelf(int commitTag, Channel& theChannel);

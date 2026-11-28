@@ -1,0 +1,61 @@
+{
+ "rows": [
+  {
+   "case": "c3d-3d",
+   "threads": 8,
+   "repeats": 10,
+   "mismatches": 0,
+   "seconds": 9.4
+  },
+  {
+   "case": "c3d-3dcr",
+   "threads": 8,
+   "repeats": 10,
+   "mismatches": 0,
+   "seconds": 118.4
+  },
+  {
+   "case": "c3d_implex-shell",
+   "threads": 8,
+   "repeats": 10,
+   "mismatches": 0,
+   "seconds": 6.9
+  },
+  {
+   "case": "c3d-ps",
+   "threads": 8,
+   "repeats": 10,
+   "mismatches": 0,
+   "seconds": 4.6
+  },
+  {
+   "case": "rc-3d",
+   "threads": 8,
+   "repeats": 10,
+   "mismatches": 0,
+   "seconds": 2.7
+  },
+  {
+   "case": "rc_implex-shell",
+   "threads": 8,
+   "repeats": 10,
+   "mismatches": 0,
+   "seconds": 1.6
+  },
+  {
+   "case": "rc_interlock-shell",
+   "threads": 8,
+   "repeats": 10,
+   "mismatches": 0,
+   "seconds": 1.7
+  },
+  {
+   "case": "rc-ps",
+   "threads": 8,
+   "repeats": 10,
+   "mismatches": 0,
+   "seconds": 0.8
+  }
+ ],
+ "mismatches": 0
+}

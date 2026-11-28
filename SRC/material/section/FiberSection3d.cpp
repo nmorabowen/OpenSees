@@ -1665,6 +1665,7 @@ FiberSection3d::commitSensitivity(const Vector& defSens, int gradIndex, int numG
 //by SAJalali
 double FiberSection3d::getEnergy() const
 {
+	// ladruno-lint: thread-ok recorder-only; the WP-196 energy sweep calls mass/damp/resisting force, not getEnergy
 	static double fiberArea[10000];
 
 	if (sectionIntegr != 0) {

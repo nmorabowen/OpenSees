@@ -1,0 +1,101 @@
+[
+ {
+  "kind": "FE",
+  "case": "sanisand_is2-3d",
+  "threads": 8,
+  "repeats": 10,
+  "mismatches": 0,
+  "ref": "7de61cb77126ae5e",
+  "wall_s": 469.6
+ },
+ {
+  "kind": "FE",
+  "case": "sanisand_implex-3d",
+  "threads": 8,
+  "repeats": 10,
+  "mismatches": 0,
+  "ref": "25f618ed4d63052b",
+  "wall_s": 11.4
+ },
+ {
+  "kind": "FE",
+  "case": "sanisand_is129-2d",
+  "threads": 8,
+  "repeats": 10,
+  "mismatches": 0,
+  "ref": "dae2aef25652ff01",
+  "wall_s": 22.8
+ },
+ {
+  "kind": "FE",
+  "case": "hs_small-3d",
+  "threads": 8,
+  "repeats": 10,
+  "mismatches": 0,
+  "ref": "4948b53e3ce2a20d",
+  "wall_s": 3.0
+ },
+ {
+  "kind": "FE",
+  "case": "dp-2d",
+  "threads": 8,
+  "repeats": 10,
+  "mismatches": 0,
+  "ref": "d28b97ff8497e9d6",
+  "wall_s": 1.0
+ },
+ {
+  "kind": "FE",
+  "case": "manzari_is1-3d",
+  "threads": 8,
+  "repeats": 10,
+  "mismatches": 0,
+  "ref": "60d6b82bb6dd3db6",
+  "wall_s": 215.1
+ },
+ {
+  "kind": "MPM",
+  "case": "sanisand_is2_3ds",
+  "threads": 8,
+  "repeats": 10,
+  "mismatches": 0,
+  "ref": "4699bcf2e7891562",
+  "wall_s": 4.0
+ },
+ {
+  "kind": "MPM",
+  "case": "sanisand_implex_3d",
+  "threads": 8,
+  "repeats": 10,
+  "mismatches": 0,
+  "ref": "44343bc7a11cf397",
+  "wall_s": 4.6
+ },
+ {
+  "kind": "MPM",
+  "case": "hs_implex_3d",
+  "threads": 8,
+  "repeats": 10,
+  "mismatches": 0,
+  "ref": "2f7a87dbfe465662",
+  "wall_s": 0.6
+ },
+ {
+  "kind": "MPM",
+  "case": "dp_3d",
+  "threads": 8,
+  "repeats": 10,
+  "mismatches": 0,
+  "ref": "fd3578e879b735d8",
+  "wall_s": 0.7
+ },
+ {
+  "kind": "MPM",
+  "case": "sanisand_is1_2d",
+  "threads": 8,
+  "repeats": 10,
+  "mismatches": 0,
+  "ref": "42e2436978c2e770",
+  "wall_s": 1.7
+ }
+]

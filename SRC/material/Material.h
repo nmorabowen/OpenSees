@@ -66,9 +66,10 @@ class Material : public TaggedObject, public MovableObject
     //
     // The answer is often CONFIGURATION-dependent rather than class-dependent,
     // so it is a runtime query and not a class-tag table: ManzariDafalias is
-    // re-entrant under IntScheme 1 (ModifiedEuler) but NOT under 2
-    // (BackwardEuler_CPPM -> NewtonIter's static Vector/Matrix work arrays) or
-    // 4 (RungeKutta45's). See Ladruno_implementation/107_ladruno_openmp_element_loop.md.
+    // admitted under IntScheme 1 (LadrunoSANISAND also 2 and 129) but NOT under
+    // 45 (RungeKutta45's function-static scratch). See
+    // Ladruno_implementation/107_ladruno_openmp_element_loop.md and
+    // 258_thread_safe_soil_materials.md (Ladruno WP-258).
     virtual bool ladrunoThreadSafeUpdate(void) const { return false; }
 
     // Ladruno WP-192. The rest of the contract: may getTangent / getStress /

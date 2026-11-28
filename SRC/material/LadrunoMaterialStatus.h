@@ -151,11 +151,26 @@ struct LadrunoProbeCommitScope {
     LadrunoProbeCommitScope &operator=(const LadrunoProbeCommitScope &);
 };
 
+// WP-253 (ADDITIVE): the calling thread's own running count of the refusals it declared. The
+// process-wide counter above keeps its exact meaning for every reader (Domain::commit, WP-192's
+// threaded commit, the MPM host's serial loop): it is bumped exactly as before. This second count
+// exists because a caller that commits several instances CONCURRENTLY and must say WHICH one
+// refused (the MPM host's threaded particle commit, WP-232k D13) cannot read that from a shared
+// counter -- another thread may bump it between its before and after reads. It is never reset
+// (only differences are read), so it costs one thread_local increment per refusal.
+inline int &ladrunoThreadCommitRefusals(void)
+{
+    static thread_local int nThreadRefusals = 0;
+    return nThreadRefusals;
+}
+
 // Called by a material whose commitState() could not integrate the step.
 inline void ladrunoNoteCommitRefusal(void)
 {
-    if (ladrunoProbeScopeDepth() == 0)
+    if (ladrunoProbeScopeDepth() == 0) {
         ++ladrunoCommitRefusalCounter();
+        ++ladrunoThreadCommitRefusals();   // WP-253: additive, see above
+    }
 }
 
 // How many integration points refused the commit now being assembled.

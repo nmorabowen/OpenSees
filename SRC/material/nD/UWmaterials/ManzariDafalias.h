@@ -196,17 +196,15 @@ class ManzariDafalias : public NDMaterial
 	virtual const Vector& getEStrain();
 	virtual const Vector& getPStrain();
 
-	// Ladruno WP-107 (ADR-75b L3-1): may two instances integrate concurrently?
-	// MEASURED ANSWER: NO, for every integration scheme -- this always returns
-	// false. IntScheme 1 (ModifiedEuler) was allowlisted on the strength of a
-	// complete function-scope-static audit that finds nothing on its call graph,
-	// and a threaded run SEGFAULTED anyway once the plastic branch was exercised
-	// in volume. The full experiment log and what it rules out are in the
-	// definition in ManzariDafalias.cpp; the lesson -- a static grep is not a
-	// re-entrancy proof -- is in LEDGER_quirks.md.
+	// Ladruno WP-107 (ADR-75b L3-1), revised by WP-258: may two instances
+	// integrate concurrently? IntScheme 1 (ModifiedEuler): YES since WP-258.
+	// WP-107 refused it because a threaded run SEGFAULTED once the plastic branch
+	// was exercised; WP-258 found the cause -- opserr -> PythonStream -> CPython
+	// from a worker thread with no Python thread state (the plastic branch
+	// prints) -- and fixed it in PythonStream.h. LadrunoSANISAND widens the
+	// answer to IntScheme 2 and 129. Every other scheme answers NO.
 	//
-	// The audited-and-rejected schemes are recorded separately, because they stay
-	// rejected even if the IntScheme-1 defect is ever found and fixed:
+	// The WP-107 record of the other schemes, kept for its reasons:
 	//   IntScheme 2 (BackwardEuler_CPPM) -> NewtonIter()'s work arrays
 	//       `sol/R/R2/dX/norms/jaco/jInv` are function-scope statics shared by
 	//       every instance, and NewtonSol*/NewtonIter* call Matrix::Invert and
@@ -220,6 +218,7 @@ class ManzariDafalias : public NDMaterial
 	//       work arrays plus a `static bool do_once`.
 	//   IntScheme 3/5 and the MaxStrain/MaxEnergy family -> not audited.
 	virtual bool ladrunoThreadSafeUpdate(void) const;   // Ladruno WP-107
+	virtual bool ladrunoThreadSafeForm(void) const;     // Ladruno WP-258
 
 
   protected:
@@ -554,19 +553,28 @@ class ManzariDafalias : public NDMaterial
 	// from the deck's `-pRe`. `updateParameter()` never re-runs `initialize()`,
 	// so no runtime parameter change can drop the seam.
 	double  m_PreElastic;   // Ladruno (ADR-93 II.1)
+	// ladruno-lint: thread-class-ok class-wide stage flag (ADR 232 232k): read on workers, written only on the main thread (updateMaterialStage, MPM stage walk, replay) (Ladruno WP-258)
 	static char unsigned mElastFlag;	// 0: elastic stage, 1: elastoplastic
   public:
 	// Ladruno #2444: `wipe` returns the class-wide stage to its elastic default.
 	static void resetStageOnWipe(void) { mElastFlag = 0; }
   protected:
 
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Vector mI1;			// 2nd Order Identity Tensor
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIIco;		// 4th-order identity tensor, covariant
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIIcon;		// 4th-order identity tensor, contravariant
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIImix;		// 4th-order identity tensor, mixed variant
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIIvol;		// 4th-order volumetric tensor, IIvol = I1 tensor I1 
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIIdevCon;	// 4th order deviatoric tensor, contravariant
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIIdevMix;	// 4th order deviatoric tensor, mixed variant
+	// ladruno-lint: thread-class-ok constant after static initialisation (initTensorOps); read-only everywhere (WP-258 audit) (Ladruno WP-258)
 	static Matrix mIIdevCo;		// 4th order deviatoric tensor, covariant
 	// initialize these Vector and Matrices:
 	static class initTensors {

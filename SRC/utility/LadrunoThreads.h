@@ -123,6 +123,16 @@ int ladruno_parallelRanks(void);
 extern thread_local int ladruno_tlInRegion;
 inline bool ladruno_inThreadedRegion(void) { return ladruno_tlInRegion != 0; }
 
+// Ladruno WP-258 -- the serial number of the ladruno_parallelFor() call this
+// thread is executing a body of (0 outside every call). Each call takes a new
+// number from one process-wide counter before it forks, and every executing
+// thread sees the same number for the whole call, so a material can tell on a
+// worker, without a shared write, which LOOP a call belongs to: one commit loop
+// is one commit ROUND (LadrunoSANISAND's IMPL-EX error ledger keys its
+// per-thread partials on it).
+extern thread_local long long ladruno_tlLoopId;
+inline long long ladruno_currentLoopId(void) { return ladruno_tlLoopId; }
+
 // One iteration of a ladruno_parallelFor loop. Returns 0 on success.
 typedef int (*LadrunoIndexBody)(int i, void *ctx);
 
@@ -152,6 +162,22 @@ void ladruno_setHybridAllowed(bool on);
 // 1 thread, nothing to announce).
 int ladruno_loopThreads(const char **why);
 
+
+// Ladruno WP-253 -- let the OpenMP workers SLEEP through a serial phase that sits between two
+// parallel regions (the MPM split path's serial material calls). With Intel / LLVM libiomp the
+// workers spin for KMP_BLOCKTIME (200 ms default) after every region, and on a hyperthreaded
+// box they steal the serial thread's core. ladruno_ompQuietBegin() sets the calling thread's
+// blocktime to 0 and returns the previous value as a token; ladruno_ompQuietEnd(token) restores
+// that value (libiomp then counts it as user-set: its oversubscription auto-zero stays off --
+// timing only). Call Begin BEFORE the parallel region that precedes the serial phase: libiomp copies the
+// master's ICVs (blocktime among them) to the team at the fork, and a worker takes the wait it
+// uses after the region from those ICVs at the join barrier, so a change made after the join
+// only governs the NEXT region's tail. kmp_set_blocktime / kmp_get_blocktime are resolved at
+// run time from the module that owns the running runtime (the one defining omp_get_max_threads;
+// GetModuleHandleEx / dladdr): no link dependency. Without them (libgomp, vcomp, OpenMP off) or
+// with KMP_BLOCKTIME=infinite, both calls are no-ops and the token is -1.
+int  ladruno_ompQuietBegin(void);
+void ladruno_ompQuietEnd(int token);
 
 // Serialises a diagnostic written to opserr from inside a threaded loop
 // (opserr is ONE shared stream; WP-107 rule 4). A no-op outside a region, so

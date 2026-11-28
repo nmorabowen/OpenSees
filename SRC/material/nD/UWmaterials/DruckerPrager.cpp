@@ -45,6 +45,8 @@
 #include <string.h>
 #include <Channel.h>
 #include <FEM_ObjectBroker.h>
+#include <LadrunoThreads.h>   // Ladruno WP-258: LadrunoOutputGuard
+#include <atomic>             // Ladruno WP-258
 
 const double DruckerPrager :: one3   = 1.0 / 3.0 ;
 const double DruckerPrager :: two3   = 2.0 / 3.0 ;
@@ -636,6 +638,7 @@ void DruckerPrager:: plastic_integrator( )
 			}
 
 			if ( count > 3 ) {
+				LadrunoOutputGuard ladrunoOut;   // Ladruno WP-258: opserr is shared under threads
 				opserr << "Jact = " << Jact;
 				opserr << "count = " << count << endln;
 			}
@@ -795,11 +798,18 @@ void DruckerPrager:: plastic_integrator( )
 			// consistent tangent (see the derivation above), so this floor is
 			// now reached legitimately at every apex GP; unthrottled it floods
 			// the log of a field run with millions of identical lines.
-			static int ladNormCepMsgCount = 0;
-			if (ladNormCepMsgCount < 10) {
-				opserr << "NormCep = " << NormCep << endln;
-				if (++ladNormCepMsgCount == 10)
-					opserr << "DruckerPrager: further NormCep messages suppressed (Ladruno ADR-95)\n";
+			// Ladruno WP-258: an atomic claim (one process-wide budget of 10, as
+			// before) and the output guard, so threaded instances neither race on
+			// the count nor interleave in opserr. Serial output is unchanged.
+			static std::atomic<int> ladNormCepMsgCount(0);
+			if (ladNormCepMsgCount.load(std::memory_order_relaxed) < 10) {
+				const int ladMsg = ladNormCepMsgCount.fetch_add(1, std::memory_order_relaxed);
+				if (ladMsg < 10) {
+					LadrunoOutputGuard ladrunoOut;
+					opserr << "NormCep = " << NormCep << endln;
+					if (ladMsg == 9)
+						opserr << "DruckerPrager: further NormCep messages suppressed (Ladruno ADR-95)\n";
+				}
 			}
 		}
 

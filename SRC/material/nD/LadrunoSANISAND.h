@@ -398,19 +398,14 @@ class LadrunoSANISAND : public ManzariDafalias
     // setTrialStrain, which is public, and because a test may want to drive it.
     int ladrunoTrialUpdate(void);   // Ladruno (ADR-92 P1)
 
-    // Ladruno WP-107 (ADR-75b stage L3-1). Narrower than the base's answer:
-    // re-entrant only when the base scheme is re-entrant (IntScheme 1) AND
-    // -implex is OFF.
-    //
-    // -implex is excluded because its diagnostics are a PROCESS-WIDE ledger
-    // (LadrunoImplexGlobals in LadrunoSANISAND.cpp: maxError, sumError, count
-    // and the four refusal buckets, all plain non-atomic members reached from
-    // every integration point). Two of those accumulators are FLOATING-POINT
-    // (sumError, and maxError's compare-and-store), so making them thread-safe
-    // is not a matter of adding an atomic -- a threaded sum changes the
-    // reported average's last bits with the thread count, which is exactly the
-    // determinism the WP exists to preserve. The honest answer for now is to
-    // refuse, loudly, and keep the ledger exact.
+    // Ladruno WP-107, revised by WP-258: IntScheme 1, 2 and 129, with or
+    // without -implex (the definition says why). The -implex ledger
+    // (LadrunoImplexGlobals) is thread-safe since WP-258: atomic counters, and
+    // per-thread error partials folded before any read. Its maxError and every
+    // counter are exact under threads; avgImplexError's FP sum is folded per
+    // thread, so under threads it may differ from one thread in its last bits
+    // (a diagnostic; the ASDConcrete WP-192 precedent). Nothing that feeds the
+    // answer reads the ledger. 258_thread_safe_soil_materials.md section 2.2.
     virtual bool ladrunoThreadSafeUpdate(void) const;   // Ladruno WP-107
 
     // Ladruno WP-127 (TIMs F21): load a state into THIS instance and apply one

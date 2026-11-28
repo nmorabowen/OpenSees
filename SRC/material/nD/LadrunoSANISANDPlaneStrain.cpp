@@ -50,11 +50,12 @@
 
 #include "LadrunoSANISANDPlaneStrain.h"
 
-Vector LadrunoSANISANDPlaneStrain::mEpsilon_M(3);
-Vector LadrunoSANISANDPlaneStrain::mSigma_M(3);
-Vector LadrunoSANISANDPlaneStrain::rSigma(4);
-Matrix LadrunoSANISANDPlaneStrain::mTangent(3,3);
-Matrix LadrunoSANISANDPlaneStrain::mTangent_init(3,3);
+// Ladruno WP-258: thread_local (one buffer per thread; the serial path is unchanged)
+thread_local Vector LadrunoSANISANDPlaneStrain::mEpsilon_M(3);
+thread_local Vector LadrunoSANISANDPlaneStrain::mSigma_M(3);
+thread_local Vector LadrunoSANISANDPlaneStrain::rSigma(4);
+thread_local Matrix LadrunoSANISANDPlaneStrain::mTangent(3,3);
+thread_local Matrix LadrunoSANISANDPlaneStrain::mTangent_init(3,3);
 
 // full constructor
 LadrunoSANISANDPlaneStrain::LadrunoSANISANDPlaneStrain(int tag, double G0, double nu, double e_init, double Mc, double c, double lambda_c, double e0, double ksi,

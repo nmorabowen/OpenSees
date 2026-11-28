@@ -102,6 +102,16 @@ class LadrunoHS : public NDMaterial {
   int setParameter(const char** argv, int argc, Parameter& param) override;
   int updateParameter(int parameterID, Information& info) override;
 
+  // Ladruno WP-258: re-entrant on DIFFERENT instances for every option (HS,
+  // -smallStrain, -implex, -sigmat, -sig0/-sig03; every dimension mode). The
+  // kernel (LadrunoHSKernel.h) is pure -- stack arrays and a const HSParams& --
+  // the return buffers are per instance, IMPL-EX state is per instance, nothing
+  // on these paths writes opserr or throws, and the tag-stage registry is read
+  // through an atomic generation (written only on the main thread). Audit:
+  // Ladruno_implementation/258_thread_safe_soil_materials.md section 2.3.
+  bool ladrunoThreadSafeUpdate(void) const override { return true; }
+  bool ladrunoThreadSafeForm(void) const override { return true; }
+
   Response* setResponse(const char** argv, int argc, OPS_Stream& s) override;
   int getResponse(int responseID, Information& matInfo) override;
 
@@ -137,6 +147,7 @@ class LadrunoHS : public NDMaterial {
   double Dtan_n_[6][6];       // 6x6 committed algorithmic tangent
   bool   refused_;            // WP-99 commit-refusal latch when setTrialStrain fails
   bool   registered_in_tag_map_;  // tracks ref-counted registration in ladrunoHSTagStageMap()
+  unsigned long long stageGenSeen_;  // Ladruno WP-258: registry generation at this instance's last sync
 
   // Element-facing return buffers (sized to ncomp_):
   Vector stressOut_;

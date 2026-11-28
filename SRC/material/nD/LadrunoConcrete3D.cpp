@@ -42,6 +42,8 @@
 #include <string.h>
 #include <math.h>
 #include <elementAPI.h>
+#include <LadrunoThreads.h>   // Ladruno WP-259: LadrunoOutputGuard (opserr from a threaded loop)
+#include <atomic>             // Ladruno WP-259: the return-map warning budget
 
 using Ladruno::Concrete3D::Params;
 using Ladruno::Concrete3D::State;
@@ -54,9 +56,13 @@ using Ladruno::Concrete3D::State;
 // builds, wipes, and rebuilds several models IN ONE PROCESS (measured: apeGmsh live tests, pytest
 // modules) does not have an early model's spam silently swallow a later model's real diagnostics --
 // same failure mode WP-104 fixed for LadrunoSANISAND's implexRefusals census.
-static long s_returnMapWarnPrinted = 0;
+// WP-259: atomic, claimed with fetch_add in integrate(), so threaded instances (the WP-107 / WP-192
+// element loops) neither race on it nor overshoot the 20-line budget; serially the printed lines
+// and their order are exactly the pre-WP-259 ones. The claim saturates once the budget is spent
+// (no fetch_add past 20), so the count cannot wrap on a 32-bit long however many returns fail.
+static std::atomic<long> s_returnMapWarnPrinted(0);
 
-void ladrunoConcrete3dResetWarningBudget(void) { s_returnMapWarnPrinted = 0; }
+void ladrunoConcrete3dResetWarningBudget(void) { s_returnMapWarnPrinted.store(0); }
 
 // ===========================================================================
 //  OPS parser
@@ -527,12 +533,24 @@ int LadrunoConcrete3D::integrate(bool doTangent)
   if (out.subInfo >= 2) { nSub += 1.0; nSubStep += 1.0; }
   if (lastStatus != 0) {
     nFail += 1.0; nFailStep += 1.0;
-    if (verbose || s_returnMapWarnPrinted < 20)
+    // WP-259: one atomic claim k (the old count) replaces the check-then-increment; k < 20 prints and
+    // k + 1 == 20 prints the suppression line, which is the serial sequence exactly. A spent budget
+    // is not claimed again (saturation: nothing prints past 20 either way). -verbose never touches
+    // the budget, as before. One LadrunoOutputGuard holds both lines, so under threads the
+    // suppression line directly follows the 20th warning.
+    long k = 0;
+    if (!verbose) {
+      k = s_returnMapWarnPrinted.load(std::memory_order_relaxed);
+      if (k < 20) k = s_returnMapWarnPrinted.fetch_add(1);
+    }
+    if (verbose || k < 20) {
+      LadrunoOutputGuard ladrunoOut;
       opserr << "WARNING LadrunoConcrete3D: return map did not converge (tag "
              << this->getTag() << ") - elastic-trial fallback this call\n";
-    if (!verbose && ++s_returnMapWarnPrinted == 20)
-      opserr << "WARNING LadrunoConcrete3D: further return-map warnings suppressed (use -verbose, or "
-             << "getResponse \"returnFailures\" / \"substeps\" per material point)\n";
+      if (!verbose && k + 1 == 20)
+        opserr << "WARNING LadrunoConcrete3D: further return-map warnings suppressed (use -verbose, or "
+               << "getResponse \"returnFailures\" / \"substeps\" per material point)\n";
+    }
   }
   return lastStatus;
 }
@@ -624,14 +642,17 @@ int LadrunoConcrete3D::setTrialStrain(const Vector& e)
     double tol22 = 1.0e-9 * (smag > 1.0 ? smag : 1.0);
     if (fabs(stress6[2]) <= tol22) { s22Converged = true; break; }
     if (fabs(d22) < 1.0e-300) {        // a near-zero pivot with sigma_22 != 0: unconverged, refuse
+      LadrunoOutputGuard ladrunoOut;   // WP-259: opserr is shared under threads
       opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation pivot vanished (tag "
              << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
       break;
     }
     strain6[2] -= stress6[2] / d22;
-    if (it == maxIt - 1)
+    if (it == maxIt - 1) {
+      LadrunoOutputGuard ladrunoOut;   // WP-259
       opserr << "WARNING LadrunoConcrete3D: sigma_22 condensation did not converge (tag "
              << this->getTag() << ", |s22|=" << fabs(stress6[2]) << ")\n";
+    }
   }
   this->condenseTangent();
   // #877 x #1038 reconciliation (r4 merge): refusal rule B is the base truth -- the call refuses when the
@@ -776,9 +797,11 @@ int LadrunoConcrete3D::commitState(void)
   kdc_n = kdc_t; kdc1_n = kdc1_t; kdc2_n = kdc2_t;
   sigtmax_n = sigtmax_t; sigcmax_n = sigcmax_t;   // P2g monotone drive history
   eqc_n = eqc_t; etp_n = etp_t;                   // B2 compressive drive history
-  if (verbose && (nSubStep > 0.0 || nFailStep > 0.0))
+  if (verbose && (nSubStep > 0.0 || nFailStep > 0.0)) {
+    LadrunoOutputGuard ladrunoOut;   // WP-259: the commit loop threads (stdBrick, ASDShellQ4)
     opserr << "LadrunoConcrete3D (tag " << this->getTag() << ") commit: " << nSubStep
            << " sub-incremented returns, " << nFailStep << " final return failures since the last commit\n";
+  }
   nSubStep = nFailStep = 0.0;
   wt_n = wt_t; wc_n = wc_t; dwt_n = dwt_t; dwc_n = dwc_t; dtn_n = dtn_t;
   for (int i = 0; i < 6; i++) depl_n[i] = depl_t[i];
@@ -869,6 +892,7 @@ double LadrunoConcrete3D::compressiveEpsFc(double lch)
     gcEpsFc = Ladruno::Concrete3D::epsFcFromGc(gcEfc, gcG, Gc, lch, &st);
     gcLch = lch;
     if (st != 0 && !gcWarned) {
+      LadrunoOutputGuard ladrunoOut;   // WP-259: reached from integrate() on a worker
       opserr << "WARNING LadrunoConcrete3D (tag " << this->getTag() << "): Gc/lch = " << Gc / lch
              << " is " << (st < 0 ? "BELOW" : "ABOVE") << " the calibrated range [" << gcG[0] << ", "
              << gcG[7] << "] (energy per unit volume); eps_fc clamped to " << gcEpsFc
