@@ -101,10 +101,12 @@ struct LadrunoSasOptions {                                                  // L
     double tcPsep;         // Ladruno WP-152: tension cutoff: a code 4/9 refusal at committed p0 < tcPsep separates (0 = tension only)
     double tcPcontact;     // Ladruno WP-152: tension cutoff: re-contact pressure (> tcPsep, > p_min); <= 0 = cutoff OFF (DEFAULT)
     double tcP0Max;        // Ladruno WP-152 (review #2): a tension refusal separates only at committed p0 <= tcP0Max (else it refuses)
+    double plasticExp;     // Ladruno WP-229 (TIMs F26): nh in b0 = G0 h0 (1 - ch e) (p/p_at)^-nh; 0.5 = DM04 (DEFAULT, the sqrt line untouched)
     LadrunoSasOptions() : errFloor(-1.0), alphaBoundTol(0.1), alphaEntryTol(2.0), alphaProject(0),
                           alphaInMode(0), errorVars(0),   // Ladruno WP-129
                           hFloor(0.0), reseatHyst(0.0), softCap(0.0),   // Ladruno WP-151
-                          tcPsep(0.0), tcPcontact(0.0), tcP0Max(0.0) {}   // Ladruno WP-152
+                          tcPsep(0.0), tcPcontact(0.0), tcP0Max(0.0),   // Ladruno WP-152
+                          plasticExp(0.5) {}   // Ladruno WP-229
 };   // Ladruno WP-129
 enum {                                                                      // Ladruno WP-129
     LSAS_UPDATES = 0, LSAS_ELASTIC, LSAS_SUBSTEPS, LSAS_ACCEPTED, LSAS_REJ_ERR,   // Ladruno WP-129
