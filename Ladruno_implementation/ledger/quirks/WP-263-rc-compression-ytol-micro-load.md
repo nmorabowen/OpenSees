@@ -3,6 +3,7 @@ wp: WP-263
 title: "LadrunoRCConcrete: a principal stress of -1e-12 loads the compression backbone where q is clamped, and the tangent there is garbage"
 date: 2026-11-28
 status: "open"
+pr: "#1181"
 ---
 ### RC exact tangent d22 ~ 0 (or x1000) at a plane-stress root: the compression backbone "loads" at x < YTOL/E
 

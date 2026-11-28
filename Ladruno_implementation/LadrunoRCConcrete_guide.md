@@ -1044,7 +1044,7 @@ tonne/mm³, N (the apeGmsh/STKO convention).
 | **3a** | `-tensStiff` | post-crack `σ_xx==σ_ts(ε1)`; equibiaxial both normals; PlateFiber `Nxx==σ_ts·h`; FD (g++) | numpy T1 + g++ + `…_tensstiff.py` | #273 |
 | **3b** | `-autoRegularization` | `g_reg·lch` mesh-objective; no-op at `lch=lch_ref`; steep-damage monotone (g++) | numpy R1 + g++ + `…_reg.py` | #277 |
 | **3b-struct** | structural objectivity | Bažant `ASDShellQ4` bar: energy mesh-objective with reg, halves without (negative control) | `…_meshobj.py` | #281 |
-| **WP-263** | `-dualTangent` | dual = FD of the map at 1e-11 to 3e-10 over 11 state classes; stress and history bit-identical to the default; element `K` = FD with it, not without | `…_dual_cpp.py` (g++) + `…_dual.py` | WP-263 |
+| **WP-263** | `-dualTangent` | dual = FD of the map at 1e-11 to 3e-10 over 11 state classes; stress and history bit-identical to the default; element `K` = FD with it, not without | `…_dual_cpp.py` (g++) + `…_dual.py` | #1181 |
 | **4b** | finite-strain view | `σ==(small-strain RC at ½lnB)/J`; elastic `K==FD`; isotropic objectivity ×2; det F guard | `test_ladrunoRCFiniteStrain.py` | #282 |
 
 > [!note] The load-bearing gate is β-on-the-strength-axis

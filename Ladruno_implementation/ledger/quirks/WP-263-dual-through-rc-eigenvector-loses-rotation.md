@@ -3,6 +3,7 @@ wp: WP-263
 title: "A Dual pushed through the RC eigen formulas loses the principal-axis rotation exactly at gxy = 0 and at repeated principals"
 date: 2026-11-28
 status: "open"
+pr: "#1181"
 ---
 ### Dual-number RC tangent misses the shear column at gxy = 0, or is NaN / basis-dependent at equal principals
 
