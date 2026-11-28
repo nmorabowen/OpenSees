@@ -1,6 +1,7 @@
 ---
 wp: WP-262
 title: "A dual number carried through a local Newton has the derivative of the PREVIOUS iterate"
+pr: "#1172"
 date: 2026-11-27
 status: "open"
 ---
