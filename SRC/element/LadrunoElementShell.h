@@ -56,6 +56,7 @@
 #include <Element.h>
 #include <Response.h>
 #include <OPS_Stream.h>
+#include <classTags.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -168,17 +169,54 @@ inline bool isMaterialPointToken(const char *token)
 inline void addNodalInertia(Vector &f, const Matrix &M, Node **nodes, int nen, int ndf,
                             bool diagOnly, Vector &a)
 {
+  // Ladruno (WP-260b / ADR-68 T7): skip M*a when every nodal trial acceleration is
+  // identically 0.0 (explicit CDL/ExplicitBathe residual pass at Azero).
+  bool allZero = true;
   for (int n = 0; n < nen; n++) {
     const Vector &accel = nodes[n]->getTrialAccel();
-    for (int j = 0; j < ndf; j++)
-      a(n * ndf + j) = accel(j);
+    for (int j = 0; j < ndf; j++) {
+      const double aj = accel(j);
+      a(n * ndf + j) = aj;
+      if (aj != 0.0)
+        allZero = false;
+    }
   }
+  if (allZero)
+    return;
   if (diagOnly) {
     const int nd = nen * ndf;
     for (int i = 0; i < nd; i++)
       f(i) += M(i, i) * a(i);
   } else
     f.addMatrixVector(1.0, M, a, 1.0);
+}
+
+// Ladruno (WP-260b): returns true ONLY for NDMaterial classes whose getInitialTangent()
+// is guaranteed time- and state-invariant (depends solely on immutable elastic constants
+// unless mutated via Element::setParameter()). Pressure/stress-dependent soils (LadrunoHS,
+// PDMY*, SANISAND, PM4Sand/Silt, etc.), stage-switched materials, and wrapper materials
+// are excluded so bulk-viscosity c_d caching is strictly 0-ULP G-BYTE for every material.
+inline bool hasConstantInitialTangent(const NDMaterial *mat)
+{
+  if (mat == 0)
+    return false;
+  switch (mat->getClassTag()) {
+    case ND_TAG_ElasticIsotropicThreeDimensional:
+    case ND_TAG_ElasticIsotropicPlaneStrain2d:
+    case ND_TAG_ElasticIsotropicPlaneStress2d:
+    case ND_TAG_ElasticIsotropicAxiSymm:
+    case ND_TAG_J2ThreeDimensional:
+    case ND_TAG_J2PlaneStrain:
+    case ND_TAG_J2PlaneStress:
+    case ND_TAG_J2AxiSymm:
+    case ND_TAG_LadrunoJ2:
+    case ND_TAG_LadrunoConcrete3D:
+    case ND_TAG_LadrunoRCConcrete:
+    case ND_TAG_ASDConcrete3DMaterial:
+      return true;
+    default:
+      return false;
+  }
 }
 
 // ---- response finalise (setResponse) ---------------------------------------

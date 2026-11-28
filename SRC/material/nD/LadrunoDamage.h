@@ -100,9 +100,14 @@ inline double triaxialityRv(double eta, double nu)
 // Mises stress and sigmaH = effective hydrostatic stress. (Equivalent to
 // sigma~_eq^2/(2E)*R_v; this form avoids the eta = sigmaH/q division and its q->0
 // singularity.) Returns 0 if E <= 0.
-inline double damageReleaseRate(double qEff, double sigHeff, double nu, double E)
+//
+// WP-262: the stress-dependent functions below are templated on the scalar T
+// (double in production; a ladruno_dual::Dual to differentiate through them).
+// T = double performs exactly the operations of the former double-only code.
+template <class T>
+inline T damageReleaseRate(const T& qEff, const T& sigHeff, double nu, double E)
 {
-  if (E <= 0.0) return 0.0;
+  if (E <= 0.0) return T(0.0);
   const double a = (2.0/3.0)*(1.0 + nu);
   const double b = 3.0*(1.0 - 2.0*nu);
   return (a*qEff*qEff + b*sigHeff*sigHeff)/(2.0*E);
@@ -113,13 +118,15 @@ inline double damageReleaseRate(double qEff, double sigHeff, double nu, double E
 //   pN, pNp1 : accumulated plastic strain at start / end of step
 // Returns the RAW increment (NOT clamped to Dc -- the caller clamps so it can also
 // flag rupture). Guards: r > 0, Y >= 0, dp_dmg >= 0.
-inline double damageIncrement(double Y, double pN, double pNp1,
-                              const DamageParams& dp)
+// (Comparisons on a Dual read its value: the branch structure is the double one.)
+template <class T>
+inline T damageIncrement(const T& Y, const T& pN, const T& pNp1,
+                         const DamageParams& dp)
 {
-  if (!dp.on || dp.r <= 0.0 || Y <= 0.0) return 0.0;
-  const double pStart = (pN > dp.pD) ? pN : dp.pD;   // max(pN, pD)
-  const double dpDmg  = pNp1 - pStart;
-  if (dpDmg <= 0.0) return 0.0;
+  if (!dp.on || dp.r <= 0.0 || Y <= 0.0) return T(0.0);
+  const T pStart = (pN > dp.pD) ? pN : T(dp.pD);   // max(pN, pD)
+  const T dpDmg  = pNp1 - pStart;
+  if (dpDmg <= 0.0) return T(0.0);
   return dp.lchScale * pow(Y/dp.r, dp.s) * dpDmg;
 }
 
@@ -128,19 +135,20 @@ inline double damageIncrement(double Y, double pN, double pNp1,
 //   ddD_dY   = s (Y/r)^(s-1) (1/r) dp_dmg = s * dD / Y      (Y > 0)
 //   ddD_dp   = (Y/r)^s                                       (dp_dmg > 0 region)
 // Both zero outside the damaging region (matches damageIncrement returning 0).
-inline void damageIncrementPartials(double Y, double pN, double pNp1,
+template <class T>
+inline void damageIncrementPartials(const T& Y, const T& pN, const T& pNp1,
                                     const DamageParams& dp,
-                                    double& ddD_dY, double& ddD_dp)
+                                    T& ddD_dY, T& ddD_dp)
 {
   ddD_dY = 0.0;
   ddD_dp = 0.0;
   if (!dp.on || dp.r <= 0.0 || Y <= 0.0) return;
-  const double pStart = (pN > dp.pD) ? pN : dp.pD;
-  const double dpDmg  = pNp1 - pStart;
+  const T pStart = (pN > dp.pD) ? pN : T(dp.pD);
+  const T dpDmg  = pNp1 - pStart;
   if (dpDmg <= 0.0) return;
-  const double g = dp.lchScale * pow(Y/dp.r, dp.s);  // lchScale (Y/r)^s
+  const T g = dp.lchScale * pow(Y/dp.r, dp.s);  // lchScale (Y/r)^s
   ddD_dp = g;
-  ddD_dY = dp.s * g / Y * dpDmg;                     // lchScale s (Y/r)^(s-1)(1/r) dp_dmg
+  ddD_dY = dp.s * g / Y * dpDmg;                // lchScale s (Y/r)^(s-1)(1/r) dp_dmg
 }
 
 } // namespace Ladruno

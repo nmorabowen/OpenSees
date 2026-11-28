@@ -213,6 +213,8 @@ void *OPS_ExplicitBathe(void) {
     bool useSMS = false, useConsistent = false;
     double dtTarget = 0.0, maxAddedMassFrac = 0.05;
     double pcgTol = 1.0e-10;    int pcgMaxIt = 200;
+    bool massCache = true;      // Ladruno (WP-260b / ADR-67 P-NEW-1)
+    bool commitSolve = false;   // Ladruno (WP-260b / ADR-67 P-NEW-2)
 
     // p is the leading numeric positional. Read it with the typed getter so it
     // works under BOTH Tcl and OpenSeesPy (OPS_GetString mis-reads a numeric arg).
@@ -305,6 +307,10 @@ void *OPS_ExplicitBathe(void) {
             if (OPS_GetNumRemainingInputArgs() > 0) { int nd = 1; OPS_GetDoubleInput(&nd, &pcgTol); }
         } else if (strcmp(arg, "-pcgMaxIt") == 0) {
             if (OPS_GetNumRemainingInputArgs() > 0) { int nd = 1; OPS_GetIntInput(&nd, &pcgMaxIt); }
+        } else if (strcmp(arg, "-noMassCache") == 0) {
+            massCache = false;
+        } else if (strcmp(arg, "-commitSolveState") == 0) {
+            commitSolve = true;
         } else {
             opserr << "WARNING ExplicitBathe - unknown option " << arg
                    << " (ignored)\n";
@@ -354,13 +360,17 @@ void *OPS_ExplicitBathe(void) {
         }
     }
 
-    TransientIntegrator *theIntegrator =
+    ExplicitBathe *theIntegrator =
         new ExplicitBathe(p, compute_critical_timestep, verbose, cflAbort,
                           divergenceFactor, cflUseTangent, cflRecomputeEvery, lumping,
                           useLNVD, alpha_flac, useSMS, useConsistent,
                           dtTarget, maxAddedMassFrac, pcgTol, pcgMaxIt);
-    if (theIntegrator == 0)
+    if (theIntegrator == 0) {
         opserr << "WARNING - out of memory creating ExplicitBathe integrator\n";
+        return 0;
+    }
+    theIntegrator->setMassCacheEnabled(massCache);
+    theIntegrator->setCommitSolveState(commitSolve);
     return theIntegrator;
 }
 
@@ -375,6 +385,8 @@ void *OPS_ExplicitBatheLNVD(void) {
     bool cflUseTangent = false;
     int cflRecomputeEvery = 0;
     CTSLumping lumping = CTSLumping::RowSum;
+    bool massCache = true;
+    bool commitSolve = false;
 
     int navail = OPS_GetNumRemainingInputArgs();
     if (navail >= 2) {
@@ -432,6 +444,10 @@ void *OPS_ExplicitBatheLNVD(void) {
                 else opserr << "WARNING ExplicitBatheLNVD - unknown -lump " << m
                             << " (use rowsum|diagonal|hrz; keeping rowsum)\n";
             }
+        } else if (strcmp(arg, "-noMassCache") == 0) {
+            massCache = false;
+        } else if (strcmp(arg, "-commitSolveState") == 0) {
+            commitSolve = true;
         } else {
             opserr << "WARNING ExplicitBatheLNVD - unknown option " << arg
                    << " (ignored)\n";
@@ -449,12 +465,16 @@ void *OPS_ExplicitBatheLNVD(void) {
         return 0;
     }
 
-    TransientIntegrator *theIntegrator =
+    ExplicitBathe *theIntegrator =
         new ExplicitBathe(p, compute_critical_timestep, verbose, cflAbort,
                           divergenceFactor, cflUseTangent, cflRecomputeEvery, lumping,
                           /*useLNVD*/true, alpha_flac);
-    if (theIntegrator == 0)
+    if (theIntegrator == 0) {
         opserr << "WARNING - out of memory creating ExplicitBatheLNVD integrator\n";
+        return 0;
+    }
+    theIntegrator->setMassCacheEnabled(massCache);
+    theIntegrator->setCommitSolveState(commitSolve);
     return theIntegrator;
 }
 
@@ -500,6 +520,8 @@ static void *OPS_ExplicitBatheSMS_impl(const char *name, bool isLNVD, bool isCon
     CTSLumping lumping = CTSLumping::Diagonal;   // matches the system Diagonal run
     double pcgTol = 1.0e-10;
     int    pcgMaxIt = 200;
+    bool   massCache = true;
+    bool   commitSolve = false;
 
     while (OPS_GetNumRemainingInputArgs() > 0) {
         char argBuf[128];
@@ -545,18 +567,26 @@ static void *OPS_ExplicitBatheSMS_impl(const char *name, bool isLNVD, bool isCon
                 if (!ebIsNumber(peek))
                     OPS_ResetCurrentInputArg(-1);
             }
+        } else if (strcmp(arg, "-noMassCache") == 0) {
+            massCache = false;
+        } else if (strcmp(arg, "-commitSolveState") == 0) {
+            commitSolve = true;
         } else {
             opserr << "WARNING " << name << " - unknown option " << arg << " (ignored)\n";
         }
     }
 
-    TransientIntegrator *theIntegrator =
+    ExplicitBathe *theIntegrator =
         new ExplicitBathe(p, /*cct*/1, verbose, /*cflAbort*/false, /*div*/0.0,
                           cflUseTangent, /*cflRecompute*/0, lumping,
                           isLNVD, alpha_flac, /*useSMS*/true, isConsistent,
                           dtTarget, maxAddedMassFrac, pcgTol, pcgMaxIt);
-    if (theIntegrator == 0)
+    if (theIntegrator == 0) {
         opserr << "WARNING - out of memory creating " << name << " integrator\n";
+        return 0;
+    }
+    theIntegrator->setMassCacheEnabled(massCache);
+    theIntegrator->setCommitSolveState(commitSolve);
     return theIntegrator;
 }
 
@@ -631,15 +661,18 @@ ExplicitBathe::ExplicitBathe(int classTag, double _p, int compute_critical_times
       useLNVD(useLNVD_), alpha_flac(alpha_flac_), lastUnbalanceNorm(-1.0),
       committedUnbalanceNorm(-1.0),
       lnvdStepEnergy(0.0), lnvdInSubStep2(false),   // Ladruno (ADR-69)
+      lnvdDamped(0),                                // Ladruno (WP-260b)
       // Ladruno (W1-E2): SMS (consistent requires sms)
       useSMS(useSMS_), useConsistent(useSMS_ && useConsistent_),
       dtTarget(dtTarget_), maxAddedMassFrac(maxAddedMassFrac_),
       smsEffectiveLimit(0.0),
       lumpingSMS(lumping_), useTangentSMS(cflUseTangent_),
       pcgTol(pcgTol_), pcgMaxIt(pcgMaxIt_),
-      injected(), scaled(false), appliedDomain(0), blocks(0),
+      injected(), scaled(false), appliedDomain(0), blocks(0), pcgScratch(0),
       warnedLimitations(false), warnedSolver(false), warnedPCG(false),
-      theProjector(0), massBuilt(false)   // Ladruno (ADR-30 P5)
+      theProjector(0), massBuilt(false),            // Ladruno (ADR-30 P5)
+      useMassCache(true), massTangentValid(false), massCacheNoted(false),
+      commitSolveState(false), commitSolveStateNoted(false)
 {
     q1 = (1.0 - 2.0*p) / (2.0*p*(1.0 - p));
     q2 = 0.5 - p * q1;
@@ -672,6 +705,8 @@ ExplicitBathe::~ExplicitBathe() {
     if (useConsistent)
         Ladruno::MassScalingEnergyRegistry::instance().clear(this);
     if (blocks != 0) delete blocks;
+    if (pcgScratch != 0) delete pcgScratch;
+    if (lnvdDamped != 0) delete lnvdDamped;
 
     if (U_t) delete U_t;
     if (V_t) delete V_t;
@@ -693,6 +728,9 @@ void ExplicitBathe::setConstraintProjector(LadrunoConstraintProjector *pr)
 {
     theProjector = pr;
     massBuilt = false;
+    // Ladruno (WP-260b / ADR-67 P-NEW-1, gate item 1): keep the two mass-re-read
+    // latches inseparable so buildMass never reads factored 1/M.
+    massTangentValid = false;
 }
 
 // =====================================================================================
@@ -860,10 +898,13 @@ int ExplicitBathe::refineAccel(Vector &a)
 {
     if (!useSMS || !useConsistent || blocks == 0)
         return 0;
+    if (pcgScratch == 0)
+        pcgScratch = new Ladruno::ConsistentPCGScratch();
     return Ladruno::applyConsistentRefine(*blocks, this->getLinearSOE(), a,
                                           pcgTol, pcgMaxIt, verbose,
                                           warnedSolver, warnedPCG,
-                                          "ExplicitBathe(-sms -consistent)");
+                                          "ExplicitBathe(-sms -consistent)",
+                                          pcgScratch);
 }
 
 // =====================================================================================
@@ -892,19 +933,36 @@ void ExplicitBathe::addLocalDamping(void) {
     int n = B.Size();
     if (n == 0) return;
 
-    // gather the global trial velocity at the instant being solved
-    Vector vglob(n);
-    vglob.Zero();
-    DOF_GrpIter &theDOFs = theModel->getDOFs();
-    DOF_Group *dofPtr;
-    while ((dofPtr = theDOFs()) != 0) {
-        const ID &id = dofPtr->getID();
-        const Vector &v = dofPtr->getTrialVel();
-        for (int i = 0; i < id.Size(); ++i) {
-            int loc = id(i);
-            if (loc >= 0 && loc < n)
-                vglob(loc) = v(i);
+    // Ladruno (WP-260b): hoisted -lnvd buffer + V_fake fast read.
+    // Both Noh-Bathe sub-steps call setResponse(*U, *V_fake, *A) immediately before
+    // formUnbalance(), so V_fake ALREADY holds the exact global trial velocity vector
+    // for all active equations — avoiding a per-substep Vector(n) heap allocation and
+    // an O(numNodes) DOF_GrpIter walk. Fall back to the DOF gather only if V_fake is
+    // absent or mismatched in size.
+    Vector vglobFallback;
+    const Vector *vsrc = 0;
+    if (V_fake != 0 && V_fake->Size() == n) {
+        vsrc = V_fake;
+    } else {
+        vglobFallback = Vector(n);
+        vglobFallback.Zero();
+        DOF_GrpIter &theDOFs = theModel->getDOFs();
+        DOF_Group *dofPtr;
+        while ((dofPtr = theDOFs()) != 0) {
+            const ID &id = dofPtr->getID();
+            const Vector &v = dofPtr->getTrialVel();
+            for (int i = 0; i < id.Size(); ++i) {
+                int loc = id(i);
+                if (loc >= 0 && loc < n)
+                    vglobFallback(loc) = v(i);
+            }
         }
+        vsrc = &vglobFallback;
+    }
+
+    if (lnvdDamped == 0 || lnvdDamped->Size() != n) {
+        if (lnvdDamped != 0) delete lnvdDamped;
+        lnvdDamped = new Vector(n);
     }
 
     // r_i <- r_i - alpha*|r_i|*sign(v_i)  (opposes motion, vanishes at v->0)
@@ -914,12 +972,15 @@ void ExplicitBathe::addLocalDamping(void) {
     // scratch; commit() publishes it (O(dt)-accurate diagnostic).
     const double dtSub = lnvdInSubStep2 ? (1.0 - p) * deltaT : p * deltaT;
     double lnvdPower = 0.0;
-    Vector damped(B);
+    Vector &damped = *lnvdDamped;
+    const Vector &vglob = *vsrc;
     for (int i = 0; i < n; ++i) {
+        double bi = B(i);
+        double abi = std::abs(bi);
         double v = vglob(i);
         double sgn = (v > 0.0) ? 1.0 : ((v < 0.0) ? -1.0 : 0.0);
-        damped(i) = B(i) - alpha_flac * std::abs(B(i)) * sgn;
-        lnvdPower += alpha_flac * std::abs(B(i)) * std::abs(v);   // Ladruno (ADR-69)
+        damped(i) = bi - alpha_flac * abi * sgn;
+        lnvdPower += alpha_flac * abi * std::abs(v);   // Ladruno (ADR-69)
     }
     lnvdStepEnergy += lnvdPower * dtSub;   // Ladruno (ADR-69)
     theSOE->setB(damped);
@@ -933,6 +994,9 @@ int ExplicitBathe::domainChanged() {
     // Ladruno (W1-E2, -sms consistent): drop the stale blocks before rebuilding.
     if (useSMS && useConsistent && blocks != 0)
         blocks->clear();
+    // Ladruno (WP-260b / ADR-67 P1.1): invalidate cached MPI multiplicity weights.
+    if (pcgScratch != 0)
+        pcgScratch->invalidate();
 
     AnalysisModel *theModel = this->getAnalysisModel();
     LinearSOE *theLinSOE = this->getLinearSOE();
@@ -963,6 +1027,7 @@ int ExplicitBathe::domainChanged() {
         if (U_tdt) delete U_tdt;
         if (V_tdt) delete V_tdt;
         if (A_tdt) delete A_tdt;
+        if (lnvdDamped) delete lnvdDamped;
 
         // Create new vectors
         U_t = new Vector(size);
@@ -975,10 +1040,11 @@ int ExplicitBathe::domainChanged() {
         U_tdt = new Vector(size);
         V_tdt = new Vector(size);
         A_tdt = new Vector(size);
+        lnvdDamped = new Vector(size);
 
         // Verify allocation was successful
         if (!U_t || !V_t || !A_t || !U_tpdt || !V_tpdt || !V_fake ||
-            !A_tpdt || !U_tdt || !V_tdt || !A_tdt) {
+            !A_tpdt || !U_tdt || !V_tdt || !A_tdt || !lnvdDamped) {
             opserr << "ExplicitBathe::domainChanged - out of memory\n";
             return -1;
         }
@@ -1027,6 +1093,10 @@ int ExplicitBathe::domainChanged() {
     // committed (u0, v0) against every constraint group — U_t/V_t hold them now.
     // enforceIC() needs no mass (it uses L, delta only), so it is safe here.
     massBuilt = false;
+    // Ladruno (WP-260b / ADR-67 P-NEW-1): every M-changing / SOE-resizing event
+    // funnels through domainChanged() (contact re-emission, element removal/birth,
+    // staged activation, SMS injection) — reassemble the mass tangent on next form.
+    massTangentValid = false;
     if (theProjector != 0) {
         int nViol = theProjector->enforceIC(*U_t, *V_t);
         if (nViol > 0) {
@@ -1404,15 +1474,52 @@ int ExplicitBathe::update(const Vector &U) {
     V_tdt->addVector(1.0, *A_tpdt, a6);    // += (0.5+q1) * a_{t+p*dt} * (1-p)*dt
     V_tdt->addVector(1.0, *A_tdt, a7);     // += q2 * a_{t+dt} * (1-p)*dt
 
-    // Set final response
+    // Set final response — LOAD-BEARING even under -commitSolveState so committed
+    // nodal output, recorders, KE, contact -visc, and brick viscous-hourglass commit
+    // all read the full-step (U_tdt, V_tdt, A_tdt).
     theModel->setResponse(*U_tdt, *V_tdt, *A_tdt);
 
-    if (theModel->updateDomain() < 0) {
-        opserr << "ExplicitBathe::update() - failed to update the domain\n";
-        return -4;
+    if (!commitSolveState) {
+        if (theModel->updateDomain() < 0) {
+            opserr << "ExplicitBathe::update() - failed to update the domain\n";
+            return -4;
+        }
+    } else if (!commitSolveStateNoted) {
+        commitSolveStateNoted = true;
+        opserr << "ExplicitBathe: -commitSolveState — element state is committed at "
+                  "the sub-step-2 solve velocity V_fake (skipping the 3rd updateDomain "
+                  "pass at unchanged U_tdt). Bit-identical for rate-independent "
+                  "materials; rate-dependent materials (Viscous-type) or velocity-reading "
+                  "elements (e.g. LadrunoCPML) commit a V_fake-velocity state.\n";
     }
 
     return 0;
+}
+
+// Ladruno (WP-260b / ADR-67 P-NEW-1): constant-mass tangent cache (ported from CDL).
+// The assembled tangent is pure M (getCFactor()==0), constant between domainChanged /
+// setConstraintProjector / revertToLastStep / recvSelf events. Skipping reassembly
+// leaves the Diagonal SOE's factored-in-place 1/M live (G-BYTE bit-identical).
+int ExplicitBathe::formTangent(int statFlag) {
+    if (useMassCache && massTangentValid) {
+        statusFlag = statFlag;   // hygiene: mirror base (ADR-67 gate item 5)
+        return 0;
+    }
+    int res = this->TransientIntegrator::formTangent(statFlag);
+    if (res == 0 && useMassCache) {
+        massTangentValid = true;
+        if (!massCacheNoted) {
+            massCacheNoted = true;
+            AnalysisModel *theModel = this->getAnalysisModel();
+            Domain *theDomain = (theModel != 0) ? theModel->getDomainPtr() : 0;
+            if (theDomain != 0 && theDomain->getNumParameters() > 0)
+                opserr << "ExplicitBathe: constant-mass tangent cache is ON and "
+                          "the model declares parameters. A mid-run updateParameter that "
+                          "changes a DENSITY will NOT be picked up - use -noMassCache (or "
+                          "trigger a domainChange) for mid-run density updates.\n";
+        }
+    }
+    return res;
 }
 
 // Form element tangent matrix (mass matrix for explicit scheme)
@@ -1440,6 +1547,9 @@ int ExplicitBathe::revertToLastStep(void)
 {
     if (U_t == 0)                                 // domainChanged never ran
         return 0;
+    // Ladruno (WP-260b / ADR-67 P-NEW-1, gate item 1): clear mass cache on revert
+    // so any retry re-forms M cleanly (coupled with projector massBuilt guard).
+    massTangentValid = false;
     AnalysisModel *theModel = this->getAnalysisModel();
     if (theModel == 0)
         return 0;
@@ -1655,6 +1765,9 @@ int ExplicitBathe::recvSelf(int cTag, Channel &theChannel, FEM_ObjectBroker &the
     appliedDomain = 0;
     Ladruno::MassScalingEnergyRegistry::instance().clearNodal(this);   // Ladruno ADR-69 P3
     if (blocks != 0) blocks->clear();
+    if (pcgScratch != 0) pcgScratch->invalidate();
+    massTangentValid = false;
+    massBuilt = false;
     if (useConsistent)
         Ladruno::MassScalingEnergyRegistry::instance().clear(this);
     warnedLimitations = false;

@@ -65,7 +65,7 @@
 #include <vector>
 
 class Domain;
-namespace Ladruno { struct ConsistentBlock; }
+namespace Ladruno { struct ConsistentBlock; struct ConsistentPCGScratch; }
 
 class CentralDifferenceSMSConsistent : public CentralDifferenceLadruno
 {
@@ -101,6 +101,8 @@ private:
 
     std::vector<Ladruno::ConsistentBlock> *blocks;  // per-element scaling blocks (owned;
                                                     //   rebuilt each domainChanged)
+    Ladruno::ConsistentPCGScratch *pcgScratch;      // Ladruno (WP-260b / ADR-67 P1.1):
+                                                    //   reusable PCG + MPI-w scratch
     bool warnedLimitations;   // one-time guard for the limitation disclosures
     bool warnedSolver;        // one-time guard for the non-Diagonal-SOE warning
     bool warnedPCG;           // one-time guard for the PCG non-convergence warning

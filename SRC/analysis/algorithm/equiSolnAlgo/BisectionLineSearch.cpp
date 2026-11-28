@@ -155,8 +155,11 @@ BisectionLineSearch::search(double s0,
     *x = dU;
     theSOE.setX(*x);
     *x *= -compoundFactor;
-    theIntegrator.update(*x);
-    theIntegrator.formUnbalance();
+    // Ladruno (WP-261): check the reset like every other update in this search
+    if (theIntegrator.update(*x) < 0 || theIntegrator.formUnbalance() < 0) {
+      opserr << "WARNING BisectionLineSearch::search() - the Integrator failed resetting the step\n";
+      return -1;
+    }
     return 0; 
   }
 

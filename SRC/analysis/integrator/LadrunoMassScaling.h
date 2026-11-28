@@ -71,6 +71,7 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <cassert>
 #include <cmath>
 #include <functional>   // Ladruno: parallel consistent PCG (ConsistentParOps callbacks)
 
@@ -450,11 +451,62 @@ applyMassScaling(Domain *theDomain, const std::map<int, Vector> &injected, doubl
 //             constrained/fixed (eliminated) — skipped in the mat-vec.
 //   Mbar    : n x n centroidal scaling mass (beta already applied; nonzero only on
 //             same-direction translational DOF pairs). Node-major local-DOF layout.
+//   Ladruno (WP-260b): compact rank-1 per-direction descriptors (beta, ndmE, nn,
+//             dirEqn, dirMass, dirInvMed) allow an O(n) matvec y_a += beta*m_a*(x_a - xbar)
+//             instead of O(n^2) dense Mbar*x, while keeping Mbar intact for the
+//             EnergyBalanceRecorder registry (MassScalingEnergyRegistry).
 struct ConsistentBlock {
     int    eleTag;
     ID     eqn;
     Matrix Mbar;
-    ConsistentBlock(int tag, const ID &e, const Matrix &m) : eleTag(tag), eqn(e), Mbar(m) {}
+    double beta;
+    int    ndmE;
+    int    nn;
+    std::vector<int>    dirEqn;    // [ndmE * nn]: global eqn per (dir, node)
+    std::vector<double> dirMass;   // [ndmE * nn]: lumped nodal mass m_a per (dir, node)
+    std::vector<double> dirInvMed; // [ndmE]:      1 / sum_a m_a (0 if massless dir)
+    ConsistentBlock(int tag, const ID &e, const Matrix &m)
+        : eleTag(tag), eqn(e), Mbar(m), beta(0.0), ndmE(0), nn(0) {}
+};
+
+// Ladruno (WP-260b / ADR-67 P1.1): reusable per-integrator scratch for consistent-SMS
+// refineAccel + consistentPCG/consistentParPCG. Hoists all per-step Vector allocations
+// (r, Ax, z, p, Ap, res) and caches the MPI multiplicity weight vector w = 1/mult per
+// domainChanged() / SOE / size so zero heap allocations and zero redundant halo exchanges
+// occur during time stepping. Must call invalidate() in domainChanged() and recvSelf().
+struct ConsistentPCGScratch {
+    int size;
+    Vector r;
+    Vector Ax;
+    Vector z;
+    Vector p;
+    Vector Ap;
+    Vector res;
+    std::vector<double> w;
+    Vector ones;
+    const void *wSOE;
+    bool wValid;
+
+    ConsistentPCGScratch() : size(0), wSOE(0), wValid(false) {}
+
+    void invalidate(void) {
+        wValid = false;
+        wSOE = 0;
+    }
+
+    void ensureSize(int neq) {
+        if (size != neq) {
+            size = neq;
+            r   = Vector(neq);
+            Ax  = Vector(neq);
+            z   = Vector(neq);
+            p   = Vector(neq);
+            Ap  = Vector(neq);
+            res = Vector(neq);
+            wValid = false;
+            wSOE = 0;
+        }
+    }
 };
 
 // Build the per-element consistent scaling blocks for the given target step. Iterates
@@ -613,15 +665,38 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
             rep.nMismatch++; continue;
         }
 
+        // DEFENSIVE: check feID size BEFORE building the block so rank-1 descriptors
+        // and dense Mbar share the exact same equation map.
+        const ID &feID = fePtr->getID();
+        if (feID.Size() != n) {
+            delete[] base; delete[] ndmOf; delete[] mdiag;
+            rep.nMismatch++; continue;
+        }
+
         // common translational dimension across the element's nodes (min ndm seen).
         int ndmE = ndmOf[0];
         for (int a = 1; a < nn; ++a) if (ndmOf[a] < ndmE) ndmE = ndmOf[a];
 
+        ConsistentBlock blk(ele->getTag(), feID, Mbar);
+        blk.beta = beta;
+        blk.ndmE = ndmE;
+        blk.nn   = nn;
+        blk.dirEqn.resize((size_t)ndmE * (size_t)nn);
+        blk.dirMass.resize((size_t)ndmE * (size_t)nn);
+        blk.dirInvMed.assign((size_t)ndmE, 0.0);
+
         double addedTrans = 0.0;
         for (int d = 0; d < ndmE; ++d) {
             double Med = 0.0;
-            for (int a = 0; a < nn; ++a) Med += mdiag[base[a] + d];
+            for (int a = 0; a < nn; ++a) {
+                int ia = base[a] + d;
+                double ma = mdiag[ia];
+                Med += ma;
+                blk.dirEqn[(size_t)d * (size_t)nn + (size_t)a]  = feID(ia);
+                blk.dirMass[(size_t)d * (size_t)nn + (size_t)a] = ma;
+            }
             if (Med <= 0.0) continue;   // massless direction -> no scaling mass
+            blk.dirInvMed[(size_t)d] = 1.0 / Med;
             for (int a = 0; a < nn; ++a) {
                 double ma = mdiag[base[a] + d];
                 int ia = base[a] + d;
@@ -629,24 +704,16 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
                     double mb = mdiag[base[b] + d];
                     int ib = base[b] + d;
                     double val = beta * (((a == b) ? ma : 0.0) - ma * mb / Med);
-                    Mbar(ia, ib) += val;
+                    blk.Mbar(ia, ib) += val;
                 }
                 addedTrans += beta * (ma - ma * ma / Med);   // diagonal trace contribution
             }
         }
         delete[] base; delete[] ndmOf; delete[] mdiag;
 
-        // DEFENSIVE: the matvec scatters the n x n M_bar through this id, so the id MUST
-        // be the plain node-major map of size n. A surviving element touches no MP node, so
-        // under the standard handlers getID().Size()==n; but guard anyway against any FE-layer
-        // DOF expansion (transformed/exotic handler) -> skip (count nMismatch) rather than
-        // read M_bar out of bounds.
-        const ID &feID = fePtr->getID();
-        if (feID.Size() != n) { rep.nMismatch++; continue; }
-
         // store the block with this element's tag (Ladruno V4 energy conduit) and
-        // equation-number map.
-        blocks.push_back(ConsistentBlock(ele->getTag(), feID, Mbar));
+        // equation-number map + compact rank-1 matvec descriptor (WP-260b).
+        blocks.push_back(std::move(blk));
         if (augmented) { nAugScaled++; rep.nOverlayAugScaled++; }   // overlay-owned element actually scaled (ADR-73 P3b)
         rep.addedMass += addedTrans;
         rep.nScaled++;
@@ -678,6 +745,54 @@ buildMassScalingConsistent(AnalysisModel *theModel, double dtTarget, CTSLumping 
     return rep;
 }
 
+// Ladruno (WP-260b): O(n) rank-1 centroidal M_bar apply for one element block:
+//   (M_bar x)_{a,d} = beta * m_{a,d} * (x_{a,d} - xbar_d),
+//   xbar_d = (sum_{b free} m_{b,d} x_{b,d}) / M_{e,d}.
+// Algebraically identical to dense Mbar * x (G-EQUIV, ~1-2 ULP rounding difference,
+// 12x fewer flops on Hex8). Falls back to dense Mbar if rank-1 descriptors were not built.
+inline void
+consistentBlockAccumulate(const ConsistentBlock &blk, int neq, const Vector &x, Vector &y)
+{
+    if (blk.ndmE > 0 && blk.nn > 0) {
+        const double beta = blk.beta;
+        const int nn = blk.nn;
+        for (int d = 0; d < blk.ndmE; ++d) {
+            const double invMed = blk.dirInvMed[(size_t)d];
+            if (invMed <= 0.0) continue;
+            const int    *eq = blk.dirEqn.data()  + (size_t)d * (size_t)nn;
+            const double *m  = blk.dirMass.data() + (size_t)d * (size_t)nn;
+            double mxSum = 0.0;
+            for (int a = 0; a < nn; ++a) {
+                const int ea = eq[a];
+                if (ea >= 0 && ea < neq)
+                    mxSum += m[a] * x(ea);
+            }
+            const double xbar = mxSum * invMed;
+            for (int a = 0; a < nn; ++a) {
+                const int ea = eq[a];
+                if (ea >= 0 && ea < neq)
+                    y(ea) += beta * m[a] * (x(ea) - xbar);
+            }
+        }
+        return;
+    }
+
+    const ID &id = blk.eqn;
+    const Matrix &Mb = blk.Mbar;
+    int nl = id.Size();
+    for (int a = 0; a < nl; ++a) {
+        int ea = id(a);
+        if (ea < 0 || ea >= neq) continue;
+        double acc = 0.0;
+        for (int b = 0; b < nl; ++b) {
+            int eb = id(b);
+            if (eb < 0 || eb >= neq) continue;
+            acc += Mb(a, b) * x(eb);
+        }
+        y(ea) += acc;
+    }
+}
+
 // Matrix-free apply  y = M_tilde x = (diag) .* x + sum_e M_bar_e x_e.
 //   diagMinv : the SOE diagonal AFTER the in-place factor (DiagonalDirectSolver stores
 //              1/mass), length neq. The lumped diagonal is 1/diagMinv[i]; this is also
@@ -689,23 +804,8 @@ consistentMatVec(const std::vector<ConsistentBlock> &blocks,
 {
     for (int i = 0; i < neq; ++i)
         y(i) = (diagMinv[i] != 0.0 ? (x(i) / diagMinv[i]) : 0.0);   // diag mass = 1/diagMinv
-    for (size_t e = 0; e < blocks.size(); ++e) {
-        const ConsistentBlock &blk = blocks[e];
-        const ID &id = blk.eqn;
-        const Matrix &Mb = blk.Mbar;
-        int nl = id.Size();
-        for (int a = 0; a < nl; ++a) {
-            int ea = id(a);
-            if (ea < 0 || ea >= neq) continue;
-            double acc = 0.0;
-            for (int b = 0; b < nl; ++b) {
-                int eb = id(b);
-                if (eb < 0 || eb >= neq) continue;
-                acc += Mb(a, b) * x(eb);
-            }
-            y(ea) += acc;
-        }
-    }
+    for (size_t e = 0; e < blocks.size(); ++e)
+        consistentBlockAccumulate(blocks[e], neq, x, y);
 }
 
 // Solve M_tilde a = r matrix-free by Jacobi(diag)-preconditioned CG, in place: `a`
@@ -713,15 +813,32 @@ consistentMatVec(const std::vector<ConsistentBlock> &blocks,
 // recovered by the caller) and exits as M_tilde^-1 r. diagMinv = 1/lumped-mass
 // (the SOE factored diagonal = the preconditioner). Returns the iteration count;
 // writes the achieved relative residual to *relResid if non-null.
+// Ladruno (WP-260b / ADR-67 P1.1): optional reusable `scratch` avoids 5 per-step heap allocs.
 inline int
 consistentPCG(const std::vector<ConsistentBlock> &blocks,
               const double *diagMinv, int neq, const Vector &r, Vector &a,
-              double tol = 1.0e-10, int maxit = 200, double *relResid = 0)
+              double tol = 1.0e-10, int maxit = 200, double *relResid = 0,
+              ConsistentPCGScratch *scratch = 0)
 {
-    Vector Ax(neq), z(neq), p(neq), Ap(neq);
+    ConsistentPCGScratch localScratch;
+    ConsistentPCGScratch &sc = scratch ? *scratch : localScratch;
+    if (!scratch) {
+        localScratch.ensureSize(neq);
+    } else {
+        // Caller must pre-size scratch via ensureSize(neq) before filling r (which
+        // may alias sc.r); never reallocate sc.r here.
+        assert(&r != &sc.r || sc.r.Size() == neq);
+        assert(sc.Ax.Size() == neq && sc.z.Size() == neq &&
+               sc.p.Size() == neq && sc.Ap.Size() == neq && sc.res.Size() == neq);
+        if (sc.Ax.Size()  != neq) sc.Ax  = Vector(neq);
+        if (sc.z.Size()   != neq) sc.z   = Vector(neq);
+        if (sc.p.Size()   != neq) sc.p   = Vector(neq);
+        if (sc.Ap.Size()  != neq) sc.Ap  = Vector(neq);
+        if (sc.res.Size() != neq) sc.res = Vector(neq);
+    }
+    Vector &Ax = sc.Ax, &z = sc.z, &p = sc.p, &Ap = sc.Ap, &res = sc.res;
     // start from a = M_lump^-1 r (already in `a` on entry); residual = r - M_tilde a
     consistentMatVec(blocks, diagMinv, neq, a, Ax);
-    Vector res(neq);
     for (int i = 0; i < neq; ++i) res(i) = r(i) - Ax(i);
     for (int i = 0; i < neq; ++i) z(i) = diagMinv[i] * res(i);
     p = z;
@@ -778,6 +895,8 @@ struct ConsistentParOps {
     const double *w;                          // length neq; w[i]=1/mult (1 if non-shared). null => all ones
     std::function<void(double *, int)> assembleShared;  // sum v[0..n) shared entries across ranks, in place. null => no-op
     std::function<double(double)>      globalSum;        // sum a scalar across ranks. null => identity
+    // Ladruno (WP-260b): optional packed 2-double Allreduce. null => falls back to two globalSum calls.
+    std::function<void(double, double, double &, double &)> globalSum2;
     ConsistentParOps() : w(0) {}
 };
 
@@ -791,6 +910,20 @@ consistentParDot(const Vector &x, const Vector &y, int neq, const ConsistentParO
     return ops.globalSum ? ops.globalSum(s) : s;
 }
 
+inline void
+consistentParReduce2(double a, double b, double &ga, double &gb, const ConsistentParOps &ops)
+{
+    if (ops.globalSum2) {
+        ops.globalSum2(a, b, ga, gb);
+    } else if (ops.globalSum) {
+        ga = ops.globalSum(a);
+        gb = ops.globalSum(b);
+    } else {
+        ga = a;
+        gb = b;
+    }
+}
+
 // y = M_tilde x  (distributed). x must be consistent (identical on every rank) at
 // shared DOFs on entry; y is consistent at shared DOFs on exit.
 inline void
@@ -802,23 +935,8 @@ consistentParMatVec(const std::vector<ConsistentBlock> &blocks, const double *di
         double diag = (diagMinv[i] != 0.0) ? (x(i) / diagMinv[i]) : 0.0;
         y(i) = (w ? w[i] : 1.0) * diag;       // diagonal weighted -> assembled to full once
     }
-    for (size_t e = 0; e < blocks.size(); ++e) {
-        const ConsistentBlock &blk = blocks[e];
-        const ID &id = blk.eqn;
-        const Matrix &Mb = blk.Mbar;
-        int nl = id.Size();
-        for (int a = 0; a < nl; ++a) {
-            int ea = id(a);
-            if (ea < 0 || ea >= neq) continue;
-            double acc = 0.0;
-            for (int b = 0; b < nl; ++b) {
-                int eb = id(b);
-                if (eb < 0 || eb >= neq) continue;
-                acc += Mb(a, b) * x(eb);
-            }
-            y(ea) += acc;                     // off-diagonal applied in FULL (element is rank-local)
-        }
-    }
+    for (size_t e = 0; e < blocks.size(); ++e)
+        consistentBlockAccumulate(blocks[e], neq, x, y);
     if (ops.assembleShared)
         ops.assembleShared(&y(0), neq);       // sum shared entries across ranks
 }
@@ -826,16 +944,48 @@ consistentParMatVec(const std::vector<ConsistentBlock> &blocks, const double *di
 inline int
 consistentParPCG(const std::vector<ConsistentBlock> &blocks, const double *diagMinv,
                  int neq, const Vector &r, Vector &a, const ConsistentParOps &ops,
-                 double tol = 1.0e-10, int maxit = 200, double *relResid = 0)
+                 double tol = 1.0e-10, int maxit = 200, double *relResid = 0,
+                 ConsistentPCGScratch *scratch = 0)
 {
-    Vector Ax(neq), z(neq), p(neq), Ap(neq), res(neq);
+    ConsistentPCGScratch localScratch;
+    ConsistentPCGScratch &sc = scratch ? *scratch : localScratch;
+    if (!scratch) {
+        localScratch.ensureSize(neq);
+    } else {
+        // Caller must pre-size scratch via ensureSize(neq) before filling r (which
+        // may alias sc.r); never reallocate sc.r here.
+        assert(&r != &sc.r || sc.r.Size() == neq);
+        assert(sc.Ax.Size() == neq && sc.z.Size() == neq &&
+               sc.p.Size() == neq && sc.Ap.Size() == neq && sc.res.Size() == neq);
+        if (sc.Ax.Size()  != neq) sc.Ax  = Vector(neq);
+        if (sc.z.Size()   != neq) sc.z   = Vector(neq);
+        if (sc.p.Size()   != neq) sc.p   = Vector(neq);
+        if (sc.Ap.Size()  != neq) sc.Ap  = Vector(neq);
+        if (sc.res.Size() != neq) sc.res = Vector(neq);
+    }
+    Vector &Ax = sc.Ax, &z = sc.z, &p = sc.p, &Ap = sc.Ap, &res = sc.res;
+    const double *w = ops.w;
+
     consistentParMatVec(blocks, diagMinv, neq, a, Ax, ops);   // a enters as M_lump^-1 r
-    for (int i = 0; i < neq; ++i) res(i) = r(i) - Ax(i);
-    for (int i = 0; i < neq; ++i) z(i) = diagMinv[i] * res(i);
-    p = z;
-    double rz = consistentParDot(res, z, neq, ops);
-    double rnorm0 = std::sqrt(consistentParDot(r, r, neq, ops));
+    double locRz = 0.0, locRR = 0.0;
+    for (int i = 0; i < neq; ++i) {
+        const double ri = r(i);
+        const double resi = ri - Ax(i);
+        const double zi = diagMinv[i] * resi;
+        const double wi = w ? w[i] : 1.0;
+        res(i) = resi;
+        z(i)   = zi;
+        p(i)   = zi;
+        locRz += wi * resi * zi;
+        locRR += wi * ri * ri;
+    }
+    // Ladruno (WP-260b): pack initial (rz, r.r) into one 2-double Allreduce.
+    double rz = 0.0, rr = 0.0;
+    consistentParReduce2(locRz, locRR, rz, rr, ops);
+    double rnorm0 = std::sqrt(rr);
     if (rnorm0 <= 0.0) rnorm0 = 1.0;
+
+    double lastResNorm = -1.0;
     int k = 0;
     for (k = 1; k <= maxit; ++k) {
         consistentParMatVec(blocks, diagMinv, neq, p, Ap, ops);
@@ -844,15 +994,30 @@ consistentParPCG(const std::vector<ConsistentBlock> &blocks, const double *diagM
         double alpha = rz / pAp;
         a.addVector(1.0, p, alpha);
         res.addVector(1.0, Ap, -alpha);
-        double resnorm = std::sqrt(consistentParDot(res, res, neq, ops));
+        // Ladruno (WP-260b): precompute z = M_lump^-1 res and pack (res.res, res.z)
+        // into one 2-double Allreduce (2 collectives/iter instead of 3, and saves
+        // the trailing residual-norm reduction on exit).
+        double locRes2 = 0.0, locRzNew = 0.0;
+        for (int i = 0; i < neq; ++i) {
+            const double resi = res(i);
+            const double zi = diagMinv[i] * resi;
+            const double wi = w ? w[i] : 1.0;
+            z(i) = zi;
+            locRes2  += wi * resi * resi;
+            locRzNew += wi * resi * zi;
+        }
+        double gRes2 = 0.0, rzNew = 0.0;
+        consistentParReduce2(locRes2, locRzNew, gRes2, rzNew, ops);
+        double resnorm = std::sqrt(gRes2);
+        lastResNorm = resnorm;
         if (resnorm <= tol * rnorm0) break;
-        for (int i = 0; i < neq; ++i) z(i) = diagMinv[i] * res(i);
-        double rzNew = consistentParDot(res, z, neq, ops);
         double bcg = rzNew / rz;
         for (int i = 0; i < neq; ++i) p(i) = z(i) + bcg * p(i);
         rz = rzNew;
     }
-    if (relResid) *relResid = std::sqrt(consistentParDot(res, res, neq, ops)) / rnorm0;
+    if (relResid)
+        *relResid = ((lastResNorm >= 0.0) ? lastResNorm
+                                          : std::sqrt(consistentParDot(res, res, neq, ops))) / rnorm0;
     return (k > maxit) ? maxit : k;
 }
 

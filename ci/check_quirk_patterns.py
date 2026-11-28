@@ -104,7 +104,8 @@ bodies are seen whole).
                 (its lines or the line above):
                     // ladruno-lint: decl-ok <reason>
 
-  pointers  L3 Every `Quirks: "..."` pointer in .claude/skills/*/SKILL.md must
+  pointers  L3 Every `Quirks: "..."` pointer in .claude/skills/*/SKILL.md (and
+                .agents/skills/*/SKILL.md, WP-260) must
                 still match text in LEDGER_quirks.md.
 
   ci-coverage  L8 A `zone_a` test file that BRANCHES on the platform
@@ -957,7 +958,10 @@ def _quirks_text(root, ledger):
 def check_pointers(root, rel):
     findings = []
     ledger = root / "Ladruno_implementation" / "LEDGER_quirks.md"
-    guides = sorted((root / ".claude" / "skills").glob("*/SKILL.md"))
+    # WP-260: Gemini/Antigravity task guides live in .agents/skills/ (tracked; the
+    # rest of .agents/ is ignored) and get the same pointer check as .claude/skills/.
+    guides = (sorted((root / ".claude" / "skills").glob("*/SKILL.md"))
+              + sorted((root / ".agents" / "skills").glob("*/SKILL.md")))
     if not guides:
         return findings
     if not ledger.exists():
@@ -1468,7 +1472,7 @@ _RULE_LIST = [
     Rule("wipe", "L2", check_wipe, "wipe-ok", "fork-stamped",
          "a process-wide singleton whose state is not reset on `wipe`"),
     Rule("pointers", "L3", check_pointers, None, "task guides",
-         'a `Quirks: "..."` pointer in `.claude/skills/*/SKILL.md` that no longer matches the quirks ledger (WP-115)'),
+         'a `Quirks: "..."` pointer in `.claude/skills/*/SKILL.md` or `.agents/skills/*/SKILL.md` that no longer matches the quirks ledger (WP-115, WP-260)'),
     Rule("commit", "L4", check_commitstate, "commit-ok", "fork-stamped",
          "an Element subclass's `commitState()` that does not chain to `Element::commitState()`, "
          "so betaKc's Kc is never refreshed (WP-118)"),

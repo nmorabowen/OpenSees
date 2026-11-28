@@ -130,6 +130,11 @@ LadrunoConstraintProjector::addGroup(const ID &allEqn, int nRet, const Matrix &L
     g.fixedEqn = fixedEqn;
     g.m      = Vector(allEqn.Size());
     g.LtML   = Matrix(nRet, nRet);
+    g.cholL  = Matrix(nRet, nRet);
+    g.cholValid = false;
+    g.araw   = Vector(allEqn.Size());
+    g.rhs    = Vector(nRet);
+    g.ar     = Vector(nRet);
     groups.push_back(g);
     massReady = false;
 }
@@ -225,6 +230,30 @@ LadrunoConstraintProjector::buildMass(LinearSOE *theSOE)
                        << " is ill-conditioned (condition number " << cond << "); the projected "
                           "acceleration may lose precision. Check for near-redundant constraints "
                           "or widely disparate tied masses.\n";
+
+            // Ladruno (WP-260b): pre-factor SPD LtML = cholL * cholL^T once here so
+            // project() solves via O(nRet^2) triangular back-substitution instead of
+            // O(nRet^3) dense LU (DGESV) + Matrix copy on every explicit step.
+            // Gate: G-BYTE for nRet == 1 (scalar divide), G-EQUIV for nRet > 1
+            // (Cholesky rounds differently from DGESV at ~1e-15).
+            if (g.cholL.noRows() != nRet || g.cholL.noCols() != nRet)
+                g.cholL = Matrix(nRet, nRet);
+            g.cholL.Zero();
+            bool cholOK = true;
+            for (int i = 0; i < nRet && cholOK; i++) {
+                for (int j = 0; j <= i; j++) {
+                    double s = g.LtML(i, j);
+                    for (int k = 0; k < j; k++)
+                        s -= g.cholL(i, k) * g.cholL(j, k);
+                    if (i == j) {
+                        if (!(s > 0.0)) { cholOK = false; break; }
+                        g.cholL(i, j) = std::sqrt(s);
+                    } else {
+                        g.cholL(i, j) = s / g.cholL(j, j);
+                    }
+                }
+            }
+            g.cholValid = cholOK;
         }
     }
 
@@ -259,13 +288,17 @@ LadrunoConstraintProjector::project(Vector &a)
             continue;
 
         // capture a_raw BEFORE overwriting (needed for the tie force f = M(a_raw-a_proj))
-        Vector araw(nrows);
+        if (g.araw.Size() != nrows) g.araw = Vector(nrows);
+        if (g.rhs.Size()  != nRet)  g.rhs  = Vector(nRet);
+        if (g.ar.Size()   != nRet)  g.ar   = Vector(nRet);
+        Vector &araw = g.araw;
+        Vector &rhs  = g.rhs;
+        Vector &ar   = g.ar;
+
         for (int r = 0; r < nrows; r++)
             araw(r) = a(g.allEqn(r));
 
         // rhs = L^T (M .* a_raw)
-        Vector rhs(nRet);
-        rhs.Zero();
         for (int p = 0; p < nRet; p++) {
             double s = 0.0;
             for (int r = 0; r < nrows; r++)
@@ -273,13 +306,31 @@ LadrunoConstraintProjector::project(Vector &a)
             rhs(p) = s;
         }
 
-        // ar = (L^T M L)^-1 rhs   (solve on a copy; Solve may modify the matrix)
-        Vector ar(nRet);
-        Matrix tmp(g.LtML);
-        if (tmp.Solve(rhs, ar) < 0) {
-            opserr << "LadrunoConstraintProjector::project() - solve failed in group "
-                   << gi << "\n";
-            continue;
+        // ar = (L^T M L)^-1 rhs via pre-factored Cholesky L_c (WP-260b, zero allocs).
+        if (nRet == 1 && g.LtML(0, 0) > 0.0) {
+            ar(0) = rhs(0) / g.LtML(0, 0);
+        } else if (g.cholValid) {
+            // Forward solve: cholL * y = rhs (stored in ar)
+            for (int i = 0; i < nRet; i++) {
+                double s = rhs(i);
+                for (int k = 0; k < i; k++)
+                    s -= g.cholL(i, k) * ar(k);
+                ar(i) = s / g.cholL(i, i);
+            }
+            // Backward solve: cholL^T * ar = y (in place)
+            for (int i = nRet - 1; i >= 0; i--) {
+                double s = ar(i);
+                for (int k = i + 1; k < nRet; k++)
+                    s -= g.cholL(k, i) * ar(k);
+                ar(i) = s / g.cholL(i, i);
+            }
+        } else {
+            Matrix tmp(g.LtML);
+            if (tmp.Solve(rhs, ar) < 0) {
+                opserr << "LadrunoConstraintProjector::project() - solve failed in group "
+                       << gi << "\n";
+                continue;
+            }
         }
 
         // a_full = L ar, scatter back (overwrites BOTH retained and constrained),
