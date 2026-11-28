@@ -33,4 +33,4 @@ status: "open"
   deck, 0.4 % after 6 steps).
 - **Open:** a fix belongs to the element (scale the p-row rate block of `getDamp` by
   (1/Δt)/c2 when the integrator's factors are known) or to the wave-2 P4 full-Jacobian option.
-  Neither is in WP-266.
+  Neither is in WP-266. Tracked in issue #1180.
