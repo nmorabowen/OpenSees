@@ -1,0 +1,23 @@
+{
+ "arrays": "vm_plate_shear.m0.q.upper.p2c-vertex.v0.result.npz",
+ "bound": "upper",
+ "format": "ladruno-limit-result",
+ "format_version": 0,
+ "formulation": "upper.p2c-vertex.v0",
+ "objective": 1.0,
+ "problem_sha256": "e51dcffa9451e4fdbb720eeab30636c2738833086f697ce20f46abfcc272f913",
+ "producer": {
+  "name": "analytic-fixture",
+  "version": "0"
+ },
+ "query_id": "q",
+ "result_sha256": "9e7cf5380b025171005781ce5df1cb2b50829414c9af740ba7cb35eb2ef60552",
+ "solver": {
+  "name": "none",
+  "settings": {},
+  "version": "0"
+ },
+ "solver_status": "solved",
+ "value": 1.0,
+ "wall_time_s": null
+}

@@ -1,0 +1,19 @@
+LINEAR-ALGEBRA PROBE, NOT A BOUND. No conic program was solved and no collapse load is implied.
+Question: can the rigid footing move with tr(D) = 0 at every tet vertex (and, for 'jump', zero normal
+jump on every facet Bernstein coefficient)? rho_feas near 0 means yes; a value far above 0 means no.
+numpy 2.3.5, scipy 1.16.3, python 3.12.10
+rank threshold 1e-10 of the largest singular value; '-' means not computed at this size
+
+mesh tets walls    space        unknowns   rows   rank nullity footing_modes rho_feas
+a     243 fixed    continuous       693    972    693       0             0  1.0e-01
+a     243 fixed    jump            5064   3354   3116    1948             -  4.2e-12
+a     243 roller   continuous      1203    972    972     231             6  4.5e-12
+a     243 roller   jump            6432   3354   3354    3078             -  4.0e-12
+b     463 fixed    continuous      1419   1852   1383      36             0  4.1e-02
+b     463 fixed    jump           10044   6466   6023    4021             -  5.1e-12
+b     463 roller   continuous      2265   1852   1826     439             6  5.2e-12
+b     463 roller   jump           12372   6466   6424    5948             -  4.7e-12
+c     949 fixed    continuous      2967   3796   2957      10             0  2.1e-02
+c     949 fixed    jump           21924  13690      -       -             -  8.3e-12
+c     949 roller   continuous      4429   3796   3777     652             6  1.3e-11
+c     949 roller   jump           26016  13690      -       -             -  7.9e-12
