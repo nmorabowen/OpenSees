@@ -19,3 +19,13 @@ def test_flags_an_orphaned_pointer(tmp_path):
     })
     out = cq.check_pointers(root, kit.rel(root))
     assert len(out) == 1 and "renamed heading" in out[0]
+
+
+def test_flags_an_orphaned_pointer_in_an_agents_skill(tmp_path):
+    # WP-260: .agents/skills/ guides (Gemini/Antigravity) get the same check.
+    root = kit.tree(tmp_path, {
+        "Ladruno_implementation/LEDGER_quirks.md": "### `wipe()` does NOT recreate the Domain\n",
+        ".agents/skills/g/SKILL.md": 'Quirks: "`wipe()` does NOT recreate the Domain", "renamed heading".\n',
+    })
+    out = cq.check_pointers(root, kit.rel(root))
+    assert len(out) == 1 and "renamed heading" in out[0] and ".agents" in out[0]

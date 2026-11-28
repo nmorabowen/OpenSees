@@ -15,6 +15,7 @@ that explains it; the guides point into the ledgers, they do not replace them.
 | Adding or changing a material (`SRC/material/`) | [`.claude/skills/ladruno-new-material/SKILL.md`](.claude/skills/ladruno-new-material/SKILL.md) |
 | Changing the profiler or monitor viewers (`Ladruno_tools/`) | [`.claude/skills/ladruno-viewer-tools/SKILL.md`](.claude/skills/ladruno-viewer-tools/SKILL.md) |
 | Running or implementing the MPM program (WP-232, `/ladruno-mpm <wp>`) | [`.claude/skills/ladruno-mpm/SKILL.md`](.claude/skills/ladruno-mpm/SKILL.md) |
+| Running or implementing Solver & Wave Acceleration (WP-260) | [`.agents/skills/ladruno-solver-accel/SKILL.md`](.agents/skills/ladruno-solver-accel/SKILL.md) |
 
 The mechanical items are enforced by `python ci/check_quirk_patterns.py` (a
 static gate in `ladruno.yml`). When a quirk names a greppable pattern, add it
@@ -130,6 +131,9 @@ Every `shipped` implementations fragment should have a matching banner line
 - `Ladruno_scripts/` — build, installer, banner, and test tooling.
 - `.claude/skills/` — the task guides above (tracked; the rest of `.claude/` is
   session scratch and stays ignored).
+- `.agents/skills/` — task guides for Gemini/Antigravity (WP-260; tracked; the
+  rest of `.agents/`, incl. `.agents/worktrees/`, is ignored). The quirk lint's
+  `pointers` rule checks them like `.claude/skills/`.
 
 ## PRs and branches (ADR-87 D9/D10 — in force)
 
