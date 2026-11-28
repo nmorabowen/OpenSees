@@ -190,6 +190,8 @@ static const OptSpec kLadrunoRCOptions[] = {
   {"-ties", 4, "WP-243"}, {"-tieHardening", 1, "WP-243"}, {"-crackCheck", 3, "WP-243"},
   // Ladruno WP-247: what the BeamFiber view does when the lateral balance has no root
   {"-lateralNoRoot", 1, "WP-247"},
+  // Ladruno WP-263: the dual-number tangent (tangentMode 3, opt-in; default stays mode 0)
+  {"-dualTangent", 0, "WP-263"},
 };
 
 // ---------------------------------------------------------------------------

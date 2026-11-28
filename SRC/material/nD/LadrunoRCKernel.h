@@ -48,11 +48,38 @@
 //
 //  Pattern cloned from LadrunoJ2Kernel.h ("one core, many views").
 //  Verified against tests/_testbed/rc_shell_ref.py (A1 gate PASS).
+//
+//  Ladruno WP-263 (dual tangent): returnMap3D is written ONCE as returnMap3DT<T>. T = double is
+//  the production path, arithmetic unchanged (bit-identical to the pre-WP kernel). T =
+//  ladruno_dual::Dual<6> with the six engineering strains seeded gives d(sigma)/d(eps) of the map
+//  actually executed, in one pass: tangentMode 3 (-dualTangent). The value part of the Dual run
+//  equals the double run bit for bit. Three helpers do not push the Dual through their own
+//  arithmetic, because the eigen-solver and the membrane eigenvector are kinked or ill-conditioned
+//  exactly where RC states sit (repeated principals, gxy = 0): decompose, eps1FromMembrane and
+//  eps1Spatial take their VALUES from the double function and their DERIVATIVES from closed-form
+//  isotropic-function / eigenprojector formulas (Dual overloads below each double function).
 // ============================================================================
 
 #include <math.h>
+#include <type_traits>
+#include "LadrunoDual.h"   // Ladruno WP-263: dual numbers (forward-mode AD)
 
 namespace ladruno_rc_kernel {
+
+using ladruno_dual::value;   // WP-263: value(x) is the identity on double, the value part on a Dual
+
+// WP-263: makes a parameter a non-deduced context, so tensStiff(e1, ..., 0) still deduces T from e1.
+template <class T> struct rc_ident { typedef T type; };
+
+// WP-263: sqrt at a cone apex (J2 = 0, the hydrostatic axis). The value is ::sqrt; a Dual at a
+// non-positive argument gets a ZERO derivative (the subgradient at the apex) instead of 0.5/0.
+inline double sqrtKink(double x) { return sqrt(x); }
+template <int N, class S>
+inline ladruno_dual::Dual<N, S> sqrtKink(const ladruno_dual::Dual<N, S>& x)
+{
+    if (!(value(x) > 0.0)) return ladruno_dual::Dual<N, S>(sqrtKink(x.v));
+    return sqrt(x);
+}
 
 enum { STATUS_OK = 0, STATUS_SINGULAR = 1, STATUS_NO_CONVERGE = 2 };
 
@@ -70,11 +97,15 @@ struct Backbone {
     double x[MAXPTS], y[MAXPTS], q[MAXPTS];
 };
 
-struct HPoint { double x, y, d, q; };
+// WP-263: templated on the strain scalar (T = double is the original arithmetic, term for term).
+template <class T> struct HPointT { T x, y, d, q; };
+typedef HPointT<double> HPoint;
 
-inline HPoint evaluateAt(const Backbone& b, double x)
+template <class T>
+inline HPointT<T> evaluateAt(const Backbone& b, T x)
 {
-    double x1, x2, y1, y2, q1, q2;
+    double x1, y1, q1;
+    T x2, y2, q2;
     bool found = false;
     for (int i = 1; i < b.n; ++i) {
         if (x <= b.x[i] + XTOL) {
@@ -89,23 +120,24 @@ inline HPoint evaluateAt(const Backbone& b, double x)
         int last = b.n - 1;
         x1 = b.x[last];
         x2 = x;
-        double span = x - x1;
+        T span = x - x1;
         y1 = b.y[last];
         double tan_y = (b.y[last] - b.y[last - 1]) / (b.x[last] - b.x[last - 1]);
-        y2 = tan_y > 0.0 ? y1 + span * tan_y : y1;
+        y2 = tan_y > 0.0 ? T(y1 + span * tan_y) : T(y1);
         q1 = b.q[last];
         double tan_q = (b.q[last] - b.q[last - 1]) / (b.x[last] - b.x[last - 1]);
-        q2 = tan_q > 0.0 ? q1 + span * tan_q : q1;
+        q2 = tan_q > 0.0 ? T(q1 + span * tan_q) : T(q1);
     }
-    double xspan  = x2 - x1;
-    double xratio = xspan > 0.0 ? (x - x1) / xspan : 0.0;
-    double y = y1 + (y2 - y1) * xratio; if (y < YTOL) y = YTOL;
-    double q = q1 + (q2 - q1) * xratio; if (q < YTOL) q = YTOL;
-    HPoint p; p.x = x; p.y = y; p.q = q; p.d = 1.0 - y / q;
+    T xspan  = x2 - x1;
+    T xratio = xspan > 0.0 ? T((x - x1) / xspan) : T(0.0);
+    T y = y1 + (y2 - y1) * xratio; if (y < YTOL) y = YTOL;
+    T q = q1 + (q2 - q1) * xratio; if (q < YTOL) q = YTOL;
+    HPointT<T> p; p.x = x; p.y = y; p.q = q; p.d = 1.0 - y / q;
     return p;
 }
 
-inline double plasticStrain(const HPoint& p, double E) { return p.x - p.q / E; }
+template <class T>
+inline T plasticStrain(const HPointT<T>& p, double E) { return p.x - p.q / E; }
 
 inline double backboneMaxStress(const Backbone& b)
 {
@@ -282,27 +314,30 @@ inline void regularize(Backbone& b, double lch, double lch_ref, double E)
     adjustBackbone(b, E, 0.0, 0.0);                        // final re-adjust (ASDConcrete3D:1000)
 }
 
-inline double macauley(double x) { return x > 0.0 ? x : 0.0; }
+template <class T>
+inline T macauley(const T& x) { return x > 0.0 ? x : T(0.0); }
 
 // ---------------------------------------------------------------------------
 // Lubliner-Lee-Fenves criterion (clone of cpp:2483-2497).
 // Local shape parameter renamed beta_lub to reserve `beta` for MCFT softening.
+// WP-263: templated on the principal stresses; sqrt(3 J2) has a zero derivative at J2 = 0.
 // ---------------------------------------------------------------------------
-inline double lublinerCriterion(double s1, double s2, double s3,
-                                double ft, double fc, double k1, double scale, double Kc)
+template <class T>
+inline T lublinerCriterion(const T& s1, const T& s2, const T& s3,
+                           double ft, double fc, double k1, double scale, double Kc)
 {
     double fb    = 1.16 * fc;
     double gamma = 3.0 * (1.0 - Kc) / (2.0 * Kc - 1.0);
     double alpha = (fb - fc) / (2.0 * fb - fc);
-    double I1    = s1 + s2 + s3;
-    double p     = I1 / 3.0;
-    double d1 = s1 - p, d2 = s2 - p, d3 = s3 - p;
-    double J2 = 0.5 * (d1 * d1 + d2 * d2 + d3 * d3);
+    T I1    = s1 + s2 + s3;
+    T p     = I1 / 3.0;
+    T d1 = s1 - p, d2 = s2 - p, d3 = s3 - p;
+    T J2 = 0.5 * (d1 * d1 + d2 * d2 + d3 * d3);
     double beta_lub = fc / ft * (1.0 - alpha) - (1.0 + alpha);
-    double smax = macauley(s1);
-    double smin = macauley(-s1);
+    T smax = macauley(s1);
+    T smin = macauley(T(-s1));
     return (1.0 / (1.0 - alpha) *
-            (alpha * I1 + sqrt(3.0 * J2) + k1 * beta_lub * smax - gamma * smin)) * scale;
+            (alpha * I1 + sqrtKink(3.0 * J2) + k1 * beta_lub * smax - gamma * smin)) * scale;
 }
 
 // ---------------------------------------------------------------------------
@@ -374,12 +409,16 @@ inline double heavyside(double x) { return x > 0.0 ? 1.0 : (x < 0.0 ? 0.0 : 0.5)
 // Spectral stress decomposition (clone of StressDecomposition::compute,
 // cpp:781-851). Builds PT, PC (6x6), ST, SC (6, = PT:S, PC:S), R.
 // ---------------------------------------------------------------------------
-struct Decomp {
-    double Si[3], V[3][3];
+// WP-263: Si, ST, SC and R carry the stress scalar T; the eigenvectors and the 6x6 projectors stay
+// double (the secant tangents of modes 0/1 read them on the double path only).
+template <class T>
+struct DecompT {
+    T Si[3]; double V[3][3];
     double PT[6][6], PC[6][6];
-    double ST[6], SC[6];
-    double R;
+    T ST[6], SC[6];
+    T R;
 };
+typedef DecompT<double> Decomp;
 
 inline void decompose(const double S[6], double cdf, Decomp& D)
 {
@@ -423,14 +462,92 @@ inline void decompose(const double S[6], double cdf, Decomp& D)
     D.R = Rden > 0.0 ? Rnum / Rden : 0.0;
 }
 
+// WP-263: decompose for a Dual stress. Values: the double decompose of the value part (so every
+// value is bit-identical to the double run). Derivatives, never through the Jacobi solver (rule 6):
+//   * ST = sum_j <lambda_j>_+ v_j v_j^T is an isotropic tensor function of S, so in the eigenbasis
+//       d(ST)~_ij = G_ij dS~_ij,  G_ii = H(lambda_i),
+//       G_ij = (<lambda_i>_+ - <lambda_j>_+) / (lambda_i - lambda_j)   (lambda_i != lambda_j),
+//       G_ij = (H(lambda_i) + H(lambda_j)) / 2                          (lambda_i == lambda_j),
+//     with H(0) = 1/2 as heavyside(); this is the exact derivative of PT(S):S, projector rotation
+//     included, and it has no 1/(lambda_i - lambda_j) singularity. SC = S - ST, so dSC = dS - dST.
+//   * Si: d lambda_i = dS~_ii, averaged over a cluster of equal principals (|gap| < 1e-9 of the
+//     stress scale): the derivative of the symmetric functions the measures use, independent of
+//     the arbitrary basis Jacobi returns inside a repeated eigenspace.
+//   * R: the double formula, templated, on the Dual Si.
+template <int N>
+inline void decompose(const ladruno_dual::Dual<N> Sd[6], double cdf, DecompT<ladruno_dual::Dual<N> >& D)
+{
+    typedef ladruno_dual::Dual<N> DN;
+    static const int vr[6] = {0, 1, 2, 0, 1, 0}, vc[6] = {0, 1, 2, 1, 2, 2};
+    double sv[6];
+    for (int a = 0; a < 6; ++a) sv[a] = Sd[a].v;
+    Decomp Dv;
+    decompose(sv, cdf, Dv);
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) D.V[i][j] = Dv.V[i][j];
+    for (int a = 0; a < 6; ++a) for (int b = 0; b < 6; ++b) { D.PT[a][b] = Dv.PT[a][b]; D.PC[a][b] = Dv.PC[a][b]; }
+    for (int a = 0; a < 6; ++a) { D.ST[a] = DN(Dv.ST[a]); D.SC[a] = DN(Dv.SC[a]); }
+    for (int i = 0; i < 3; ++i) D.Si[i] = DN(Dv.Si[i]);
+
+    const double* l = Dv.Si;
+    double scale = 0.0;
+    for (int a = 0; a < 6; ++a) scale += fabs(sv[a]);
+    scale += 1.0e-30;
+    const double ctol = 1.0e-9 * scale;
+    const bool g01 = (l[0] - l[1] < ctol), g12 = (l[1] - l[2] < ctol);
+    double G[3][3];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            if (i == j)              G[i][j] = heavyside(l[i]);
+            else if (l[i] == l[j])   G[i][j] = 0.5 * (heavyside(l[i]) + heavyside(l[j]));
+            else                     G[i][j] = (macauley(l[i]) - macauley(l[j])) / (l[i] - l[j]);
+        }
+    for (int k = 0; k < N; ++k) {
+        const double M[3][3] = {
+            { Sd[0].d[k], Sd[3].d[k], Sd[5].d[k] },
+            { Sd[3].d[k], Sd[1].d[k], Sd[4].d[k] },
+            { Sd[5].d[k], Sd[4].d[k], Sd[2].d[k] }
+        };
+        double At[3][3];                                  // dS~ = V^T dS V
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) {
+                double acc = 0.0;
+                for (int r = 0; r < 3; ++r)
+                    for (int c = 0; c < 3; ++c) acc += Dv.V[r][i] * M[r][c] * Dv.V[c][j];
+                At[i][j] = acc;
+            }
+        double dl[3] = { At[0][0], At[1][1], At[2][2] };
+        if (g01 && g12) { const double m = (dl[0] + dl[1] + dl[2]) / 3.0; dl[0] = dl[1] = dl[2] = m; }
+        else if (g01)   { const double m = 0.5 * (dl[0] + dl[1]); dl[0] = dl[1] = m; }
+        else if (g12)   { const double m = 0.5 * (dl[1] + dl[2]); dl[1] = dl[2] = m; }
+        for (int i = 0; i < 3; ++i) D.Si[i].d[k] = dl[i];
+        for (int a = 0; a < 6; ++a) {
+            double acc = 0.0;
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    acc += Dv.V[vr[a]][i] * Dv.V[vc[a]][j] * G[i][j] * At[i][j];
+            D.ST[a].d[k] = acc;
+            D.SC[a].d[k] = Sd[a].d[k] - acc;
+        }
+    }
+    DN Rnum(0.0), Rden(0.0);
+    for (int j = 0; j < 3; ++j) {
+        DN Sj = D.Si[j];
+        if (Sj > 0.0) Sj *= cdf;
+        if (Sj > 0.0) Rnum += Sj;
+        Rden += fabs(Sj);
+    }
+    D.R = Rden > 0.0 ? DN(Rnum / Rden) : DN(0.0);
+}
+
 // ---------------------------------------------------------------------------
 // MCFT compression-softening factor (applied to the STRENGTH axis only).
 // ---------------------------------------------------------------------------
 // Ladruno (C2): the coefficient C (hard-wired 170 = 0.34/0.002 before C2) is P.betaC;
 // the default 170.0 keeps the arithmetic bit-identical to the pre-C2 kernel.
-inline double betaCompr(double e1, double floorv, double C = 170.0)
+template <class T>
+inline T betaCompr(const T& e1, double floorv, double C = 170.0)
 {
-    double b = 1.0 / (0.8 + C * e1);
+    T b = 1.0 / (0.8 + C * e1);
     if (b > 1.0) b = 1.0;
     if (b < floorv) b = floorv;
     return b;
@@ -450,16 +567,17 @@ inline double dBetaCompr(double e1, double floorv, double C = 170.0)   // 0 when
 // e1 = COMPOSITE (reinforced) in-plane principal tensile strain (same membrane e1
 // the MCFT beta uses; perfect-bond strain compatibility). Writes *dsig = d sigma_ts/d e1.
 // ---------------------------------------------------------------------------
-inline double tensStiff(double e1, int mode, double ft, double c, double alpha, double* dsig)
+template <class T>
+inline T tensStiff(const T& e1, int mode, double ft, double c, double alpha, typename rc_ident<T>::type* dsig)
 {
     double cc, ft_eff;
     if      (mode == 1) { cc = c;     ft_eff = ft; }
     else if (mode == 2) { cc = 500.0; ft_eff = alpha * ft; }
-    else { if (dsig) *dsig = 0.0; return 0.0; }
-    double u = (e1 > 0.0) ? sqrt(cc * e1) : 0.0;
-    double denom = 1.0 + u;
-    double sig = ft_eff / denom;
-    if (dsig) *dsig = (u > 0.0) ? (-ft_eff * (cc / (2.0 * u)) / (denom * denom)) : 0.0;
+    else { if (dsig) *dsig = 0.0; return T(0.0); }
+    T u = (e1 > 0.0) ? T(sqrt(cc * e1)) : T(0.0);
+    T denom = 1.0 + u;
+    T sig = ft_eff / denom;
+    if (dsig) *dsig = (u > 0.0) ? T(-ft_eff * (cc / (2.0 * u)) / (denom * denom)) : T(0.0);
     return sig;
 }
 
@@ -495,6 +613,37 @@ inline double eps1FromMembrane(double exx, double eyy, double gxy, double p1[2],
     return macauley(lam1);
 }
 
+// WP-263: eps1FromMembrane for a Dual strain. Values (e1, p1, degen) are the double function's.
+// e1 = <c + r>_+ is differentiated through the same expressions (r > 0 off the degenerate branch;
+// the degenerate branch is <c>_+, the equibiaxial blend). p1 is NOT differentiated through
+// (gxy/2, lam1 - exx)/nrm: at gxy = 0 that vector cancels to zero (the fallback branch) although
+// p1 rotates. Its derivative is the rotation of the major axis, 2 theta = atan2(gxy, exx - eyy):
+//     d theta = ((exx - eyy) d gxy - gxy d(exx - eyy)) / (2 ((exx - eyy)^2 + gxy^2)),
+//     d p1 = d theta (-p1y, p1x)   (either sign of p1). Zero on the degenerate branch.
+template <int N>
+inline ladruno_dual::Dual<N> eps1FromMembrane(const ladruno_dual::Dual<N>& exx, const ladruno_dual::Dual<N>& eyy,
+                                              const ladruno_dual::Dual<N>& gxy, ladruno_dual::Dual<N> p1[2], int* degen)
+{
+    typedef ladruno_dual::Dual<N> DN;
+    double pv[2]; int dg = 0;
+    eps1FromMembrane(exx.v, eyy.v, gxy.v, pv, &dg);
+    if (degen) *degen = dg;
+    p1[0] = DN(pv[0]); p1[1] = DN(pv[1]);
+    DN c = 0.5 * (exx + eyy);
+    if (dg) return macauley(c);
+    DN half_diff = 0.5 * (exx - eyy);
+    DN half_gxy  = 0.5 * gxy;
+    DN r = sqrt(half_diff * half_diff + half_gxy * half_gxy);
+    DN lam1 = c + r;
+    const double Dv = exx.v - eyy.v, gv = gxy.v, den = 2.0 * (Dv * Dv + gv * gv);
+    for (int k = 0; k < N; ++k) {
+        const double dth = (Dv * gxy.d[k] - gv * (exx.d[k] - eyy.d[k])) / den;
+        p1[0].d[k] = -pv[1] * dth;
+        p1[1].d[k] =  pv[0] * dth;
+    }
+    return macauley(lam1);
+}
+
 // isotropic elastic 6x6 (clone of getInitialTangent, cpp:1733-1743). Engineering shear.
 inline void elasticTangent(double E, double nu, double C0[6][6])
 {
@@ -519,7 +668,7 @@ struct Params {
     double eta;                        // viscous regularization (default 0)
     bool   betaOn;                     // false => beta=1 (identity gate)
     bool   lublinerTCReduced;          // true  => k1=0 in compressive measure
-    int    tangentMode;                // 0 algorithmic, 1 secant, 2 numerical
+    int    tangentMode;                // 0 algorithmic, 1 secant, 2 numerical, 3 dual (WP-263, -dualTangent)
     // --- Phase 2a: fixed-crack aggregate-interlock shear retention (membrane) ---
     bool   interlockOn;                // false => no interlock (Phase-1 baseline)
     bool   interlockCyclic;          // Phase 2b: incremental friction-slip + reversible w
@@ -627,21 +776,33 @@ inline double backbonePeakAbscissa(const Backbone& b)
 // so meas . inj = 1 for every m (each of the m normals is pinned to sigma_ts). For an x-y state
 // whose largest principal lies in x-y these equal the membrane vectors exactly: m = 1 gives
 // (a, b, ab) / (a, b, 2ab); the in-plane equibiaxial m = 2 gives (1,1,0) / (0.5,0.5,0).
-inline double eps1Spatial(const double eps6[6], double P1[6], double inj[6], double meas[6], int* mult)
+// WP-263: the eigen-solve and the multiplicity of eps1Spatial, split out so its Dual overload reads
+// the same eigenbasis and the same m (arithmetic unchanged).
+inline void strainEig3(const double eps6[6], double S[3], double V[3][3])
 {
     double A[3][3] = {
         { eps6[0],       0.5 * eps6[3], 0.5 * eps6[5] },
         { 0.5 * eps6[3], eps6[1],       0.5 * eps6[4] },
         { 0.5 * eps6[5], 0.5 * eps6[4], eps6[2]       }
     };
-    double S[3], V[3][3];
     eig3x3sym(A, S, V);
+}
+inline int eps1SpatialMult(const double eps6[6], const double S[3])
+{
     double scale = 0.0;
     for (int a = 0; a < 6; ++a) scale += fabs(eps6[a]);
     scale += 1.0e-30;
     int m = 1;
     if (S[0] - S[1] < 1.0e-9 * scale) m = 2;
     if (S[0] - S[2] < 1.0e-9 * scale) m = 3;
+    return m;
+}
+
+inline double eps1Spatial(const double eps6[6], double P1[6], double inj[6], double meas[6], int* mult)
+{
+    double S[3], V[3][3];
+    strainEig3(eps6, S, V);
+    int m = eps1SpatialMult(eps6, S);
     for (int a = 0; a < 6; ++a) { P1[a] = 0.0; inj[a] = 0.0; meas[a] = 0.0; }
     for (int k = 0; k < m; ++k) {
         double vx = V[0][k], vy = V[1][k], vz = V[2][k];
@@ -656,6 +817,63 @@ inline double eps1Spatial(const double eps6[6], double P1[6], double inj[6], dou
     double lam = S[0];
     if (m > 1) { lam = 0.0; for (int k = 0; k < m; ++k) lam += S[k]; lam /= m; }
     return macauley(lam);
+}
+
+// WP-263: eps1Spatial for a Dual strain. Values are the double function's. Derivatives from the
+// eigenprojector of the top cluster C (the m eigenvectors sharing lambda_max), which is smooth
+// while C stays separated from the rest even though its individual eigenvectors are not:
+//     d lambda_C = (1/m) tr(dA~_CC),
+//     d P_C = sum_{c in C, j not in C} dA~_jc / (lambda_c - lambda_j) (v_j v_c^T + v_c v_j^T),
+// dA~ = V^T dA V, A the tensor strain (shear = gamma/2). inj = P_C, P1 = P_C/m, meas = the
+// Voigt-weighted P_C/m, as in the double function. m = 3 (isotropic strain): P_C = I, d P_C = 0.
+template <int N>
+inline ladruno_dual::Dual<N> eps1Spatial(const ladruno_dual::Dual<N> eps6[6], ladruno_dual::Dual<N> P1[6],
+                                         ladruno_dual::Dual<N> inj[6], ladruno_dual::Dual<N> meas[6], int* mult)
+{
+    typedef ladruno_dual::Dual<N> DN;
+    static const int vr[6] = {0, 1, 2, 0, 1, 0}, vc[6] = {0, 1, 2, 1, 2, 2};
+    double ev[6], P1v[6], injv[6], measv[6];
+    for (int a = 0; a < 6; ++a) ev[a] = eps6[a].v;
+    int m = 1;
+    const double e1v = eps1Spatial(ev, P1v, injv, measv, &m);
+    if (mult) *mult = m;
+    double S[3], V[3][3];
+    strainEig3(ev, S, V);
+    DN e1(e1v);
+    for (int a = 0; a < 6; ++a) { P1[a] = DN(P1v[a]); inj[a] = DN(injv[a]); meas[a] = DN(measv[a]); }
+    for (int k = 0; k < N; ++k) {
+        const double dA[3][3] = {
+            { eps6[0].d[k],       0.5 * eps6[3].d[k], 0.5 * eps6[5].d[k] },
+            { 0.5 * eps6[3].d[k], eps6[1].d[k],       0.5 * eps6[4].d[k] },
+            { 0.5 * eps6[5].d[k], 0.5 * eps6[4].d[k], eps6[2].d[k]       }
+        };
+        double At[3][3];
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) {
+                double acc = 0.0;
+                for (int r = 0; r < 3; ++r)
+                    for (int c = 0; c < 3; ++c) acc += V[r][i] * dA[r][c] * V[c][j];
+                At[i][j] = acc;
+            }
+        double dlam = 0.0;
+        for (int c = 0; c < m; ++c) dlam += At[c][c];
+        dlam /= m;
+        e1.d[k] = (e1v > 0.0) ? dlam : 0.0;
+        double dP[3][3] = { {0,0,0}, {0,0,0}, {0,0,0} };
+        for (int c = 0; c < m; ++c)
+            for (int j = m; j < 3; ++j) {
+                const double f = At[j][c] / (S[c] - S[j]);
+                for (int r = 0; r < 3; ++r)
+                    for (int q = 0; q < 3; ++q) dP[r][q] += f * (V[r][j] * V[q][c] + V[r][c] * V[q][j]);
+            }
+        for (int a = 0; a < 6; ++a) {
+            const double dw = dP[vr[a]][vc[a]];
+            inj[a].d[k]  = dw;
+            P1[a].d[k]   = dw / m;
+            meas[a].d[k] = (a < 3 ? 1.0 : 2.0) * dw / m;
+        }
+    }
+    return e1;
 }
 
 inline void setupParams(Params& P)    // call after ht/hc are filled
@@ -710,16 +928,18 @@ inline void histZero(RCHist& h)
     h.tsScale = -1.0;
 }
 
-inline double equivTensile(const double Si[3], double fcft, double Kc)
+template <class T>
+inline T equivTensile(const T Si[3], double fcft, double Kc)
 {
-    if (Si[0] < STRESS_TOL) return 0.0;
+    if (Si[0] < STRESS_TOL) return T(0.0);
     return lublinerCriterion(Si[0], Si[1], Si[2], 1.0 / fcft, 1.0, 1.0, 1.0 / fcft, Kc);
 }
-inline double equivCompressive(const double Si[3], double fcft, double Kc, double k1)
+template <class T>
+inline T equivCompressive(const T Si[3], double fcft, double Kc, double k1)
 {
-    double s0 = Si[0] < 0.0 ? Si[0] : 0.0;
-    double s1 = Si[1] < 0.0 ? Si[1] : 0.0;
-    double s2 = Si[2] < 0.0 ? Si[2] : 0.0;
+    T s0 = Si[0] < 0.0 ? Si[0] : T(0.0);
+    T s1 = Si[1] < 0.0 ? Si[1] : T(0.0);
+    T s2 = Si[2] < 0.0 ? Si[2] : T(0.0);
     return lublinerCriterion(s0, s1, s2, 1.0 / fcft, 1.0, k1, 1.0, Kc);
 }
 
@@ -745,10 +965,23 @@ inline double equivCompressive(const double Si[3], double fcft, double Kc, doubl
 //   normal implicit logic in the explicit pass (it is SPD/secant-character). Freezing
 //   PT_commit for a fully strain-constant tangent under rotating principals is a scoped
 //   follow-up (see ADR 19 Phase 4).
+// Ladruno WP-263: returnMap3D (signature unchanged, every caller unchanged) is the double entry
+// point. tangentMode 3 (-dualTangent) routes a tangent request through returnMap3DDual: one
+// Dual<6> pass of returnMap3DT, whose value part is the double run bit for bit and whose
+// derivative part is d(sigma)/d(eps_eng) of the map executed -- the implicit map, or under
+// IMPL-EX (do_implex) the extrapolated map with the committed history frozen. It therefore
+// carries every term the mode-0 tangent omits: the projector rotation d(PT:S)/deps, the damage
+// rate d(dt_bar, dc_bar)/deps, the tension-stiffening direction dp1/deps, dv_ci,max/de_n.
 inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
                        double sig6[6], double Dtan6[6][6], RCHist& out,
                        bool do_tangent = true, double* residual = 0,
-                       bool do_implex = false, double time_factor = 1.0)
+                       bool do_implex = false, double time_factor = 1.0);
+
+template <class T>
+inline int returnMap3DT(const Params& P, const T eps6[6], const RCHist& in,
+                        T sig6[6], double Dtan6[6][6], RCHist& out,
+                        bool do_tangent, double* residual,
+                        bool do_implex, double time_factor)
 {
     const bool implexExplicit = (P.implex && do_implex);
     const double E = P.E;
@@ -761,8 +994,8 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // Off (crackedNu < 0, the default) => C0(E, nu) exactly as before.
     // Ladruno WP-241: the add-on principal strain, membrane (default) or spatial, computed once.
     const bool spatial = (P.addonPlane == 1);
-    double sp_P1[6], sp_inj[6], sp_meas[6]; int sp_mult = 1;
-    const double e1_sp = spatial ? eps1Spatial(eps6, sp_P1, sp_inj, sp_meas, &sp_mult) : 0.0;
+    T sp_P1[6], sp_inj[6], sp_meas[6]; int sp_mult = 1;
+    const T e1_sp = spatial ? eps1Spatial(eps6, sp_P1, sp_inj, sp_meas, &sp_mult) : T(0.0);
     // crackGate = damage: crack onset = tensile threshold past the backbone peak
     const double xtPeak = (P.crackGate == 1) ? backbonePeakAbscissa(P.ht) : 0.0;
     double nuCr = in.nuCracked;
@@ -772,8 +1005,8 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
             // damage is known), so the latch lags the crack by one step; stress-continuous.
             if (in.xt > xtPeak) nuCr = 1.0;
         } else {
-            double p1c[2]; int dgc = 0;
-            double e1c = spatial ? e1_sp : eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1c, &dgc);
+            T p1c[2]; int dgc = 0;
+            T e1c = spatial ? e1_sp : eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1c, &dgc);
             if (e1c >= P.crackStrain && P.crackStrain > 0.0)
                 nuCr = 1.0;
         }
@@ -782,45 +1015,45 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     double C0[6][6]; elasticTangent(E, nuAct, C0);
 
     // elastic predictor: SEFFn = SEFF_commit + C0:(En - En-1)
-    double seff[6];
+    T seff[6];
     for (int a = 0; a < 6; ++a) {
-        double acc = in.stress_eff[a];
+        T acc = in.stress_eff[a];
         for (int b = 0; b < 6; ++b) acc += C0[a][b] * (eps6[b] - in.strain[b]);
         seff[a] = acc;
     }
 
-    Decomp D;
+    DecompT<T> D;
     decompose(seff, P.cdf, D);
 
     // MCFT beta from in-plane membrane principal tensile strain (gxy = eps6[3] engineering)
-    double p1[2] = { 1.0, 0.0 }; int degen = 0;
-    double e1 = spatial ? e1_sp : eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1, &degen);
+    T p1[2] = { T(1.0), T(0.0) }; int degen = 0;
+    T e1 = spatial ? e1_sp : eps1FromMembrane(eps6[0], eps6[1], eps6[3], p1, &degen);
     // IMPL-EX: freeze beta over the step from the extrapolated (committed) eps1, so the
     // returned tangent carries no beta cross-term (constant secant). eps1 itself is a
     // pure function of strain, so this is the only path-frozen quantity here.
-    double e1_beta = e1;
+    T e1_beta = e1;
     if (implexExplicit && P.betaOn) {
         e1_beta = in.eps1 + time_factor * (in.eps1 - in.eps1_old);
         if (e1_beta < 0.0) e1_beta = 0.0;
     }
-    double beta = P.betaOn ? betaCompr(e1_beta, P.betaFloor, P.betaC) : 1.0;
+    T beta = P.betaOn ? betaCompr(e1_beta, P.betaFloor, P.betaC) : T(1.0);
     double k1c  = (P.betaOn && P.lublinerTCReduced) ? 0.0 : 1.0;
 
     // committed hardening
-    HPoint pt = evaluateAt(P.ht, in.xt);
-    HPoint pc = evaluateAt(P.hc, in.xc);
-    double xt_pl = plasticStrain(pt, E);
-    double xc_pl = plasticStrain(pc, E);
+    HPointT<T> pt = evaluateAt(P.ht, T(in.xt));
+    HPointT<T> pc = evaluateAt(P.hc, T(in.xc));
+    T xt_pl = plasticStrain(pt, E);
+    T xc_pl = plasticStrain(pc, E);
 
     // rate coefficients (eta=0 -> rc1=0, rc2=1)
     double rc1 = (P.eta > 0.0) ? P.eta / (P.eta + 1.0) : 0.0;
     double rc2 = 1.0 - rc1;
 
     // /E converts the Lubliner STRESS measure to the strain abscissa (cpp:2509/2522)
-    double xt_meas = equivTensile(D.Si, P.fcft_ratio, P.Kc) / E;
-    double xc_meas = equivCompressive(D.Si, P.fcft_ratio, P.Kc, k1c) / E;
-    double xt_trial = xt_meas + xt_pl;
-    double xc_trial = xc_meas + xc_pl;
+    T xt_meas = equivTensile(D.Si, P.fcft_ratio, P.Kc) / E;
+    T xc_meas = equivCompressive(D.Si, P.fcft_ratio, P.Kc, k1c) / E;
+    T xt_trial = xt_meas + xt_pl;
+    T xc_trial = xc_meas + xc_pl;
     // Ladruno WP-246: committed-surface consistency shift. The return rescales the tensile and the
     // compressive parts of the effective stress by different factors (1 - dt_plastic, 1 - dc_plastic,
     // below), and the Lubliner measure of a MIXED-sign stress is not homogeneous in either part. So
@@ -834,45 +1067,58 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     if (!implexExplicit && (in.xt > 0.0 || in.xc > 0.0)) {
         Decomp Dn;
         decompose(in.stress_eff, P.cdf, Dn);
-        const double ot = (in.xt - xt_pl) - equivTensile(Dn.Si, P.fcft_ratio, P.Kc) / E;
-        const double oc = (in.xc - xc_pl) - equivCompressive(Dn.Si, P.fcft_ratio, P.Kc, k1c) / E;
+        const double ot = (in.xt - value(xt_pl)) - equivTensile(Dn.Si, P.fcft_ratio, P.Kc) / E;
+        const double oc = (in.xc - value(xc_pl)) - equivCompressive(Dn.Si, P.fcft_ratio, P.Kc, k1c) / E;
         if (ot < 0.0) xt_trial += ot;
         if (oc < 0.0) xc_trial += oc;
     }
 
-    double new_xt = in.xt, new_xc = in.xc;
+    T new_xt = in.xt, new_xc = in.xc;
     if (implexExplicit) {
         // explicit extrapolation of the damage thresholds (frozen over the step)
         double xt_ext = in.xt + time_factor * (in.xt - in.xt_old);
         double xc_ext = in.xc + time_factor * (in.xc - in.xc_old);
         if (xt_ext < in.xt) xt_ext = in.xt;     // threshold is monotone non-decreasing
         if (xc_ext < in.xc) xc_ext = in.xc;
-        pt = evaluateAt(P.ht, xt_ext); new_xt = pt.x;
-        pc = evaluateAt(P.hc, xc_ext); new_xc = pc.x;
+        pt = evaluateAt(P.ht, T(xt_ext)); new_xt = pt.x;
+        pc = evaluateAt(P.hc, T(xc_ext)); new_xc = pc.x;
     } else {
-        if (xt_trial > pt.x) { double xn = rc1 * pt.x + rc2 * xt_trial; pt = evaluateAt(P.ht, xn); new_xt = pt.x; }
-        if (xc_trial > pc.x) { double xn = rc1 * pc.x + rc2 * xc_trial; pc = evaluateAt(P.hc, xn); new_xc = pc.x; }
+        if (xt_trial > pt.x) { T xn = rc1 * pt.x + rc2 * xt_trial; pt = evaluateAt(P.ht, xn); new_xt = pt.x; }
+        if (xc_trial > pc.x) { T xn = rc1 * pc.x + rc2 * xc_trial; pc = evaluateAt(P.hc, xn); new_xc = pc.x; }
     }
 
-    double seff_eq_t = (pt.x - xt_pl) * E;
-    double dt_plastic = seff_eq_t > 0.0 ? 1.0 - pt.q / seff_eq_t : 0.0;
-    double seff_eq_c = (pc.x - xc_pl) * E;
-    double dc_plastic = seff_eq_c > 0.0 ? 1.0 - pc.q / seff_eq_c : 0.0;
+    T seff_eq_t = (pt.x - xt_pl) * E;
+    T dt_plastic = seff_eq_t > 0.0 ? T(1.0 - pt.q / seff_eq_t) : T(0.0);
+    T seff_eq_c = (pc.x - xc_pl) * E;
+    T dc_plastic = seff_eq_c > 0.0 ? T(1.0 - pc.q / seff_eq_c) : T(0.0);
 
     // mix damages (cdf=0 -> R=0 -> identity)
-    HPoint auxp = evaluateAt(P.hc, pt.x * P.fcft_ratio);
-    double aux_pl = plasticStrain(auxp, E);
-    double aux_seff = (auxp.x - aux_pl) * E;
-    double aux_d = aux_seff > 0.0 ? 1.0 - auxp.q / aux_seff : 0.0;
+    HPointT<T> auxp = evaluateAt(P.hc, T(pt.x * P.fcft_ratio));
+    T aux_pl = plasticStrain(auxp, E);
+    T aux_seff = (auxp.x - aux_pl) * E;
+    T aux_d = aux_seff > 0.0 ? T(1.0 - auxp.q / aux_seff) : T(0.0);
     dc_plastic = 1.0 - (1.0 - dc_plastic) * (1.0 - D.R * aux_d);
-    double pc_d = 1.0 - (1.0 - pc.d) * (1.0 - D.R * auxp.d);
+    T pc_d = 1.0 - (1.0 - pc.d) * (1.0 - D.R * auxp.d);
 
-    double dt_bar = pt.d + dt_plastic - pt.d * dt_plastic;
-    double dc_bar = pc_d + dc_plastic - pc_d * dc_plastic;
+    T dt_bar = pt.d + dt_plastic - pt.d * dt_plastic;
+    T dc_bar = pc_d + dc_plastic - pc_d * dc_plastic;
 
     // nominal stress -- THE Phase-1 insertion: beta multiplies the assembled compressive cone
-    for (int a = 0; a < 6; ++a)
-        sig6[a] = (1.0 - dt_bar) * D.ST[a] + beta * (1.0 - dc_bar) * D.SC[a];
+    // WP-263 (Dual only): the compressive measure has no STRESS_TOL gate (the tensile one does), so a
+    // principal stress of ~-1e-12 "loads" the compression backbone at x < YTOL/E, where evaluateAt
+    // clamps q to YTOL and dc_plastic = 1 - YTOL/(E x) is noise (<< 0 as x -> 0). The stress there
+    // is ~YTOL, harmless, but its exact derivative is not: d22 ~ 0 on the PlaneStress sigma_33 root
+    // (a micro-plateau of the map), which a condensation divides by. On that clamp the Dual takes
+    // the elastic-side derivative beta dSC (the limit from x > YTOL/E, where dc = 0 exactly); the
+    // value is untouched (fix has a zero value part). Quirk WP-263-rc-compression-ytol-micro-load.
+    const bool microC = (value(pc.q) <= YTOL); (void)microC;
+    for (int a = 0; a < 6; ++a) {
+        T cterm = beta * (1.0 - dc_bar) * D.SC[a];
+        if constexpr (ladruno_dual::is_dual<T>::value) {
+            if (microC) { T fix = cterm - beta * D.SC[a]; ladruno_dual::zero_value(fix); cterm -= fix; }
+        }
+        sig6[a] = (1.0 - dt_bar) * D.ST[a] + cterm;
+    }
 
     // ---- Phase 3: tension stiffening (rank-1 FLOOR along the live principal tensile axis) ----
     // Between cracks, bonded reinforcement holds the average concrete tension above the bare
@@ -897,7 +1143,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     //      (delta*sin(th_rel)cos(th_rel)) which the interlock then bounds. Combined TS+interlock
     //      is validated for NON-rotating (proportional) loading; rotating-axis combined use is a
     //      documented boundary, not a guaranteed-correct superposition.
-    double e1_ts = e1;
+    T e1_ts = e1;
     if (implexExplicit && P.tensStiffMode != 0) {
         e1_ts = in.eps1 + time_factor * (in.eps1 - in.eps1_old);
         if (e1_ts < 0.0) e1_ts = 0.0;
@@ -915,7 +1161,8 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // Ladruno WP-241: the vectors live on an index list -- membrane {0,1,3} (the original
     // arithmetic, term for term), spatial all six (eps1Spatial's multiplicity-aware vectors).
     bool   ts_active = false;
-    double ts_inj[6] = {0,0,0,0,0,0}, ts_meas[6] = {0,0,0,0,0,0}, ts_P1eps[6] = {0,0,0,0,0,0}, ts_dsig = 0.0;
+    T ts_inj[6], ts_meas[6], ts_P1eps[6], ts_dsig = 0.0;
+    for (int k = 0; k < 6; ++k) { ts_inj[k] = 0.0; ts_meas[k] = 0.0; ts_P1eps[k] = 0.0; }
     const int ts_idx_m[3] = { 0, 1, 3 }, ts_idx_s[6] = { 0, 1, 2, 3, 4, 5 };
     const int* ts_idx = spatial ? ts_idx_s : ts_idx_m;
     const int  ts_n   = spatial ? 6 : 3;
@@ -926,7 +1173,7 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // So the floor is scaled by s = min(1, q / sigma_ts(e1)) taken on the step it first opens
     // (delta = 0 there: continuous), and frozen at commit (RCHist::tsScale). The gate stays shut
     // while q <= 0. crackGate = strain: s = 1 always (byte-identical).
-    double tsScale = in.tsScale;
+    T tsScale = in.tsScale;
     if (P.tensStiffMode != 0 && e1_ts >= P.crackStrain && ts_gate) {
         if (spatial) {
             for (int k = 0; k < 6; ++k) { ts_inj[k] = sp_inj[k]; ts_meas[k] = sp_meas[k]; ts_P1eps[k] = sp_P1[k]; }
@@ -935,21 +1182,21 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
             ts_meas[0] = 0.5; ts_meas[1] = 0.5;
             ts_P1eps[0] = 0.5; ts_P1eps[1] = 0.5;         // de1/d(exx)=de1/d(eyy)=0.5 (mean)
         } else {
-            double a = p1[0]*p1[0], b = p1[1]*p1[1], ab = p1[0]*p1[1];
+            T a = p1[0]*p1[0], b = p1[1]*p1[1], ab = p1[0]*p1[1];
             ts_inj[0] = a;  ts_inj[1] = b;  ts_inj[3] = ab;
             ts_meas[0] = a; ts_meas[1] = b; ts_meas[3] = 2.0*ab;
             ts_P1eps[0] = a; ts_P1eps[1] = b; ts_P1eps[3] = ab;   // de1/deps (membrane)
         }
-        double q = 0.0;
+        T q = 0.0;
         for (int k = 0; k < ts_n; ++k) q += ts_meas[ts_idx[k]] * sig6[ts_idx[k]];
-        double sig_ts = tensStiff(e1_ts, P.tensStiffMode, P.ftPeak, P.tensStiffC, P.tensStiffAlpha, &ts_dsig);
+        T sig_ts = tensStiff(e1_ts, P.tensStiffMode, P.ftPeak, P.tensStiffC, P.tensStiffAlpha, &ts_dsig);
         if (P.crackGate == 1) {
             if (tsScale < 0.0 && q > 0.0 && sig_ts > 0.0)      // onset step: open at q
-                tsScale = (q < sig_ts) ? q / sig_ts : 1.0;
-            const double s = (tsScale < 0.0) ? 0.0 : tsScale;   // q <= 0: still shut
+                tsScale = (q < sig_ts) ? T(q / sig_ts) : T(1.0);
+            const T s = (tsScale < 0.0) ? T(0.0) : tsScale;      // q <= 0: still shut
             sig_ts *= s; ts_dsig *= s;
         }
-        double delta  = sig_ts - q;
+        T delta  = sig_ts - q;
         if (delta > 0.0) {
             for (int k = 0; k < ts_n; ++k) sig6[ts_idx[k]] += delta * ts_inj[ts_idx[k]];
             ts_active = true;
@@ -976,13 +1223,16 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     // Cyclic reversal unloads along G and re-caps in the opposite sense; the cap
     // collapsing as the crack re-opens (w grows) gives pinching. Reduces to a monotone
     // ramp-then-cap (same plateau as 2a) under monotonic loading.
-    double crk_c = in.crackC, crk_s = in.crackS, cracked = in.cracked, wmax = in.wmax;
-    double tauCr = in.tauCr, gammaCr = in.gammaCr;   // 2b cyclic crack-shear state
-    double cracked2 = in.cracked2, slipCum = in.slipCum;   // 2b.2b X-crack + wear state
-    double betaSr = 1.0;
+    T crk_c = in.crackC, crk_s = in.crackS, wmax = in.wmax;
+    double cracked = in.cracked;
+    T tauCr = in.tauCr, gammaCr = in.gammaCr;        // 2b cyclic crack-shear state
+    double cracked2 = in.cracked2;                   // 2b.2b X-crack + wear state
+    T slipCum = in.slipCum;
+    T betaSr = 1.0;
     bool   il_active = false, il_capped = false, il_cyclic = false;
-    double il_m[3] = { 0.0, 0.0, 0.0 };             // m_eps: stress back-rotation of a shear change
-    double il_Gint = 0.0;                            // interlock shear modulus (cyclic tangent)
+    T il_m[3] = { T(0.0), T(0.0), T(0.0) };          // m_eps: stress back-rotation of a shear change
+    T il_Gint = 0.0;                                 // interlock shear modulus (cyclic tangent)
+    T il_floor = 0.0; (void)il_floor;                // WP-263: Dual-only betaSrMin floor driver
     // shearRetMode 3 (rots) = rotating-coaxial: skip the fixed-crack shear entirely, so the
     // membrane shear stays smeared/spectral (no capture, no clip, no friction). il_active
     // stays false => the tangent carries no crack cross-term either.
@@ -995,27 +1245,27 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
         bool just_captured = (in.cracked < 0.5 && cracked >= 0.5);
         if (cracked >= 0.5) {
             il_active = true;
-            double exx = eps6[0], eyy = eps6[1], gxy = eps6[3];
-            double c = crk_c, s = crk_s, c2 = c*c, s2 = s*s, cs = c*s;
-            double en = exx*c2 + eyy*s2 + gxy*cs;               // strain normal to the FROZEN crack 1
+            T exx = eps6[0], eyy = eps6[1], gxy = eps6[3];
+            T c = crk_c, s = crk_s, c2 = c*c, s2 = s*s, cs = c*s;
+            T en = exx*c2 + eyy*s2 + gxy*cs;                    // strain normal to the FROZEN crack 1
             double sth = (P.crackSpacing > 0.0) ? P.crackSpacing : (P.lch > 0.0 ? P.lch : 1.0);
             // ---- Phase 2b.2b: second orthogonal crack (X-cracking) ----
             // Crack 2 normal = (-s,c) (orthogonal to crack 1), frozen when the strain normal to
             // THAT plane reaches eps_cr (FSAM CepsA2>=eunpA2 + orthogonality lock). The cap then
             // uses the GOVERNING (most-open) crack's opening, so the REVERSE shear direction is
             // interlock-capped too (2a/2b.1 single crack only capped the crack-1 direction).
-            double en_gov = en;
+            T en_gov = en;
             if (P.xcrackOn && P.interlockCyclic) {
-                double c2n = -s, s2n = c;                       // crack-2 (orthogonal) normal
-                double en2 = exx*c2n*c2n + eyy*s2n*s2n + gxy*c2n*s2n;
+                T c2n = -s, s2n = c;                            // crack-2 (orthogonal) normal
+                T en2 = exx*c2n*c2n + eyy*s2n*s2n + gxy*c2n*s2n;
                 if (cracked2 < 0.5 && en2 >= P.crackStrain) cracked2 = 1.0;
                 if (cracked2 >= 0.5 && en2 > en_gov) en_gov = en2;   // most-open crack governs
             }
-            double w = macauley(en_gov) * sth;
+            T w = macauley(en_gov) * sth;
             if (w > wmax) wmax = w;                              // tracked max (diagnostic / 2a)
-            double w_use = P.interlockCyclic ? w : wmax;        // reversible (cyclic) vs monotone (2a)
-            double denom = 0.31 + 24.0 * w_use / (P.aggSize + 16.0);
-            double vcimax = (denom > 0.0) ? 0.18 * P.sqrtFc / denom : 0.18 * P.sqrtFc;
+            T w_use = P.interlockCyclic ? w : wmax;             // reversible (cyclic) vs monotone (2a)
+            T denom = 0.31 + 24.0 * w_use / (P.aggSize + 16.0);
+            T vcimax = (denom > 0.0) ? T(0.18 * P.sqrtFc / denom) : T(0.18 * P.sqrtFc);
             // ---- Phase 2b.2b: slip-driven irreversible interlock-surface wear (degradation) ----
             // Aggregate-interlock abrasion (Archard) scales with the CUMULATIVE crack sliding
             // distance; knock the cap down by kn = max(degMin, 1 - degKappa*clamp(slipCum/degSlipRef,
@@ -1028,9 +1278,9 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
                 if (kn > 1.0) kn = 1.0;
                 vcimax *= kn;
             }
-            double sxx = sig6[0], syy = sig6[1], sxy = sig6[3];
-            double tau_sm = cs * (syy - sxx) + (c2 - s2) * sxy; // smeared crack-plane shear
-            double tau_ci;
+            T sxx = sig6[0], syy = sig6[1], sxy = sig6[3];
+            T tau_sm = cs * (syy - sxx) + (c2 - s2) * sxy;      // smeared crack-plane shear
+            T tau_ci;
             if (P.interlockCyclic) {
                 il_cyclic = true;
                 // crack-shear slip stiffness G_slip per -shearRetention mode (cap unchanged).
@@ -1038,10 +1288,10 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
                 il_Gint = Gfull;                                 // mcft (default): full G
                 if (P.shearRetMode == 1)      il_Gint = P.shearRetFactor * Gfull;  // const: mu*G
                 else if (P.shearRetMode == 2) il_Gint = Gfull * (0.31 / denom);    // dsfm: width-degraded
-                double g_nt = 2.0*(eyy - exx)*cs + gxy*(c2 - s2);
+                T g_nt = 2.0*(eyy - exx)*cs + gxy*(c2 - s2);
                 // 2b.2b wear driver: accumulate the sliding distance (skip the capture step,
                 // where in.gammaCr is still the uncracked 0 and would inject a spurious jump).
-                slipCum = in.slipCum + (just_captured ? 0.0 : fabs(g_nt - in.gammaCr));
+                slipCum = in.slipCum + (just_captured ? T(0.0) : T(fabs(g_nt - in.gammaCr)));
                 if (just_captured) {                            // seed for stress CONTINUITY:
                     gammaCr = g_nt;                             // slip origin = capture slip,
                     tauCr = (tau_sm >  vcimax) ?  vcimax        // tau origin = the clipped smeared
@@ -1053,39 +1303,61 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
                 gammaCr = g_nt; tauCr = tau_ci;                 // advance committed slip/stress
                 // betaSr in cyclic = cap UTILIZATION tau_ci/v_ci,max (in [-1,1]); the 2a
                 // retention-secant tau_ci/tau_sm is non-physical here (tau_ci is independent).
-                betaSr = (vcimax > 1.0e-30) ? tau_ci / vcimax : 0.0;
+                betaSr = (vcimax > 1.0e-30) ? T(tau_ci / vcimax) : T(0.0);
+                if constexpr (ladruno_dual::is_dual<T>::value) il_floor = value(il_Gint) * g_nt;
             } else {
                 tau_ci = tau_sm;                                // 2a: clip the smeared shear
                 if (tau_ci >  vcimax) { tau_ci =  vcimax; il_capped = true; }
                 if (tau_ci < -vcimax) { tau_ci = -vcimax; il_capped = true; }
-                betaSr = (fabs(tau_sm) > 1.0e-30) ? tau_ci / tau_sm : 1.0;
+                betaSr = (fabs(tau_sm) > 1.0e-30) ? T(tau_ci / tau_sm) : T(1.0);
+                if constexpr (ladruno_dual::is_dual<T>::value) il_floor = tau_sm;
             }
-            double dtau = tau_ci - tau_sm;
+            T dtau = tau_ci - tau_sm;
             il_m[0] = -2.0*cs; il_m[1] = 2.0*cs; il_m[2] = c2 - s2;   // m_eps
             sig6[0] += dtau * il_m[0];
             sig6[1] += dtau * il_m[1];
             sig6[3] += dtau * il_m[2];
+            // WP-263 (Dual only): on a capped crack tau_ci = +/- v_ci,max is pinned, so the exact
+            // tangent has ZERO crack-shear stiffness: the in-plane block is singular. An element
+            // that inverts a block of the material tangent then blows up -- ASDShellQ4's EAS
+            // enhanced-mode update KQQ^-1 sent the membrane strains to ~1e26 (research downside D1;
+            // quirk WP-263-rc-exact-tangent-singular-capped-interlock). The Dual keeps mode 0's
+            // documented betaSrMin floor: + betaSrMin m_eps (x) d(tau_sm) on the 2a clip (the
+            // retained fraction of the smeared crack shear), + betaSrMin G_int m_eps (x) m_full on
+            // the cyclic cap (d g_nt = m_full). Derivative only (zero-valued, subtracted so a -0.0
+            // stays -0.0): the stress stays fully capped, as in mode 0. -betaSrMin 0 is the exact map.
+            if constexpr (ladruno_dual::is_dual<T>::value) {
+                if (il_capped && P.betaSrMin != 0.0) {
+                    static const int fidx[3] = { 0, 1, 3 };
+                    for (int a = 0; a < 3; ++a) {
+                        T neg = -(P.betaSrMin * value(il_m[a])) * il_floor;
+                        ladruno_dual::zero_value(neg);
+                        sig6[fidx[a]] -= neg;
+                    }
+                }
+            }
         }
     }
 
     // effective stress reassembly for next-step commit (beta NOT applied)
     for (int a = 0; a < 6; ++a)
-        out.stress_eff[a] = (1.0 - dt_plastic) * D.ST[a] + (1.0 - dc_plastic) * D.SC[a];
-    for (int a = 0; a < 6; ++a) out.strain[a] = eps6[a];
-    out.xt = new_xt; out.xc = new_xc;
-    out.dt_bar = dt_bar; out.dc_bar = dc_bar; out.beta = beta; out.eps1 = e1;
-    out.cracked = cracked; out.crackC = crk_c; out.crackS = crk_s;
-    out.wmax = wmax; out.betaSr = betaSr;
-    out.tauCr = tauCr; out.gammaCr = gammaCr;
-    out.cracked2 = cracked2; out.slipCum = slipCum;
+        out.stress_eff[a] = value((1.0 - dt_plastic) * D.ST[a] + (1.0 - dc_plastic) * D.SC[a]);
+    for (int a = 0; a < 6; ++a) out.strain[a] = value(eps6[a]);
+    out.xt = value(new_xt); out.xc = value(new_xc);
+    out.dt_bar = value(dt_bar); out.dc_bar = value(dc_bar); out.beta = value(beta); out.eps1 = value(e1);
+    out.cracked = cracked; out.crackC = value(crk_c); out.crackS = value(crk_s);
+    out.wmax = value(wmax); out.betaSr = value(betaSr);
+    out.tauCr = value(tauCr); out.gammaCr = value(gammaCr);
+    out.cracked2 = cracked2; out.slipCum = value(slipCum);
     // IMPL-EX (n-1) generation: carried through verbatim; the rolling n->n-1 is done
     // by the host material at commit (so a mid-step explicit pass never corrupts it).
     out.xt_old = in.xt_old; out.xc_old = in.xc_old; out.eps1_old = in.eps1_old;
     out.nuCracked = nuCr;   // Ladruno (C2)
-    out.tsScale = tsScale;  // Ladruno WP-241 (damage-gated TS onset scale)
+    out.tsScale = value(tsScale);  // Ladruno WP-241 (damage-gated TS onset scale)
 
-    // tangent
-    if (do_tangent) {
+    // tangent. WP-263: built on the double path only. A Dual run (tangentMode 3, via
+    // returnMap3DDual) reads the tangent off the derivative part of sig6 instead.
+    if constexpr (!ladruno_dual::is_dual<T>::value) if (do_tangent) {
         // Under IMPL-EX the numerical (forward-difference) tangent is INVALID: the base
         // point is the explicit stress while a perturbed re-call would re-enter implicitly
         // (do_implex defaults false), so the quotient mixes branches (O(implexError/h),
@@ -1215,10 +1487,40 @@ inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
     }
 
     if (residual) {
-        double sn = 0.0; for (int a = 0; a < 6; ++a) sn += sig6[a] * sig6[a];
+        double sn = 0.0; for (int a = 0; a < 6; ++a) sn += value(sig6[a]) * value(sig6[a]);
         *residual = sqrt(sn);
     }
     return STATUS_OK;
+}
+
+// Ladruno WP-263: the dual tangent. Seeds the six engineering strains, runs returnMap3DT once in
+// Dual<6>, and returns sig6 / out from the value part (bit-identical to the double run) and
+// Dtan6[a][b] = d sig_a / d eps_b from the derivative part. There is no local Newton in the map, so
+// no implicit-function-theorem step is needed here (the condensing views -- sigma_33 = 0, the
+// BeamFiber lateral balance -- condense this Dtan6 at their converged point, which is that step).
+inline int returnMap3DDual(const Params& P, const double eps6[6], const RCHist& in,
+                           double sig6[6], double Dtan6[6][6], RCHist& out,
+                           double* residual, bool do_implex, double time_factor)
+{
+    typedef ladruno_dual::Dual<6> D6;
+    D6 e[6], s[6];
+    for (int i = 0; i < 6; ++i) e[i] = D6::variable(eps6[i], i);
+    const int st = returnMap3DT<D6>(P, e, in, s, Dtan6, out, true, residual, do_implex, time_factor);
+    for (int a = 0; a < 6; ++a) {
+        sig6[a] = s[a].v;
+        for (int b = 0; b < 6; ++b) Dtan6[a][b] = s[a].d[b];
+    }
+    return st;
+}
+
+inline int returnMap3D(const Params& P, const double eps6[6], const RCHist& in,
+                       double sig6[6], double Dtan6[6][6], RCHist& out,
+                       bool do_tangent, double* residual,
+                       bool do_implex, double time_factor)
+{
+    if (do_tangent && P.tangentMode == 3)
+        return returnMap3DDual(P, eps6, in, sig6, Dtan6, out, residual, do_implex, time_factor);
+    return returnMap3DT<double>(P, eps6, in, sig6, Dtan6, out, do_tangent, residual, do_implex, time_factor);
 }
 
 // ===========================================================================

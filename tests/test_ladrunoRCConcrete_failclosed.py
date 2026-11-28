@@ -71,6 +71,7 @@ ACCEPTED = {
     "-ties": [0.004, 0.004, 420.0, 200000.0], "-tieHardening": [0.01],
     "-crackCheck": ["sum", 150.0, 100.0],
     "-lateralNoRoot": ["modelC"],                 # Ladruno WP-247 (LadrunoRCConcrete only)
+    "-dualTangent": [],                           # Ladruno WP-263: tangentMode 3 (both materials)
 }
 
 # Declared in the shared table, accepted by LadrunoRCConcrete only: LadrunoRCFiniteStrain has no
