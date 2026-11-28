@@ -46,7 +46,7 @@ def run():
     src = os.path.join(_HERE, "ladruno_uniaxialj2_dual_check.cpp")
     with tempfile.TemporaryDirectory() as td:
         exe = os.path.join(td, "luj2d.exe")
-        cc = subprocess.run([gpp, "-O2", "-std=c++17", "-Wall",
+        cc = subprocess.run([gpp, "-O2", "-std=c++17", "-Wall", "-ffp-contract=off",
                              "-I", os.path.join(_SRC, "nD"), "-I", os.path.join(_SRC, "uniaxial"),
                              src, "-o", exe, *cxx_runtime_flags()],
                             stdin=subprocess.DEVNULL, capture_output=True, text=True)

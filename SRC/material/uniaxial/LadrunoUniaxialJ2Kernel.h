@@ -90,7 +90,8 @@ struct StateT {
 
 // strain: trial total strain. C: committed state; CdD: committed implicit damage
 // increment (IMPL-EX extrapolation). Tr: trial state (out). stress / tangent (out).
-// outIter (optional): local Newton iteration count; outResidual: final |R|.
+// outResidual (optional): final |R|. C and Tr must be DIFFERENT objects (C is read
+// after Tr is written).
 template <class T, class P>
 inline int returnMap(const ParamsT<P>& p, const T& strain,
                      const StateT<T>& C, const T& CdD,

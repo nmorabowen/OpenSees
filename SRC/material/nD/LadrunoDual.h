@@ -47,15 +47,19 @@
 //   * NO implicit conversion to double: a Dual can never silently lose its
 //     derivative. Branches read the value explicitly through value(x);
 //   * the value part follows EXACTLY the operations of the double code path,
-//     so value(f(Dual)) == f(double) bit for bit for the operations below.
+//     so value(f(Dual)) == f(double) bit for bit for the operations below --
+//     provided the compiler does not contract a*b+c into an FMA differently in
+//     the two instantiations (MSVC without /arch:AVX2 and g++ without
+//     -march=... do not; bit-identity harnesses pass -ffp-contract=off).
 //
 // Math functions are found by argument-dependent lookup: kernel code calls
 // unqualified sqrt/exp/... and gets ::sqrt for double, ladruno_dual::sqrt for
 // Dual. Kernels must therefore NOT qualify them as std::sqrt.
 //
 // Known limits (research/05_downsides.md D4-D6):
-//   * sqrt at 0, pow(0, a<1) and similar: the value is finite but the
-//     derivative is infinite. Kernels keep their existing guards (normFloor).
+//   * sqrt at 0, pow(0, a<1), pow(0, 0) and similar: the value is finite but
+//     the derivative is not -- infinite, or NaN when the incoming derivative is
+//     0 (0 * inf). Kernels keep their existing guards (normFloor).
 //   * fabs/fmax/fmin and every value-based branch return the derivative of the
 //     active branch: one-sided at the kink itself.
 //   * Iterative solves: converge, then take ONE Newton step in Dual at the
@@ -281,20 +285,38 @@ inline Dual<N, S> cos(const Dual<N, S>& a)
   return r;
 }
 // fabs / fmax / fmin: derivative of the active branch (one-sided at the kink).
+// Values match <math.h> exactly: fabs clears the sign of -0.0, and fmax/fmin
+// return the non-NaN argument when exactly one is NaN (C99 semantics).
 template <int N, class S>
-inline Dual<N, S> fabs(const Dual<N, S>& a) { return (a.v < 0.0) ? -a : a; }
+inline Dual<N, S> fabs(const Dual<N, S>& a)
+{
+  using ::fabs;
+  Dual<N, S> r = (a.v < 0.0) ? -a : a;
+  r.v = fabs(a.v);
+  return r;
+}
 template <int N, class S>
-inline Dual<N, S> fmax(const Dual<N, S>& a, const Dual<N, S>& b) { return (a.v >= b.v) ? a : b; }
+inline Dual<N, S> fmax(const Dual<N, S>& a, const Dual<N, S>& b)
+{
+  if (a.v != a.v) return b;                      // a is NaN
+  if (b.v != b.v) return a;                      // b is NaN
+  return (a.v >= b.v) ? a : b;
+}
 template <int N, class S>
-inline Dual<N, S> fmin(const Dual<N, S>& a, const Dual<N, S>& b) { return (a.v <= b.v) ? a : b; }
+inline Dual<N, S> fmin(const Dual<N, S>& a, const Dual<N, S>& b)
+{
+  if (a.v != a.v) return b;
+  if (b.v != b.v) return a;
+  return (a.v <= b.v) ? a : b;
+}
 template <int N, class S, class A, LADRUNO_DUAL_ARITH(A)>
-inline Dual<N, S> fmax(const Dual<N, S>& a, A b) { return (a.v >= b) ? a : Dual<N, S>(b); }
+inline Dual<N, S> fmax(const Dual<N, S>& a, A b) { return fmax(a, Dual<N, S>(b)); }
 template <int N, class S, class A, LADRUNO_DUAL_ARITH(A)>
-inline Dual<N, S> fmax(A a, const Dual<N, S>& b) { return (b.v >= a) ? b : Dual<N, S>(a); }
+inline Dual<N, S> fmax(A a, const Dual<N, S>& b) { return fmax(Dual<N, S>(a), b); }
 template <int N, class S, class A, LADRUNO_DUAL_ARITH(A)>
-inline Dual<N, S> fmin(const Dual<N, S>& a, A b) { return (a.v <= b) ? a : Dual<N, S>(b); }
+inline Dual<N, S> fmin(const Dual<N, S>& a, A b) { return fmin(a, Dual<N, S>(b)); }
 template <int N, class S, class A, LADRUNO_DUAL_ARITH(A)>
-inline Dual<N, S> fmin(A a, const Dual<N, S>& b) { return (b.v <= a) ? b : Dual<N, S>(a); }
+inline Dual<N, S> fmin(A a, const Dual<N, S>& b) { return fmin(Dual<N, S>(a), b); }
 
 #undef LADRUNO_DUAL_ARITH
 

@@ -167,6 +167,9 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
   // parameter. Empty until the first commitSensitivity (=> zero history).
   static const int SHV_N = 4 + MAXBACK;
   std::vector<double> SHV;
+  // lch/lch_ref used by the last setTrialStrain (1 when not regularized). The DDM
+  // pass reuses it: ops_TheActiveElement is stale outside Domain::update.
+  double lchScaleTrial = 1.0;
   // one Dual<1> pass of the kernel at the CURRENT trial strain; the seed is the
   // active parameter (if it is this material's), the stored history
   // sensitivities of gradIndex, and strainGradient on the strain. Returns the

@@ -125,3 +125,94 @@ def test_ladruno_uniaxial_j2_ddm_matches_fd(par):
     err, ddm, fd, _ = _check('LadrunoUniaxialJ2', BASE_LJ2, par)
     assert np.abs(ddm).max() > 0.0, "DDM sensitivity is identically zero (the pre-WP-262 stub)"
     assert err <= 1e-5, f"LadrunoUniaxialJ2 d(u_tip)/d({par}): DDM vs FD {err:.3e}"
+
+
+# ---------------------------------------------------------------------------
+# Truss-chain harness (WP-262 review findings 1 and 3): Lemaitre damage, the
+# crack-band regularization -lchRef on elements of DIFFERENT lengths, IMPL-EX,
+# and two parameters in one run (the SHV block per gradIndex). Finding 1 was
+# that the DDM pass re-read ops_TheActiveElement -- stale outside
+# Domain::update -- so every material replayed its map with the LAST element's
+# lch: 1.7e-2 .. 1.2e-1 off FD on L = 1, 2 with -lchRef 1.
+# ---------------------------------------------------------------------------
+T_E, T_S0, T_HISO = 200000.0, 250.0, 2000.0
+
+
+def _truss(vals, xs, lchref, sens=None, implex=False, pmax=330.0, nup=20):
+    ops.wipe()
+    ops.model('basic', '-ndm', 1, '-ndf', 1)
+    for i, x in enumerate(xs):
+        ops.node(i + 1, x)
+    ops.fix(1, 1)
+    args = ['LadrunoUniaxialJ2', 1, vals['E'], '-iso', 'voce', vals['sig0'], 0.0, 0.0, vals['Hiso'],
+            '-damage', 'lemaitre', 0.5, 1.0, 0.0, 0.99]
+    if implex:
+        args += ['-implex']
+    if lchref > 0.0:
+        args += ['-lchRef', lchref]
+    ops.uniaxialMaterial(*args)
+    ne = len(xs) - 1
+    for e in range(ne):
+        ops.element('Truss', e + 1, e + 1, e + 2, 1.0, 1)
+    prot = ([pmax * (k + 1) / nup for k in range(nup)]
+            + [pmax * (1.0 - 0.1 * (k + 1) / 40.0) for k in range(40)])
+    ops.timeSeries('Path', 1, '-time', *range(len(prot) + 1), '-values', 0.0, *prot)
+    ops.pattern('Plain', 1, 1)
+    ops.load(len(xs), 1.0)
+    names = list(sens) if sens else []
+    for j, nm in enumerate(names):
+        ops.parameter(j + 1, 'element', 1, nm)
+        for e in range(1, ne):
+            ops.addToParameter(j + 1, 'element', e + 1, nm)
+    ops.constraints('Plain')
+    ops.numberer('Plain')
+    ops.system('BandGeneral')
+    ops.test('NormDispIncr', 1.0e-12, 100)
+    ops.algorithm('Newton')
+    ops.integrator('LoadControl', 1.0)
+    ops.analysis('Static')
+    if names:
+        ops.sensitivityAlgorithm('-computeAtEachStep')
+    us, ss = [], []
+    for k in range(len(prot)):
+        assert ops.analyze(1) == 0, f"truss: step {k} failed"
+        us.append(ops.nodeDisp(len(xs), 1))
+        ss.append([ops.sensNodeDisp(len(xs), 1, j + 1) for j in range(len(names))])
+    ops.wipe()
+    return np.array(us), np.array(ss)
+
+
+def _truss_check(xs, lchref, names, implex=False):
+    base = dict(E=T_E, sig0=T_S0, Hiso=T_HISO)
+    _, ddm = _truss(base, xs, lchref, sens=names, implex=implex)
+    errs = {}
+    for j, nm in enumerate(names):
+        h = 1.0e-6 * abs(base[nm])
+        vp = dict(base); vp[nm] += h
+        vm = dict(base); vm[nm] -= h
+        up, _ = _truss(vp, xs, lchref, implex=implex)
+        um, _ = _truss(vm, xs, lchref, implex=implex)
+        fd = (up - um) / (2.0 * h)
+        scale = np.abs(fd).max()
+        assert scale > 0.0
+        errs[nm] = np.abs(ddm[:, j] - fd).max() / scale
+    return errs
+
+
+@pytest.mark.parametrize("xs", [[0.0, 1.0, 3.0], [0.0, 2.0, 3.0]], ids=["L1-2", "L2-1"])
+def test_ddm_crack_band_unequal_lengths(xs):
+    """Regression for review finding 1: -lchRef on elements of different length."""
+    errs = _truss_check(xs, 1.0, ["sig0"])
+    assert errs["sig0"] <= 1e-6, f"lchRef DDM vs FD {errs['sig0']:.3e} (stale active element?)"
+
+
+def test_ddm_two_parameters_one_run_damage():
+    """Two gradients in one run: each SHV block is indexed by its gradIndex."""
+    errs = _truss_check([0.0, 1.0, 3.0], 1.0, ["E", "Hiso"])
+    for nm, e in errs.items():
+        assert e <= 1e-6, f"two-parameter run, {nm}: DDM vs FD {e:.3e}"
+
+
+def test_ddm_damage_implex():
+    errs = _truss_check([0.0, 1.0, 3.0], 1.0, ["sig0"], implex=True)
+    assert errs["sig0"] <= 1e-6, f"IMPL-EX DDM vs FD {errs['sig0']:.3e}"
