@@ -94,6 +94,8 @@ GLOBS = [
     "SRC/material/uniaxial/LadrunoUniaxialJ2.*",
     "SRC/material/uniaxial/LadrunoRebarBuckling.*",
     "SRC/material/uniaxial/LadrunoBondSlip.*",
+    "SRC/material/uniaxial/LadrunoBondSlipKernel.h",        # WP-267: templated bond-slip law
+    "SRC/material/uniaxial/LadrunoCohesiveHingeKernel.h",   # WP-267: templated cohesive hinge law
     "SRC/material/nD/LogStrainNDMaterial.*", "SRC/material/nD/LogStrainKernel.h",
     "SRC/material/nD/FiniteStrainNDMaterial.h",
     "SRC/material/nD/LogStrain2D.*", "SRC/material/nD/FiniteStrainND2DMaterial.h",

@@ -34,6 +34,7 @@
 #include <FEM_ObjectBroker.h>
 #include <Information.h>
 #include <MaterialResponse.h>
+#include <Parameter.h>
 #include <OPS_Globals.h>
 #include <OPS_Stream.h>
 #include <string.h>
@@ -112,7 +113,8 @@ LadrunoBondSlip::LadrunoBondSlip(int tag, double tau_max_, double s1_, double s2
     tau_max(tau_max_), s1(s1_), s2(s2_), s3(s3_), tau_f(tau_f_), alpha(alpha_),
     Gf(Gf_), s0(s0_), k0(0.0),
     Cslip(0.0), Cstress(0.0), CslipMaxAbs(0.0), Cwork(0.0),
-    Tslip(0.0), Tstress(0.0), Ttangent(0.0), TslipMaxAbs(0.0), Twork(0.0)
+    Tslip(0.0), Tstress(0.0), Ttangent(0.0), TslipMaxAbs(0.0), Twork(0.0),
+    parameterID(0)
 {
   setDerived();
   Ttangent = k0;
@@ -123,77 +125,63 @@ LadrunoBondSlip::LadrunoBondSlip()
     tau_max(0.0), s1(1.0), s2(1.0), s3(1.0), tau_f(0.0), alpha(1.0),
     Gf(0.0), s0(0.0), k0(0.0),
     Cslip(0.0), Cstress(0.0), CslipMaxAbs(0.0), Cwork(0.0),
-    Tslip(0.0), Tstress(0.0), Ttangent(0.0), TslipMaxAbs(0.0), Twork(0.0)
+    Tslip(0.0), Tstress(0.0), Ttangent(0.0), TslipMaxAbs(0.0), Twork(0.0),
+    parameterID(0)
 {
 }
 
 LadrunoBondSlip::~LadrunoBondSlip() {}
 
 // fill s0 default, k0, and apply the Gf override of s3
+// WP-267: LadrunoBondSlipKernel.h::setDerived (double instantiation)
 void LadrunoBondSlip::setDerived(void)
 {
-  if (s1 <= 0.0) s1 = 1.0e-12;
-  if (s0 <= 0.0) s0 = 0.1 * s1;
-  if (s0 > s1)   s0 = s1;
-  // initial stiffness = secant to the power-law value at s0 (D4.1 linear segment)
-  double tau_s0 = tau_max * pow(s0 / s1, alpha);
-  k0 = (s0 > 0.0) ? tau_s0 / s0 : tau_max / s1;
-  // D4.3: Gf overrides s3 so the softening triangle dissipates Gf per unit area
-  if (Gf > 0.0 && tau_max > tau_f) {
-    s3 = s2 + 2.0 * Gf / (tau_max - tau_f);
-  }
-  if (s2 < s1) s2 = s1;
-  if (s3 < s2) s3 = s2;
+  ladruno_bond_slip::ParamsT<double> p;
+  fillKernelParams(p);
+  ladruno_bond_slip::setDerived(p);
+  s1 = p.s1; s2 = p.s2; s3 = p.s3; s0 = p.s0; k0 = p.k0;
+}
+
+void LadrunoBondSlip::fillKernelParams(ladruno_bond_slip::ParamsT<double>& p) const
+{
+  p.tau_max = tau_max; p.s1 = s1; p.s2 = s2; p.s3 = s3;
+  p.tau_f = tau_f; p.alpha = alpha; p.Gf = Gf; p.s0 = s0;
+  p.k0 = k0;
 }
 
 // ===========================================================================
-//  backbone (a = |slip| >= 0)
+//  backbone (a = |slip| >= 0): LadrunoBondSlipKernel.h
 // ===========================================================================
 double LadrunoBondSlip::envelope(double a) const
 {
-  if (a <= s0)  return k0 * a;
-  if (a <= s1)  return tau_max * pow(a / s1, alpha);
-  if (a <= s2)  return tau_max;
-  if (a <= s3)  return tau_max - (tau_max - tau_f) * (a - s2) / (s3 - s2);
-  return tau_f;
+  ladruno_bond_slip::ParamsT<double> p;
+  fillKernelParams(p);
+  return ladruno_bond_slip::envelope(p, a);
 }
 
 double LadrunoBondSlip::envelopeTangent(double a) const
 {
-  if (a <= s0)  return k0;
-  if (a <= s1)  return tau_max * alpha / s1 * pow(a / s1, alpha - 1.0);
-  if (a <= s2)  return 0.0;
-  if (a <= s3)  return -(tau_max - tau_f) / (s3 - s2);
-  return 0.0;
+  ladruno_bond_slip::ParamsT<double> p;
+  fillKernelParams(p);
+  return ladruno_bond_slip::envelopeTangent(p, a);
 }
 
 // ===========================================================================
 //  state update: backbone on loading past the peak |slip|; inside it, elastic
 //  (k0) from the committed point, with |tau| limited to the envelope at the peak
+//  (friction slider; since envelope(a) <= k0*a, the path reaches +-peak already
+//  on the cap, so it rejoins the backbone without a jump). WP-267: the update
+//  lives in LadrunoBondSlipKernel.h::trialState; this is its double
+//  instantiation, which performs exactly the operations of the former code.
 // ===========================================================================
 int LadrunoBondSlip::setTrialStrain(double strain, double)
 {
   Tslip = strain;
-  double a = fabs(Tslip);
-  double sgn = (Tslip >= 0.0) ? 1.0 : -1.0;
-
-  if (a >= CslipMaxAbs) {              // virgin loading on the envelope
-    TslipMaxAbs = a;
-    Tstress  = sgn * envelope(a);
-    Ttangent = envelopeTangent(a);    // (>=0 ascending, <0 softening, 0 plateau)
-    if (Ttangent == 0.0) Ttangent = (a <= s2) ? k0 : -1.0e-12 * k0;  // avoid a hard 0 pivot
-  }
-  else {                              // inside the peak: elastic, then friction
-    TslipMaxAbs = CslipMaxAbs;
-    // Friction slider: k0 from the committed point, capped at the envelope stress
-    // of the peak slip in either direction. Since envelope(a) <= k0*a, the path
-    // reaches +-peak already on the cap, so it rejoins the backbone without a jump.
-    const double tauCap = envelope(CslipMaxAbs);
-    Tstress = Cstress + k0 * (Tslip - Cslip);
-    if (Tstress > tauCap)       Tstress = tauCap;
-    else if (Tstress < -tauCap) Tstress = -tauCap;
-    Ttangent = k0;                    // also while sliding: keeps the pivot finite
-  }
+  ladruno_bond_slip::ParamsT<double> p;
+  fillKernelParams(p);
+  ladruno_bond_slip::StateT<double> C;
+  C.slip = Cslip; C.stress = Cstress; C.slipMaxAbs = CslipMaxAbs;
+  ladruno_bond_slip::trialState(p, Tslip, C, TslipMaxAbs, Tstress, Ttangent);
   // cumulative bond work per unit interface area, W = ∫ tau ds, accumulated
   // from the committed point by the trapezoidal rule (ADR 20 §10.2b — the
   // PHYSICAL bond energy the embedded element nets against the artificial
@@ -226,6 +214,7 @@ int LadrunoBondSlip::revertToLastCommit(void)
 
 int LadrunoBondSlip::revertToStart(void)
 {
+  SHV.clear();                       // WP-267: history sensitivities
   Cslip = Cstress = CslipMaxAbs = Cwork = 0.0;
   Tslip = Tstress = TslipMaxAbs = Twork = 0.0;
   Ttangent = k0;
@@ -240,6 +229,8 @@ UniaxialMaterial* LadrunoBondSlip::getCopy(void)
   c->Tslip = Tslip; c->Tstress = Tstress; c->TslipMaxAbs = TslipMaxAbs;
   c->Ttangent = Ttangent;
   c->Cwork = Cwork; c->Twork = Twork;
+  c->parameterID = parameterID;      // WP-267: DDM
+  c->SHV = SHV;
   return c;
 }
 
@@ -317,4 +308,141 @@ int LadrunoBondSlip::getResponse(int responseID, Information& matInfo)
   case 4: matInfo.setDouble(Twork);    return 0;
   default: return -1;
   }
+}
+
+// ===========================================================================
+//  WP-267: parameters and DDM sensitivities by dual numbers
+//  (the WP-262 LadrunoUniaxialJ2 recipe)
+//
+//  Parameters: 1 tau_max, 2 s1, 3 s2, 4 s3, 5 tau_f, 6 alpha, 7 Gf, 8 s0.
+//  updateParameter re-runs setDerived on the stored constants, so a defaulted
+//  s0 stays at its stored value and a Gf > 0 keeps overriding s3 (s3 is then
+//  inert). The DDM pass does the same in Dual<1>, so it is the derivative of
+//  what updateParameter + the run would do.
+//
+//  OpenSees DDM contract (computeSensitivities BEFORE commit):
+//  getStressSensitivity(g) is d tau/d theta at the CURRENT trial slip held
+//  fixed, given the committed state and its stored sensitivities;
+//  commitSensitivity(d slip/d theta, g, n) advances them with the converged
+//  slip derivative. The history is (Cslip, Cstress, CslipMaxAbs): the slider
+//  reads all three. The DDM equals the derivative of the discrete response only
+//  where the reported tangent is the consistent one: it is k0, not 0, on the
+//  plateau and while sliding at the cap (kept so the pivot stays finite).
+// ===========================================================================
+int LadrunoBondSlip::setParameter(const char** argv, int argc, Parameter& param)
+{
+  if (argc < 1) return -1;
+  if (strcmp(argv[0], "tau_max") == 0 || strcmp(argv[0], "tauMax") == 0) { param.setValue(tau_max); return param.addObject(1, this); }
+  if (strcmp(argv[0], "s1") == 0)    { param.setValue(s1);    return param.addObject(2, this); }
+  if (strcmp(argv[0], "s2") == 0)    { param.setValue(s2);    return param.addObject(3, this); }
+  if (strcmp(argv[0], "s3") == 0)    { param.setValue(s3);    return param.addObject(4, this); }
+  if (strcmp(argv[0], "tau_f") == 0 || strcmp(argv[0], "tauF") == 0) { param.setValue(tau_f); return param.addObject(5, this); }
+  if (strcmp(argv[0], "alpha") == 0) { param.setValue(alpha); return param.addObject(6, this); }
+  if (strcmp(argv[0], "Gf") == 0)    { param.setValue(Gf);    return param.addObject(7, this); }
+  if (strcmp(argv[0], "s0") == 0)    { param.setValue(s0);    return param.addObject(8, this); }
+  return -1;
+}
+
+int LadrunoBondSlip::updateParameter(int paramID, Information& info)
+{
+  switch (paramID) {
+    case 1: tau_max = info.theDouble; break;
+    case 2: s1      = info.theDouble; break;
+    case 3: s2      = info.theDouble; break;
+    case 4: s3      = info.theDouble; break;
+    case 5: tau_f   = info.theDouble; break;
+    case 6: alpha   = info.theDouble; break;
+    case 7: Gf      = info.theDouble; break;
+    case 8: s0      = info.theDouble; break;
+    default: return -1;
+  }
+  setDerived();
+  return 0;
+}
+
+int LadrunoBondSlip::activateParameter(int paramID)
+{
+  parameterID = paramID;
+  return 0;
+}
+
+void LadrunoBondSlip::seededParams(ladruno_bond_slip::ParamsT<ladruno_dual::Dual<1> >& p) const
+{
+  p.tau_max = tau_max; p.s1 = s1; p.s2 = s2; p.s3 = s3;
+  p.tau_f = tau_f; p.alpha = alpha; p.Gf = Gf; p.s0 = s0;
+  p.k0 = k0;
+  switch (parameterID) {
+    case 1: p.tau_max.d[0] = 1.0; break;
+    case 2: p.s1.d[0]      = 1.0; break;
+    case 3: p.s2.d[0]      = 1.0; break;
+    case 4: p.s3.d[0]      = 1.0; break;
+    case 5: p.tau_f.d[0]   = 1.0; break;
+    case 6: p.alpha.d[0]   = 1.0; break;
+    case 7: p.Gf.d[0]      = 1.0; break;
+    case 8: p.s0.d[0]      = 1.0; break;
+    default: break;                  // not this material's parameter
+  }
+  ladruno_bond_slip::setDerived(p);  // k0 and a Gf-driven s3 carry their derivatives
+}
+
+void LadrunoBondSlip::sensitivityPass(int gradIndex, double strainGradient,
+                                      double& dStress, double& dTangent, double* dTrialState)
+{
+  typedef ladruno_dual::Dual<1> D1;
+  ladruno_bond_slip::ParamsT<D1> p;
+  seededParams(p);
+
+  ladruno_bond_slip::StateT<D1> C;
+  C.slip = Cslip; C.stress = Cstress; C.slipMaxAbs = CslipMaxAbs;
+  const size_t base = (size_t)gradIndex * SHV_N;
+  if (gradIndex >= 0 && SHV.size() >= base + SHV_N) {
+    C.slip.d[0]       = SHV[base];
+    C.stress.d[0]     = SHV[base + 1];
+    C.slipMaxAbs.d[0] = SHV[base + 2];
+  }
+
+  D1 slip(Tslip);
+  slip.d[0] = strainGradient;
+  D1 smax, stress, tangent;
+  ladruno_bond_slip::trialState(p, slip, C, smax, stress, tangent);
+
+  dStress  = stress.d[0];
+  dTangent = tangent.d[0];
+  if (dTrialState) {                 // commitState: Cslip, Cstress, CslipMaxAbs = trial
+    dTrialState[0] = slip.d[0];
+    dTrialState[1] = stress.d[0];
+    dTrialState[2] = smax.d[0];
+  }
+}
+
+double LadrunoBondSlip::getStressSensitivity(int gradIndex, bool)
+{
+  double dS = 0.0, dT = 0.0;
+  this->sensitivityPass(gradIndex, 0.0, dS, dT, 0);
+  return dS;
+}
+
+double LadrunoBondSlip::getTangentSensitivity(int gradIndex)
+{
+  double dS = 0.0, dT = 0.0;
+  this->sensitivityPass(gradIndex, 0.0, dS, dT, 0);
+  return dT;
+}
+
+double LadrunoBondSlip::getInitialTangentSensitivity(int)
+{
+  ladruno_bond_slip::ParamsT<ladruno_dual::Dual<1> > p;
+  seededParams(p);
+  return p.k0.d[0];                  // getInitialTangent() == k0
+}
+
+int LadrunoBondSlip::commitSensitivity(double strainGradient, int gradIndex, int numGrads)
+{
+  if (gradIndex < 0 || numGrads <= gradIndex) return -1;
+  if (SHV.size() < (size_t)numGrads * SHV_N) SHV.resize((size_t)numGrads * SHV_N, 0.0);
+  double dTr[SHV_N];
+  double dS = 0.0, dT = 0.0;
+  this->sensitivityPass(gradIndex, strainGradient, dS, dT, dTr);
+  for (int i = 0; i < SHV_N; i++) SHV[(size_t)gradIndex * SHV_N + i] = dTr[i];
+  return 0;
 }

@@ -63,6 +63,8 @@
 #define LadrunoBondSlip_h
 
 #include <UniaxialMaterial.h>
+#include <LadrunoBondSlipKernel.h>
+#include <vector>
 
 class LadrunoBondSlip : public UniaxialMaterial
 {
@@ -94,6 +96,18 @@ class LadrunoBondSlip : public UniaxialMaterial
   Response* setResponse(const char** argv, int argc, OPS_Stream& s);
   int getResponse(int responseID, Information& matInfo);
 
+  // WP-267: parameters (tau_max s1 s2 s3 tau_f alpha Gf s0) and DDM
+  // sensitivities by dual numbers: the backbone and the slider are templated
+  // (LadrunoBondSlipKernel.h); one Dual<1> pass seeded on the active parameter
+  // and on the stored history sensitivities gives d(tau)/d(theta).
+  int setParameter(const char** argv, int argc, Parameter& param);
+  int updateParameter(int parameterID, Information& info);
+  int activateParameter(int parameterID);
+  double getStressSensitivity(int gradIndex, bool conditional);
+  double getTangentSensitivity(int gradIndex);
+  double getInitialTangentSensitivity(int gradIndex);
+  int    commitSensitivity(double strainGradient, int gradIndex, int numGrads);
+
  private:
   // --- backbone parameters (s3 may be overridden by Gf) ---
   double tau_max, s1, s2, s3, tau_f, alpha, Gf, s0;
@@ -115,6 +129,20 @@ class LadrunoBondSlip : public UniaxialMaterial
   double Ttangent;
   double TslipMaxAbs;
   double Twork;              // trial cumulative bond work (trapezoidal increment)
+
+  // WP-267: DDM. parameterID is set by activateParameter (0 = not this material's).
+  // SHV holds, per gradient, [d Cslip, d Cstress, d CslipMaxAbs]; empty until
+  // the first commitSensitivity (=> zero history).
+  int parameterID;
+  static const int SHV_N = 3;
+  std::vector<double> SHV;
+  void fillKernelParams(ladruno_bond_slip::ParamsT<double>& p) const;
+  // the same block in Dual<1>, the active parameter seeded and setDerived re-run
+  void seededParams(ladruno_bond_slip::ParamsT<ladruno_dual::Dual<1> >& p) const;
+  // one Dual<1> pass at the CURRENT trial slip: seeds the active parameter, the
+  // stored history sensitivities of gradIndex and strainGradient on the slip.
+  void sensitivityPass(int gradIndex, double strainGradient,
+                       double& dStress, double& dTangent, double* dTrialState);
 };
 
 #endif
