@@ -32,6 +32,8 @@
 #include <OPS_Globals.h>    // Ladruno WP-107 red-team S7: opserr for the refusals
 
 #include <stdlib.h>
+#include <climits>          // Ladruno WP-253: INT_MAX (KMP_MAX_BLOCKTIME)
+#include <cstring>          // Ladruno WP-253: memcpy (import-stub decoding)
 #include <stdio.h>
 #include <ctype.h>
 #include <thread>
@@ -39,6 +41,20 @@
 
 #ifdef _LADRUNO_OPENMP
 #include <omp.h>
+#  ifdef _WIN32                 // Ladruno WP-253: run-time lookup of kmp_set_blocktime
+#    ifndef WIN32_LEAN_AND_MEAN
+#      define WIN32_LEAN_AND_MEAN
+#    endif
+#    ifndef NOMINMAX
+#      define NOMINMAX
+#    endif
+#    ifndef NOGDI
+#      define NOGDI
+#    endif
+#    include <windows.h>
+#  else
+#    include <dlfcn.h>
+#  endif
 #endif
 
 // -1 = "not seeded yet". Seeded once, lazily, from LADRUNO_THREADS so that a
@@ -282,6 +298,135 @@ ladruno_parallelFor(int n, int nThreads, int chunk,
     if (firstFail != 0)
         *firstFail = first;
     return sum;
+}
+
+// ---------------------------------------------------------------------------
+// Ladruno WP-253 -- the OpenMP quiet span (see LadrunoThreads.h). Relies on the LLVM / Intel
+// OpenMP runtime (libiomp5 / libomp), read in its source (kmp_ftn_entry.h, kmp_runtime.cpp,
+// kmp_barrier.cpp): kmp_set_blocktime(v) converts v from KMP_BLOCKTIME's units and stores it in
+// the CALLING thread's ICVs (td_icvs.blocktime) with bt_set = TRUE; the fork copies the master's
+// ICVs to the team's implicit tasks; each worker sets its wait interval (th_team_bt_intervals)
+// from them in the join barrier and waits with it for the next fork. kmp_get_blocktime()
+// returns the effective value in the same units, so set(get()) restores the VALUE for every
+// later region (WP-192's, MKL's). It does not restore bt_set: from the first span on, the
+// master's blocktime counts as user-set, which switches off libiomp's oversubscription auto-zero
+// (KMP_ADJUST_BLOCKTIME: blocktime 0 while threads > procs and bt_set is false). Timing only
+// (LEDGER quirk WP-253): no result depends on how long a worker waits.
+//
+// The entry points are taken from the module that OWNS the running OpenMP runtime -- the one
+// defining omp_get_max_threads as this translation unit resolved it -- never from the first DLL
+// found by name. A runtime without them (libgomp, vcomp) leaves the span a no-op.
+// ---------------------------------------------------------------------------
+namespace {
+typedef void (*LadrunoKmpSetBt)(int);
+typedef int (*LadrunoKmpGetBt)(void);
+struct LadrunoKmpBt {
+    LadrunoKmpSetBt set = 0;
+    LadrunoKmpGetBt get = 0;
+};
+
+#if defined(_LADRUNO_OPENMP) && defined(_WIN32)
+// The module containing address a, or 0 (reference count untouched).
+HMODULE ladruno_moduleOf(const void *a)
+{
+    HMODULE h = 0;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCSTR>(a), &h))
+        return 0;
+    return h;
+}
+
+// &omp_get_max_threads is this module's own import stub when omp.h does not declare the function
+// dllimport: an incremental-link `jmp rel32` (E9) and/or the x64 import thunk `jmp [rip+rel32]`
+// (FF 25) that reads the IAT slot. Follow at most two hops while the address stays inside this
+// module; anything else is returned unchanged (and then owns no kmp_*: a no-op).
+const void *ladruno_followImportStub(const void *a)
+{
+#  if defined(_M_X64) || defined(__x86_64__)
+    const HMODULE self = ladruno_moduleOf(reinterpret_cast<const void *>(&ladruno_moduleOf));
+    for (int hop = 0; hop < 2 && a != 0 && self != 0 && ladruno_moduleOf(a) == self; hop++) {
+        const unsigned char *c = static_cast<const unsigned char *>(a);
+        int rel;
+        if (c[0] == 0xE9) {
+            memcpy(&rel, c + 1, sizeof rel);
+            a = c + 5 + rel;
+        } else if (c[0] == 0xFF && c[1] == 0x25) {
+            memcpy(&rel, c + 2, sizeof rel);
+            const void *slot;
+            memcpy(&slot, c + 6 + rel, sizeof slot);
+            a = slot;
+        } else {
+            break;
+        }
+    }
+#  endif
+    return a;
+}
+#endif
+
+const LadrunoKmpBt &ladruno_kmpBlocktime(void)
+{
+    static const LadrunoKmpBt bt = [] {
+        LadrunoKmpBt b;
+#ifdef _LADRUNO_OPENMP
+#  ifdef _WIN32
+        const void *ompFn = ladruno_followImportStub(
+            reinterpret_cast<const void *>(&omp_get_max_threads));
+        const HMODULE owner = ladruno_moduleOf(ompFn);
+        if (owner != 0) {
+            b.set = reinterpret_cast<LadrunoKmpSetBt>(
+                reinterpret_cast<void *>(GetProcAddress(owner, "kmp_set_blocktime")));
+            b.get = reinterpret_cast<LadrunoKmpGetBt>(
+                reinterpret_cast<void *>(GetProcAddress(owner, "kmp_get_blocktime")));
+        }
+#  else
+        Dl_info info;
+        if (dladdr(reinterpret_cast<void *>(&omp_get_max_threads), &info) != 0 &&
+            info.dli_fname != 0) {
+            // the owner is loaded already: RTLD_NOLOAD only takes a handle (dlclose drops it)
+            void *owner = dlopen(info.dli_fname, RTLD_LAZY | RTLD_NOLOAD);
+            if (owner != 0) {
+                b.set = reinterpret_cast<LadrunoKmpSetBt>(dlsym(owner, "kmp_set_blocktime"));
+                b.get = reinterpret_cast<LadrunoKmpGetBt>(dlsym(owner, "kmp_get_blocktime"));
+                dlclose(owner);
+            }
+        }
+#  endif
+        if (b.set == 0 || b.get == 0) {
+            b.set = 0;
+            b.get = 0;
+        }
+#endif
+        return b;
+    }();
+    return bt;
+}
+}
+
+int
+ladruno_ompQuietBegin(void)
+{
+    const LadrunoKmpBt &bt = ladruno_kmpBlocktime();
+    if (bt.set == 0)
+        return -1;
+    const int previous = bt.get();
+    // KMP_BLOCKTIME=infinite: get() reports INT_MAX whatever is set, and set(INT_MAX) prints an
+    // "OMP: Info #109" clamp line on every call (measured, oneAPI 2026.1). A user who asked for
+    // an infinite spin keeps it: nothing is changed.
+    if (previous < 0 || previous == INT_MAX)
+        return -1;
+    bt.set(0);
+    return previous;
+}
+
+void
+ladruno_ompQuietEnd(int token)
+{
+    const LadrunoKmpBt &bt = ladruno_kmpBlocktime();
+    if (bt.set == 0 || token < 0)
+        return;
+    bt.set(token);
 }
 
 static std::mutex &ladruno_outputMutex(void) { static std::mutex m; return m; }

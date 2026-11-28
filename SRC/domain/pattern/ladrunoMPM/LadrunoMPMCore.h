@@ -47,10 +47,12 @@
 #define LadrunoMPMCore_h
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -327,6 +329,10 @@ class MaterialPoints {
   virtual void   clearRefusals() {}
   // M_p: largest normal diagonal entry of the current tangent (interface §6.1).
   virtual double normalModulus(int p) = 0;
+  // WP-253: called on the calling thread after every loop that ran the calls above on
+  // several threads (Engine::advance with nThreads > 1 and matThreaded), so the host can fold
+  // what it kept per particle (profiler walls, the first commit refuser). Default: nothing.
+  virtual void afterParallel() {}
 };
 
 // --------------------------------------------------------------------------- //
@@ -842,12 +848,91 @@ struct UPStep {
   int pcgIter = 0;
 };
 
+// WP-253 (Ladruno_implementation/253_mpm_performance.md §2): the named phases of one mode-F
+// Engine::advance, reported by the host's profiler as children of `mpm.advance`. The core
+// stays OpenSees-free: it only calls an optional enter/leave pair the host sets (null by
+// default -> one predicted branch per phase change, nothing else). The hook times; it never
+// reads or writes engine state, so no result depends on it.
+enum Phase {
+  PH_SUPPORT = 0,   // mpm.f.support:  support search and shape functions
+  PH_P2G,           // mpm.f.p2g:      mass, momentum and forces, image folds
+  PH_GRID,          // mpm.f.grid:     damping, grid momentum update, grid conditions
+  PH_G2P,           // mpm.f.g2p:      particle velocity and position, trial admissibility
+  PH_PROJECT2,      // mpm.f.project2: the second projection and its grid conditions
+  PH_UPDATE,        // mpm.f.update:   dF, the kernel, the constitutive call, the stress push
+  PH_COMMIT,        // mpm.f.commit:   material commit
+  PH_TRANSPOSE,     // mpm.f.transpose: threaded path only -- the node -> entry transpose the
+                    //   P2G gather needs (part of P2G's cost in §2's split; timed apart so its
+                    //   share can be read)
+  PH_COUNT
+};
+inline const char *phaseName(int ph)
+{
+  static const char *const names[PH_COUNT] = {"mpm.f.support", "mpm.f.p2g", "mpm.f.grid",
+                                              "mpm.f.g2p", "mpm.f.project2", "mpm.f.update",
+                                              "mpm.f.commit", "mpm.f.transpose"};
+  return (ph >= 0 && ph < PH_COUNT) ? names[ph] : "mpm.f.?";
+}
+struct PhaseHook {
+  void (*enter)(int phase, void *ctx) = nullptr;   // both set, or both null
+  void (*leave)(int phase, void *ctx) = nullptr;
+  void *ctx = nullptr;
+};
+// At most one phase open at a time: go() closes the open one and opens the next; stop() and
+// the destructor close it, so every early return of advance() closes its phase.
+class PhaseRun {
+ public:
+  explicit PhaseRun(const PhaseHook &h) : hk(h), cur(-1) {}
+  ~PhaseRun() { stop(); }
+  void go(int ph)
+  {
+    if (hk.enter == nullptr) return;
+    stop();
+    hk.enter(ph, hk.ctx);
+    cur = ph;
+  }
+  void stop()
+  {
+    if (cur < 0) return;
+    hk.leave(cur, hk.ctx);
+    cur = -1;
+  }
+  PhaseRun(const PhaseRun &) = delete;
+  PhaseRun &operator=(const PhaseRun &) = delete;
+ private:
+  const PhaseHook &hk;
+  int cur;
+};
+
 class Engine {
  public:
   Grid           grid;
   Params         par;
   FaceConditions fc;
   Particles      P;
+  // WP-253: the host's phase timer (see PhaseHook); empty = untimed
+  PhaseHook      phaseHook;
+  // WP-253 (253_mpm_performance.md §5): mode F's threaded path, set by the host before each
+  // mode-F step (ladruno_loopThreads, ladruno_parallelFor). nThreads <= 1 or no parFor = the
+  // serial code, unchanged. matThreaded = every particle material may run setTrialStrain,
+  // getStress, commitState and getInitialTangent concurrently on different instances
+  // (Material::ladrunoThreadSafeUpdate && ladrunoThreadSafeForm); otherwise the material calls
+  // stay serial in particle order and only the transfer loops thread. Results are bit-identical
+  // to 1 thread at every count (LadrunoMPMThreads.h).
+  typedef int (*ParallelFor)(int n, int nThreads, int chunk, int (*body)(int, void *), void *ctx,
+                             int *firstFail);
+  ParallelFor    parFor = nullptr;
+  // the split path's serial material phases: the host's "let the pool's workers sleep" span
+  // (ladruno_ompQuietBegin / End); begin returns a token for end. Null = nothing done.
+  int          (*quietBegin)(void) = nullptr;
+  void         (*quietEnd)(int) = nullptr;
+  int            nThreads = 1;
+  bool           matThreaded = false;
+  // `mpm debug threads`: the last advance's transfer-loop and material-loop thread counts
+  int            lastXferThreads = 1, lastMatThreads = 1;
+  // threaded material path only: the lowest failing particle when its failure was the
+  // material's trial (the serial adapter names it itself), else -1
+  int            lastMatFail = -1;
   // WP-232i (B11): per-particle body force per unit MASS (acceleration units),
   // ndm per particle in storage order, NOT scaled by the load factor; empty = none.
   std::vector<double> bodyForce;
@@ -1009,6 +1094,7 @@ class Engine {
   // When several are inadmissible, the one with the LOWEST id (A5 F6).
   int firstInadmissible() const
   {
+    if (nThreads > 1 && parFor != nullptr) return firstInadmissibleThreaded();   // WP-253
     const int nd = grid.ndm;
     int worst = -1;
     for (int p = 0; p < P.size(); p++)
@@ -1038,6 +1124,8 @@ class Engine {
   // particles.
   double criticalTimeStep(MaterialPoints &mats) const
   {
+    if (nThreads > 1 && parFor != nullptr && matThreaded)                         // WP-253
+      return criticalTimeStepThreaded(mats);
     const int nd = grid.ndm;
     double wmax = 0.0;
     for (int p = 0; p < P.size(); p++) {
@@ -1081,6 +1169,9 @@ class Engine {
 
   int advance(double dt, double lambda, MaterialPoints &mats, std::string &err)
   {
+    if (nThreads > 1 && parFor != nullptr) return advanceThreaded(dt, lambda, mats, err);   // WP-253
+    lastXferThreads = lastMatThreads = 1;
+    lastMatFail = -1;
     const int N = P.size(), nd = grid.ndm, nvv = nv();
     if (N == 0) return 0;
     if (!bodyForce.empty() && (long)bodyForce.size() != (long)nd * N) {
@@ -1089,9 +1180,12 @@ class Engine {
             " step refused, nothing changed";
       return -1;
     }
+    PhaseRun ph(phaseHook);             // WP-253: profiler phases (timing only)
+    ph.go(PH_SUPPORT);
     buildSupports();
 
     // ---- step 3: P2G -------------------------------------------------------
+    ph.go(PH_P2G);
     p2gMass();
     // WP-232j (J5, interface §11): each particle's anti-locking path, decided ONCE per step
     // from the P2G mass (a corner below the cutoff -> the fallback) and used by both the
@@ -1168,6 +1262,7 @@ class Engine {
     zeroFaceOdd(gfe);
 
     // ---- step 4: damping, grid momentum update, grid conditions ------------
+    ph.go(PH_GRID);
     const double mcut = par.masscut * massRef();
     for (long i : touched) {
       if (gslave[i]) continue;          // K4: set from the image below
@@ -1198,6 +1293,7 @@ class Engine {
     }
 
     // ---- step 5: MUSL particle update (trial) ------------------------------
+    ph.go(PH_G2P);
     tx.assign(P.x.begin(), P.x.end());
     tv.assign(P.v.begin(), P.v.end());
     for (int p = 0; p < N; p++) {
@@ -1237,6 +1333,7 @@ class Engine {
       }
     }
     // second projection of the updated particle momentum
+    ph.go(PH_PROJECT2);
     for (long i : touched)
       for (int a = 0; a < nd; a++) gvs[nd * i + a] = 0.0;
     for (int p = 0; p < N; p++)
@@ -1257,6 +1354,7 @@ class Engine {
     }
     for (size_t s = 0; s < slave.size(); s++) reflectVec(gvs, s);
     // velocity gradient, F, the kernel, the constitutive update
+    ph.go(PH_UPDATE);
     const int nn = nd * nd;
     tF.resize(P.F.size()); tR.resize(P.R.size()); tV.resize(N);
     teps.resize(P.eps.size()); tsh.resize(P.sigHat.size()); tsig.resize(P.sig.size());
@@ -1314,12 +1412,15 @@ class Engine {
       for (int k = 0; k < nn; k++) { tF[nn * p + k] = F1[k]; tR[nn * p + k] = R1[k]; }
       tV[p] = J1 * P.V0[p];
     }
+    ph.stop();                          // the grid reset is the advance's own time
     clearGrid();
 
     // ---- step 6: commit the particle materials; a refusal aborts (W17) -----
+    ph.go(PH_COMMIT);
     mats.clearRefusals();
     for (int p = 0; p < N; p++) mats.commitState(p);
     const int nRef = mats.pendingRefusals();
+    ph.stop();
     if (nRef > 0) {
       err = std::to_string(nRef) + " particle material point(s) REFUSED this commit; sibling "
             "points have already committed, so the run is aborted (ADR 232 W17)";
@@ -1450,6 +1551,42 @@ class Engine {
   // trial particle arrays
   std::vector<double> tx, tv, tF, tR, tV, teps, tsh, tsig;
   std::vector<unsigned char> talFlag;     // WP-232j: this step's anti-locking path per particle
+
+  // ---- WP-253: the threaded path (LadrunoMPMThreads.h) -----------------------------------
+  int  advanceThreaded(double dt, double lambda, MaterialPoints &mats, std::string &err);
+  int  firstInadmissibleThreaded() const;
+  double criticalTimeStepThreaded(MaterialPoints &mats) const;
+  template <class F> void forBlocks(long n, int nb, const F &f) const;
+  int  blocksFor(long n) const;
+  void buildSupportsThreaded();
+  void transposeThreaded();
+  void clearGridThreaded();
+  int  advanceSerialFallback(double dt, double lambda, MaterialPoints &mats, std::string &err);
+  double massRefThreaded() const;
+  // node -> entry transpose: tEntry[tPtr[t] .. tPtr[t+1]) are the support entries k of touched
+  // node t (= touched[t], t < nTouchedP2G) in ascending k, i.e. the serial scatter's order
+  std::vector<int>    supCnt, pOf, tPtr, tEntry, tSlot, tHist;
+  // the transpose's windowed histogram: block b's row spans the slots of owner blocks
+  // tWin[2b] .. tWin[2b+1] (tOwnOff = each owner's first slot), stored from tHOff[b];
+  // tCov[tCovPtr[o] ..) = the blocks, ascending, whose window holds owner o
+  std::vector<int>    tWin, tCov, tCovPtr;
+  std::vector<long>   tOwnOff, tHOff;
+  std::vector<long>   tBlkSum, tImg;
+  std::vector<double> tSg;
+  std::vector<std::vector<long>> tDisc;   // per block: the nodes it discovered
+  struct Marks {                          // dense per-node discovery flags (copying gives an empty one)
+    std::unique_ptr<std::atomic<int>[]> a;
+    long n = 0;
+    Marks() {}
+    Marks(const Marks &) {}
+    Marks &operator=(const Marks &) { a.reset(); n = 0; return *this; }
+  } tMark;
+  int                 nTouchedP2G = 0;
+  std::vector<signed char> cornerOfEntry; // anti-locking: entry k is corner c of its particle, or -1
+  std::vector<double> pbarP;              // anti-locking: the particle's pbar
+  std::vector<int>    blkFirst;           // per block: a reduction slot
+  std::vector<double> blkMax;
+  std::vector<unsigned char> upStatus;    // per particle: 0, or 1 / 2 / 3 (al / kinematic / material)
 
   double massRef() const
   {
@@ -1625,5 +1762,6 @@ class Engine {
 } // namespace ladruno_mpm
 
 #include "LadrunoMPMRouteS.h"     // WP-232l: Engine::advanceUP (route S)
+#include "LadrunoMPMThreads.h"    // WP-253: Engine::advanceThreaded (mode F, nThreads > 1)
 
 #endif

@@ -58,6 +58,11 @@
 //   mpm debug activeNodes                 -> sorted active node ids at the committed state
 //   mpm debug injectRefusal | staleRefusal | aborted   W17 test hooks (a refusal at the next
 //                                         particle commit; a stale WP-99 count; the abort latch)
+//   mpm debug threads                     -> [transfer-loop threads, material-loop threads] of the
+//                                         last mode-F step (WP-253; 1 1 when serial)
+//   mpm debug failTrial|failCommit <id ..> | off   WP-253: those particles' trial fails / commit
+//                                         refuses at every step, until off
+//   mpm debug quietSpan                   -> 1 when the OpenMP quiet span can act (libiomp)
 //
 // Mode A (WP-232f, tests/mpm_implicit_interface.md §5):
 //   mpm mode explicit|implicit|quasiStatic
@@ -612,6 +617,31 @@ int cmdDebug(LadrunoMPMPattern *h)
     }
     return outDoubles(out);
   }
+  if (what == "threads") {                                            // WP-253 loop-structure guard
+    // the last mode-F advance: the transfer loops' and the material loop's thread counts
+    int v[2] = {h->engine().lastXferThreads, h->engine().lastMatThreads};
+    int two = 2;
+    return OPS_SetIntOutput(&two, v, false);
+  }
+  if (what == "failTrial" || what == "failCommit") {                   // WP-253 test hooks
+    const char *usage = "debug failTrial|failCommit <particle id ..> | off";
+    std::vector<long long> ids;
+    if (OPS_GetNumRemainingInputArgs() < 1) return fail(usage);
+    const std::string first = OPS_GetString();
+    if (first != "off") {
+      OPS_ResetCurrentInputArg(-1);
+      while (OPS_GetNumRemainingInputArgs() > 0) {
+        double v;
+        if (!readDoubles(1, &v) || !(v >= 0.0) || v != std::floor(v)) return fail(usage);
+        ids.push_back((long long)v);
+      }
+      if (ids.empty()) return fail(usage);
+    }
+    std::string err;
+    if (h->setDebugFailIds(what == "failCommit", ids, err) < 0) return fail("debug " + what + " -- " + err);
+    return 0;
+  }
+  if (what == "quietSpan") return outInt(h->quietSpanAvailable());     // WP-253: libiomp resolved?
   if (what == "injectRefusal") { h->injectCommitRefusal(); return 0; }   // W17 test hook
   if (what == "staleRefusal") { h->injectStaleRefusal(); return 0; }     // W17 test hook
   if (what == "aborted") return outInt(h->isAborted() ? 1 : 0);

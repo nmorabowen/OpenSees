@@ -25,3 +25,23 @@ target_sources(OPS_Domain
 )
 
 target_include_directories(OPS_Domain PUBLIC ${CMAKE_CURRENT_LIST_DIR})
+
+# Ladruno WP-253: the threaded mode-F step is bit-identical to 1 thread only if its gathers and
+# the serial scatters round alike, so floating-point contraction is pinned OFF for these
+# translation units on GCC / Clang (a -march with FMA, e.g. a spack wrapper's, would otherwise
+# let the compiler fuse a*b+c differently in the two loops). Without -march, x86-64 GCC emits no
+# FMA at all (checked: g++ 15 -O2/-O3 on the core, zero vfmadd), so no existing Linux record
+# changes. MSVC needs nothing: /fp:precise (the default) does not contract without /fp:contract
+# (VS 2022), and the build sets no /arch:AVX2 that would provide FMA.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  set(_ladruno_mpm_sources
+      LadrunoMPMPattern.cpp OPS_LadrunoMPM.cpp LadrunoMPMIO.cpp LadrunoMPMImplicit.cpp
+      LadrunoMPMSoil.cpp LadrunoMPMTwoPhase.cpp)
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.18)
+    set_property(SOURCE ${_ladruno_mpm_sources} TARGET_DIRECTORY OPS_Domain
+                 APPEND PROPERTY COMPILE_OPTIONS "-ffp-contract=off")
+  else()
+    message(WARNING "Ladruno WP-253: CMake < 3.18 cannot set -ffp-contract=off on the MPM sources;"
+                    " the threaded MPM step's bit-identity then relies on no -march with FMA")
+  endif()
+endif()
