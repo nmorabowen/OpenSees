@@ -153,6 +153,10 @@ __pycache__
 # .claude/skills/, which are tracked source (Ladruno WP-115)
 .claude/*
 !.claude/skills/
+
+# Antigravity / Gemini worktrees & session scratch (never commit) — except tracked .agents/skills/
+.agents/*
+!.agents/skills/
 _build_ladrunobrick.log
 
 # Ladruno transient build logs / banner backups (not source)
