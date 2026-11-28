@@ -1,7 +1,7 @@
 """WP-263: dual-number tangent oracle for the LadrunoRCConcrete return map (header-only, g++).
 
 Compiles tests/_testbed/rc_dual_gpp.cpp (it includes only SRC/material/nD/LadrunoRCKernel.h,
-which pulls in LadrunoDual.h) and runs 18 strain paths, committed history threaded step to step.
+which pulls in LadrunoDual.h) and runs 19 strain paths, committed history threaded step to step.
 At every trial state it compares three tangents: the shipped mode 0 (the secant W_B C0 plus the
 beta / tension-stiffening / interlock cross-terms), the new mode 3 (-dualTangent: one Dual<6> pass
 of returnMap3DT) and a central finite difference of the map itself at nine steps h.
@@ -20,7 +20,10 @@ Asserts:
   * the break-the-gate legs: mode 0 differs from the dual by >= 1e-2 on every loading step of the
     projector-rotation states (it omits dP/deps, the damage rate, dp1/deps, dv_ci,max/de_n), while
     on the elastic path it equals the dual to round-off; and a SYMMETRIZED dual tangent fails the
-    FD by >= 1e-3 wherever damage grows (the damaged tangent is unsymmetric).
+    FD by >= 1e-3 wherever damage grows (the damaged tangent is unsymmetric);
+  * the capped-interlock floor (research downside D1): the exactness legs run -betaSrMin 0 (the
+    exact map); the production dual adds mode 0's betaSrMin conditioning floor on a capped crack,
+    so its crack-shear stiffness is not the exact 0 that made ASDShellQ4's EAS update blow up.
 
 It prints the omitted-term table (||C_dual - C_mode0|| / ||C_dual|| per state class) and the
 per-call cost of mode 3 vs mode 0.
@@ -61,6 +64,7 @@ SCENARIOS = {
     "implex_crack_shear": "implex", "implex_ts_beta": "implex",
     "spatial_ts_beta": "spatial",
     "ps_crack_shear": "plane-stress", "ps_interlock_cyclic": "plane-stress",
+    "ps_shell_test_path": "plane-stress",
 }
 FD_TOL = 1e-8          # smooth classes (measured worst 2.8e-10)
 FD_TOL_KINK = 1e-6     # degenerate class at h = 1e-10 (measured 3.4e-7)
@@ -108,6 +112,9 @@ def oracle():
             rows[cur].append(kv)
         elif p[0] == "FDH":
             rows[cur][-1]["fdh"] = [float(x) for x in p[1:]]
+        elif p[0] == "IL":
+            kv = {k: float(v) for k, v in zip(p[1::2], p[2::2])}
+            rows[cur][-1].update({"cap": int(kv["CAP"]), "sh0": kv["SH0"], "shf": kv["SHF"], "floor": kv["FLOOR"]})
         elif p[0] == "TIMING" and p[1] == "mode":
             timing[int(p[2])] = float(p[3])
     return rows, cls, timing
@@ -160,7 +167,7 @@ def test_dual_tangent_equals_fd_of_the_map(oracle):
             else:
                 assert r["FD"] <= FD_TOL, (
                     f"{c} step {r['step']}: dual vs FD {r['FD']:.3e} > {FD_TOL:.0e} (FD by h: {fdh})")
-                if r["FD"] > 1e-13:   # an exactly linear (elastic) state has no truncation to show
+                if fdh[0] > 1e-8:     # a (near-)linear state has no truncation to show
                     assert fdh[0] > 1e2 * r["FD"], f"{c} step {r['step']}: no h-convergence {fdh}"
 
 
@@ -185,6 +192,33 @@ def test_symmetrized_dual_is_flagged(oracle):
         if dmg:
             worst = max(r["SYM"] for r in dmg)
             assert worst >= SYM_FLOOR, f"{c}: symmetrized dual passes the FD (worst {worst:.2e})"
+
+
+def test_capped_interlock_floor_and_conditioning(oracle):
+    """WP-263, research downside D1. On a capped crack tau_ci is pinned, so the EXACT tangent has
+    zero crack-shear stiffness and the in-plane block is singular. ASDShellQ4's EAS update inverts
+    a block of it and sent the membrane strains to ~1e26 (the PlateFiber leg of
+    test_ladrunoRCConcrete_dual.py, first build). The dual keeps mode 0's betaSrMin floor
+    (derivative only). This leg sees that failure without a binary: on the shell-test path the
+    exact capped shear stiffness is exactly 0 and the production one is betaSrMin G; the floor the
+    dual adds equals mode 0's on the cyclic cap and betaSrMin m (x) d(tau_sm) on the 2a clip, to
+    round-off. (The stress is unchanged: BITS compares mode 0 with both dual settings.)"""
+    rows, _, _ = oracle
+    ncap = 0
+    for c, rr in rows.items():
+        for r in rr:
+            if r.get("cap") != 1:
+                continue
+            ncap += 1
+            assert r["shf"] - r["sh0"] >= 1e-3, f"{c} step {r['step']}: no conditioning floor ({r})"
+            if r["floor"] >= 0.0:
+                assert r["floor"] <= 1e-10, f"{c} step {r['step']}: floor differs from mode 0's: {r['floor']:.3e}"
+    assert ncap >= 40, ncap
+    shell = [r for r in rows["ps_shell_test_path"] if r.get("cap") == 1]
+    assert len(shell) >= 10, "the shell-test path never capped"
+    for r in shell:
+        assert abs(r["sh0"]) <= 1e-12, f"exact capped shear stiffness not singular: {r['sh0']}"
+        assert r["shf"] >= 0.5 * 0.01, f"production capped shear stiffness {r['shf']} < betaSrMin G / 2"
 
 
 def test_print_omitted_term_table(oracle):

@@ -147,6 +147,22 @@ static std::vector<Case> makeCases()
     add("ps_crack_shear", "plane-stress", [](Params& P) { P.betaOn = true; P.tensStiffMode = 1; }, 12, psS, false, true);
     add("ps_interlock_cyclic", "plane-stress", [](Params& P) { P.interlockOn = true; P.interlockCyclic = true;
         P.betaOn = true; }, 14, psI, false, true);
+    // WP-263 D1 regression: the material and path of test_ladrunoRCConcrete_dual.py::
+    // test_platefiber_view_runs_cyclic_interlock_with_dual (its 4-point tension backbone with
+    // d = 0.999, -beta -interlock -cyclic -crackSpacing 50; tension to 5e-4, then gamma_xy to
+    // 2e-3 and back). Under ASDShellQ4's EAS the exact capped tangent (zero crack-shear stiffness)
+    // blew the enhanced modes up; the SH0/SHF legs make the singular block visible here.
+    add("ps_shell_test_path", "plane-stress", [](Params& P) {
+        P.interlockOn = true; P.interlockCyclic = true; P.betaOn = true; P.crackSpacing = 50.0;
+        double Te[4] = {0.0, 0.0001, 0.0010, 0.0040}, Ts[4] = {0.0, 3.0, 0.5, 0.0};
+        double Td[4] = {0.0, 0.0, 1.0 - 0.5 / 5.0, 0.999};
+        buildBackbone(P.ht, P.E, Te, Ts, Td, 4);
+    }, 54, [](int s, double* e) {
+        if (s <= 4) { e[0] = 1.25e-4 * s; e[1] = 0.0; e[2] = 0.0; return; }
+        const int k = s - 4;
+        const double g = (k <= 25) ? 2.0e-3 * k / 25.0 : 2.0e-3 * (1.0 - 2.0 * (k - 25) / 25.0);
+        e[0] = 5.0e-4; e[1] = 0.0; e[2] = g;
+    }, false, true);
     return C;
 }
 
@@ -275,28 +291,79 @@ static void oracle(const std::vector<Case>& C)
     for (const Case& c : C) {
         printf("SCENARIO %s %s\n", c.name.c_str(), c.cls.c_str());
         Params P0 = c.P; P0.tangentMode = 0;
+        // the exactness legs (FD, SYM) run the EXACT map: the interlock cases' betaSrMin
+        // conditioning floor is a deliberate tangent-only addition (WP-263, D1), so P3 sets it to 0;
+        // P3p is the production setting (parser default 0.01), used for OMIT and the floor legs
         Params P3 = c.P; P3.tangentMode = 3;
+        if (c.P.interlockOn) P3.betaSrMin = 0.0;
+        Params P3p = c.P; P3p.tangentMode = 3;
+        Params P0z = P0; P0z.betaSrMin = 0.0;
+        const double Gel = 0.5 * c.P.E / (1.0 + c.P.nu);
         RCHist h; histZero(h);
         const int nc = c.planeStress ? 3 : 6;
         for (int s = 1; s <= c.n; ++s) {
             double e[6]; c.path(s, e);
-            double s0[6], D0[6][6], s3[6], D3[6][6];
-            RCHist o0, o3;
+            double s0[6], D0[6][6], s3[6], D3[6][6], s3p[6], D3p[6][6], s0z[6], D0z[6][6];
+            RCHist o0, o3, o3p, o0z;
             int bits, nbase = 0;
             if (c.planeStress) {
                 nbase += !psMap(P0, e, h, s0, D0, o0, c.implex, 1.0);
                 nbase += !psMap(P3, e, h, s3, D3, o3, c.implex, 1.0);
+                nbase += !psMap(P3p, e, h, s3p, D3p, o3p, c.implex, 1.0);
                 bits = -1;
             } else {
                 returnMap3D(P0, e, h, s0, D0, o0, true, 0, c.implex, 1.0);
                 returnMap3D(P3, e, h, s3, D3, o3, true, 0, c.implex, 1.0);
-                bits = (std::memcmp(s0, s3, sizeof(s0)) == 0 && sameHist(o0, o3)) ? 1 : 0;
+                returnMap3D(P3p, e, h, s3p, D3p, o3p, true, 0, c.implex, 1.0);
+                bits = (std::memcmp(s0, s3, sizeof(s0)) == 0 && sameHist(o0, o3)
+                        && std::memcmp(s0, s3p, sizeof(s0)) == 0 && sameHist(o0, o3p)) ? 1 : 0;
             }
             // the tangents as nc x nc (3D: all six; plane stress: the condensed {0,1,3} block)
-            double Cd[36], Cm[36];
+            double Cd[36], Cm[36], Cp[36];
             for (int a = 0; a < nc; ++a) for (int b = 0; b < nc; ++b) {
                 const int A = c.planeStress ? PSI[a] : a, B = c.planeStress ? PSI[b] : b;
-                Cd[a*nc + b] = D3[A][B]; Cm[a*nc + b] = D0[A][B];
+                Cd[a*nc + b] = D3[A][B]; Cm[a*nc + b] = D0[A][B]; Cp[a*nc + b] = D3p[A][B];
+            }
+            // floor + conditioning legs (interlock cases). CAP: mode 0's own floor is active
+            // (D0(betaSrMin) != D0(0)), i.e. the crack is capped. SH0 / SHF: the shear diagonal
+            // dsig_xy/dgamma_xy (condensed on the plane-stress view) of the exact dual and of the
+            // production dual, over G: the exact one is 0 on a capped crack (the singular block an
+            // element's EAS solve inverts), the floored one is not. FLOOR (3D): the floor the dual
+            // added equals mode 0's on the cyclic cap (betaSrMin G_int m (x) m_full, exact), and
+            // betaSrMin m (x) d(tau_sm) on the 2a clip, d(tau_sm) from the same map without interlock.
+            int cap = -1; double sh0 = -1.0, shf = -1.0, floorErr = -1.0;
+            if (c.P.interlockOn) {
+                RCHist od; double sd[6], Dn[6][6];
+                if (c.planeStress) psMap(P0z, e, h, s0z, D0z, o0z, c.implex, 1.0);
+                else returnMap3D(P0z, e, h, s0z, D0z, o0z, true, 0, c.implex, 1.0);
+                double d0f = 0.0;
+                for (int a = 0; a < 6; ++a) for (int b = 0; b < 6; ++b) d0f += fabs(D0[a][b] - D0z[a][b]);
+                cap = (d0f > 0.0) ? 1 : 0;
+                sh0 = D3[3][3] / Gel; shf = D3p[3][3] / Gel;
+                if (!c.planeStress && cap) {
+                    double ex[6][6] = {{0}};
+                    const double cc = o3.crackC, ss = o3.crackS, cs = cc * ss;
+                    const double m[3] = { -2.0 * cs, 2.0 * cs, cc * cc - ss * ss };
+                    const double ms[3] = { -cs, cs, cc * cc - ss * ss };
+                    const int vi[3] = { 0, 1, 3 };
+                    if (c.P.interlockCyclic) {
+                        for (int a = 0; a < 6; ++a) for (int b = 0; b < 6; ++b) ex[a][b] = D0[a][b] - D0z[a][b];
+                    } else {
+                        Params Pn = P3; Pn.interlockOn = false; Pn.interlockCyclic = false;
+                        returnMap3D(Pn, e, h, sd, Dn, od, true, 0, c.implex, 1.0);
+                        for (int a = 0; a < 3; ++a) for (int j = 0; j < 6; ++j) {
+                            double row = 0.0;
+                            for (int k = 0; k < 3; ++k) row += ms[k] * Dn[vi[k]][j];
+                            ex[vi[a]][j] = c.P.betaSrMin * m[a] * row;
+                        }
+                    }
+                    double num = 0.0, den = 0.0;
+                    for (int a = 0; a < 6; ++a) for (int b = 0; b < 6; ++b) {
+                        const double dd = (D3p[a][b] - D3[a][b]) - ex[a][b];
+                        num += dd * dd; den += ex[a][b] * ex[a][b];
+                    }
+                    floorErr = sqrt(num) / (sqrt(den) + 1e-300);
+                }
             }
             const double nd = frob(Cd, nc*nc);
             double best = 1e300, bestFd[36] = {0}, errs[NH];
@@ -323,16 +390,17 @@ static void oracle(const std::vector<Case>& C)
             int plat = 0; for (int k = 0; k < NH; ++k) if (errs[k] <= 10.0 * best) ++plat;
             double dm[36], ds[36];
             for (int a = 0; a < nc; ++a) for (int b = 0; b < nc; ++b) {
-                dm[a*nc + b] = Cd[a*nc + b] - Cm[a*nc + b];
+                dm[a*nc + b] = Cp[a*nc + b] - Cm[a*nc + b];
                 ds[a*nc + b] = 0.5 * (Cd[a*nc + b] + Cd[b*nc + a]) - bestFd[a*nc + b];
             }
-            const double omit = frob(dm, nc*nc) / nd, sym = frob(ds, nc*nc) / nd;
+            const double omit = frob(dm, nc*nc) / frob(Cp, nc*nc), sym = frob(ds, nc*nc) / nd;
             const int load = (o3.xt > h.xt || o3.xc > h.xc) ? 1 : 0;
             printf("STEP %d LOAD %d DT %.4f DC %.4f CRK %d BSR %.4f FD %.3e PLAT %d OMIT %.3e SYM %.3e BITS %d NFAIL %d\n",
                    s, load, o3.dt_bar, o3.dc_bar, (int)o3.cracked, o3.betaSr, best, plat, omit, sym, bits, nbase + nfail);
             printf("FDH");
             for (int k = 0; k < NH; ++k) printf(" %.2e", errs[k]);
             printf("\n");
+            if (cap >= 0) printf("IL CAP %d SH0 %.3e SHF %.3e FLOOR %.3e\n", cap, sh0, shf, floorErr);
             commitCase(c, P3, s, h, o3);
         }
     }

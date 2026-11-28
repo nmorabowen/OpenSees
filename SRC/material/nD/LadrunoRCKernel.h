@@ -1232,6 +1232,7 @@ inline int returnMap3DT(const Params& P, const T eps6[6], const RCHist& in,
     bool   il_active = false, il_capped = false, il_cyclic = false;
     T il_m[3] = { T(0.0), T(0.0), T(0.0) };          // m_eps: stress back-rotation of a shear change
     T il_Gint = 0.0;                                 // interlock shear modulus (cyclic tangent)
+    T il_floor = 0.0; (void)il_floor;                // WP-263: Dual-only betaSrMin floor driver
     // shearRetMode 3 (rots) = rotating-coaxial: skip the fixed-crack shear entirely, so the
     // membrane shear stays smeared/spectral (no capture, no clip, no friction). il_active
     // stays false => the tangent carries no crack cross-term either.
@@ -1303,17 +1304,38 @@ inline int returnMap3DT(const Params& P, const T eps6[6], const RCHist& in,
                 // betaSr in cyclic = cap UTILIZATION tau_ci/v_ci,max (in [-1,1]); the 2a
                 // retention-secant tau_ci/tau_sm is non-physical here (tau_ci is independent).
                 betaSr = (vcimax > 1.0e-30) ? T(tau_ci / vcimax) : T(0.0);
+                if constexpr (ladruno_dual::is_dual<T>::value) il_floor = value(il_Gint) * g_nt;
             } else {
                 tau_ci = tau_sm;                                // 2a: clip the smeared shear
                 if (tau_ci >  vcimax) { tau_ci =  vcimax; il_capped = true; }
                 if (tau_ci < -vcimax) { tau_ci = -vcimax; il_capped = true; }
                 betaSr = (fabs(tau_sm) > 1.0e-30) ? T(tau_ci / tau_sm) : T(1.0);
+                if constexpr (ladruno_dual::is_dual<T>::value) il_floor = tau_sm;
             }
             T dtau = tau_ci - tau_sm;
             il_m[0] = -2.0*cs; il_m[1] = 2.0*cs; il_m[2] = c2 - s2;   // m_eps
             sig6[0] += dtau * il_m[0];
             sig6[1] += dtau * il_m[1];
             sig6[3] += dtau * il_m[2];
+            // WP-263 (Dual only): on a capped crack tau_ci = +/- v_ci,max is pinned, so the exact
+            // tangent has ZERO crack-shear stiffness: the in-plane block is singular. An element
+            // that inverts a block of the material tangent then blows up -- ASDShellQ4's EAS
+            // enhanced-mode update KQQ^-1 sent the membrane strains to ~1e26 (research downside D1;
+            // quirk WP-263-rc-exact-tangent-singular-capped-interlock). The Dual keeps mode 0's
+            // documented betaSrMin floor: + betaSrMin m_eps (x) d(tau_sm) on the 2a clip (the
+            // retained fraction of the smeared crack shear), + betaSrMin G_int m_eps (x) m_full on
+            // the cyclic cap (d g_nt = m_full). Derivative only (zero-valued, subtracted so a -0.0
+            // stays -0.0): the stress stays fully capped, as in mode 0. -betaSrMin 0 is the exact map.
+            if constexpr (ladruno_dual::is_dual<T>::value) {
+                if (il_capped && P.betaSrMin != 0.0) {
+                    static const int fidx[3] = { 0, 1, 3 };
+                    for (int a = 0; a < 3; ++a) {
+                        T neg = -(P.betaSrMin * value(il_m[a])) * il_floor;
+                        ladruno_dual::zero_value(neg);
+                        sig6[fidx[a]] -= neg;
+                    }
+                }
+            }
         }
     }
 

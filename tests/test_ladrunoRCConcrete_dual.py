@@ -193,6 +193,14 @@ def _shell_cyclic_shear(dual, exx=5.0e-4, gamma=2.0e-3, n1=40, nleg=50):
 
 
 def test_platefiber_view_runs_cyclic_interlock_with_dual():
+    """Regression for research downside D1 (first MSVC build of ca987390a): with the EXACT capped
+    tangent (zero crack-shear stiffness) ASDShellQ4's EAS update inverted a singular block, the
+    enhanced membrane strains reached ~1e26, the sigma_33 condensation then failed and analyze
+    returned -3 at load factor 1.16-1.18. The dual now keeps mode 0's betaSrMin floor on a capped
+    crack (quirk WP-263-rc-exact-tangent-singular-capped-interlock). EAS is on (the element
+    default), deliberately. The resultants agree to the global Newton tolerance: the material
+    stress at a given strain is bit-identical between the tangents (the g++ oracle), the global
+    iterates are not."""
     a = _shell_cyclic_shear(dual=False)
     b = _shell_cyclic_shear(dual=True)
     assert a.shape == b.shape and len(a) > 50

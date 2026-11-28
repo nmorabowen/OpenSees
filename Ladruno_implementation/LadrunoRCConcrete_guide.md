@@ -792,7 +792,7 @@ nDMaterial LadrunoRCFiniteStrain $tag $E $nu  <same backbones + flags as above>
 | `-rho` | mass density (also the element mass for explicit, §19) | 0.0 |
 | `-beta` / `-lublinerReduced` | enable MCFT compression softening (§3) / reduce the Lubliner t–c interaction | OFF / OFF |
 | `-secant` / `-numericalTangent` | secant / forward-difference tangent | algorithmic |
-| `-dualTangent` | exact algorithmic tangent: d(sigma)/d(eps) of the executed return map by one `Dual<6>` pass (WP-263). Valid under `-implex`, where it differentiates the extrapolated map. About 3.5x the per-call cost of the default; opt-in until decision D2 | algorithmic |
+| `-dualTangent` | exact algorithmic tangent: d(sigma)/d(eps) of the executed return map by one `Dual<6>` pass (WP-263). Valid under `-implex`, where it differentiates the extrapolated map. On a capped interlock crack it keeps the default's `-betaSrMin` shear floor, because the exact capped tangent is singular and breaks ASDShellQ4's EAS update. `-betaSrMin 0` gives the exact map. About 3.5x the per-call cost of the default; opt-in until decision D2 | algorithmic |
 | `-interlock` | enable aggregate-interlock shear bound (§4.1) | OFF |
 | `-agg` / `-crackStrain` / `-crackSpacing` / `-lch` / `-betaSrMin` | `a_g` / crack-freeze strain / spacing `s_θ` / explicit `lch` / residual shear floor | 16 / 0 / 0 / auto / 0.01 |
 | `-cyclic` | enable cyclic friction-slip (⇒ `-interlock`, §4.2) | OFF |
