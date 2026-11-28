@@ -48,15 +48,23 @@ namespace Ladruno {
 // Voce saturation + linear isotropic hardening (Abaqus *PLASTIC form):
 //   sig_y(p) = sig0 + Qinf (1 - e^{-b p}) + Hiso p
 //   Qinf = Hiso = 0  => perfectly plastic ;  Qinf = 0 => linear
-inline double yieldStressVoceLinear(double p, double sig0, double Qinf,
-                                    double b, double Hiso)
+//
+// WP-262: templated on the scalar T of the accumulated plastic strain so the
+// dual-number tangent oracle (LadrunoDual.h) can push a Dual<N> through the
+// return map. T = double is the production path and performs exactly the
+// operations of the former double-only functions. exp is unqualified on
+// purpose: ::exp for double, ladruno_dual::exp (ADL) for a Dual.
+template <class T>
+inline T yieldStressVoceLinear(const T& p, double sig0, double Qinf,
+                               double b, double Hiso)
 {
   return sig0 + Qinf*(1.0 - exp(-b*p)) + Hiso*p;
 }
 
 // d sig_y / d p  (the isotropic plastic modulus contribution H_iso)
-inline double yieldSlopeVoceLinear(double p, double sig0, double Qinf,
-                                   double b, double Hiso)
+template <class T>
+inline T yieldSlopeVoceLinear(const T& p, double sig0, double Qinf,
+                              double b, double Hiso)
 {
   return Qinf*b*exp(-b*p) + Hiso;
 }
