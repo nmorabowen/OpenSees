@@ -127,6 +127,8 @@ void* OPS_LadrunoRCFiniteStrain(void)
     else if (strcmp(opt, "-lublinerReduced") == 0)   lubRed = true;
     else if (strcmp(opt, "-secant") == 0)            tanMode = 1;
     else if (strcmp(opt, "-numericalTangent") == 0)  tanMode = 2;
+    // Ladruno WP-263: d(tau)/d(eps_e) by one Dual<6> pass of the return map (exact, valid under -implex)
+    else if (strcmp(opt, "-dualTangent") == 0)       tanMode = 3;
     else if (strcmp(opt, "-interlock") == 0)         interlockOn = true;
     else if (strcmp(opt, "-cyclic") == 0)            interlockCyclic = true;
     else if (strcmp(opt, "-agg") == 0)          { int nd = 1; if (OPS_GetDoubleInput(&nd, &aggSize) < 0)      { opserr << "LadrunoRCFiniteStrain: -agg needs a value.\n";          return 0; } }

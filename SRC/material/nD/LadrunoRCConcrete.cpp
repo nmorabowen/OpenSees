@@ -52,14 +52,14 @@ using namespace ladruno_rc_kernel;
 //             <-ties $rhoY $rhoZ $fyt $Es> <-tieHardening $b>  (BeamFiber view, Ladruno WP-243)
 //             <-crackCheck sum $smx $smt>                          (BeamFiber view, Ladruno WP-243)
 //             <-lateralNoRoot {refuse|modelC}>                     (BeamFiber view, Ladruno WP-247)
-//             <-rho $rho> <-secant | -numericalTangent>
+//             <-rho $rho> <-secant | -numericalTangent | -dualTangent>   (-dualTangent: Ladruno WP-263)
 // ===========================================================================
 void* OPS_LadrunoRCConcrete(void)
 {
   if (OPS_GetNumRemainingInputArgs() < 3) {
     opserr << "nDMaterial LadrunoRCConcrete error: too few args.\n"
            << "  want: tag E nu -Ce {..} -Cs {..} <-Cd {..}> -Te {..} -Ts {..} <-Td {..}>"
-           << " <-Kc Kc> <-beta> <-betaFloor f> <-lublinerReduced> <-rho rho> <-secant|-numericalTangent>\n";
+           << " <-Kc Kc> <-beta> <-betaFloor f> <-lublinerReduced> <-rho rho> <-secant|-numericalTangent|-dualTangent>\n";
     return 0;
   }
 
@@ -143,6 +143,8 @@ void* OPS_LadrunoRCConcrete(void)
     else if (strcmp(opt, "-lublinerReduced") == 0)   lubRed = true;
     else if (strcmp(opt, "-secant") == 0)            tanMode = 1;
     else if (strcmp(opt, "-numericalTangent") == 0)  tanMode = 2;
+    // Ladruno WP-263: d(sigma)/d(eps) by one Dual<6> pass of the return map (exact, valid under -implex)
+    else if (strcmp(opt, "-dualTangent") == 0)       tanMode = 3;
     else if (strcmp(opt, "-interlock") == 0)         interlockOn = true;
     else if (strcmp(opt, "-cyclic") == 0)            interlockCyclic = true;
     else if (strcmp(opt, "-agg") == 0)          { int nd = 1; if (OPS_GetDoubleInput(&nd, &aggSize) < 0)      { opserr << "LadrunoRCConcrete: -agg needs a value.\n";          return 0; } }
