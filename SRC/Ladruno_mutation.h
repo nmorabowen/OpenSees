@@ -66,11 +66,25 @@
 //          it separates suites that check values from suites that only check
 //          "it ran without throwing" — precisely the failure mode ADR-87 was
 //          written about. A suite green under SCALE is a smoke test.
-//   IDENT  tangent -> identity, residual untouched. Newton usually still
-//          converges to the RIGHT answer (slowly), so most tests correctly
-//          stay green; this mode exists to ask whether anything at all pins
-//          the tangent (iteration counts, eigenvalues, convergence rate).
-//          Read a low IDENT score as "no tangent coverage", not as a bug.
+//   IDENT  tangent -> identity, residual untouched. It asks whether anything
+//          pins the tangent. WP-265 corrected the old reading here ("Newton
+//          usually still converges, so most tests stay green"): with K = I a
+//          static Newton step is dU = R, which DIVERGES on any model whose
+//          stiffness eigenvalues leave (0, 2) -- every structural model -- and
+//          a `Linear` step lands at u = F. Implicit dynamics survives only where
+//          a0*M dominates the effective tangent; explicit integrators never
+//          read K. So IDENT kills much of a static suite by divergence, which
+//          is coverage of "a tangent exists", not of "the tangent is right".
+//          The tests that pin the tangent itself compare K with a finite
+//          difference of the force at a nonlinear state (tests/
+//          test_*tangent_gate*.py); mutation_gate.py adds them to each
+//          family's IDENT suite.
+//          IDENT is NOT a pure tangent mutation where a residual is built from
+//          a tangent: Rayleigh betaK / betaK0 damping forces, the CFL critical
+//          step (CriticalTimeStep reads getInitialStiff), shell drilling
+//          stiffness taken from the section's initial tangent (ShellMITC4,
+//          ASDShellQ4) and ASDShellQ4's EAS residual all move with it. Read a
+//          kill on such a path as a residual change, not as tangent coverage.
 //
 // USAGE (one line per accessor; FAMILY is a bare token, e.g. CONTINUUM)
 //   const Vector &Foo::getResistingForce(void) {
@@ -183,9 +197,9 @@ inline void force(int mode, Vector &v)
 }
 
 // Sabotage a stiffness matrix. IDENT replaces K with the identity, which keeps
-// the matrix non-singular (the analysis proceeds and Newton can still find the
-// right root) so the gate measures whether anything CHECKS the tangent rather
-// than merely whether the solve survives.
+// the matrix non-singular (the solve proceeds; whether Newton then reaches the
+// root depends on the model -- see IDENT above) so the gate measures whether
+// anything CHECKS the tangent rather than merely whether the solve survives.
 inline void tangent(int mode, Matrix &m)
 {
   if (mode == LADRUNO_MUT_ZERO)
