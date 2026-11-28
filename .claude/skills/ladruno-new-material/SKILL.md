@@ -79,6 +79,11 @@ applies. Items marked **[lint]** are enforced by `python ci/check_quirk_patterns
       compare with the analytic tangent to round-off (`tests/ladrunoj2_dual_check.cpp`). Through a
       local Newton, take one value-zeroed Newton step at the converged point. Quirks:
       "the derivative lags the local Newton by one iterate".
+- [ ] A material that accepts `setParameter` names but does not implement
+      `getStressSensitivity` / `commitSensitivity` contributes **0** to a DDM run, silently
+      (the base stubs; `FiberSection` ignores the -1). Implement them, or refuse the parameter
+      for sensitivity. Dual-number recipe: `LadrunoUniaxialJ2` (WP-262). Quirks:
+      "contributes d(sigma)/d(theta) = 0 to a fiber beam, silently".
 - [ ] Implement `getInitialTangent()` honestly: the base default returns `getTangent()`, so
       `-initial` silently becomes full Newton. Quirks: "`NDMaterial::getInitialTangent()` DEFAULTS".
 - [ ] Substep schemes need error control and yield-drift correction, and must honour the

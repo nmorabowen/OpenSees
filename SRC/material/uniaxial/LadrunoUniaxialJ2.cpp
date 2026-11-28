@@ -33,6 +33,7 @@
 #include <LadrunoUniaxialJ2.h>
 #include <LadrunoHardening.h>     // shared sig_y(pbar) -- oracle contract w/ LadrunoJ2
 #include <LadrunoDamage.h>        // shared Lemaitre damage law -- oracle contract w/ LadrunoJ2
+#include "LadrunoUniaxialJ2Kernel.h"  // WP-262: templated return map (dual-number DDM)
 #include <Element.h>
 #include <OPS_Globals.h>
 #include <Vector.h>
@@ -223,6 +224,29 @@ double LadrunoUniaxialJ2::yieldSlope(double p) const
 //  the return map: fixed direction s = sign(sigma_tr - X_n) + scalar Newton on
 //  dp (= accumulated plastic strain increment). No M(dGamma) tensor solve.
 // ===========================================================================
+// WP-262: pack the instance's constants / committed history for the kernel.
+template <class P>
+static void fillKernelParams(ladruno_uniaxial_j2::ParamsT<P>& p, double E, double sig0,
+                             double Qinf, double bIso, double Hiso, int nBack,
+                             const double* Ckin, const double* gKin,
+                             bool dmgOn, double dmgR, double dmgS, double dmgPD, double dmgDc,
+                             bool dmgImplex, double lchScale)
+{
+  p.E = E; p.sig0 = sig0; p.Qinf = Qinf; p.bIso = bIso; p.Hiso = Hiso;
+  p.nBack = nBack;
+  for (int k = 0; k < ladruno_uniaxial_j2::MAXBACK; k++) { p.C[k] = Ckin[k]; p.gam[k] = gKin[k]; }
+  p.dmgOn = dmgOn; p.dmgR = dmgR; p.dmgS = dmgS; p.dmgPD = dmgPD; p.dmgDc = dmgDc;
+  p.dmgImplex = dmgImplex; p.lchScale = lchScale;
+}
+
+template <class T>
+static void committedState(ladruno_uniaxial_j2::StateT<T>& C, double plasticStrain, double ebarp,
+                           double dGamma, double wp, double D, const double* X, int nBack)
+{
+  C.plasticStrain = plasticStrain; C.ebarp = ebarp; C.dGamma = dGamma; C.wp = wp; C.D = D;
+  for (int k = 0; k < ladruno_uniaxial_j2::MAXBACK; k++) C.X[k] = (k < nBack) ? X[k] : 0.0;
+}
+
 int LadrunoUniaxialJ2::setTrialStrain(double strain, double)
 {
   if (fabs(Tstrain - strain) < DBL_EPSILON)
@@ -230,142 +254,42 @@ int LadrunoUniaxialJ2::setTrialStrain(double strain, double)
 
   Tstrain = strain;
 
-  // trial (elastic predictor): freeze plastic state
-  double sigTr = E*(Tstrain - CplasticStrain);
-  double Xtot = 0.0;
-  for (int k = 0; k < nBack; k++) Xtot += CX[k];
-  double eta = sigTr - Xtot;                 // relative stress
-  double absEta = fabs(eta);
-  double syn = yieldStress(Cebarp);          // sig_y at committed pbar
-  double f = absEta - syn;
+  // WP-262: the return map lives in the templated kernel
+  // (LadrunoUniaxialJ2Kernel.h); this is its double instantiation, which performs
+  // exactly the operations of the former in-class code (bit-identity gate:
+  // tests/ladruno_uniaxialj2_dual_check.cpp). The crack-band scale is read from
+  // the active element only where the damage law uses it (plastic + damage).
+  ladruno_uniaxial_j2::ParamsT<double> p;
+  fillKernelParams(p, E, sig0, Qinf, bIso, Hiso, nBack, Ckin, gKin,
+                   dmgOn, dmgR, dmgS, dmgPD, dmgDc, dmgImplex, 1.0);
+  ladruno_uniaxial_j2::StateT<double> C, Tr;
+  committedState(C, CplasticStrain, Cebarp, CdGamma, Cwp, CD, CX, nBack);
+  if (dmgOn) p.lchScale = this->lchScaleFromElement();
 
-  // unit-aware tolerance (never collapses to a fixed absolute when sig0 == 0,
-  // e.g. kinematic-only); scaled to the operative stress magnitude
-  double stressScale = fmax(absEta, syn);
-  double tolY = 1.0e-12 * fmax(stressScale, 1.0e-300);
+  double resid = 0.0;
+  int status = ladruno_uniaxial_j2::returnMap(p, Tstrain, C, CdD, Tr, Tstress, Ttangent, &resid);
 
-  if (f <= tolY) {
-    // ---- elastic step: state frozen ----
-    TplasticStrain = CplasticStrain;
-    Tebarp = Cebarp;
-    TdGamma = 0.0;
-    Twp = Cwp;
-    for (int k = 0; k < nBack; k++) TX[k] = CX[k];
-    Tstress = sigTr;
-    Ttangent = E;
-    TD = CD;                                   // no new damage on an elastic step
-    if (dmgOn) {                               // prior damage still degrades sigma/tangent
-      double dScale = dmgImplex ? (CD + CdD) : CD;   // IMPL-EX: frozen extrapolated D~
-      if (dScale > dmgDc) dScale = dmgDc;
-      if (dScale < 0.0)   dScale = 0.0;
-      if (dScale > 0.0) { double omd = 1.0 - dScale; Tstress *= omd; Ttangent *= omd; }
-    }
-    return 0;
-  }
+  TplasticStrain = Tr.plasticStrain;
+  Tebarp = Tr.ebarp;
+  TdGamma = Tr.dGamma;
+  Twp = Tr.wp;
+  TD = Tr.D;
+  for (int k = 0; k < nBack; k++) TX[k] = Tr.X[k];
 
-  // ---- plastic corrector ----
-  int s = (eta >= 0.0) ? 1 : -1;
-
-  // initial plastic modulus (for the Newton seed): iso slope + sum C_k
-  double h0 = yieldSlope(Cebarp);
-  for (int k = 0; k < nBack; k++) h0 += Ckin[k];
-  double dp = f / (E + h0);                  // perfectly-plastic-style seed
-  if (dp < 0.0) dp = 0.0;
-
-  // scalar Newton:  R(dp) = |eta| - E dp
-  //   - sum_k dp (C_k - gamma_k s X_k,n)/(1 + gamma_k dp) - sig_y(pbar_n + dp) = 0
-  //   a_k = C_k - gamma_k s X_k,n   (constant in dp)
-  const int maxIter = 50;
-  int iter = 0;
-  double R = 1.0;
-  for (; iter < maxIter; iter++) {
-    double R0 = absEta - E*dp - yieldStress(Cebarp + dp);
-    double dR = -E - yieldSlope(Cebarp + dp);
-    for (int k = 0; k < nBack; k++) {
-      double ak = Ckin[k] - gKin[k]*s*CX[k];
-      double den = 1.0 + gKin[k]*dp;
-      R0 -= dp*ak/den;
-      dR -= ak/(den*den);
-    }
-    R = R0;
-    if (fabs(R) <= tolY) break;
-    if (dR == 0.0) {
-      opserr << "WARNING LadrunoUniaxialJ2: singular local Jacobian (tag "
-             << this->getTag() << ")\n";
-      break;
-    }
-    dp -= R/dR;
-    if (dp < 0.0) dp = 0.0;
-  }
-  if (iter >= maxIter)
+  if (status == ladruno_uniaxial_j2::STATUS_SINGULAR)
+    opserr << "WARNING LadrunoUniaxialJ2: singular local Jacobian (tag "
+           << this->getTag() << ")\n";
+  else if (status == ladruno_uniaxial_j2::STATUS_NO_CONVERGE)
     opserr << "WARNING LadrunoUniaxialJ2: local Newton did not converge (tag "
-           << this->getTag() << ", |R|=" << fabs(R) << ")\n";
-
-  // ---- state update ----
-  double pbar = Cebarp + dp;
-  Tebarp = pbar;
-  TdGamma = dp;
-  TplasticStrain = CplasticStrain + dp*s;
-  for (int k = 0; k < nBack; k++)
-    TX[k] = (CX[k] + Ckin[k]*dp*s) / (1.0 + gKin[k]*dp);
-
-  // ---- stress ----
-  Tstress = sigTr - E*dp*s;
-
-  // ---- plastic work increment (fracture/LCF hook): dWp = sigma * deps^p ----
-  Twp = Cwp + Tstress*(dp*s);
-
-  // ---- consistent tangent: E_alg = E h/(E+h),  h = sig_y' + sum a_k/(1+g_k dp)^2
-  double h = yieldSlope(pbar);
-  for (int k = 0; k < nBack; k++) {
-    double ak = Ckin[k] - gKin[k]*s*CX[k];
-    double den = 1.0 + gKin[k]*dp;
-    h += ak/(den*den);
-  }
-  Ttangent = E*h/(E + h);
-
-  // ---- Lemaitre coupled ductile damage (uniaxial: triaxiality 1/3 => R_v == 1,
-  //      so Y = sigma~^2/(2E)). The effective return above is D-independent; D is
-  //      recovered from the converged effective stress and the (dp,D) coupling
-  //      enters the CONSISTENT TANGENT: E_nom = (1-D)E_alg - sigma~ dD/deps.
-  //      This is the exact 1D reduction of the 3D returnMapDamaged (the V4 oracle).
-  TD = CD;
-  if (dmgOn) {
-    const double sigEff  = Tstress;            // effective stress (pre-degradation)
-    const double EalgEff = Ttangent;           // effective consistent tangent
-    Ladruno::DamageParams dpar;
-    dpar.on = dmgOn; dpar.r = dmgR; dpar.s = dmgS; dpar.pD = dmgPD; dpar.Dc = dmgDc;
-    const double Y = (E > 0.0) ? sigEff*sigEff/(2.0*E) : 0.0;
-    const double lch = (ops_TheActiveElement != 0) ? ops_TheActiveElement->getCharacteristicLength() : 0.0;
-    const double lchScale = (dmgLchRef > 0.0 && lch > 0.0) ? (lch / dmgLchRef) : 1.0;
-    const double dDraw = lchScale * Ladruno::damageIncrement(Y, Cebarp, pbar, dpar);
-    double Dnew = CD + dDraw;
-    bool capped = false;
-    if (Dnew >= dmgDc) { Dnew = dmgDc; capped = true; }
-    if (Dnew < 0.0) Dnew = 0.0;
-    TD = Dnew;                                  // implicit damage (committed for extrapolation)
-
-    // IMPL-EX: degrade by the FROZEN extrapolated D~ = CD + CdD (constant tangent
-    // omd*E_alg, no dD/deps softening term); else fully implicit.
-    double dScale = dmgImplex ? (CD + CdD) : Dnew;
-    if (dScale > dmgDc) dScale = dmgDc;
-    if (dScale < 0.0)   dScale = 0.0;
-    const double omd = 1.0 - dScale;
-
-    double dDdeps = 0.0;
-    if (!dmgImplex && !capped && dDraw > 0.0) {
-      // d(pbar)/deps = s E/(E+h) ; dY/deps = (sigma~/E) E_alg ; partials of dD
-      double ddD_dY, ddD_dp;
-      Ladruno::damageIncrementPartials(Y, Cebarp, pbar, dpar, ddD_dY, ddD_dp);
-      const double dpbar_deps = s*E/(E + h);
-      const double dY_deps    = (sigEff/E)*EalgEff;
-      dDdeps = lchScale * (ddD_dp*dpbar_deps + ddD_dY*dY_deps);
-    }
-    Tstress  = omd*sigEff;
-    Ttangent = omd*EalgEff - sigEff*dDdeps;
-  }
+           << this->getTag() << ", |R|=" << resid << ")\n";
 
   return 0;
+}
+
+double LadrunoUniaxialJ2::lchScaleFromElement(void) const
+{
+  const double lch = (ops_TheActiveElement != 0) ? ops_TheActiveElement->getCharacteristicLength() : 0.0;
+  return (dmgLchRef > 0.0 && lch > 0.0) ? (lch / dmgLchRef) : 1.0;
 }
 
 // ===========================================================================
@@ -402,6 +326,7 @@ int LadrunoUniaxialJ2::revertToLastCommit(void)
 
 int LadrunoUniaxialJ2::revertToStart(void)
 {
+  SHV.clear();                                   // WP-262: history sensitivities
   CplasticStrain = 0.0; Cebarp = 0.0; CdGamma = 0.0; Cwp = 0.0; CD = 0.0; CdD = 0.0;
   TplasticStrain = 0.0; Tebarp = 0.0; TdGamma = 0.0; Twp = 0.0; TD = 0.0;
   for (int k = 0; k < MAXBACK; k++) { CX[k] = 0.0; TX[k] = 0.0; }
@@ -448,6 +373,7 @@ UniaxialMaterial* LadrunoUniaxialJ2::getCopy(void)
   theCopy->Tstress = Tstress;
   theCopy->Ttangent = Ttangent;
   theCopy->parameterID = parameterID;
+  theCopy->SHV = SHV;                            // WP-262: history sensitivities
 
   return theCopy;
 }
@@ -571,6 +497,101 @@ int LadrunoUniaxialJ2::updateParameter(int parameterID, Information& info)
 int LadrunoUniaxialJ2::activateParameter(int paramID)
 {
   parameterID = paramID;
+  return 0;
+}
+
+// ===========================================================================
+//  WP-262: DDM sensitivities by dual numbers
+//
+//  The OpenSees DDM contract (StaticAnalysis: computeSensitivities BEFORE
+//  commit): getStressSensitivity(g) is d(sigma)/d(theta) at the CURRENT trial
+//  strain held fixed, given the committed history and ITS sensitivities;
+//  commitSensitivity(d eps/d theta, g, n) then advances the history
+//  sensitivities with the converged total strain derivative.
+//
+//  Both are one pass of the templated kernel in Dual<1>: the active parameter
+//  (parameterID, set by Parameter::activate; 0 when this material is not the
+//  one being differentiated) is seeded with 1, the committed history with its
+//  stored sensitivities, the strain with d eps/d theta (0 for the conditional
+//  stress sensitivity). The local Newton is closed with the IFT step, so the
+//  result is the exact derivative of the discrete return map, history included.
+//  Not differentiated: the damage constants and lchRef (parameter 6), which
+//  return 0 here like every material without a derivative for them.
+// ===========================================================================
+int LadrunoUniaxialJ2::sensitivityPass(int gradIndex, double strainGradient,
+                                       double& dStress, double& dTangent, double* dTrialState)
+{
+  typedef ladruno_dual::Dual<1> D1;
+  ladruno_uniaxial_j2::ParamsT<D1> p;
+  fillKernelParams(p, E, sig0, Qinf, bIso, Hiso, nBack, Ckin, gKin,
+                   dmgOn, dmgR, dmgS, dmgPD, dmgDc, dmgImplex, 1.0);
+  if (dmgOn) p.lchScale = this->lchScaleFromElement();
+  switch (parameterID) {
+    case 1: p.E.d[0]    = 1.0; break;
+    case 2: p.sig0.d[0] = 1.0; break;
+    case 3: p.Qinf.d[0] = 1.0; break;
+    case 4: p.bIso.d[0] = 1.0; break;
+    case 5: p.Hiso.d[0] = 1.0; break;
+    default: break;                        // not this material's parameter (or lchRef)
+  }
+
+  ladruno_uniaxial_j2::StateT<D1> C, Tr;
+  committedState(C, CplasticStrain, Cebarp, CdGamma, Cwp, CD, CX, nBack);
+  D1 CdDd(CdD);
+  const size_t base = (size_t)gradIndex * SHV_N;
+  if (gradIndex >= 0 && SHV.size() >= base + SHV_N) {
+    const double* sh = &SHV[base];
+    C.plasticStrain.d[0] = sh[0];
+    C.ebarp.d[0]         = sh[1];
+    C.D.d[0]             = sh[2];
+    CdDd.d[0]            = sh[3];
+    for (int k = 0; k < nBack; k++) C.X[k].d[0] = sh[4 + k];
+  }
+
+  D1 strain(Tstrain);
+  strain.d[0] = strainGradient;
+  D1 stress, tangent;
+  int status = ladruno_uniaxial_j2::returnMap(p, strain, C, CdDd, Tr, stress, tangent);
+
+  dStress = stress.d[0];
+  dTangent = tangent.d[0];
+  if (dTrialState) {
+    dTrialState[0] = Tr.plasticStrain.d[0];
+    dTrialState[1] = Tr.ebarp.d[0];
+    dTrialState[2] = Tr.D.d[0];
+    dTrialState[3] = Tr.D.d[0] - C.D.d[0];          // commitState sets CdD = TD - CD
+    for (int k = 0; k < MAXBACK; k++) dTrialState[4 + k] = (k < nBack) ? Tr.X[k].d[0] : 0.0;
+  }
+  return status;
+}
+
+double LadrunoUniaxialJ2::getStressSensitivity(int gradIndex, bool)
+{
+  double dS = 0.0, dT = 0.0;
+  this->sensitivityPass(gradIndex, 0.0, dS, dT, 0);
+  return dS;
+}
+
+double LadrunoUniaxialJ2::getTangentSensitivity(int gradIndex)
+{
+  double dS = 0.0, dT = 0.0;
+  this->sensitivityPass(gradIndex, 0.0, dS, dT, 0);
+  return dT;
+}
+
+double LadrunoUniaxialJ2::getInitialTangentSensitivity(int)
+{
+  return (parameterID == 1) ? 1.0 : 0.0;    // getInitialTangent() == E
+}
+
+int LadrunoUniaxialJ2::commitSensitivity(double strainGradient, int gradIndex, int numGrads)
+{
+  if (gradIndex < 0 || numGrads <= gradIndex) return -1;
+  if (SHV.size() < (size_t)numGrads * SHV_N) SHV.resize((size_t)numGrads * SHV_N, 0.0);
+  double dTr[SHV_N];
+  double dS = 0.0, dT = 0.0;
+  this->sensitivityPass(gradIndex, strainGradient, dS, dT, dTr);
+  for (int i = 0; i < SHV_N; i++) SHV[(size_t)gradIndex * SHV_N + i] = dTr[i];
   return 0;
 }
 

@@ -55,6 +55,7 @@
 #define LadrunoUniaxialJ2_h
 
 #include <UniaxialMaterial.h>
+#include <vector>
 
 class LadrunoUniaxialJ2 : public UniaxialMaterial
 {
@@ -96,6 +97,14 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
   int setParameter(const char** argv, int argc, Parameter& param);
   int updateParameter(int parameterID, Information& info);
   int activateParameter(int parameterID);
+
+  // WP-262: DDM sensitivities by dual numbers. The return map is templated
+  // (LadrunoUniaxialJ2Kernel.h); one Dual<1> pass seeded on the active
+  // parameter (and on the stored history sensitivities) gives d(sigma)/d(theta).
+  double getStressSensitivity(int gradIndex, bool conditional);
+  double getTangentSensitivity(int gradIndex);
+  double getInitialTangentSensitivity(int gradIndex);
+  int    commitSensitivity(double strainGradient, int gradIndex, int numGrads);
 
   Response* setResponse(const char** argv, int argc, OPS_Stream& s);
   int getResponse(int responseID, Information& matInfo);
@@ -149,8 +158,21 @@ class LadrunoUniaxialJ2 : public UniaxialMaterial
   // helpers
   double yieldStress(double p) const;   // sig_y(p)   (shared Ladruno law)
   double yieldSlope(double p) const;    // d sig_y/dp (shared Ladruno law)
+  double lchScaleFromElement(void) const;
 
   int parameterID;
+
+  // WP-262: committed history sensitivities, one block of SHV_N per gradient:
+  // [d eps^p, d pbar, d D, d dD, d X_0 .. d X_{MAXBACK-1}] w.r.t. that gradient's
+  // parameter. Empty until the first commitSensitivity (=> zero history).
+  static const int SHV_N = 4 + MAXBACK;
+  std::vector<double> SHV;
+  // one Dual<1> pass of the kernel at the CURRENT trial strain; the seed is the
+  // active parameter (if it is this material's), the stored history
+  // sensitivities of gradIndex, and strainGradient on the strain. Returns the
+  // kernel status; outputs d(stress), d(tangent) and the trial-state derivatives.
+  int sensitivityPass(int gradIndex, double strainGradient,
+                      double& dStress, double& dTangent, double* dTrialState);
 };
 
 #endif

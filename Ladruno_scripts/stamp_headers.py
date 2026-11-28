@@ -90,6 +90,7 @@ GLOBS = [
     "SRC/material/nD/LadrunoHS.*", "SRC/material/nD/LadrunoHSKernel.h",
     "SRC/material/nD/LadrunoHardening.h",
     "SRC/material/nD/LadrunoDual.h",   # WP-262: dual numbers (forward-mode AD)
+    "SRC/material/uniaxial/LadrunoUniaxialJ2Kernel.h",   # WP-262: templated uniaxial J2 return map
     "SRC/material/uniaxial/LadrunoUniaxialJ2.*",
     "SRC/material/uniaxial/LadrunoRebarBuckling.*",
     "SRC/material/uniaxial/LadrunoBondSlip.*",
