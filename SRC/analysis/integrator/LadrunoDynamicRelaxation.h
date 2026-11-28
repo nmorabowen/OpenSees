@@ -90,6 +90,18 @@ class Vector;
 // ("not measured") rather than a stale number.
 #define LADRUNO_DR_DEFAULT_MARGIN_EVERY 500
 
+// Ladruno WP-240 (from jaabell/OpenSees 3c2f585b5, J. Abell): global reductions
+// over the processes of a parallel run. The library is compiled once for every
+// target, without MPI, so the integrator cannot call MPI itself. The two
+// _PARALLEL_INTERPRETERS engines (SRC/tcl/commands.cpp for OpenSeesMP.exe,
+// SRC/interpreter/OpenSeesCommands.cpp for openseesmp.pyd) point these at
+// MPI_Allreduce through Ladruno::drInstallMPIReductions() (LadrunoSolverQuery.h)
+// when the integrator is created. Identity by default.
+namespace Ladruno {
+extern double (*drAllreduceSum)(double);
+extern double (*drAllreduceMax)(double);
+}
+
 class LadrunoDynamicRelaxation : public TransientIntegrator
 {
   public:
@@ -136,6 +148,9 @@ class LadrunoDynamicRelaxation : public TransientIntegrator
     // Read-only on existing in-memory state (no sendSelf change, serial v1).
     double getResidualNorm(void) const;     // ||f_ext - f_int|| (settling gate)
     double getKineticEnergy(void) const;    // 1/2 v^T M* v (micro-burst signal)
+    // Ladruno WP-240: max |u| over the equation DOFs. All three are global in a
+    // parallel run (see Ladruno::drAllreduceSum/Max above).
+    double getMaxDisplacement(void) const;
 
     // Gershgorin stability margin of the mass we are MARCHING with, measured
     // against the CURRENT tangent: max_i (dt^2/4)*sum_j|K_ij| / M*_i, which is
@@ -213,6 +228,12 @@ class LadrunoDynamicRelaxation : public TransientIntegrator
     int    marginEvery;              // probe cadence in steps (0 = off)
     int    marginCount;              // steps since the last probe
     bool   haveBuiltOnce;            // M* exists (own flag: stabMargin is a VALUE)
+
+    // --- Ladruno WP-240: distributed diagonal system (OpenSeesMP `system MPIDiagonal`) ---
+    // Set in domainChanged() from LinearSOE::isDistributedDiagonal(). Such a system
+    // inverts A at its first solve and ignores later zeroA/addA, so M* is not
+    // rebuilt, and its B holds the neighbours' contributions at the interface DOFs.
+    bool   distributedSOE;
 
     // --- Ladruno WP-153: the march state at the last commit (revertToLastStep) ---
     // M* is included: -recompute and the KE-peak auto-refresh rebuild it INSIDE a

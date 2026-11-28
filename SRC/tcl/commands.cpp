@@ -6539,6 +6539,7 @@ ladrunoSpecifyIntegratorImpl(ClientData clientData, Tcl_Interp *interp, int argc
   }
 
   else if (strcmp(argv[1],"LadrunoDynamicRelaxation") == 0) {   // Ladruno
+    Ladruno::drInstallMPIReductions();   // Ladruno WP-240: global KE / residual in OpenSeesMP
     theTransientIntegrator = (TransientIntegrator *)OPS_LadrunoDynamicRelaxation();
 
     if (theTransientIntegrator != 0 && theTransientAnalysis != 0)
@@ -7515,7 +7516,8 @@ int
 ladrunoDR(ClientData clientData, Tcl_Interp* interp, int argc, TCL_Char** argv)
 {
     OPS_ResetInputNoBuilder(clientData, interp, 1, argc, argv, &theDomain);
-    if (Ladruno::drCommand(theTransientIntegrator) < 0)
+    // Ladruno WP-240: `relax` marches, so the dispatch needs the analysis too
+    if (Ladruno::drCommand(theTransientIntegrator, theTransientAnalysis) < 0)
 	    return TCL_ERROR;
     return TCL_OK;
 }

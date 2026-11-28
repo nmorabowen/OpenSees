@@ -2023,6 +2023,7 @@ int OPS_Integrator()
 	ti = (TransientIntegrator*)OPS_ExplicitBatheLNVDSMSConsistent();
 
     } else if (strcmp(type, "LadrunoDynamicRelaxation") == 0) {   // Ladruno
+	Ladruno::drInstallMPIReductions();   // Ladruno WP-240: global KE / residual in openseesmp
 	ti = (TransientIntegrator*)OPS_LadrunoDynamicRelaxation();
 
     } else {
@@ -3676,7 +3677,8 @@ int OPS_LadrunoArcLengthCmd()
 int OPS_LadrunoDRCmd()
 {
     if (cmds == 0) return 0;
-    return Ladruno::drCommand(cmds->getTransientIntegrator());
+    // Ladruno WP-240: `relax` marches, so the dispatch needs the analysis too
+    return Ladruno::drCommand(cmds->getTransientIntegrator(), cmds->getTransientAnalysis());
 }
 
 // Ladruno WP-221: the half-storage asymmetry guard of the active system; the
