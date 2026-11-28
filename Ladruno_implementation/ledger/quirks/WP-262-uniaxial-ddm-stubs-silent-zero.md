@@ -52,3 +52,14 @@ status: "open"
   element updated. Latch whatever the trial state used. `LadrunoUniaxialJ2`
   latches `lchScaleTrial`, with a truss-chain regression in
   `tests/test_ladrunoUniaxialJ2_ddm_fiber.py`.
+
+#### Follow-up (WP-267)
+
+`LadrunoCohesiveHinge` and `LadrunoBondSlip` now implement the four sensitivity
+methods by the same recipe (templated kernels `LadrunoCohesiveHingeKernel.h`,
+`LadrunoBondSlipKernel.h`; PR #1176). `LadrunoBondSlip` also gained the
+`setParameter` / `updateParameter` it never had. **Still stubbed** (they return 0):
+`LadrunoRebarBuckling` (WP-264 owns the file this wave), every other fork uniaxial,
+and every fork nD material, `LadrunoCohesiveHingeBiaxial` included. Not
+differentiated in `LadrunoCohesiveHinge`: the parent beam's axial force `P_axial`
+(a P-M hinge in a beam misses dP/dθ). `SHV` is not sent by `sendSelf` in either.
