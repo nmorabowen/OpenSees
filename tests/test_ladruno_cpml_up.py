@@ -863,7 +863,7 @@ def test_up_gate0_oracle_14_cases_and_fd_tangent() -> None:
             a_oracle = a_target.copy()
             a_oracle[p_idx] = 0.0
 
-            R_int_ref, K_eff_ref, C_eff_ref, M_eff_ref, K_T_dyn_ref, P_ext_ref = (
+            R_int_ref, K_eff_ref, C_eff_ref, M_eff_ref, K_T_dyn_ref, _ = (
                 oracle.evaluate_trial(
                     u_target, v_target, a_oracle, dt, c1, c2, c3
                 )
@@ -906,7 +906,7 @@ def test_up_gate0_oracle_14_cases_and_fd_tangent() -> None:
 
             a_ops_zero_p = a_ops.copy()
             a_ops_zero_p[p_idx] = 0.0
-            R_int_ops_ref, _, _, M_eff_ops_ref, _, _ = oracle_ops.evaluate_trial(
+            R_int_ops_ref, _, _, M_eff_ops_ref, _, P_ext_ops_ref = oracle_ops.evaluate_trial(
                 u_ops, v_ops, a_ops_zero_p, dt, c1, c2, c3
             )
             R_disp_ops_ref = extract_oracle_r_disp_up(
@@ -964,7 +964,7 @@ def test_up_gate0_oracle_14_cases_and_fd_tangent() -> None:
             assert rel_err(f_disp_ops[p_idx], R_disp_ops_ref[p_idx]) <= 1.0e-10
             assert rel_err(f_int_ops[u_idx], R_int_ref[u_idx]) <= 1.0e-10
             assert rel_err(f_int_ops[p_idx], R_int_ref[p_idx]) <= 1.0e-10
-            assert rel_err_scaled(p_ext_ops, P_ext_ref) <= 1.0e-10
+            assert rel_err_scaled(p_ext_ops, P_ext_ops_ref) <= 1.0e-10
 
             u_c, v_c, a_c = u_target, v_target, a_target
 
