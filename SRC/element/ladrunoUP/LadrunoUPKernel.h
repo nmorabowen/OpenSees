@@ -185,9 +185,13 @@ inline double stabAlphaAuto(double h, double KsDrained, double GsDrained,
 //  Expected domain (policed by the P1 parser, not here): 0 < n <= biotAlpha   //
 //  <= 1 and Kf > 0 — outside it the formula returns a physically meaningless  //
 //  (possibly negative) storage coefficient.                                   //
+//  Templated on the porosity's scalar (WP-266): -geom hypo evolves n(J), and  //
+//  the dual element-Jacobian oracle (LadrunoUPHypoKernel.h) differentiates    //
+//  through it. Every caller passes a double n and gets the same expressions.  //
 // --------------------------------------------------------------------------- //
-inline double oneOverQbar(double n, double Kf, double biotAlpha, double Ks) {
-  double val = n / Kf;
+template <class T>
+inline T oneOverQbar(const T& n, double Kf, double biotAlpha, double Ks) {
+  T val = n / Kf;
   if (Ks > 0.0)
     val += (biotAlpha - n) / Ks;
   return val;

@@ -16,6 +16,7 @@ target_sources(OPS_Element
     PUBLIC
     LadrunoUP.h
     LadrunoUPKernel.h    # Ladruno (ADR 71): shared Biot u-p block kernel (header-only)
+    LadrunoUPHypoKernel.h  # Ladruno (WP-266): -geom hypo per-GP residual, templated on the scalar
     LadrunoUPShapes.h    # Ladruno (ADR 71): stateless shape providers (header-only)
 )
 
