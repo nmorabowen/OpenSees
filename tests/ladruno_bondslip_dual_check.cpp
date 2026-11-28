@@ -188,6 +188,8 @@ static void sensitivity(const Case& cs, int which, const char* pname, bool keepH
   pd.tau_max = stored.tau_max; pd.s1 = stored.s1; pd.s2 = stored.s2; pd.s3 = stored.s3;
   pd.tau_f = stored.tau_f; pd.alpha = stored.alpha; pd.Gf = stored.Gf; pd.s0 = stored.s0;
   pd.k0 = stored.k0;
+  const bool s0User = cs.p.s0 > 0.0;
+  if (!s0User && which != 8) pd.s0 = 0.0;     // the class: a defaulted s0 follows s1
   fieldD(pd, which)->d[0] = 1.0;
   setDerived(pd);
   Pd chk = stored;
@@ -213,10 +215,12 @@ static void sensitivity(const Case& cs, int which, const char* pname, bool keepH
     (void)s1;
   }
 
-  // ---- FD of the whole path (updateParameter: set, then setDerived) ----
+  // ---- FD of the whole path (updateParameter: set, then setDerived; a
+  //      defaulted s0 re-derived, i.e. the same as constructing at theta +/- h) ----
   double sp[16], sm[16];
   const double h = 1.0e-6 * std::fmax(std::fabs(theta0), 1.0);
   Pd pp = stored, pm = stored;
+  if (!s0User && which != 8) { pp.s0 = 0.0; pm.s0 = 0.0; }
   *field(pp, which) = theta0 + h; setDerived(pp);
   *field(pm, which) = theta0 - h; setDerived(pm);
   pathStresses(cs, pp, h, scaleC, sp);

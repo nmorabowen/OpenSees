@@ -112,6 +112,8 @@ class LadrunoBondSlip : public UniaxialMaterial
   // --- backbone parameters (s3 may be overridden by Gf) ---
   double tau_max, s1, s2, s3, tau_f, alpha, Gf, s0;
   double k0;                 // initial (linear-segment) stiffness = envelope'(0+)
+  bool   s0User;             // WP-267: s0 given by the user (> 0); false => s0 = 0.1*s1,
+                             // re-derived whenever s1 changes (updateParameter, DDM)
 
   void setDerived(void);     // compute s0 default, k0, and Gf-override of s3
   double envelope(double a) const;      // backbone for a = |slip| >= 0

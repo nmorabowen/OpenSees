@@ -111,7 +111,7 @@ LadrunoBondSlip::LadrunoBondSlip(int tag, double tau_max_, double s1_, double s2
                                  double Gf_, double s0_)
   : UniaxialMaterial(tag, MAT_TAG_LadrunoBondSlip),
     tau_max(tau_max_), s1(s1_), s2(s2_), s3(s3_), tau_f(tau_f_), alpha(alpha_),
-    Gf(Gf_), s0(s0_), k0(0.0),
+    Gf(Gf_), s0(s0_), k0(0.0), s0User(s0_ > 0.0),
     Cslip(0.0), Cstress(0.0), CslipMaxAbs(0.0), Cwork(0.0),
     Tslip(0.0), Tstress(0.0), Ttangent(0.0), TslipMaxAbs(0.0), Twork(0.0),
     parameterID(0)
@@ -123,7 +123,7 @@ LadrunoBondSlip::LadrunoBondSlip(int tag, double tau_max_, double s1_, double s2
 LadrunoBondSlip::LadrunoBondSlip()
   : UniaxialMaterial(0, MAT_TAG_LadrunoBondSlip),
     tau_max(0.0), s1(1.0), s2(1.0), s3(1.0), tau_f(0.0), alpha(1.0),
-    Gf(0.0), s0(0.0), k0(0.0),
+    Gf(0.0), s0(0.0), k0(0.0), s0User(false),
     Cslip(0.0), Cstress(0.0), CslipMaxAbs(0.0), Cwork(0.0),
     Tslip(0.0), Tstress(0.0), Ttangent(0.0), TslipMaxAbs(0.0), Twork(0.0),
     parameterID(0)
@@ -136,6 +136,10 @@ LadrunoBondSlip::~LadrunoBondSlip() {}
 // WP-267: LadrunoBondSlipKernel.h::setDerived (double instantiation)
 void LadrunoBondSlip::setDerived(void)
 {
+  // WP-267: a defaulted s0 is re-derived from the current s1 (at construction s0
+  // is still 0 here, so this changes no value; it keeps s0 = 0.1*s1 tracking s1 on
+  // updateParameter and in the DDM pass)
+  if (!s0User) s0 = 0.0;
   ladruno_bond_slip::ParamsT<double> p;
   fillKernelParams(p);
   ladruno_bond_slip::setDerived(p);
@@ -230,6 +234,7 @@ UniaxialMaterial* LadrunoBondSlip::getCopy(void)
   c->Ttangent = Ttangent;
   c->Cwork = Cwork; c->Twork = Twork;
   c->parameterID = parameterID;      // WP-267: DDM
+  c->s0User = s0User;                // the ctor saw the derived s0 (> 0)
   c->SHV = SHV;
   return c;
 }
@@ -263,6 +268,7 @@ int LadrunoBondSlip::recvSelf(int commitTag, Channel& theChannel,
   this->setTag((int)data(0));
   tau_max = data(1); s1 = data(2); s2 = data(3); s3 = data(4);
   tau_f = data(5); alpha = data(6); Gf = data(7); s0 = data(8);
+  s0User = true;   // WP-267: the sent s0 is the derived one; keep it (not serialized)
   setDerived();
   Cslip = data(9); Cstress = data(10); CslipMaxAbs = data(11);
   Cwork = data(12);
@@ -315,9 +321,10 @@ int LadrunoBondSlip::getResponse(int responseID, Information& matInfo)
 //  (the WP-262 LadrunoUniaxialJ2 recipe)
 //
 //  Parameters: 1 tau_max, 2 s1, 3 s2, 4 s3, 5 tau_f, 6 alpha, 7 Gf, 8 s0.
-//  updateParameter re-runs setDerived on the stored constants, so a defaulted
-//  s0 stays at its stored value and a Gf > 0 keeps overriding s3 (s3 is then
-//  inert). The DDM pass does the same in Dual<1>, so it is the derivative of
+//  updateParameter re-runs setDerived on the stored constants: a defaulted s0
+//  (none given) is re-derived as 0.1*s1, as at construction, and a Gf > 0 keeps
+//  overriding s3 (s3 is then inert).  After recvSelf a defaulted s0 is frozen
+//  at its sent value (the flag is not serialized). The DDM pass does the same in Dual<1>, so it is the derivative of
 //  what updateParameter + the run would do.
 //
 //  OpenSees DDM contract (computeSensitivities BEFORE commit):
@@ -353,7 +360,7 @@ int LadrunoBondSlip::updateParameter(int paramID, Information& info)
     case 5: tau_f   = info.theDouble; break;
     case 6: alpha   = info.theDouble; break;
     case 7: Gf      = info.theDouble; break;
-    case 8: s0      = info.theDouble; break;
+    case 8: s0      = info.theDouble; s0User = (s0 > 0.0); break;
     default: return -1;
   }
   setDerived();
@@ -371,6 +378,9 @@ void LadrunoBondSlip::seededParams(ladruno_bond_slip::ParamsT<ladruno_dual::Dual
   p.tau_max = tau_max; p.s1 = s1; p.s2 = s2; p.s3 = s3;
   p.tau_f = tau_f; p.alpha = alpha; p.Gf = Gf; p.s0 = s0;
   p.k0 = k0;
+  // a defaulted s0 follows s1 (as in setDerived); seeding s0 itself makes it
+  // user-set, as updateParameter(8) does
+  if (!s0User && parameterID != 8) p.s0 = 0.0;
   switch (parameterID) {
     case 1: p.tau_max.d[0] = 1.0; break;
     case 2: p.s1.d[0]      = 1.0; break;
