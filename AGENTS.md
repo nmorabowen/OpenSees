@@ -16,6 +16,7 @@ that explains it; the guides point into the ledgers, they do not replace them.
 | Changing the profiler or monitor viewers (`Ladruno_tools/`) | [`.claude/skills/ladruno-viewer-tools/SKILL.md`](.claude/skills/ladruno-viewer-tools/SKILL.md) |
 | Running or implementing the MPM program (WP-232, `/ladruno-mpm <wp>`) | [`.claude/skills/ladruno-mpm/SKILL.md`](.claude/skills/ladruno-mpm/SKILL.md) |
 | Running or implementing Solver & Wave Acceleration (WP-260) | [`.agents/skills/ladruno-solver-accel/SKILL.md`](.agents/skills/ladruno-solver-accel/SKILL.md) |
+| Dual numbers: templating a kernel, a dual tangent oracle, DDM by duals (WP-262…, `/ladruno-dual <wp>`) | [`.claude/skills/ladruno-dual/SKILL.md`](.claude/skills/ladruno-dual/SKILL.md) |
 
 The mechanical items are enforced by `python ci/check_quirk_patterns.py` (a
 static gate in `ladruno.yml`). When a quirk names a greppable pattern, add it
