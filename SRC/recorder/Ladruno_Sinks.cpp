@@ -38,8 +38,54 @@
 
 #include <sstream>
 #include <cmath>
+#include <cstdlib>
+#include <mutex>
+#include <set>
 
 namespace ladruno {
+
+	/* ===================================================================== */
+	/* off-thread compression: the at-exit hook                              */
+	/*                                                                       */
+	/* A deck that ends without `wipe` never destroys its recorder; HDF5's    */
+	/* own atexit close then writes what sits in its chunk cache. Rows still  */
+	/* in a sink's compression queue are not in HDF5 yet, so a hook registered */
+	/* after HDF5 initialised (atexit is LIFO: it runs first) writes them.    */
+	/* It compresses on the exiting thread: in the .pyd the workers have      */
+	/* already been terminated when the CRT runs atexit.                      */
+	/* ===================================================================== */
+	namespace {
+		std::mutex& liveMutex() { static std::mutex* m = new std::mutex(); return *m; }
+		std::set<StreamingSink*>& liveSinks() {
+			static std::set<StreamingSink*>* s = new std::set<StreamingSink*>();
+			return *s;
+		}
+		void drainLiveSinksAtExit()
+		{
+			std::set<StreamingSink*> sinks;
+			{
+				std::lock_guard<std::mutex> lk(liveMutex());
+				sinks.swap(liveSinks());
+			}
+			for (std::set<StreamingSink*>::iterator it = sinks.begin(); it != sinks.end(); ++it)
+				(*it)->drainAtExit();
+		}
+		void registerLive(StreamingSink* s)
+		{
+			static std::once_flag once;
+			std::call_once(once, [] { std::atexit(drainLiveSinksAtExit); });
+			std::lock_guard<std::mutex> lk(liveMutex());
+			liveSinks().insert(s);
+		}
+		void unregisterLive(StreamingSink* s)
+		{
+			std::lock_guard<std::mutex> lk(liveMutex());
+			liveSinks().erase(s);
+		}
+		// Rows a sink may have in flight before accept() waits for the oldest:
+		// bounds memory and how far the file lags the analysis.
+		const size_t kMaxInFlight = 8;
+	} // namespace
 
 	/* ===================================================================== */
 	/* ResultFamily                                                          */
@@ -128,6 +174,7 @@ namespace ladruno {
 		m_initialized = true;   // never re-run begin() (no per-step retry/spam)
 		m_has_pending = false;
 		m_pending.clear();
+		m_inflight.clear();     // the pool keeps its own references to the jobs
 	}
 
 	void StreamingSink::begin(detail::ProcessInfo& info, const ResultSource& src)
@@ -228,6 +275,22 @@ namespace ladruno {
 		m_n_ids = n_ids;
 		m_n_comp = n_comp;
 		m_t = 0;
+		// Off-thread compression: only the compressed layout (one step per chunk,
+		// so a step's write completes every chunk it touches).
+		{
+			const hsize_t esz = info.store_data_f32 ? 4 : 8;
+			const bool compressed = h5::dataset::timeSeriesCompressed(
+				(hsize_t)n_ids, (hsize_t)n_comp, esz, info.deflate_level);
+			h5::dataset::TimeSeriesPlan plan = h5::dataset::planTimeSeries(
+				(hsize_t)n_ids, (hsize_t)n_comp, esz, compressed);
+			m_chunk_ids = plan.chunk_ids;
+			m_level = info.deflate_level > 9 ? 9 : info.deflate_level;
+			m_f32 = info.store_data_f32;
+			m_async = compressed && plan.ct == 1 && info.compress_threads != 0 &&
+			          chunkz::ensureThreads(info.compress_threads) > 0;
+			if (m_async)
+				registerLive(this);
+		}
 		const bool ok = (h_dset_id >= 0 && m_data >= 0 && m_time >= 0 && m_step >= 0 &&
 		                 m_mspace >= 0 && m_mspace1 >= 0);
 
@@ -295,6 +358,10 @@ namespace ladruno {
 
 	void StreamingSink::writeRow(const double* row, double t_val, int s_val)
 	{
+		if (m_async) {
+			submitRow(row, t_val, s_val);
+			return;
+		}
 		// WP-164 (P2): write into the handles held open since begin(). The slab
 		// lands in the dataset's chunk cache and reaches the file at the next
 		// flush or eviction. Under SWMR (WP-233) each dataset's own writes reach
@@ -327,8 +394,107 @@ namespace ladruno {
 		m_pending.clear();
 	}
 
+	/* ---- off-thread compression ----------------------------------------- */
+
+	void StreamingSink::submitRow(const double* row, double t_val, int s_val)
+	{
+		drainReady();   // write what the pool already finished, in step order
+		std::shared_ptr<std::vector<double> > slab(
+			new std::vector<double>(row, row + m_n_ids * m_n_comp));
+		InFlight f;
+		f.t = m_t;
+		f.time = t_val;
+		f.step = s_val;
+		const size_t tile = (size_t)m_chunk_ids;
+		for (size_t id0 = 0; id0 < m_n_ids; id0 += tile) {
+			std::shared_ptr<chunkz::ChunkJob> job(new chunkz::ChunkJob());
+			job->slab = slab;
+			job->id0 = id0;
+			job->chunk_ids = tile;
+			job->n_ids = m_n_ids;
+			job->n_comp = m_n_comp;
+			job->f32 = m_f32;
+			job->level = m_level;
+			f.tiles.push_back(job);
+		}
+		for (size_t i = 0; i < f.tiles.size(); ++i)
+			chunkz::submit(f.tiles[i]);
+		m_inflight.push_back(f);
+		++m_t;
+		while (!m_dead && m_inflight.size() > kMaxInFlight)
+			drainFront(false);
+	}
+
+	bool StreamingSink::writeInFlight(InFlight& f, bool inline_compress)
+	{
+		hsize_t newdims[3] = { f.t + 1, (hsize_t)m_n_ids, (hsize_t)m_n_comp };
+		if (H5Dset_extent(m_data, newdims) < 0)
+			return false;
+		bool ok = true;
+		std::vector<unsigned char> local;
+		for (size_t i = 0; i < f.tiles.size() && ok; ++i) {
+			chunkz::ChunkJob& job = *f.tiles[i];
+			const std::vector<unsigned char>* bytes = &job.out;
+			bool job_ok = false;
+			if (inline_compress) {
+				chunkz::compressInto(job, local, job_ok);
+				bytes = &local;
+			}
+			else {
+				chunkz::wait(f.tiles[i]);
+				job_ok = job.ok;
+			}
+			hsize_t offset[3] = { f.t, (hsize_t)job.id0, 0 };
+			ok = job_ok && H5Dwrite_chunk(m_data, H5P_DEFAULT, 0, offset,
+			                              bytes->size(), bytes->data()) >= 0;
+		}
+		// DATA grew whatever happened, so its TIME/STEP rows follow (axes aligned,
+		// as writeRow does after a failed slab write).
+		h5::dataset::writeScalar1dAt(m_time, f.t, H5T_NATIVE_DOUBLE, &f.time, m_mspace1);
+		h5::dataset::writeScalar1dAt(m_step, f.t, H5T_NATIVE_INT, &f.step, m_mspace1);
+		return ok;
+	}
+
+	void StreamingSink::drainFront(bool inline_compress)
+	{
+		if (m_inflight.empty())
+			return;
+		InFlight f = m_inflight.front();
+		m_inflight.pop_front();
+		if (m_dead || m_data < 0)
+			return;
+		if (!writeInFlight(f, inline_compress))
+			failNamed("failed to append a step to DATA (disk full or quota?)");
+	}
+
+	void StreamingSink::drainReady()
+	{
+		while (!m_inflight.empty() && !m_dead) {
+			const InFlight& f = m_inflight.front();
+			bool ready = true;
+			for (size_t i = 0; i < f.tiles.size() && ready; ++i)
+				ready = f.tiles[i]->state.load() == 2;
+			if (!ready)
+				return;
+			drainFront(false);
+		}
+	}
+
+	void StreamingSink::drain()
+	{
+		while (!m_inflight.empty())
+			drainFront(false);
+	}
+
+	void StreamingSink::drainAtExit()
+	{
+		while (!m_inflight.empty())
+			drainFront(true);
+	}
+
 	void StreamingSink::releaseHandles()
 	{
+		drain();   // rows in flight need the DATA handle
 		// WP-233: the datasets only; the memory spaces are not file objects.
 		if (m_step >= 0) H5Dclose(m_step);
 		if (m_time >= 0) H5Dclose(m_time);
@@ -360,6 +526,7 @@ namespace ladruno {
 
 	void StreamingSink::closeHandles()
 	{
+		drain();
 		if (m_mspace1 >= 0) H5Sclose(m_mspace1);
 		if (m_mspace >= 0) H5Sclose(m_mspace);
 		if (m_step >= 0) H5Dclose(m_step);
@@ -371,10 +538,13 @@ namespace ladruno {
 	StreamingSink::~StreamingSink()
 	{
 		closeHandles();
+		if (m_async)
+			unregisterLive(this);
 	}
 
 	void StreamingSink::finalize(detail::ProcessInfo& /*info*/)
 	{
+		drain();
 		// Every step is handed to HDF5 in accept(); partially filled chunks sit in
 		// the open dataset's chunk cache until the recorder's H5Fflush (its flush
 		// cadence) or the handles close in the destructor. Nothing to do here.

@@ -143,6 +143,9 @@ namespace ladruno {
 		// Append the row held back during a layout step, once SWMR is armed (no
 		// streaming row is ever written outside SWMR).
 		virtual void commitPending(detail::ProcessInfo& /*info*/) {}
+		// Write everything a sink still holds outside HDF5 (off-thread compressed
+		// rows). The recorder calls it before every flush and layout step.
+		virtual void drain() {}
 	};
 
 } // namespace ladruno
