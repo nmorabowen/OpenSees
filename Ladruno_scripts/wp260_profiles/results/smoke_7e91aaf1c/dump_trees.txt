@@ -1,0 +1,159 @@
+=== d1a_brick_sanisand[smoke] ===
+root: 0.0000s (c=0)
+  step: 1.8399s (c=6)
+    commit: 0.0081s (c=6)
+      commit.elements: 0.0079s (c=6)
+    newStep: 0.0352s (c=6)
+      elem.update: 0.0165s (c=6) [33002:n=768:0.0164s]
+        sanisand.sasME.update: 0.0084s (c=6144)
+          sanisand.sasME.predictor: 0.0018s (c=6144)
+      sanisand.sasME.update: 0.0085s (c=6144)
+        sanisand.sasME.predictor: 0.0019s (c=6144)
+    solveCurrentStep: 1.7965s (c=6)
+      formTangent: 0.0135s (c=2)
+        elem.tangent: 0.0133s (c=2) [33002:n=256:0.0121s]
+      formUnbalance: 0.0432s (c=30)
+        dof.residual: 0.0017s (c=30)
+        elem.residual: 0.0413s (c=30) [33002:n=3840:0.0397s]
+          brick.geo: 0.0032s (c=3840)
+          brick.inertia: 0.0096s (c=3840)
+            brick.geo: 0.0021s (c=3840)
+      linearSolve: 0.0029s (c=24)
+        soe.trisolve: 0.0025s (c=24)
+      update: 1.7360s (c=24)
+        elem.update: 1.7344s (c=24) [33002:n=3072:1.7331s]
+          brick.geo: 0.0038s (c=3072)
+          sanisand.sasME.update: 1.6909s (c=24576)
+            sanisand.sasME.predictor: 0.0095s (c=24576)
+            sanisand.sasME.substeps: 1.5951s (c=22272)
+              sanisand.sasME.alphaCheck: 0.1267s (c=311040)
+              sanisand.sasME.drift: 0.1419s (c=311040)
+              sanisand.sasME.stages: 0.9418s (c=711936)
+                sanisand.sasME.stageArithmetic: 0.1809s (c=711936)
+                sanisand.sasME.stateDependent: 0.2532s (c=711936)
+            sanisand.sasME.tangent: 0.0479s (c=22272)
+=== d1b_brick_concrete3d[smoke] ===
+root: 0.0000s (c=0)
+  step: 0.8295s (c=6)
+    newStep: 0.1753s (c=6)
+      elem.tangent: 0.0355s (c=6) [33002:n=768:0.0318s]
+        soe.addA: 0.0033s (c=768)
+      elem.update: 0.0854s (c=6) [33002:n=768:0.0852s]
+      soe.factor: 0.0059s (c=6)
+      soe.trisolve: 0.0011s (c=6)
+    solveCurrentStep: 0.6535s (c=6)
+      formTangent: 0.0297s (c=5)
+        elem.tangent: 0.0297s (c=5) [33002:n=640:0.0264s]
+          soe.addA: 0.0029s (c=640)
+      formUnbalance: 0.0285s (c=30)
+        dof.residual: 0.0012s (c=30)
+        elem.residual: 0.0272s (c=30) [33002:n=3840:0.0254s]
+          brick.geo: 0.0034s (c=3840)
+      linearSolve: 0.0139s (c=24)
+        soe.factor: 0.0061s (c=5)
+        soe.trisolve: 0.0077s (c=24)
+      update: 0.5801s (c=24)
+        brick.geo: 0.0010s (c=768)
+        elem.update: 0.3611s (c=24) [33002:n=3072:0.3600s]
+          brick.geo: 0.0035s (c=3072)
+        soe.trisolve: 0.0045s (c=24)
+=== d2_cpml_wave[smoke] ===
+root: 0.0000s (c=0)
+  step: 0.2254s (c=6)
+    commit: 0.0279s (c=6)
+      commit.elements: 0.0270s (c=6)
+    newStep: 0.1074s (c=6)
+      elem.update: 0.0587s (c=6) [33002:n=1296:0.0053s, 33023:n=3504:0.0521s]
+        brick.geo: 0.0011s (c=1296)
+    solveCurrentStep: 0.0900s (c=6)
+      formUnbalance: 0.0195s (c=6)
+        dof.residual: 0.0011s (c=6)
+        elem.residual: 0.0183s (c=6) [33002:n=1296:0.0089s, 33023:n=3504:0.0077s]
+          brick.inertia: 0.0021s (c=1296)
+      linearSolve: 0.0074s (c=6)
+        soe.trisolve: 0.0074s (c=6)
+      update: 0.0631s (c=6)
+        elem.update: 0.0612s (c=6) [33002:n=1296:0.0054s, 33023:n=3504:0.0545s]
+          brick.geo: 0.0012s (c=1296)
+=== d3a_explicit_cdl_cpml[smoke] ===
+root: 0.0000s (c=0)
+  step: 1.1358s (c=20)
+    commit: 0.2147s (c=20)
+      commit.elements: 0.2116s (c=20)
+      commit.nodes: 0.0028s (c=20)
+    newStep: 0.5796s (c=20)
+      elem.update: 0.3239s (c=20) [33002:n=4320:0.0057s, 33023:n=11680:0.3135s]
+    solveCurrentStep: 0.3412s (c=20)
+      formUnbalance: 0.0412s (c=20)
+        dof.residual: 0.0036s (c=20)
+        elem.residual: 0.0374s (c=20) [33002:n=4320:0.0108s, 33023:n=11680:0.0201s]
+      update: 0.2999s (c=20)
+        elem.update: 0.2949s (c=20) [33002:n=4320:0.0057s, 33023:n=11680:0.2847s]
+=== d3b_explicit_bathe_cpml[smoke] ===
+root: 0.0000s (c=0)
+  step: 2.3188s (c=20)
+    commit: 0.2092s (c=20)
+      commit.elements: 0.2056s (c=20)
+      commit.nodes: 0.0031s (c=20)
+    newStep: 0.8617s (c=20)
+      elem.update: 0.4370s (c=20) [33002:n=4320:0.0059s, 33023:n=11680:0.4263s]
+    solveCurrentStep: 1.2477s (c=20)
+      formTangent: 0.0384s (c=20)
+        dof.tangent: 0.0042s (c=20)
+        elem.tangent: 0.0340s (c=20) [33002:n=4320:0.0053s, 33023:n=11680:0.0228s]
+      formUnbalance: 0.0357s (c=20)
+        dof.residual: 0.0029s (c=20)
+        elem.residual: 0.0326s (c=20) [33002:n=4320:0.0101s, 33023:n=11680:0.0180s]
+      update: 1.1734s (c=20)
+        dof.residual: 0.0036s (c=20)
+        elem.residual: 0.0384s (c=20) [33002:n=4320:0.0110s, 33023:n=11680:0.0207s]
+        elem.update: 0.7095s (c=40) [33002:n=8640:0.0112s, 33023:n=23360:0.6894s]
+=== d3c_explicit_sms_cons[smoke] ===
+root: 0.0000s (c=0)
+  step: 0.0171s (c=15)
+    newStep: 0.0048s (c=15)
+      elem.update: 0.0040s (c=15) [33002:n=1680:0.0039s]
+    solveCurrentStep: 0.0121s (c=15)
+      formUnbalance: 0.0059s (c=15)
+        elem.residual: 0.0058s (c=15) [33002:n=1680:0.0057s]
+      linearSolve: 0.0018s (c=15)
+        soe.trisolve: 0.0018s (c=15)
+      update: 0.0044s (c=15)
+        elem.update: 0.0042s (c=15) [33002:n=1680:0.0041s]
+=== d4_mpm_modeA[smoke] ===
+root: 0.0000s (c=0)
+  mpm.a.step: 0.0616s (c=4)
+    mpm.a.prepare: 0.0044s (c=4)
+      mpm.a.repoint: 0.0023s (c=4)
+      mpm.a.support: 0.0015s (c=4)
+    step: 0.0568s (c=4)
+      domainChanged: 0.0102s (c=4)
+        dc.numberDOF: 0.0049s (c=4)
+        dc.setSize: 0.0038s (c=4)
+          dc.s.graph: 0.0032s (c=4)
+      newStep: 0.0020s (c=4)
+        elem.update: 0.0018s (c=4) [33026:n=2560:0.0016s]
+      solveCurrentStep: 0.0440s (c=4)
+        formTangent: 0.0209s (c=12)
+          dof.tangent: 0.0013s (c=12)
+          elem.tangent: 0.0195s (c=12) [33026:n=7680:0.0108s]
+            soe.addA: 0.0064s (c=7680)
+        formUnbalance: 0.0061s (c=16)
+          elem.residual: 0.0057s (c=16) [33026:n=10240:0.0047s]
+        linearSolve: 0.0101s (c=12)
+          soe.factor: 0.0042s (c=12)
+          soe.symbolic: 0.0040s (c=4)
+          soe.trisolve: 0.0012s (c=12)
+        update: 0.0067s (c=12)
+          elem.update: 0.0061s (c=12) [33026:n=7680:0.0052s]
+=== d5_mcft_2cld12[smoke] ===
+root: 0.0000s (c=0)
+  step: 1.1644s (c=6)
+    commit: 0.0211s (c=6)
+      commit.elements: 0.0210s (c=6)
+    newStep: 0.4742s (c=6)
+      elem.update: 0.4734s (c=6) [33025:n=24:0.4733s]
+    solveCurrentStep: 0.6691s (c=6)
+      linearSolve: 0.0014s (c=17)
+      update: 0.6670s (c=17)
+        elem.update: 0.6665s (c=17) [33025:n=68:0.6664s]

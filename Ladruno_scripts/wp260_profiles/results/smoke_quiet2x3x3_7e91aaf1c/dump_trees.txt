@@ -1,0 +1,37 @@
+=== d1b_brick_concrete3d[smoke] ===
+root: 0.0000s (c=0)
+  step: 0.7660s (c=6)
+    newStep: 0.1602s (c=6)
+      elem.tangent: 0.0309s (c=6) [33002:n=768:0.0278s]
+        soe.addA: 0.0028s (c=768)
+      elem.update: 0.0783s (c=6) [33002:n=768:0.0781s]
+      soe.factor: 0.0061s (c=6)
+      soe.trisolve: 0.0014s (c=6)
+    solveCurrentStep: 0.6051s (c=6)
+      formTangent: 0.0249s (c=5)
+        elem.tangent: 0.0248s (c=5) [33002:n=640:0.0225s]
+          soe.addA: 0.0021s (c=640)
+      formUnbalance: 0.0250s (c=30)
+        elem.residual: 0.0240s (c=30) [33002:n=3840:0.0227s]
+          brick.geo: 0.0030s (c=3840)
+      linearSolve: 0.0127s (c=24)
+        soe.factor: 0.0052s (c=5)
+        soe.trisolve: 0.0074s (c=24)
+      update: 0.5411s (c=24)
+        elem.update: 0.3372s (c=24) [33002:n=3072:0.3363s]
+          brick.geo: 0.0029s (c=3072)
+        soe.trisolve: 0.0045s (c=24)
+=== d3a_explicit_cdl_cpml[smoke] ===
+root: 0.0000s (c=0)
+  step: 1.1529s (c=20)
+    commit: 0.2167s (c=20)
+      commit.elements: 0.2132s (c=20)
+      commit.nodes: 0.0033s (c=20)
+    newStep: 0.5854s (c=20)
+      elem.update: 0.3371s (c=20) [33002:n=4320:0.0060s, 33023:n=11680:0.3264s]
+    solveCurrentStep: 0.3506s (c=20)
+      formUnbalance: 0.0415s (c=20)
+        dof.residual: 0.0036s (c=20)
+        elem.residual: 0.0377s (c=20) [33002:n=4320:0.0106s, 33023:n=11680:0.0206s]
+      update: 0.3089s (c=20)
+        elem.update: 0.3037s (c=20) [33002:n=4320:0.0059s, 33023:n=11680:0.2933s]

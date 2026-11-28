@@ -1,0 +1,4057 @@
+{
+ "d1a_brick_sanisand_smoke_1t_deep_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 1839898100,
+     "calls": 6,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 8135900,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 7933200,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 161600,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 2300,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 35169000,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "brick.geo": {
+         "wall_ns": 529200,
+         "calls": 768,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "elem.update": {
+         "wall_ns": 16536000,
+         "calls": 6,
+         "elem_by_type": [
+          [
+           33002,
+           768,
+           16373900
+          ]
+         ],
+         "children": {
+          "brick.geo": {
+           "wall_ns": 597500,
+           "calls": 768,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "sanisand.sasME.update": {
+           "wall_ns": 8448800,
+           "calls": 6144,
+           "elem_by_type": [],
+           "children": {
+            "sanisand.sasME.predictor": {
+             "wall_ns": 1819300,
+             "calls": 6144,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        },
+        "sanisand.sasME.update": {
+         "wall_ns": 8486100,
+         "calls": 6144,
+         "elem_by_type": [],
+         "children": {
+          "sanisand.sasME.predictor": {
+           "wall_ns": 1859000,
+           "calls": 6144,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 1796543000,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "convTest": {
+         "wall_ns": 151800,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formTangent": {
+         "wall_ns": 13544400,
+         "calls": 2,
+         "elem_by_type": [],
+         "children": {
+          "dof.tangent": {
+           "wall_ns": 282100,
+           "calls": 2,
+           "elem_by_type": [],
+           "children": {
+            "soe.addA": {
+             "wall_ns": 122700,
+             "calls": 450,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          },
+          "elem.tangent": {
+           "wall_ns": 13253100,
+           "calls": 2,
+           "elem_by_type": [
+            [
+             33002,
+             256,
+             12143700
+            ]
+           ],
+           "children": {
+            "brick.geo": {
+             "wall_ns": 220000,
+             "calls": 256,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "soe.addA": {
+             "wall_ns": 962200,
+             "calls": 256,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        },
+        "formUnbalance": {
+         "wall_ns": 43164500,
+         "calls": 30,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 1679900,
+           "calls": 30,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "elem.residual": {
+           "wall_ns": 41348400,
+           "calls": 30,
+           "elem_by_type": [
+            [
+             33002,
+             3840,
+             39716500
+            ]
+           ],
+           "children": {
+            "brick.geo": {
+             "wall_ns": 3221100,
+             "calls": 3840,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "brick.inertia": {
+             "wall_ns": 9567300,
+             "calls": 3840,
+             "elem_by_type": [],
+             "children": {
+              "brick.geo": {
+               "wall_ns": 2142200,
+               "calls": 3840,
+               "elem_by_type": [],
+               "children": {}
+              }
+             }
+            }
+           }
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 2939300,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {
+          "soe.factor": {
+           "wall_ns": 352800,
+           "calls": 2,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "soe.trisolve": {
+           "wall_ns": 2504200,
+           "calls": 24,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 1736023300,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {
+          "elem.update": {
+           "wall_ns": 1734403300,
+           "calls": 24,
+           "elem_by_type": [
+            [
+             33002,
+             3072,
+             1733050700
+            ]
+           ],
+           "children": {
+            "brick.geo": {
+             "wall_ns": 3820400,
+             "calls": 3072,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "sanisand.sasME.update": {
+             "wall_ns": 1690863300,
+             "calls": 24576,
+             "elem_by_type": [],
+             "children": {
+              "sanisand.sasME.predictor": {
+               "wall_ns": 9489000,
+               "calls": 24576,
+               "elem_by_type": [],
+               "children": {}
+              },
+              "sanisand.sasME.substeps": {
+               "wall_ns": 1595120100,
+               "calls": 22272,
+               "elem_by_type": [],
+               "children": {
+                "sanisand.sasME.alphaCheck": {
+                 "wall_ns": 126695000,
+                 "calls": 311040,
+                 "elem_by_type": [],
+                 "children": {}
+                },
+                "sanisand.sasME.drift": {
+                 "wall_ns": 141914200,
+                 "calls": 311040,
+                 "elem_by_type": [],
+                 "children": {}
+                },
+                "sanisand.sasME.stages": {
+                 "wall_ns": 941846700,
+                 "calls": 711936,
+                 "elem_by_type": [],
+                 "children": {
+                  "sanisand.sasME.stageArithmetic": {
+                   "wall_ns": 180925300,
+                   "calls": 711936,
+                   "elem_by_type": [],
+                   "children": {}
+                  },
+                  "sanisand.sasME.stateDependent": {
+                   "wall_ns": 253205600,
+                   "calls": 711936,
+                   "elem_by_type": [],
+                   "children": {}
+                  }
+                 }
+                }
+               }
+              },
+              "sanisand.sasME.tangent": {
+               "wall_ns": 47891300,
+               "calls": 22272,
+               "elem_by_type": [],
+               "children": {}
+              }
+             }
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   98.85160064697266,
+   137.4738006591797,
+   239.1136932373047,
+   310.5378112792969,
+   481.05828857421875,
+   573.1072998046875
+  ]
+ },
+ "d1a_brick_sanisand_smoke_1t_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 1858127200,
+     "calls": 6,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 7499400,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 7318300,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 137300,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 1800,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 34792900,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "sanisand.sasME.update": {
+         "wall_ns": 17150700,
+         "calls": 12288,
+         "elem_by_type": [],
+         "children": {
+          "sanisand.sasME.predictor": {
+           "wall_ns": 3561100,
+           "calls": 12288,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 1815786400,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "convTest": {
+         "wall_ns": 133700,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formTangent": {
+         "wall_ns": 12559900,
+         "calls": 2,
+         "elem_by_type": [],
+         "children": {
+          "dof.tangent": {
+           "wall_ns": 128500,
+           "calls": 2,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "formUnbalance": {
+         "wall_ns": 33757600,
+         "calls": 30,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 1504700,
+           "calls": 30,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 2997800,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {
+          "soe.factor": {
+           "wall_ns": 341500,
+           "calls": 2,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "soe.trisolve": {
+           "wall_ns": 2573000,
+           "calls": 24,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 1765680200,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {
+          "sanisand.sasME.update": {
+           "wall_ns": 1722649300,
+           "calls": 24576,
+           "elem_by_type": [],
+           "children": {
+            "sanisand.sasME.predictor": {
+             "wall_ns": 9615800,
+             "calls": 24576,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "sanisand.sasME.substeps": {
+             "wall_ns": 1626979300,
+             "calls": 22272,
+             "elem_by_type": [],
+             "children": {
+              "sanisand.sasME.alphaCheck": {
+               "wall_ns": 129932000,
+               "calls": 311040,
+               "elem_by_type": [],
+               "children": {}
+              },
+              "sanisand.sasME.drift": {
+               "wall_ns": 144005100,
+               "calls": 311040,
+               "elem_by_type": [],
+               "children": {}
+              },
+              "sanisand.sasME.stages": {
+               "wall_ns": 958975600,
+               "calls": 711936,
+               "elem_by_type": [],
+               "children": {
+                "sanisand.sasME.stageArithmetic": {
+                 "wall_ns": 183721600,
+                 "calls": 711936,
+                 "elem_by_type": [],
+                 "children": {}
+                },
+                "sanisand.sasME.stateDependent": {
+                 "wall_ns": 262866600,
+                 "calls": 711936,
+                 "elem_by_type": [],
+                 "children": {}
+                }
+               }
+              }
+             }
+            },
+            "sanisand.sasME.tangent": {
+             "wall_ns": 47392100,
+             "calls": 22272,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   91.69259643554688,
+   127.69770050048828,
+   227.6761016845703,
+   297.0436096191406,
+   454.2401123046875,
+   659.8165893554688
+  ]
+ },
+ "d1a_brick_sanisand_smoke_nt_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 2209942800,
+     "calls": 6,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 9235400,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 9064200,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 133100,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 1700,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 39086700,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "sanisand.sasME.update": {
+         "wall_ns": 19678000,
+         "calls": 12288,
+         "elem_by_type": [],
+         "children": {
+          "sanisand.sasME.predictor": {
+           "wall_ns": 4167300,
+           "calls": 12288,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 2161576400,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "convTest": {
+         "wall_ns": 158600,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formTangent": {
+         "wall_ns": 15888200,
+         "calls": 2,
+         "elem_by_type": [],
+         "children": {
+          "dof.tangent": {
+           "wall_ns": 107700,
+           "calls": 2,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "formUnbalance": {
+         "wall_ns": 40360100,
+         "calls": 30,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 1712200,
+           "calls": 30,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 3916200,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {
+          "soe.factor": {
+           "wall_ns": 426700,
+           "calls": 2,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "soe.trisolve": {
+           "wall_ns": 3392100,
+           "calls": 24,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 2100478800,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {
+          "sanisand.sasME.update": {
+           "wall_ns": 2050285700,
+           "calls": 24576,
+           "elem_by_type": [],
+           "children": {
+            "sanisand.sasME.predictor": {
+             "wall_ns": 11325000,
+             "calls": 24576,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "sanisand.sasME.substeps": {
+             "wall_ns": 1931033000,
+             "calls": 22272,
+             "elem_by_type": [],
+             "children": {
+              "sanisand.sasME.alphaCheck": {
+               "wall_ns": 149856100,
+               "calls": 311040,
+               "elem_by_type": [],
+               "children": {}
+              },
+              "sanisand.sasME.drift": {
+               "wall_ns": 165210500,
+               "calls": 311040,
+               "elem_by_type": [],
+               "children": {}
+              },
+              "sanisand.sasME.stages": {
+               "wall_ns": 1137722300,
+               "calls": 711936,
+               "elem_by_type": [],
+               "children": {
+                "sanisand.sasME.stageArithmetic": {
+                 "wall_ns": 219429600,
+                 "calls": 711936,
+                 "elem_by_type": [],
+                 "children": {}
+                },
+                "sanisand.sasME.stateDependent": {
+                 "wall_ns": 300033300,
+                 "calls": 711936,
+                 "elem_by_type": [],
+                 "children": {}
+                }
+               }
+              }
+             }
+            },
+            "sanisand.sasME.tangent": {
+             "wall_ns": 62704700,
+             "calls": 22272,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   110.31939697265625,
+   150.8780059814453,
+   275.54791259765625,
+   361.11749267578125,
+   571.6838989257812,
+   740.4317016601562
+  ]
+ },
+ "d1b_brick_concrete3d_smoke_1t_deep_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 829538200,
+     "calls": 6,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 712400,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 542200,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 133500,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 1400,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 175252900,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "brick.geo": {
+         "wall_ns": 336000,
+         "calls": 192,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "elem.tangent": {
+         "wall_ns": 35516200,
+         "calls": 6,
+         "elem_by_type": [
+          [
+           33002,
+           768,
+           31789500
+          ]
+         ],
+         "children": {
+          "brick.geo": {
+           "wall_ns": 629200,
+           "calls": 768,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "soe.addA": {
+           "wall_ns": 3319900,
+           "calls": 768,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "elem.update": {
+         "wall_ns": 85411400,
+         "calls": 6,
+         "elem_by_type": [
+          [
+           33002,
+           768,
+           85153900
+          ]
+         ],
+         "children": {
+          "brick.geo": {
+           "wall_ns": 854100,
+           "calls": 768,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "soe.factor": {
+         "wall_ns": 5916100,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "soe.trisolve": {
+         "wall_ns": 1118600,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 653548500,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "convTest": {
+         "wall_ns": 220900,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formTangent": {
+         "wall_ns": 29717600,
+         "calls": 5,
+         "elem_by_type": [],
+         "children": {
+          "elem.tangent": {
+           "wall_ns": 29670300,
+           "calls": 5,
+           "elem_by_type": [
+            [
+             33002,
+             640,
+             26420400
+            ]
+           ],
+           "children": {
+            "brick.geo": {
+             "wall_ns": 558400,
+             "calls": 640,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "soe.addA": {
+             "wall_ns": 2870600,
+             "calls": 640,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        },
+        "formUnbalance": {
+         "wall_ns": 28526200,
+         "calls": 30,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 1197900,
+           "calls": 30,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "elem.residual": {
+           "wall_ns": 27213200,
+           "calls": 30,
+           "elem_by_type": [
+            [
+             33002,
+             3840,
+             25399200
+            ]
+           ],
+           "children": {
+            "brick.geo": {
+             "wall_ns": 3371000,
+             "calls": 3840,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 13894900,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {
+          "soe.factor": {
+           "wall_ns": 6106900,
+           "calls": 5,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "soe.trisolve": {
+           "wall_ns": 7683600,
+           "calls": 24,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 580069300,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {
+          "brick.geo": {
+           "wall_ns": 1040100,
+           "calls": 768,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "elem.update": {
+           "wall_ns": 361085100,
+           "calls": 24,
+           "elem_by_type": [
+            [
+             33002,
+             3072,
+             360005400
+            ]
+           ],
+           "children": {
+            "brick.geo": {
+             "wall_ns": 3532700,
+             "calls": 3072,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          },
+          "soe.trisolve": {
+           "wall_ns": 4464900,
+           "calls": 24,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   37.23500061035156,
+   75.61100006103516,
+   148.42820739746094,
+   181.63589477539062,
+   208.0677947998047,
+   178.63209533691406
+  ]
+ },
+ "d1b_brick_concrete3d_smoke_1t_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 770047900,
+     "calls": 6,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 817100,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 640900,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 128400,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 2200,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 166096700,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "soe.factor": {
+         "wall_ns": 5791500,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "soe.trisolve": {
+         "wall_ns": 1128400,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 603080700,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "convTest": {
+         "wall_ns": 224100,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formTangent": {
+         "wall_ns": 24180200,
+         "calls": 5,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formUnbalance": {
+         "wall_ns": 22237600,
+         "calls": 30,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 914400,
+           "calls": 30,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 11256500,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {
+          "soe.factor": {
+           "wall_ns": 4973100,
+           "calls": 5,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "soe.trisolve": {
+           "wall_ns": 6184400,
+           "calls": 24,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 543928700,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {
+          "soe.trisolve": {
+           "wall_ns": 3681700,
+           "calls": 24,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   33.93230056762695,
+   74.26029968261719,
+   150.25709533691406,
+   185.2866973876953,
+   183.35800170898438,
+   143.01809692382812
+  ]
+ },
+ "d1b_brick_concrete3d_smoke_nt_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 900548500,
+     "calls": 6,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 980800,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 785300,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 157500,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 2200,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 196119800,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "soe.factor": {
+         "wall_ns": 8050200,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "soe.trisolve": {
+         "wall_ns": 1545500,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 703394300,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "convTest": {
+         "wall_ns": 228400,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formTangent": {
+         "wall_ns": 35991500,
+         "calls": 5,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formUnbalance": {
+         "wall_ns": 28900500,
+         "calls": 30,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 1426800,
+           "calls": 30,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 17761200,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {
+          "soe.factor": {
+           "wall_ns": 6808400,
+           "calls": 5,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "soe.trisolve": {
+           "wall_ns": 10822400,
+           "calls": 24,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 617327900,
+         "calls": 24,
+         "elem_by_type": [],
+         "children": {
+          "soe.trisolve": {
+           "wall_ns": 5225300,
+           "calls": 24,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   42.35419845581055,
+   84.63159942626953,
+   186.20750427246094,
+   203.40130615234375,
+   214.72940063476562,
+   169.28880310058594
+  ]
+ },
+ "d2_cpml_wave_smoke_1t_deep_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 225448700,
+     "calls": 6,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 27907200,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 26958700,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 870600,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 1400,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 107429300,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "elem.update": {
+         "wall_ns": 58728800,
+         "calls": 6,
+         "elem_by_type": [
+          [
+           33002,
+           1296,
+           5286500
+          ],
+          [
+           33023,
+           3504,
+           52119200
+          ]
+         ],
+         "children": {
+          "brick.geo": {
+           "wall_ns": 1120300,
+           "calls": 1296,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 90035100,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "formUnbalance": {
+         "wall_ns": 19480300,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 1107900,
+           "calls": 6,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "elem.residual": {
+           "wall_ns": 18333100,
+           "calls": 6,
+           "elem_by_type": [
+            [
+             33002,
+             1296,
+             8865000
+            ],
+            [
+             33023,
+             3504,
+             7711000
+            ]
+           ],
+           "children": {
+            "brick.geo": {
+             "wall_ns": 920400,
+             "calls": 1296,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "brick.inertia": {
+             "wall_ns": 2114000,
+             "calls": 1296,
+             "elem_by_type": [],
+             "children": {
+              "brick.geo": {
+               "wall_ns": 620300,
+               "calls": 1296,
+               "elem_by_type": [],
+               "children": {}
+              }
+             }
+            }
+           }
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 7425400,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {
+          "soe.trisolve": {
+           "wall_ns": 7402000,
+           "calls": 6,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 63100200,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {
+          "elem.update": {
+           "wall_ns": 61195200,
+           "calls": 6,
+           "elem_by_type": [
+            [
+             33002,
+             1296,
+             5447100
+            ],
+            [
+             33023,
+             3504,
+             54468300
+            ]
+           ],
+           "children": {
+            "brick.geo": {
+             "wall_ns": 1178600,
+             "calls": 1296,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   39.572601318359375,
+   39.02669906616211,
+   37.4838981628418,
+   37.055301666259766,
+   36.965301513671875,
+   35.36669921875
+  ]
+ },
+ "d2_cpml_wave_smoke_1t_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 229962800,
+     "calls": 6,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 29074800,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 28056900,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 918400,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 1900,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 111892900,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {}
+      },
+      "solveCurrentStep": {
+       "wall_ns": 88879000,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "formUnbalance": {
+         "wall_ns": 18291700,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 1236500,
+           "calls": 6,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 8464800,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {
+          "soe.trisolve": {
+           "wall_ns": 8420700,
+           "calls": 6,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 62053700,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   39.66709899902344,
+   38.38460159301758,
+   36.145999908447266,
+   40.2338981628418,
+   39.575599670410156,
+   35.99140167236328
+  ]
+ },
+ "d2_cpml_wave_smoke_nt_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 293716100,
+     "calls": 6,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 39893700,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 38602300,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 1197300,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 2400,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 142296500,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {}
+      },
+      "solveCurrentStep": {
+       "wall_ns": 111377800,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "formUnbalance": {
+         "wall_ns": 23386100,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 1593500,
+           "calls": 6,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 9200700,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {
+          "soe.trisolve": {
+           "wall_ns": 9163600,
+           "calls": 6,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 78733300,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   47.95500183105469,
+   54.79819869995117,
+   48.0452995300293,
+   49.10499954223633,
+   48.99760055541992,
+   44.882301330566406
+  ]
+ },
+ "d3a_explicit_cdl_cpml_smoke_1t_deep_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 1135767000,
+     "calls": 20,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 214697500,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 211595700,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 2821600,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 5300,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 579598500,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "elem.update": {
+         "wall_ns": 323938100,
+         "calls": 20,
+         "elem_by_type": [
+          [
+           33002,
+           4320,
+           5715400
+          ],
+          [
+           33023,
+           11680,
+           313451200
+          ]
+         ],
+         "children": {}
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 341228700,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "formTangent": {
+         "wall_ns": 18500,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formUnbalance": {
+         "wall_ns": 41173500,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 3586500,
+           "calls": 20,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "elem.residual": {
+           "wall_ns": 37421700,
+           "calls": 20,
+           "elem_by_type": [
+            [
+             33002,
+             4320,
+             10789400
+            ],
+            [
+             33023,
+             11680,
+             20128200
+            ]
+           ],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 50500,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "update": {
+         "wall_ns": 299884500,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "elem.update": {
+           "wall_ns": 294941000,
+           "calls": 20,
+           "elem_by_type": [
+            [
+             33002,
+             4320,
+             5733200
+            ],
+            [
+             33023,
+             11680,
+             284685900
+            ]
+           ],
+           "children": {}
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   49.977699279785156,
+   70.74870300292969,
+   72.44390106201172,
+   50.80139923095703,
+   69.24459838867188,
+   51.62310028076172,
+   59.54819869995117,
+   56.9906005859375,
+   51.232601165771484,
+   53.5276985168457,
+   52.354801177978516,
+   54.330101013183594,
+   51.69060134887695,
+   50.72140121459961,
+   57.15679931640625,
+   56.1411018371582,
+   56.2953987121582,
+   51.54199981689453,
+   67.6500015258789,
+   51.779598236083984
+  ]
+ },
+ "d3a_explicit_cdl_cpml_smoke_1t_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 1165489400,
+     "calls": 20,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 228220700,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 224633300,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 3305100,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 5500,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 591601900,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {}
+      },
+      "solveCurrentStep": {
+       "wall_ns": 345343300,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "formTangent": {
+         "wall_ns": 21300,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formUnbalance": {
+         "wall_ns": 39604800,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 3698000,
+           "calls": 20,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 53000,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "update": {
+         "wall_ns": 305470900,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   50.57149887084961,
+   75.56639862060547,
+   73.43009948730469,
+   53.70719909667969,
+   68.89939880371094,
+   52.37369918823242,
+   52.29949951171875,
+   57.9827995300293,
+   58.132198333740234,
+   50.697601318359375,
+   61.21780014038086,
+   54.23379898071289,
+   53.19179916381836,
+   54.16360092163086,
+   53.71849822998047,
+   57.31340026855469,
+   54.17770004272461,
+   52.578800201416016,
+   71.4302978515625,
+   59.840599060058594
+  ]
+ },
+ "d3a_explicit_cdl_cpml_smoke_nt_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 1127669700,
+     "calls": 20,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 221790900,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 218348300,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 3161900,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 7400,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 564975300,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {}
+      },
+      "solveCurrentStep": {
+       "wall_ns": 340582600,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "formTangent": {
+         "wall_ns": 19300,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formUnbalance": {
+         "wall_ns": 40893100,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 3589300,
+           "calls": 20,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 54200,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "update": {
+         "wall_ns": 299411200,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   54.77539825439453,
+   75.40879821777344,
+   73.0457992553711,
+   51.90439987182617,
+   70.20680236816406,
+   54.54199981689453,
+   52.364898681640625,
+   52.26089859008789,
+   52.575199127197266,
+   52.61920166015625,
+   54.627601623535156,
+   54.583900451660156,
+   48.72439956665039,
+   50.9901008605957,
+   52.1693000793457,
+   55.646400451660156,
+   48.49909973144531,
+   49.91669845581055,
+   70.11100006103516,
+   52.74420166015625
+  ]
+ },
+ "d3b_explicit_bathe_cpml_smoke_1t_deep_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 2318815900,
+     "calls": 20,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 209171700,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 205637200,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 3109200,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 5500,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 861740400,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "elem.update": {
+         "wall_ns": 436978700,
+         "calls": 20,
+         "elem_by_type": [
+          [
+           33002,
+           4320,
+           5933400
+          ],
+          [
+           33023,
+           11680,
+           426275900
+          ]
+         ],
+         "children": {}
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 1247663600,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "formTangent": {
+         "wall_ns": 38351400,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "dof.tangent": {
+           "wall_ns": 4171200,
+           "calls": 20,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "elem.tangent": {
+           "wall_ns": 34027500,
+           "calls": 20,
+           "elem_by_type": [
+            [
+             33002,
+             4320,
+             5266100
+            ],
+            [
+             33023,
+             11680,
+             22780200
+            ]
+           ],
+           "children": {}
+          }
+         }
+        },
+        "formUnbalance": {
+         "wall_ns": 35683700,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 2938100,
+           "calls": 20,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "elem.residual": {
+           "wall_ns": 32614000,
+           "calls": 20,
+           "elem_by_type": [
+            [
+             33002,
+             4320,
+             10068000
+            ],
+            [
+             33023,
+             11680,
+             18023700
+            ]
+           ],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 71400,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "update": {
+         "wall_ns": 1173449100,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 3647900,
+           "calls": 20,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "elem.residual": {
+           "wall_ns": 38410100,
+           "calls": 20,
+           "elem_by_type": [
+            [
+             33002,
+             4320,
+             11031000
+            ],
+            [
+             33023,
+             11680,
+             20713600
+            ]
+           ],
+           "children": {}
+          },
+          "elem.update": {
+           "wall_ns": 709475600,
+           "calls": 40,
+           "elem_by_type": [
+            [
+             33002,
+             8640,
+             11193600
+            ],
+            [
+             33023,
+             23360,
+             689363800
+            ]
+           ],
+           "children": {}
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   121.9041976928711,
+   121.55419921875,
+   114.9115982055664,
+   123.82980346679688,
+   123.46440124511719,
+   112.74659729003906,
+   114.77269744873047,
+   112.58999633789062,
+   115.46219635009766,
+   116.32769775390625,
+   110.97509765625,
+   116.4115982055664,
+   114.9072036743164,
+   113.13819885253906,
+   111.00530242919922,
+   112.69090270996094,
+   111.06169891357422,
+   114.3906021118164,
+   112.23690032958984,
+   124.46910095214844
+  ]
+ },
+ "d3b_explicit_bathe_cpml_smoke_1t_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 2306072000,
+     "calls": 20,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 206486300,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 202993700,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 3035200,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 7900,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 842226800,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {}
+      },
+      "solveCurrentStep": {
+       "wall_ns": 1257015800,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "formTangent": {
+         "wall_ns": 37827400,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "dof.tangent": {
+           "wall_ns": 4051700,
+           "calls": 20,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "formUnbalance": {
+         "wall_ns": 34330900,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 3009100,
+           "calls": 20,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 68100,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "update": {
+         "wall_ns": 1184564100,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 3393200,
+           "calls": 20,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   113.0363998413086,
+   114.9552993774414,
+   114.47049713134766,
+   114.43419647216797,
+   113.49490356445312,
+   117.26309967041016,
+   112.3134994506836,
+   119.2083969116211,
+   119.62909698486328,
+   119.60260009765625,
+   125.35359954833984,
+   116.38510131835938,
+   111.24700164794922,
+   111.0073013305664,
+   111.78630065917969,
+   110.9834976196289,
+   110.3676986694336,
+   111.16699981689453,
+   119.3958969116211,
+   120.01200103759766
+  ]
+ },
+ "d3b_explicit_bathe_cpml_smoke_nt_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 2391445800,
+     "calls": 20,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 208914100,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 205233100,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 3275700,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 7300,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 884192300,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {}
+      },
+      "solveCurrentStep": {
+       "wall_ns": 1298025900,
+       "calls": 20,
+       "elem_by_type": [],
+       "children": {
+        "formTangent": {
+         "wall_ns": 41007300,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "dof.tangent": {
+           "wall_ns": 4401600,
+           "calls": 20,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "formUnbalance": {
+         "wall_ns": 36683900,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 3313200,
+           "calls": 20,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 65100,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "update": {
+         "wall_ns": 1220042400,
+         "calls": 20,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 3766600,
+           "calls": 20,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   112.8666000366211,
+   122.76260375976562,
+   111.31909942626953,
+   114.70890045166016,
+   111.28910064697266,
+   108.69750213623047,
+   111.24759674072266,
+   109.27230072021484,
+   115.26840209960938,
+   113.79630279541016,
+   120.48259735107422,
+   123.68319702148438,
+   121.97840118408203,
+   134.83270263671875,
+   122.32569885253906,
+   121.45770263671875,
+   126.16400146484375,
+   131.67080688476562,
+   124.74449920654297,
+   132.92300415039062
+  ]
+ },
+ "d3c_explicit_sms_cons_smoke_1t_deep_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 17076200,
+     "calls": 15,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 171100,
+       "calls": 15,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 93600,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 53200,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 3200,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 4762900,
+       "calls": 15,
+       "elem_by_type": [],
+       "children": {
+        "brick.geo": {
+         "wall_ns": 146700,
+         "calls": 240,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "elem.update": {
+         "wall_ns": 4001100,
+         "calls": 15,
+         "elem_by_type": [
+          [
+           33002,
+           1680,
+           3935800
+          ]
+         ],
+         "children": {
+          "brick.geo": {
+           "wall_ns": 948700,
+           "calls": 1680,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 12106600,
+       "calls": 15,
+       "elem_by_type": [],
+       "children": {
+        "formTangent": {
+         "wall_ns": 3800,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formUnbalance": {
+         "wall_ns": 5902200,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 87700,
+           "calls": 15,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "elem.residual": {
+           "wall_ns": 5792000,
+           "calls": 15,
+           "elem_by_type": [
+            [
+             33002,
+             1680,
+             5679200
+            ]
+           ],
+           "children": {
+            "brick.geo": {
+             "wall_ns": 956300,
+             "calls": 1680,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 1801000,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {
+          "soe.trisolve": {
+           "wall_ns": 1783300,
+           "calls": 15,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 4373700,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {
+          "elem.update": {
+           "wall_ns": 4191500,
+           "calls": 15,
+           "elem_by_type": [
+            [
+             33002,
+             1680,
+             4107500
+            ]
+           ],
+           "children": {
+            "brick.geo": {
+             "wall_ns": 997800,
+             "calls": 1680,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   1.215000033378601,
+   1.1019999980926514,
+   1.1331000328063965,
+   1.1311999559402466,
+   1.1411000490188599,
+   1.131700038909912,
+   1.1344000101089478,
+   1.1130000352859497,
+   1.104200005531311,
+   1.2202999591827393,
+   1.115399956703186,
+   1.1313999891281128,
+   1.1729999780654907,
+   1.1216000318527222,
+   1.13919997215271
+  ]
+ },
+ "d3c_explicit_sms_cons_smoke_1t_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 13972800,
+     "calls": 15,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 159200,
+       "calls": 15,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 89200,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 46800,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 3200,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 3770200,
+       "calls": 15,
+       "elem_by_type": [],
+       "children": {}
+      },
+      "solveCurrentStep": {
+       "wall_ns": 10011100,
+       "calls": 15,
+       "elem_by_type": [],
+       "children": {
+        "formTangent": {
+         "wall_ns": 3300,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formUnbalance": {
+         "wall_ns": 4928900,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 64200,
+           "calls": 15,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 1660100,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {
+          "soe.trisolve": {
+           "wall_ns": 1647800,
+           "calls": 15,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 3393200,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   0.9542999863624573,
+   0.9100000262260437,
+   0.8996000289916992,
+   0.8955000042915344,
+   0.9077000021934509,
+   0.8981999754905701,
+   0.9106000065803528,
+   0.9423999786376953,
+   0.9750000238418579,
+   0.920799970626831,
+   0.9217000007629395,
+   0.9140999913215637,
+   0.9341999888420105,
+   0.9228000044822693,
+   1.0936000347137451
+  ]
+ },
+ "d3c_explicit_sms_cons_smoke_nt_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 20326900,
+     "calls": 15,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 297800,
+       "calls": 15,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 191000,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 73300,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 4300,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 5657800,
+       "calls": 15,
+       "elem_by_type": [],
+       "children": {}
+      },
+      "solveCurrentStep": {
+       "wall_ns": 14324600,
+       "calls": 15,
+       "elem_by_type": [],
+       "children": {
+        "formTangent": {
+         "wall_ns": 5400,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formUnbalance": {
+         "wall_ns": 7028200,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 99100,
+           "calls": 15,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 2157900,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {
+          "soe.trisolve": {
+           "wall_ns": 2135300,
+           "calls": 15,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 5093500,
+         "calls": 15,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   1.6193000078201294,
+   1.3978999853134155,
+   1.3739999532699585,
+   1.3342000246047974,
+   1.3200000524520874,
+   1.3330999612808228,
+   1.313099980354309,
+   1.3305000066757202,
+   1.4011000394821167,
+   1.3387000560760498,
+   1.3248000144958496,
+   1.3137999773025513,
+   1.3136999607086182,
+   1.3171000480651855,
+   1.332800030708313
+  ]
+ },
+ "d4_mpm_modeA_smoke_1t_deep_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "mpm.a.step": {
+     "wall_ns": 61589700,
+     "calls": 4,
+     "elem_by_type": [],
+     "children": {
+      "mpm.a.prepare": {
+       "wall_ns": 4433000,
+       "calls": 4,
+       "elem_by_type": [],
+       "children": {
+        "mpm.a.churn": {
+         "wall_ns": 32700,
+         "calls": 8,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.domainChange": {
+         "wall_ns": 1100,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.p2g": {
+         "wall_ns": 539500,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.repoint": {
+         "wall_ns": 2281100,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.sp": {
+         "wall_ns": 30900,
+         "calls": 12,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.support": {
+         "wall_ns": 1451300,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "step": {
+       "wall_ns": 56831700,
+       "calls": 4,
+       "elem_by_type": [],
+       "children": {
+        "commit": {
+         "wall_ns": 686600,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {
+          "commit.elements": {
+           "wall_ns": 613800,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {
+            "mpm.a.g2p": {
+             "wall_ns": 445800,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          },
+          "commit.nodes": {
+           "wall_ns": 55300,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "commit.record": {
+           "wall_ns": 800,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "domainChanged": {
+         "wall_ns": 10162200,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {
+          "dc.algorithm": {
+           "wall_ns": 1900,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.clearAll": {
+           "wall_ns": 298100,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.handle": {
+           "wall_ns": 889400,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.integrator": {
+           "wall_ns": 84000,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.numberDOF": {
+           "wall_ns": 4912600,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.setSize": {
+           "wall_ns": 3835700,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {
+            "dc.s.fill": {
+             "wall_ns": 555600,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "dc.s.graph": {
+             "wall_ns": 3170800,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "dc.s.verify": {
+             "wall_ns": 30000,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        },
+        "newStep": {
+         "wall_ns": 1993100,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {
+          "elem.update": {
+           "wall_ns": 1775900,
+           "calls": 4,
+           "elem_by_type": [
+            [
+             33026,
+             2560,
+             1627300
+            ]
+           ],
+           "children": {}
+          }
+         }
+        },
+        "solveCurrentStep": {
+         "wall_ns": 43956600,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {
+          "convTest": {
+           "wall_ns": 97600,
+           "calls": 12,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "formTangent": {
+           "wall_ns": 20907700,
+           "calls": 12,
+           "elem_by_type": [],
+           "children": {
+            "dof.tangent": {
+             "wall_ns": 1305200,
+             "calls": 12,
+             "elem_by_type": [],
+             "children": {
+              "soe.addA": {
+               "wall_ns": 599100,
+               "calls": 2460,
+               "elem_by_type": [],
+               "children": {}
+              }
+             }
+            },
+            "elem.tangent": {
+             "wall_ns": 19530100,
+             "calls": 12,
+             "elem_by_type": [
+              [
+               33026,
+               7680,
+               10809200
+              ]
+             ],
+             "children": {
+              "soe.addA": {
+               "wall_ns": 6434800,
+               "calls": 7680,
+               "elem_by_type": [],
+               "children": {}
+              }
+             }
+            }
+           }
+          },
+          "formUnbalance": {
+           "wall_ns": 6099400,
+           "calls": 16,
+           "elem_by_type": [],
+           "children": {
+            "dof.residual": {
+             "wall_ns": 326000,
+             "calls": 16,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "elem.residual": {
+             "wall_ns": 5733000,
+             "calls": 16,
+             "elem_by_type": [
+              [
+               33026,
+               10240,
+               4675500
+              ]
+             ],
+             "children": {}
+            }
+           }
+          },
+          "linearSolve": {
+           "wall_ns": 10127200,
+           "calls": 12,
+           "elem_by_type": [],
+           "children": {
+            "soe.factor": {
+             "wall_ns": 4210700,
+             "calls": 12,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "soe.symbolic": {
+             "wall_ns": 4032500,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "soe.trisolve": {
+             "wall_ns": 1223700,
+             "calls": 12,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          },
+          "update": {
+           "wall_ns": 6670900,
+           "calls": 12,
+           "elem_by_type": [],
+           "children": {
+            "elem.update": {
+             "wall_ns": 6124200,
+             "calls": 12,
+             "elem_by_type": [
+              [
+               33026,
+               7680,
+               5180400
+              ]
+             ],
+             "children": {}
+            }
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   14.899900436401367,
+   16.76449966430664,
+   16.246000289916992,
+   14.157500267028809
+  ]
+ },
+ "d4_mpm_modeA_smoke_1t_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "mpm.a.step": {
+     "wall_ns": 52464800,
+     "calls": 4,
+     "elem_by_type": [],
+     "children": {
+      "mpm.a.prepare": {
+       "wall_ns": 4739700,
+       "calls": 4,
+       "elem_by_type": [],
+       "children": {
+        "mpm.a.churn": {
+         "wall_ns": 40000,
+         "calls": 8,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.domainChange": {
+         "wall_ns": 1000,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.p2g": {
+         "wall_ns": 568300,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.repoint": {
+         "wall_ns": 2499900,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.sp": {
+         "wall_ns": 33200,
+         "calls": 12,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.support": {
+         "wall_ns": 1494800,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "step": {
+       "wall_ns": 47701800,
+       "calls": 4,
+       "elem_by_type": [],
+       "children": {
+        "commit": {
+         "wall_ns": 698500,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {
+          "commit.elements": {
+           "wall_ns": 617800,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {
+            "mpm.a.g2p": {
+             "wall_ns": 478000,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          },
+          "commit.nodes": {
+           "wall_ns": 58600,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "commit.record": {
+           "wall_ns": 800,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "domainChanged": {
+         "wall_ns": 10034800,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {
+          "dc.algorithm": {
+           "wall_ns": 2100,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.clearAll": {
+           "wall_ns": 280400,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.handle": {
+           "wall_ns": 850200,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.integrator": {
+           "wall_ns": 75100,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.numberDOF": {
+           "wall_ns": 4938100,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.setSize": {
+           "wall_ns": 3753600,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {
+            "dc.s.fill": {
+             "wall_ns": 450500,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "dc.s.graph": {
+             "wall_ns": 3188800,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "dc.s.verify": {
+             "wall_ns": 29700,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        },
+        "newStep": {
+         "wall_ns": 1677100,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "solveCurrentStep": {
+         "wall_ns": 35250700,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {
+          "convTest": {
+           "wall_ns": 93800,
+           "calls": 12,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "formTangent": {
+           "wall_ns": 14457000,
+           "calls": 12,
+           "elem_by_type": [],
+           "children": {
+            "dof.tangent": {
+             "wall_ns": 229300,
+             "calls": 12,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          },
+          "formUnbalance": {
+           "wall_ns": 5056300,
+           "calls": 16,
+           "elem_by_type": [],
+           "children": {
+            "dof.residual": {
+             "wall_ns": 227600,
+             "calls": 16,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          },
+          "linearSolve": {
+           "wall_ns": 9655900,
+           "calls": 12,
+           "elem_by_type": [],
+           "children": {
+            "soe.factor": {
+             "wall_ns": 3951100,
+             "calls": 12,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "soe.symbolic": {
+             "wall_ns": 3869600,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "soe.trisolve": {
+             "wall_ns": 1175300,
+             "calls": 12,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          },
+          "update": {
+           "wall_ns": 5927000,
+           "calls": 12,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   13.470100402832031,
+   11.80090045928955,
+   13.505800247192383,
+   13.879599571228027
+  ]
+ },
+ "d4_mpm_modeA_smoke_nt_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "mpm.a.step": {
+     "wall_ns": 75408100,
+     "calls": 4,
+     "elem_by_type": [],
+     "children": {
+      "mpm.a.prepare": {
+       "wall_ns": 6472500,
+       "calls": 4,
+       "elem_by_type": [],
+       "children": {
+        "mpm.a.churn": {
+         "wall_ns": 35300,
+         "calls": 8,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.domainChange": {
+         "wall_ns": 1600,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.p2g": {
+         "wall_ns": 700500,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.repoint": {
+         "wall_ns": 3542800,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.sp": {
+         "wall_ns": 38700,
+         "calls": 12,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "mpm.a.support": {
+         "wall_ns": 2005800,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "step": {
+       "wall_ns": 68905300,
+       "calls": 4,
+       "elem_by_type": [],
+       "children": {
+        "commit": {
+         "wall_ns": 966000,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {
+          "commit.elements": {
+           "wall_ns": 872200,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {
+            "mpm.a.g2p": {
+             "wall_ns": 670000,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          },
+          "commit.nodes": {
+           "wall_ns": 71600,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "commit.record": {
+           "wall_ns": 1400,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "domainChanged": {
+         "wall_ns": 15126700,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {
+          "dc.algorithm": {
+           "wall_ns": 3600,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.clearAll": {
+           "wall_ns": 581200,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.handle": {
+           "wall_ns": 1418600,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.integrator": {
+           "wall_ns": 126400,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.numberDOF": {
+           "wall_ns": 7019700,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "dc.setSize": {
+           "wall_ns": 5737700,
+           "calls": 4,
+           "elem_by_type": [],
+           "children": {
+            "dc.s.fill": {
+             "wall_ns": 808100,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "dc.s.graph": {
+             "wall_ns": 4784000,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "dc.s.verify": {
+             "wall_ns": 45700,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        },
+        "newStep": {
+         "wall_ns": 2661100,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "solveCurrentStep": {
+         "wall_ns": 50106600,
+         "calls": 4,
+         "elem_by_type": [],
+         "children": {
+          "convTest": {
+           "wall_ns": 126200,
+           "calls": 12,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "formTangent": {
+           "wall_ns": 22339200,
+           "calls": 12,
+           "elem_by_type": [],
+           "children": {
+            "dof.tangent": {
+             "wall_ns": 318800,
+             "calls": 12,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          },
+          "formUnbalance": {
+           "wall_ns": 6542100,
+           "calls": 16,
+           "elem_by_type": [],
+           "children": {
+            "dof.residual": {
+             "wall_ns": 407200,
+             "calls": 16,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          },
+          "linearSolve": {
+           "wall_ns": 13306900,
+           "calls": 12,
+           "elem_by_type": [],
+           "children": {
+            "soe.factor": {
+             "wall_ns": 5890500,
+             "calls": 12,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "soe.symbolic": {
+             "wall_ns": 4971500,
+             "calls": 4,
+             "elem_by_type": [],
+             "children": {}
+            },
+            "soe.trisolve": {
+             "wall_ns": 1641300,
+             "calls": 12,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          },
+          "update": {
+           "wall_ns": 7701100,
+           "calls": 12,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   18.374000549316406,
+   19.730199813842773,
+   19.75320053100586,
+   17.802400588989258
+  ]
+ },
+ "d5_mcft_2cld12_smoke_1t_deep_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 1164401800,
+     "calls": 6,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 21061400,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 21000100,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 16800,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 1400,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 474179600,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "elem.tangent": {
+         "wall_ns": 73500,
+         "calls": 6,
+         "elem_by_type": [
+          [
+           33025,
+           24,
+           30200
+          ]
+         ],
+         "children": {
+          "soe.addA": {
+           "wall_ns": 21500,
+           "calls": 24,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "elem.update": {
+         "wall_ns": 473371900,
+         "calls": 6,
+         "elem_by_type": [
+          [
+           33025,
+           24,
+           473300800
+          ]
+         ],
+         "children": {}
+        },
+        "soe.factor": {
+         "wall_ns": 380100,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "soe.trisolve": {
+         "wall_ns": 214900,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 669125600,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "convTest": {
+         "wall_ns": 41300,
+         "calls": 17,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formTangent": {
+         "wall_ns": 71400,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {
+          "elem.tangent": {
+           "wall_ns": 63100,
+           "calls": 6,
+           "elem_by_type": [
+            [
+             33025,
+             24,
+             26600
+            ]
+           ],
+           "children": {
+            "soe.addA": {
+             "wall_ns": 21000,
+             "calls": 24,
+             "elem_by_type": [],
+             "children": {}
+            }
+           }
+          }
+         }
+        },
+        "formUnbalance": {
+         "wall_ns": 356600,
+         "calls": 23,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 79600,
+           "calls": 23,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "elem.residual": {
+           "wall_ns": 212800,
+           "calls": 23,
+           "elem_by_type": [
+            [
+             33025,
+             92,
+             108000
+            ]
+           ],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 1363500,
+         "calls": 17,
+         "elem_by_type": [],
+         "children": {
+          "soe.factor": {
+           "wall_ns": 405700,
+           "calls": 6,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "soe.trisolve": {
+           "wall_ns": 904000,
+           "calls": 17,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 666986400,
+         "calls": 17,
+         "elem_by_type": [],
+         "children": {
+          "elem.update": {
+           "wall_ns": 666517100,
+           "calls": 17,
+           "elem_by_type": [
+            [
+             33025,
+             68,
+             666370000
+            ]
+           ],
+           "children": {}
+          },
+          "soe.trisolve": {
+           "wall_ns": 124700,
+           "calls": 17,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   120.98419952392578,
+   121.28690338134766,
+   211.70289611816406,
+   226.82569885253906,
+   218.4163055419922,
+   265.2419128417969
+  ]
+ },
+ "d5_mcft_2cld12_smoke_1t_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 1159640800,
+     "calls": 6,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 21525100,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 21459000,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 13200,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 1600,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 472964400,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "soe.factor": {
+         "wall_ns": 429700,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "soe.trisolve": {
+         "wall_ns": 229900,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 665093500,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "convTest": {
+         "wall_ns": 40700,
+         "calls": 17,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formTangent": {
+         "wall_ns": 52000,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formUnbalance": {
+         "wall_ns": 336300,
+         "calls": 23,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 82100,
+           "calls": 23,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 1482100,
+         "calls": 17,
+         "elem_by_type": [],
+         "children": {
+          "soe.factor": {
+           "wall_ns": 417200,
+           "calls": 6,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "soe.trisolve": {
+           "wall_ns": 1007800,
+           "calls": 17,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 662790100,
+         "calls": 17,
+         "elem_by_type": [],
+         "children": {
+          "soe.trisolve": {
+           "wall_ns": 124000,
+           "calls": 17,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   120.75489807128906,
+   124.98719787597656,
+   214.11289978027344,
+   222.9228057861328,
+   211.15769958496094,
+   265.7669982910156
+  ]
+ },
+ "d5_mcft_2cld12_smoke_nt_coarse_r0": {
+  "tree": {
+   "wall_ns": 0,
+   "calls": 0,
+   "elem_by_type": [],
+   "children": {
+    "step": {
+     "wall_ns": 1460091800,
+     "calls": 6,
+     "elem_by_type": [],
+     "children": {
+      "commit": {
+       "wall_ns": 28993000,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "commit.elements": {
+         "wall_ns": 28921300,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.nodes": {
+         "wall_ns": 15500,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "commit.record": {
+         "wall_ns": 2000,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "newStep": {
+       "wall_ns": 599783900,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "soe.factor": {
+         "wall_ns": 441900,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "soe.trisolve": {
+         "wall_ns": 593500,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        }
+       }
+      },
+      "solveCurrentStep": {
+       "wall_ns": 831251200,
+       "calls": 6,
+       "elem_by_type": [],
+       "children": {
+        "convTest": {
+         "wall_ns": 45600,
+         "calls": 17,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formTangent": {
+         "wall_ns": 64000,
+         "calls": 6,
+         "elem_by_type": [],
+         "children": {}
+        },
+        "formUnbalance": {
+         "wall_ns": 504900,
+         "calls": 23,
+         "elem_by_type": [],
+         "children": {
+          "dof.residual": {
+           "wall_ns": 100400,
+           "calls": 23,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "linearSolve": {
+         "wall_ns": 1616500,
+         "calls": 17,
+         "elem_by_type": [],
+         "children": {
+          "soe.factor": {
+           "wall_ns": 415500,
+           "calls": 6,
+           "elem_by_type": [],
+           "children": {}
+          },
+          "soe.trisolve": {
+           "wall_ns": 1141700,
+           "calls": 17,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        },
+        "update": {
+         "wall_ns": 828611700,
+         "calls": 17,
+         "elem_by_type": [],
+         "children": {
+          "soe.trisolve": {
+           "wall_ns": 208800,
+           "calls": 17,
+           "elem_by_type": [],
+           "children": {}
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "series_wall_ms": [
+   150.5095977783203,
+   163.77760314941406,
+   266.8432922363281,
+   287.1296081542969,
+   263.9757080078125,
+   327.9159851074219
+  ]
+ }
+}
