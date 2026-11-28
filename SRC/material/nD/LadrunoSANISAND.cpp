@@ -5189,6 +5189,20 @@ LadrunoSANISAND::setParameter(const char **argv, int argc, Parameter &param)
             param.setValue(mStressCorrectionInUse ? 1.0 : 0.0);
             return param.addObject(9, this);
         }
+        // Ladruno WP-238: claim `voidRatio` (the base's id 8) for the ELEMENT route,
+        // exactly as `stressCorrection` above and for the same reason. The base
+        // registers it only with the material tag in argv[1]; the idiomatic
+        //     setParameter -val $e -ele $eleTag voidRatio
+        // hands the material argc = 1, the base returns -1, no parameter is created
+        // and the command still returns normally: a SILENT NO-OP. A deck applying a
+        // per-element void-ratio field that way would run a homogeneous model.
+        // Claimed only at argc == 1: with a tag in argv[1] the base's own guard
+        // (atoi(argv[1]) == getTag()) still decides, so a call naming ANOTHER
+        // material's tag does not land here.
+        if (argc == 1 && (strcmp(argv[0], "voidRatio") == 0 || strcmp(argv[0], "VoidRatio") == 0)) {
+            param.setValue(m_e_init - (1 + m_e_init) * this->GetTrace(mEpsilon_n));
+            return param.addObject(8, this);
+        }
     }
     return ManzariDafalias::setParameter(argv, argc, param);
 }
@@ -5281,6 +5295,57 @@ LadrunoSANISAND::updateParameter(int parameterID, Information &info)
     // for every id this one does not claim.
     if (parameterID == 9) {
         mStressCorrectionInUse = (info.theDouble != 0.0);
+        return 0;
+    }
+
+    // ---- Ladruno WP-238: the base's id 8, `voidRatio` --------------------------
+    // The base sets m_e_init so that the CURRENT void ratio becomes the value:
+    //     m_e_init = (e + eps_v) / (1 - eps_v),   eps_v = tr(eps) (compression positive)
+    // and nothing else. Three things are added here, none of them to the base:
+    //   1. the value must be a void ratio (finite, > 0): NaN or a negative number
+    //      would be stored and the model would run on it;
+    //   2. a point with strain history in the PLASTIC stage is refused. alpha,
+    //      the fabric and the stress were integrated with the old void ratio (psi,
+    //      the bounding and dilatancy surfaces, G): changing e under them is a
+    //      jump in state no path of the model takes. In the elastic stage, and at
+    //      a strain-free point in any stage, it is allowed;
+    //   3. mVoidRatio is refreshed (the base leaves the old value until the next
+    //      update), and at a STRAIN-FREE point the initial elastic operator is
+    //      rebuilt as initialize() builds it (G depends on e), so the point is
+    //      exactly a point CONSTRUCTED with that void ratio.
+    if (parameterID == 8) {
+        const double v = info.theDouble;
+        if (!(std::isfinite(v) && v > 0.0)) {
+            opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                   << ": voidRatio " << v << " is not a void ratio (finite, > 0); refused." << endln;
+            return -1;
+        }
+        bool strainFree = true;
+        for (int i = 0; i < 6; i++)
+            if (mEpsilon(i) != 0.0 || mEpsilon_n(i) != 0.0)
+                strainFree = false;
+        if (!strainFree && mElastFlag != 0) {
+            opserr << "WARNING LadrunoSANISAND tag " << this->getTag()
+                   << ": voidRatio refused: this point has strain history and the material is in the"
+                      " plastic stage (alpha, the fabric and the stress were integrated with the void"
+                      " ratio it has). Set the void ratio before the first analysis step, or in the"
+                      " elastic stage." << endln;
+            return -1;
+        }
+        const int resE = ManzariDafalias::updateParameter(parameterID, info);
+        if (resE != 0)
+            return resE;
+        mVoidRatio = m_e_init - (1 + m_e_init) * this->GetTrace(mEpsilon);
+        if (strainFree) {
+            Vector sigAtm(6);
+            sigAtm(0) = m_P_atm;
+            sigAtm(1) = m_P_atm;
+            sigAtm(2) = m_P_atm;
+            this->GetElasticModuli(sigAtm, mVoidRatio, mK, mG);
+            mCe             = this->GetStiffness(mK, mG);
+            mCep            = mCe;
+            mCep_Consistent = mCe;
+        }
         return 0;
     }
 
