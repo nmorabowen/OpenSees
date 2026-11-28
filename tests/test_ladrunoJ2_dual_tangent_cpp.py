@@ -2,15 +2,19 @@
 
 Compiles tests/ladrunoj2_dual_check.cpp (pure: includes only
 SRC/material/nD/LadrunoJ2Kernel.h, which pulls in LadrunoDual.h) with g++, and
-runs the templated return map on seven strain paths twice: once in double (the
+runs the templated return map on twelve strain paths twice: once in double (the
 production path, with the hand-derived analytic tangent Dtan) and once in
 ladruno_dual::Dual<6> with the six engineering strain directions seeded, which
-gives the exact algorithmic tangent with no step size.
+gives the exact algorithmic tangent with no step size. Seven paths drive the
+undamaged map (returnMap); five drive the Lemaitre layer (returnMapDamaged),
+whose tangent carries the hand-derived -sigma~ (x) dD/deps term, one of them
+under IMPL-EX (D~ frozen), where the tangent must be (1 - D~) Dtan_eff.
 
 Asserts, at every step of every path:
 
   * the analytic Dtan equals the dual tangent to round-off (<= 1e-12 relative
-    to max|Dtan|; measured ~1e-16, worst 2.8e-14 on the strong-Voce path). The
+    to max|Dtan|; measured ~1e-16, worst 2.8e-14 on the strong-Voce path,
+    including the damaged tangent up to D = 0.85). The
     finite-difference gate this complements (test_ladrunoJ2_kernel_cpp.py)
     can only resolve ~1e-4;
   * the VALUE part of the Dual run equals the double run bit for bit (stress,
@@ -36,7 +40,12 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _SRC_ND = os.path.normpath(os.path.join(_HERE, "..", "SRC", "material", "nD"))
 
 SCENARIOS = {"elastic_iso", "single_af_cyclic", "chaboche3_3d", "kin_linear_cyclic",
-             "linkin_cf", "chaboche_nonprop", "voce_strong_3d"}
+             "linkin_cf", "chaboche_nonprop", "voce_strong_3d",
+             # Lemaitre damage layer (returnMapDamaged, hand-derived dD/deps term)
+             "lemaitre_uniaxial", "lemaitre_3d_mixed", "lemaitre_s2", "lemaitre_threshold",
+             # IMPL-EX: D~ frozen at the committed damage => (1-D~) Dtan_eff identity
+             "lemaitre_implex_3d"}
+DAMAGED = {s for s in SCENARIOS if s.startswith("lemaitre_")}
 TAN_TOL = 1e-12   # relative to max|Dtan|
 SYM_FLOOR = 1e-6  # the symmetrized mutant must miss by at least this much
 
@@ -66,8 +75,20 @@ def dual_run():
             kv = dict(zip(p[2::2], p[3::2]))
             cur.append({"step": int(p[1]), "plastic": int(kv["PLASTIC"]),
                         "tan": float(kv["TAN"]), "fd": float(kv["FD"]),
-                        "sym": float(kv["SYM"]), "bits": int(kv["BITS"])})
+                        "sym": float(kv["SYM"]), "bits": int(kv["BITS"]),
+                        "damage": float(kv.get("DAMAGE", "0"))})
     return out
+
+
+def test_damage_paths_actually_damage(dual_run):
+    """The damaged scenarios must reach real damage (s=2 to D > 0.5), or the
+    dD/deps term of the consistent tangent is never exercised."""
+    for name in DAMAGED:
+        assert max(r["damage"] for r in dual_run[name]) > 1e-4, f"{name}: no damage grew"
+    assert max(r["damage"] for r in dual_run["lemaitre_s2"]) > 0.5
+    # the threshold path is undamaged before p crosses pD, damaged after
+    thr = dual_run["lemaitre_threshold"]
+    assert thr[0]["damage"] == 0.0 and thr[-1]["damage"] > 0.1
 
 
 def test_every_path_ran_and_yielded(dual_run):

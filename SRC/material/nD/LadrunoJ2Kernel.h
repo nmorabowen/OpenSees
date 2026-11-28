@@ -430,18 +430,19 @@ inline int returnMap(const Params& p,
 //  so the caller updates the extrapolation from a true backward-Euler history.
 //  dScaleOverride < 0 (default) = fully implicit (the consistent tangent above).
 // ===========================================================================
-inline int returnMapDamaged(const Params& p,
-                            const double strain6[6],
-                            const double epsP_n[6], double ebarP_n,
-                            const double alpha_n[][6], double D_n,
-                            double stress6[6], double Dtan[6][6],
-                            double epsP[6], double& ebarP,
-                            double alpha[][6], double& dGamma, double& D,
-                            double* outResidual = 0, double dScaleOverride = -1.0)
+template <class T>
+inline int returnMapDamagedT(const Params& p,
+                             const T strain6[6],
+                             const T epsP_n[6], const T& ebarP_n,
+                             const T alpha_n[][6], const T& D_n,
+                             T stress6[6], T Dtan[6][6],
+                             T epsP[6], T& ebarP,
+                             T alpha[][6], T& dGamma, T& D,
+                             double* outResidual = 0, double dScaleOverride = -1.0)
 {
   // 1) effective (undamaged) return map -- the proven kernel, untouched
-  int status = returnMap(p, strain6, epsP_n, ebarP_n, alpha_n,
-                         stress6, Dtan, epsP, ebarP, alpha, dGamma, outResidual);
+  int status = returnMapT<T>(p, strain6, epsP_n, ebarP_n, alpha_n,
+                             stress6, Dtan, epsP, ebarP, alpha, dGamma, outResidual);
 
   if (!p.dmg.on) { D = 0.0; return status; }   // pure pass-through (bit-identical)
 
@@ -450,91 +451,91 @@ inline int returnMapDamaged(const Params& p,
   const double root23 = sqrt(2.0/3.0);
 
   // 2) effective deviatoric stress s~ and hydrostatic stress from stress6 (effective)
-  double sigEff[6];
+  T sigEff[6];
   for (int i = 0; i < 6; i++) sigEff[i] = stress6[i];
-  const double sigH = (sigEff[0] + sigEff[1] + sigEff[2]) / 3.0;   // effective pressure
-  double sdev[6];
+  const T sigH = (sigEff[0] + sigEff[1] + sigEff[2]) / 3.0;   // effective pressure
+  T sdev[6];
   for (int i = 0; i < 6; i++) sdev[i] = sigEff[i];
   for (int i = 0; i < 3; i++) sdev[i] -= sigH;
-  const double qEff = sqrt(1.5 * dotT(sdev, sdev));                // effective von Mises
+  const T qEff = sqrt(1.5 * dotT(sdev, sdev));                // effective von Mises
 
   // 3) damage energy release rate + backward-Euler damage update
   const double E  = Ladruno::youngsFromKG(p.K, p.G);
   const double nu = Ladruno::poissonFromKG(p.K, p.G);
-  const double Y  = Ladruno::damageReleaseRate(qEff, sigH, nu, E);
-  const double dDraw = Ladruno::damageIncrement(Y, ebarP_n, ebarP, p.dmg);
+  const T Y  = Ladruno::damageReleaseRate(qEff, sigH, nu, E);
+  const T dDraw = Ladruno::damageIncrement(Y, ebarP_n, ebarP, p.dmg);
 
-  double Dnew = D_n + dDraw;
+  T Dnew = D_n + dDraw;
   bool capped = false;
-  if (Dnew >= p.dmg.Dc) { Dnew = p.dmg.Dc; capped = true; }
-  if (Dnew < 0.0) Dnew = 0.0;
+  if (value(Dnew) >= p.dmg.Dc) { Dnew = p.dmg.Dc; capped = true; }
+  if (value(Dnew) < 0.0) Dnew = 0.0;
   D = Dnew;                          // ALWAYS the implicit damage (for the caller to commit)
 
   // IMPL-EX: degrade by the frozen extrapolated D~ (SPD tangent) but still return
   // the implicit D above. Fully-implicit (default) degrades by the implicit D.
   const bool implex = (dScaleOverride >= 0.0);
-  double dScale = implex ? dScaleOverride : Dnew;
-  if (dScale >= p.dmg.Dc) dScale = p.dmg.Dc;
-  if (dScale < 0.0) dScale = 0.0;
-  const double omd = 1.0 - dScale;
+  T dScale = implex ? T(dScaleOverride) : Dnew;
+  if (value(dScale) >= p.dmg.Dc) dScale = p.dmg.Dc;
+  if (value(dScale) < 0.0) dScale = 0.0;
+  const T omd = 1.0 - dScale;
 
   // 4) dD/deps for the consistent tangent (only where damage is actively growing).
   //    Skipped entirely in IMPL-EX: D~ is frozen => the rank-one softening term
   //    vanishes => tangent (1 - D~) Dtan_eff is SPD.
-  double dDdeps[6] = {0,0,0,0,0,0};
-  if (!implex && !capped && dDraw > 0.0 && dGamma > 0.0) {
+  T dDdeps[6] = {0,0,0,0,0,0};
+  if (!implex && !capped && value(dDraw) > 0.0 && value(dGamma) > 0.0) {
     // recompute the converged flow direction n and hardening modulus h (the
     // quantities returnMap consumes internally but does not return)
-    double tr = strain6[0] + strain6[1] + strain6[2];
-    double edev[6];
+    T tr = strain6[0] + strain6[1] + strain6[2];
+    T edev[6];
     for (int i = 0; i < 6; i++) edev[i] = strain6[i];
     for (int i = 0; i < 3; i++) edev[i] -= tr/3.0;
-    double s_tr[6];
+    T s_tr[6];
     for (int i = 0; i < 6; i++) s_tr[i] = 2.0*G*(edev[i] - epsP_n[i]);
 
-    double Dk[MAXBACK];
+    T Dk[MAXBACK];
     for (int k = 0; k < nBack; k++) Dk[k] = 1.0 + root23*p.gam[k]*dGamma;
-    double M[6], Mp[6];
+    T M[6], Mp[6];
     for (int i = 0; i < 6; i++) {
       M[i] = s_tr[i]; Mp[i] = 0.0;
       for (int k = 0; k < nBack; k++) {
-        double inv = 1.0/Dk[k];
+        T inv = 1.0/Dk[k];
         M[i]  -= alpha_n[k][i]*inv;
         Mp[i] += alpha_n[k][i]*root23*p.gam[k]*inv*inv;
       }
     }
-    double normM = sqrt(dotT(M, M));
-    const double normFloor = 1.0e-10 * fmax(fmax(normM, root23*yieldStress(p, ebarP)), 1.0e-300);
-    if (normM > normFloor) {
-      double n[6];
+    T normM = sqrt(dotT(M, M));
+    const double normFloor = 1.0e-10 * fmax(fmax(value(normM), root23*value(yieldStress(p, ebarP))), 1.0e-300);
+    if (value(normM) > normFloor) {
+      T n[6];
       for (int i = 0; i < 6; i++) n[i] = M[i]/normM;
-      double dtheta = 2.0*G;
-      for (int k = 0; k < nBack; k++) { double inv = 1.0/Dk[k]; dtheta += (2.0/3.0)*p.C[k]*inv*inv; }
-      double h = dtheta + (2.0/3.0)*yieldSlope(p, ebarP) - dotT(n, Mp);   // = -df/ddG > 0
+      T dtheta = 2.0*G;
+      for (int k = 0; k < nBack; k++) { T inv = 1.0/Dk[k]; dtheta += (2.0/3.0)*p.C[k]*inv*inv; }
+      T h = dtheta + (2.0/3.0)*yieldSlope(p, ebarP) - dotT(n, Mp);   // = -df/ddG > 0
 
       // d(pbar)/deps : pbar = ebarP_n + sqrt(2/3) dGamma ; d(dGamma)/deps_eng = (2G/h) n w
       //   (w = 1 normal, 1/2 shear: tensor->engineering strain on the differentiation var)
       // dY/deps : Y(sigma~) contracted with the effective algorithmic tangent Dtan
       const double a = (2.0/3.0)*(1.0 + nu);
       const double b = 3.0*(1.0 - 2.0*nu);
-      double gY[6];                                   // grad_Y in dotT convention
+      T gY[6];                                        // grad_Y in dotT convention
       for (int i = 0; i < 6; i++) {
-        double base = 3.0*a*sdev[i];
+        T base = 3.0*a*sdev[i];
         if (i < 3) base += (2.0*b/3.0)*sigH;
         gY[i] = base/(2.0*E);
       }
-      double ddD_dY, ddD_dp;
+      T ddD_dY, ddD_dp;
       Ladruno::damageIncrementPartials(Y, ebarP_n, ebarP, p.dmg, ddD_dY, ddD_dp);
 
       const double wt[6] = {1,1,1,2,2,2};             // dotT weights (off-diagonal pairs)
       for (int j = 0; j < 6; j++) {
         // dY/deps_eng,j = sum_I wt_I gY_I Dtan[I][j]   (Dtan already eng-convention)
-        double dY_dej = 0.0;
+        T dY_dej = 0.0;
         for (int I = 0; I < 6; I++) dY_dej += wt[I]*gY[I]*Dtan[I][j];
         // d(pbar)/deps_eng,j = sqrt(2/3) (2G/h) n_j.  d||M||/dM carries the dotT weight
         // wt_j (2 on shear); the tensor->engineering strain factor is 1/wt_j, so they
         // cancel and the engineering derivative is just n_j (no shear factor).
-        double dpbar_dej = root23*(2.0*G/h)*n[j];
+        T dpbar_dej = root23*(2.0*G/h)*n[j];
         dDdeps[j] = ddD_dp*dpbar_dej + ddD_dY*dY_dej;
       }
     }
@@ -547,6 +548,21 @@ inline int returnMapDamaged(const Params& p,
   for (int i = 0; i < 6; i++) stress6[i] = omd*sigEff[i];
 
   return status;
+}
+
+// The production entry point (unchanged signature; every caller uses this).
+inline int returnMapDamaged(const Params& p,
+                            const double strain6[6],
+                            const double epsP_n[6], double ebarP_n,
+                            const double alpha_n[][6], double D_n,
+                            double stress6[6], double Dtan[6][6],
+                            double epsP[6], double& ebarP,
+                            double alpha[][6], double& dGamma, double& D,
+                            double* outResidual = 0, double dScaleOverride = -1.0)
+{
+  return returnMapDamagedT<double>(p, strain6, epsP_n, ebarP_n, alpha_n, D_n,
+                                   stress6, Dtan, epsP, ebarP, alpha, dGamma, D,
+                                   outResidual, dScaleOverride);
 }
 
 } // namespace ladruno_j2_kernel
